@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS Desktop Preview - All Editions</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+        }
+        
+        .preview-container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+        
+        .header h1 {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 20px;
+            opacity: 0.7;
+        }
+        
+        .os-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(700px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .os-mockup {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        
+        .os-label {
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .price-tag {
+            font-size: 16px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: normal;
+        }
+        
+        .price-tag.free {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .price-tag.basic {
+            background: #0078d4;
+        }
+        
+        .price-tag.gamer {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .price-tag.ai {
+            background: #ff006e;
+        }
+        
+        .desktop {
+            width: 100%;
+            height: 500px;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+            background-size: cover;
+            background-position: center;
+        }
+        
+        .desktop.freemium {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .desktop.basic {
+            background: linear-gradient(135deg, #0078d4 0%, #4facfe 100%);
+        }
+        
+        .desktop.gamer {
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        }
+        
+        .desktop.ai {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%), 
+                        url('data:image/svg+xml,<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg"><defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/></pattern></defs><rect width="100" height="100" fill="url(%23grid)"/></svg>');
+        }
+        
+        .taskbar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(20px);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-button {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+        
+        .taskbar-apps {
+            display: flex;
+            gap: 5px;
+            flex: 1;
+        }
+        
+        .taskbar-app {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .system-tray {
+            display: flex;
+            gap: 15px;
+            color: white;
+            font-size: 13px;
+            align-items: center;
+        }
+        
+        .desktop-icons {
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 25px;
+        }
+        
+        .desktop-icon {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+            text-align: center;
+            cursor: pointer;
+        }
+        
+        .icon-image {
+            width: 56px;
+            height: 56px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 5px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .icon-label {
+            font-size: 13px;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+        }
+        
+        .window {
+            position: absolute;
+            background: rgba(30, 30, 30, 0.95);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        
+        .window-titlebar {
+            height: 32px;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            justify-content: space-between;
+        }
+        
+        .window-title {
+            color: white;
+            font-size: 13px;
+        }
+        
+        .window-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .window-button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .window-content {
+            padding: 15px;
+            color: white;
+            font-size: 13px;
+        }
+        
+        .feature-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 20px;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        
+        .feature-badge.gamer {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 2px solid #00ff88;
+        }
+        
+        .feature-badge.ai {
+            background: rgba(255, 0, 110, 0.2);
+            color: #ff006e;
+            border: 2px solid #ff006e;
+        }
+    </style>
+</head>
+<body>
+    <div class="preview-container">
+        <div class="header">
+            <h1>Aegis OS Desktop Preview</h1>
+            <p>See how each edition looks and what apps come pre-installed</p>
+        </div>
+        
+        <div class="os-grid">
+            <!-- FREEMIUM EDITION -->
+            <div class="os-mockup">
+                <div class="os-label">
+                    Freemium Edition
+                    <span class="price-tag free">FREE</span>
+                </div>
+                <div class="desktop freemium">
+                    <div class="desktop-icons">
+                        <div class="desktop-icon">
+                            <div class="icon-image">📁</div>
+                            <div class="icon-label">Files</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🌐</div>
+                            <div class="icon-label">Browser</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">⚙️</div>
+                            <div class="icon-label">Settings</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🎮</div>
+                            <div class="icon-label">Steam</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🍷</div>
+                            <div class="icon-label">Wine</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">💬</div>
+                            <div class="icon-label">Discord</div>
+                        </div>
+                    </div>
+                    <div class="taskbar">
+                        <div class="start-button">A</div>
+                        <div class="taskbar-apps">
+                            <div class="taskbar-app">📁</div>
+                            <div class="taskbar-app">🌐</div>
+                            <div class="taskbar-app">💬</div>
+                        </div>
+                        <div class="system-tray">
+                            <span>🔊</span>
+                            <span>📶</span>
+                            <span>14:23</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- BASIC EDITION -->
+            <div class="os-mockup">
+                <div class="os-label">
+                    Basic Edition
+                    <span class="price-tag basic">$49/YEAR</span>
+                </div>
+                <div class="desktop basic">
+                    <div class="desktop-icons">
+                        <div class="desktop-icon">
+                            <div class="icon-image">📁</div>
+                            <div class="icon-label">Files</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🌐</div>
+                            <div class="icon-label">Browser</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">⚙️</div>
+                            <div class="icon-label">Settings</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🎮</div>
+                            <div class="icon-label">Steam</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🍷</div>
+                            <div class="icon-label">Wine</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">💬</div>
+                            <div class="icon-label">Discord</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📧</div>
+                            <div class="icon-label">Mail</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🛡️</div>
+                            <div class="icon-label">Security</div>
+                        </div>
+                    </div>
+                    <div class="window" style="top: 100px; left: 50px; width: 350px;">
+                        <div class="window-titlebar">
+                            <div class="window-title">🛡️ Security Updates</div>
+                            <div class="window-controls">
+                                <div class="window-button" style="background: #ff5f57;"></div>
+                                <div class="window-button" style="background: #febc2e;"></div>
+                                <div class="window-button" style="background: #28c840;"></div>
+                            </div>
+                        </div>
+                        <div class="window-content">
+                            ✓ System is up to date<br>
+                            ✓ Priority security patches applied<br>
+                            Next update: Tomorrow
+                        </div>
+                    </div>
+                    <div class="taskbar">
+                        <div class="start-button">A</div>
+                        <div class="taskbar-apps">
+                            <div class="taskbar-app">📁</div>
+                            <div class="taskbar-app">🌐</div>
+                            <div class="taskbar-app">🛡️</div>
+                        </div>
+                        <div class="system-tray">
+                            <span>🔊</span>
+                            <span>📶</span>
+                            <span>🔒</span>
+                            <span>14:23</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- GAMER EDITION -->
+            <div class="os-mockup">
+                <div class="os-label">
+                    Gamer Edition
+                    <span class="price-tag gamer">$99/YEAR</span>
+                </div>
+                <div class="desktop gamer">
+                    <div class="feature-badge gamer">⚡ AI BOOST ACTIVE</div>
+                    <div class="desktop-icons">
+                        <div class="desktop-icon">
+                            <div class="icon-image">🎮</div>
+                            <div class="icon-label">Steam</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🎯</div>
+                            <div class="icon-label">Game Hub</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">⚡</div>
+                            <div class="icon-label">FPS Boost</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🌐</div>
+                            <div class="icon-label">Browser</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">💬</div>
+                            <div class="icon-label">Discord</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📊</div>
+                            <div class="icon-label">Performance</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🎵</div>
+                            <div class="icon-label">Spotify</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📹</div>
+                            <div class="icon-label">OBS</div>
+                        </div>
+                    </div>
+                    <div class="window" style="top: 80px; right: 50px; width: 320px;">
+                        <div class="window-titlebar">
+                            <div class="window-title">⚡ AI Game Optimizer</div>
+                            <div class="window-controls">
+                                <div class="window-button" style="background: #ff5f57;"></div>
+                                <div class="window-button" style="background: #febc2e;"></div>
+                                <div class="window-button" style="background: #28c840;"></div>
+                            </div>
+                        </div>
+                        <div class="window-content">
+                            <strong style="color: #00ff88;">PERFORMANCE MODE: ON</strong><br><br>
+                            FPS: 144 → 180 (+25%)<br>
+                            Latency: 45ms → 12ms<br>
+                            GPU Temp: 68°C
+                        </div>
+                    </div>
+                    <div class="taskbar">
+                        <div class="start-button" style="background: rgba(0, 255, 136, 0.3);">A</div>
+                        <div class="taskbar-apps">
+                            <div class="taskbar-app">🎮</div>
+                            <div class="taskbar-app">💬</div>
+                            <div class="taskbar-app">⚡</div>
+                            <div class="taskbar-app">📊</div>
+                        </div>
+                        <div class="system-tray">
+                            <span style="color: #00ff88;">⚡ 180 FPS</span>
+                            <span>🔊</span>
+                            <span>14:23</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI DEVELOPER EDITION -->
+            <div class="os-mockup">
+                <div class="os-label">
+                    AI Developer Edition
+                    <span class="price-tag ai">$149/YEAR</span>
+                </div>
+                <div class="desktop ai">
+                    <div class="feature-badge ai">🧠 GPU ACCELERATED</div>
+                    <div class="desktop-icons">
+                        <div class="desktop-icon">
+                            <div class="icon-image">💻</div>
+                            <div class="icon-label">VS Code</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🐋</div>
+                            <div class="icon-label">Docker</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🧠</div>
+                            <div class="icon-label">PyTorch</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📊</div>
+                            <div class="icon-label">TensorFlow</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📓</div>
+                            <div class="icon-label">Jupyter</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">⚙️</div>
+                            <div class="icon-label">Terminal</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">🐍</div>
+                            <div class="icon-label">Python</div>
+                        </div>
+                        <div class="desktop-icon">
+                            <div class="icon-image">📦</div>
+                            <div class="icon-label">Conda</div>
+                        </div>
+                    </div>
+                    <div class="window" style="top: 120px; left: 60px; width: 400px;">
+                        <div class="window-titlebar">
+                            <div class="window-title">💻 Terminal</div>
+                            <div class="window-controls">
+                                <div class="window-button" style="background: #ff5f57;"></div>
+                                <div class="window-button" style="background: #febc2e;"></div>
+                                <div class="window-button" style="background: #28c840;"></div>
+                            </div>
+                        </div>
+                        <div class="window-content" style="font-family: 'Courier New', monospace; background: #000; padding: 10px; color: #00ff88;">
+                            $ nvidia-smi<br>
+                            GPU 0: RTX 4090 (24GB)<br>
+                            CUDA Version: 12.2<br>
+                            <span style="color: #ff006e;">$ python train.py</span><br>
+                            Training model... ⚡
+                        </div>
+                    </div>
+                    <div class="taskbar">
+                        <div class="start-button" style="background: rgba(255, 0, 110, 0.3);">A</div>
+                        <div class="taskbar-apps">
+                            <div class="taskbar-app">💻</div>
+                            <div class="taskbar-app">🐋</div>
+                            <div class="taskbar-app">📓</div>
+                            <div class="taskbar-app">⚙️</div>
+                        </div>
+                        <div class="system-tray">
+                            <span style="color: #ff006e;">🧠 GPU: 87%</span>
+                            <span>🔊</span>
+                            <span>14:23</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 40px;">
+            <a href="index.html" style="color: #0078d4; text-decoration: none; font-size: 18px;">← Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>
