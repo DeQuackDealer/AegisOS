@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS - Interactive Desktop Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background: #000;
+        }
+        
+        .edition-selector {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px 30px;
+            border-radius: 30px;
+            backdrop-filter: blur(20px);
+            z-index: 10000;
+            display: flex;
+            gap: 15px;
+        }
+        
+        .edition-btn {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .edition-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        
+        .edition-btn.free {
+            background: #00ff88;
+            color: #000;
+        }
+        
+        .edition-btn.basic {
+            background: #0078d4;
+            color: white;
+        }
+        
+        .edition-btn.gamer {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .edition-btn.ai {
+            background: #ff006e;
+            color: white;
+        }
+        
+        .edition-btn.active {
+            box-shadow: 0 0 20px currentColor;
+        }
+        
+        .desktop {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+            background-size: cover;
+            background-position: center;
+        }
+        
+        .desktop.freemium {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .desktop.basic {
+            background: linear-gradient(135deg, #0078d4 0%, #00a8ff 100%);
+        }
+        
+        .desktop.gamer {
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+        }
+        
+        .desktop.ai {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .desktop-icons {
+            padding: 80px 30px 100px 30px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, 90px);
+            gap: 30px;
+            height: calc(100vh - 48px);
+            overflow-y: auto;
+        }
+        
+        .desktop-icon {
+            width: 80px;
+            height: 90px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border-radius: 4px;
+            padding: 8px;
+            transition: background 0.2s;
+        }
+        
+        .desktop-icon:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .icon-img {
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin-bottom: 8px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .icon-label {
+            color: white;
+            font-size: 12px;
+            text-align: center;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            word-wrap: break-word;
+        }
+        
+        .taskbar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(30px);
+            display: flex;
+            align-items: center;
+            padding: 0 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-btn {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .start-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-icon {
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(135deg, #0078d4, #00a8ff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .search-box {
+            width: 300px;
+            height: 32px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            margin-left: 8px;
+            padding: 0 12px;
+            color: white;
+            font-size: 13px;
+        }
+        
+        .search-box::placeholder {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .taskbar-apps {
+            display: flex;
+            gap: 4px;
+            margin-left: 16px;
+            flex: 1;
+        }
+        
+        .taskbar-app {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            transition: background 0.2s;
+            position: relative;
+        }
+        
+        .taskbar-app:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .taskbar-app.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 3px;
+            background: #0078d4;
+            border-radius: 2px 2px 0 0;
+        }
+        
+        .system-tray {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-left: auto;
+            padding: 0 8px;
+        }
+        
+        .tray-icon {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .tray-icon:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .clock {
+            color: white;
+            font-size: 12px;
+            padding: 0 8px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .clock:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-menu {
+            position: fixed;
+            bottom: 56px;
+            left: 8px;
+            width: 600px;
+            height: 600px;
+            background: rgba(30, 30, 30, 0.98);
+            backdrop-filter: blur(30px);
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            display: none;
+            flex-direction: column;
+        }
+        
+        .start-menu.show {
+            display: flex;
+            animation: slideUp 0.2s ease;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .start-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-user {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: white;
+        }
+        
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            background: #0078d4;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .start-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        
+        .pinned-section {
+            margin-bottom: 30px;
+        }
+        
+        .section-title {
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        
+        .start-app {
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .start-app:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-app-icon {
+            width: 32px;
+            height: 32px;
+            font-size: 24px;
+        }
+        
+        .start-app-name {
+            color: white;
+            font-size: 13px;
+        }
+        
+        .window {
+            position: fixed;
+            background: #202020;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            overflow: hidden;
+            display: none;
+        }
+        
+        .window.show {
+            display: block;
+            animation: windowOpen 0.2s ease;
+        }
+        
+        @keyframes windowOpen {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        
+        .window-titlebar {
+            height: 32px;
+            background: #1a1a1a;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            cursor: move;
+        }
+        
+        .window-icon {
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+        }
+        
+        .window-title {
+            color: white;
+            font-size: 12px;
+            flex: 1;
+        }
+        
+        .window-controls {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .window-btn {
+            width: 46px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .window-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .window-btn.close:hover {
+            background: #e81123;
+        }
+        
+        .window-content {
+            padding: 20px;
+            color: white;
+            min-height: 200px;
+        }
+        
+        .edition-badge {
+            position: fixed;
+            top: 100px;
+            right: 30px;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(20px);
+            padding: 15px 30px;
+            border-radius: 25px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="edition-selector">
+        <button class="edition-btn free active" onclick="switchEdition('freemium')">Freemium</button>
+        <button class="edition-btn basic" onclick="switchEdition('basic')">Basic</button>
+        <button class="edition-btn gamer" onclick="switchEdition('gamer')">Gamer</button>
+        <button class="edition-btn ai" onclick="switchEdition('ai')">AI Developer</button>
+    </div>
+    
+    <div class="edition-badge" id="editionBadge">Freemium Edition - FREE</div>
+    
+    <div class="desktop freemium" id="desktop">
+        <div class="desktop-icons" id="desktopIcons"></div>
+    </div>
+    
+    <div class="taskbar">
+        <div class="start-btn" onclick="toggleStartMenu()">
+            <div class="start-icon">A</div>
+        </div>
+        
+        <input type="text" class="search-box" placeholder="Type here to search" />
+        
+        <div class="taskbar-apps" id="taskbarApps"></div>
+        
+        <div class="system-tray">
+            <div class="tray-icon">🔔</div>
+            <div class="tray-icon">📶</div>
+            <div class="tray-icon">🔊</div>
+            <div class="clock" id="clock"></div>
+        </div>
+    </div>
+    
+    <div class="start-menu" id="startMenu">
+        <div class="start-header">
+            <div class="start-user">
+                <div class="user-avatar">👤</div>
+                <div>
+                    <div style="font-weight: 600;">User</div>
+                    <div style="font-size: 11px; opacity: 0.7;">Administrator</div>
+                </div>
+            </div>
+        </div>
+        <div class="start-content">
+            <div class="pinned-section">
+                <div class="section-title">Pinned</div>
+                <div class="app-grid" id="pinnedApps"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="window" id="window1" style="width: 600px; height: 400px; top: 100px; left: 100px;">
+        <div class="window-titlebar">
+            <span class="window-icon">📁</span>
+            <span class="window-title" id="windowTitle">File Explorer</span>
+            <div class="window-controls" style="margin-left: auto;">
+                <div class="window-btn" onclick="minimizeWindow()">−</div>
+                <div class="window-btn" onclick="maximizeWindow()">□</div>
+                <div class="window-btn close" onclick="closeWindow()">×</div>
+            </div>
+        </div>
+        <div class="window-content" id="windowContent">
+            <h3>File Explorer</h3>
+            <p>Your files and folders would appear here.</p>
+        </div>
+    </div>
+    
+    <script>
+        const editions = {
+            freemium: {
+                name: 'Freemium Edition - FREE',
+                icons: [
+                    {name: 'Files', icon: '📁', action: 'openWindow'},
+                    {name: 'Browser', icon: '🌐'},
+                    {name: 'Settings', icon: '⚙️'},
+                    {name: 'Steam', icon: '🎮'},
+                    {name: 'Wine', icon: '🍷'},
+                    {name: 'Discord', icon: '💬'}
+                ],
+                taskbar: ['📁', '🌐', '💬']
+            },
+            basic: {
+                name: 'Basic Edition - $49/year',
+                icons: [
+                    {name: 'Files', icon: '📁', action: 'openWindow'},
+                    {name: 'Browser', icon: '🌐'},
+                    {name: 'Settings', icon: '⚙️'},
+                    {name: 'Steam', icon: '🎮'},
+                    {name: 'Wine', icon: '🍷'},
+                    {name: 'Discord', icon: '💬'},
+                    {name: 'Mail', icon: '📧'},
+                    {name: 'Security', icon: '🛡️', action: 'openSecurity'}
+                ],
+                taskbar: ['📁', '🌐', '🛡️', '💬']
+            },
+            gamer: {
+                name: 'Gamer Edition - $99/year',
+                icons: [
+                    {name: 'Steam', icon: '🎮', action: 'openWindow'},
+                    {name: 'Game Hub', icon: '🎯'},
+                    {name: 'FPS Boost', icon: '⚡', action: 'openFPS'},
+                    {name: 'Browser', icon: '🌐'},
+                    {name: 'Discord', icon: '💬'},
+                    {name: 'Performance', icon: '📊'},
+                    {name: 'Spotify', icon: '🎵'},
+                    {name: 'OBS Studio', icon: '📹'}
+                ],
+                taskbar: ['🎮', '💬', '⚡', '📊']
+            },
+            ai: {
+                name: 'AI Developer Edition - $149/year',
+                icons: [
+                    {name: 'VS Code', icon: '💻', action: 'openVSCode'},
+                    {name: 'Docker', icon: '🐋'},
+                    {name: 'PyTorch', icon: '🧠'},
+                    {name: 'TensorFlow', icon: '📊'},
+                    {name: 'Jupyter', icon: '📓', action: 'openJupyter'},
+                    {name: 'Terminal', icon: '⚙️'},
+                    {name: 'Python', icon: '🐍'},
+                    {name: 'Conda', icon: '📦'}
+                ],
+                taskbar: ['💻', '🐋', '📓', '⚙️']
+            }
+        };
+        
+        let currentEdition = 'freemium';
+        
+        function switchEdition(edition) {
+            currentEdition = edition;
+            const desktop = document.getElementById('desktop');
+            desktop.className = 'desktop ' + edition;
+            
+            document.querySelectorAll('.edition-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            document.getElementById('editionBadge').textContent = editions[edition].name;
+            
+            renderDesktop();
+            renderTaskbar();
+            renderStartMenu();
+            closeWindow();
+            document.getElementById('startMenu').classList.remove('show');
+        }
+        
+        function renderDesktop() {
+            const container = document.getElementById('desktopIcons');
+            container.innerHTML = '';
+            
+            editions[currentEdition].icons.forEach(item => {
+                const icon = document.createElement('div');
+                icon.className = 'desktop-icon';
+                icon.innerHTML = `
+                    <div class="icon-img">${item.icon}</div>
+                    <div class="icon-label">${item.name}</div>
+                `;
+                icon.onclick = () => handleIconClick(item);
+                container.appendChild(icon);
+            });
+        }
+        
+        function renderTaskbar() {
+            const container = document.getElementById('taskbarApps');
+            container.innerHTML = '';
+            
+            editions[currentEdition].taskbar.forEach(icon => {
+                const app = document.createElement('div');
+                app.className = 'taskbar-app';
+                app.innerHTML = icon;
+                app.onclick = () => {
+                    app.classList.toggle('active');
+                };
+                container.appendChild(app);
+            });
+        }
+        
+        function renderStartMenu() {
+            const container = document.getElementById('pinnedApps');
+            container.innerHTML = '';
+            
+            editions[currentEdition].icons.forEach(item => {
+                const app = document.createElement('div');
+                app.className = 'start-app';
+                app.innerHTML = `
+                    <div class="start-app-icon">${item.icon}</div>
+                    <div class="start-app-name">${item.name}</div>
+                `;
+                app.onclick = () => {
+                    handleIconClick(item);
+                    document.getElementById('startMenu').classList.remove('show');
+                };
+                container.appendChild(app);
+            });
+        }
+        
+        function handleIconClick(item) {
+            if (item.action === 'openWindow') {
+                openWindow(item.name, item.icon, `<h3>${item.name}</h3><p>This is the ${item.name} application.</p>`);
+            } else if (item.action === 'openSecurity') {
+                openWindow('Security Center', '🛡️', `
+                    <h3>Security Center</h3>
+                    <p style="color: #00ff88;">✓ System is up to date</p>
+                    <p style="color: #00ff88;">✓ Priority security patches applied</p>
+                    <p>Next update: Tomorrow</p>
+                    <p style="margin-top: 20px;">Firewall: Active</p>
+                    <p>Antivirus: Active</p>
+                `);
+            } else if (item.action === 'openFPS') {
+                openWindow('AI Game Optimizer', '⚡', `
+                    <h3 style="color: #00ff88;">⚡ PERFORMANCE MODE: ACTIVE</h3>
+                    <div style="margin-top: 20px; line-height: 2;">
+                        <p>FPS: <span style="color: #00ff88;">144 → 180 (+25%)</span></p>
+                        <p>Latency: <span style="color: #00ff88;">45ms → 12ms</span></p>
+                        <p>GPU Temp: 68°C</p>
+                        <p>CPU Usage: 45%</p>
+                    </div>
+                `);
+            } else if (item.action === 'openVSCode') {
+                openWindow('Visual Studio Code', '💻', `
+                    <h3>VS Code</h3>
+                    <div style="background: #1e1e1e; padding: 15px; margin-top: 15px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px;">
+                        <div style="color: #569cd6;">import</div> <div style="color: #dcdcaa;">torch</div>
+                        <div style="margin-top: 10px; color: #608b4e;"># AI Development Ready</div>
+                    </div>
+                `);
+            } else if (item.action === 'openJupyter') {
+                openWindow('Jupyter Notebook', '📓', `
+                    <h3>Jupyter Notebook</h3>
+                    <div style="background: #fff; color: #000; padding: 15px; margin-top: 15px; border-radius: 4px;">
+                        <div style="border: 1px solid #ccc; padding: 10px; font-family: 'Courier New', monospace; font-size: 12px;">
+                            <div style="color: #008000;">In [1]:</div>
+                            <div>import tensorflow as tf</div>
+                            <div>print("GPU Available:", tf.config.list_physical_devices('GPU'))</div>
+                        </div>
+                    </div>
+                `);
+            }
+        }
+        
+        function openWindow(title, icon, content) {
+            const win = document.getElementById('window1');
+            document.getElementById('windowTitle').textContent = title;
+            document.querySelector('.window-icon').textContent = icon;
+            document.getElementById('windowContent').innerHTML = content;
+            win.classList.add('show');
+        }
+        
+        function closeWindow() {
+            document.getElementById('window1').classList.remove('show');
+        }
+        
+        function minimizeWindow() {
+            document.getElementById('window1').classList.remove('show');
+        }
+        
+        function maximizeWindow() {
+            const win = document.getElementById('window1');
+            if (win.style.width === '100vw') {
+                win.style.width = '600px';
+                win.style.height = '400px';
+                win.style.top = '100px';
+                win.style.left = '100px';
+                win.style.borderRadius = '8px';
+            } else {
+                win.style.width = '100vw';
+                win.style.height = 'calc(100vh - 48px)';
+                win.style.top = '0';
+                win.style.left = '0';
+                win.style.borderRadius = '0';
+            }
+        }
+        
+        function toggleStartMenu() {
+            document.getElementById('startMenu').classList.toggle('show');
+        }
+        
+        function updateClock() {
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'});
+            const date = now.toLocaleDateString('en-US', {month: 'numeric', day: 'numeric', year: 'numeric'});
+            document.getElementById('clock').innerHTML = `<div>${time}</div><div style="font-size: 10px; opacity: 0.7;">${date}</div>`;
+        }
+        
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.start-menu') && !e.target.closest('.start-btn')) {
+                document.getElementById('startMenu').classList.remove('show');
+            }
+        });
+        
+        renderDesktop();
+        renderTaskbar();
+        renderStartMenu();
+        updateClock();
+        setInterval(updateClock, 1000);
+    </script>
+</body>
+</html>
