@@ -1,0 +1,219 @@
+
+#!/usr/bin/env python3
+"""
+Aegis OS System Monitor - Freemium Edition
+Basic system monitoring without advanced features
+"""
+
+import os
+import time
+import json
+import psutil
+import logging
+from datetime import datetime
+
+class AegisSystemMonitor:
+    def __init__(self):
+        self.config_file = "/etc/aegis/monitor-config.json"
+        self.log_file = "/var/log/aegis-system.log"
+        self.stats_file = "/var/lib/aegis/system-stats.json"
+        self.setup_logging()
+        self.ensure_directories()
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(self.log_file, mode='a'),
+                logging.StreamHandler()
+            ]
+        )
+        
+    def ensure_directories(self):
+        """Ensure required directories exist"""
+        os.makedirs("/etc/aegis", exist_ok=True)
+        os.makedirs("/var/lib/aegis", exist_ok=True)
+        os.makedirs("/var/log", exist_ok=True)
+    
+    def load_config(self):
+        """Load monitoring configuration"""
+        default_config = {
+            "update_interval": 30,
+            "cpu_alert_threshold": 90,
+            "memory_alert_threshold": 85,
+            "disk_alert_threshold": 90,
+            "temperature_alert_threshold": 80,
+            "log_retention_days": 7
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                config = json.load(f)
+                return {**default_config, **config}
+        except FileNotFoundError:
+            with open(self.config_file, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+    
+    def get_system_stats(self):
+        """Collect system statistics"""
+        stats = {
+            "timestamp": datetime.now().isoformat(),
+            "cpu": {
+                "usage": psutil.cpu_percent(interval=1),
+                "count": psutil.cpu_count(),
+                "frequency": psutil.cpu_freq()._asdict() if psutil.cpu_freq() else {}
+            },
+            "memory": {
+                "total": psutil.virtual_memory().total,
+                "available": psutil.virtual_memory().available,
+                "percent": psutil.virtual_memory().percent,
+                "used": psutil.virtual_memory().used
+            },
+            "disk": {},
+            "network": psutil.net_io_counters()._asdict(),
+            "processes": len(psutil.pids()),
+            "boot_time": psutil.boot_time()
+        }
+        
+        # Get disk usage for all mounted filesystems
+        for partition in psutil.disk_partitions():
+            try:
+                partition_usage = psutil.disk_usage(partition.mountpoint)
+                stats["disk"][partition.device] = {
+                    "mountpoint": partition.mountpoint,
+                    "fstype": partition.fstype,
+                    "total": partition_usage.total,
+                    "used": partition_usage.used,
+                    "free": partition_usage.free,
+                    "percent": round((partition_usage.used / partition_usage.total) * 100, 2)
+                }
+            except PermissionError:
+                continue
+                
+        # Get temperature information if available
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                stats["temperature"] = {}
+                for name, entries in temps.items():
+                    stats["temperature"][name] = [
+                        {"label": entry.label or "N/A", "current": entry.current}
+                        for entry in entries
+                    ]
+        except:
+            stats["temperature"] = {}
+            
+        return stats
+    
+    def check_alerts(self, stats, config):
+        """Check for system alerts"""
+        alerts = []
+        
+        # CPU usage alert
+        if stats["cpu"]["usage"] > config["cpu_alert_threshold"]:
+            alerts.append(f"High CPU usage: {stats['cpu']['usage']:.1f}%")
+            
+        # Memory usage alert
+        if stats["memory"]["percent"] > config["memory_alert_threshold"]:
+            alerts.append(f"High memory usage: {stats['memory']['percent']:.1f}%")
+            
+        # Disk usage alerts
+        for device, disk_info in stats["disk"].items():
+            if disk_info["percent"] > config["disk_alert_threshold"]:
+                alerts.append(f"High disk usage on {device}: {disk_info['percent']:.1f}%")
+                
+        # Temperature alerts
+        if stats["temperature"]:
+            for sensor_name, entries in stats["temperature"].items():
+                for entry in entries:
+                    if entry["current"] > config["temperature_alert_threshold"]:
+                        alerts.append(f"High temperature on {sensor_name}: {entry['current']:.1f}°C")
+        
+        return alerts
+    
+    def save_stats(self, stats):
+        """Save statistics to file"""
+        try:
+            # Load existing stats
+            if os.path.exists(self.stats_file):
+                with open(self.stats_file, 'r') as f:
+                    all_stats = json.load(f)
+            else:
+                all_stats = []
+            
+            # Add new stats
+            all_stats.append(stats)
+            
+            # Keep only recent stats (last 24 hours worth)
+            max_entries = 24 * 60 * 60 // 30  # 30-second intervals
+            if len(all_stats) > max_entries:
+                all_stats = all_stats[-max_entries:]
+            
+            # Save updated stats
+            with open(self.stats_file, 'w') as f:
+                json.dump(all_stats, f, indent=2)
+                
+        except Exception as e:
+            logging.error(f"Failed to save stats: {e}")
+    
+    def cleanup_logs(self, retention_days):
+        """Clean up old log files"""
+        try:
+            cutoff_time = time.time() - (retention_days * 24 * 60 * 60)
+            
+            for filename in os.listdir("/var/log"):
+                if filename.startswith("aegis-"):
+                    filepath = os.path.join("/var/log", filename)
+                    if os.path.isfile(filepath) and os.path.getmtime(filepath) < cutoff_time:
+                        os.remove(filepath)
+                        logging.info(f"Removed old log file: {filename}")
+                        
+        except Exception as e:
+            logging.error(f"Failed to cleanup logs: {e}")
+    
+    def run_monitoring_loop(self):
+        """Main monitoring loop"""
+        logging.info("Starting Aegis System Monitor - Freemium Edition")
+        
+        config = self.load_config()
+        update_interval = config["update_interval"]
+        
+        while True:
+            try:
+                # Collect system statistics
+                stats = self.get_system_stats()
+                
+                # Check for alerts
+                alerts = self.check_alerts(stats, config)
+                
+                if alerts:
+                    for alert in alerts:
+                        logging.warning(f"ALERT: {alert}")
+                
+                # Save statistics
+                self.save_stats(stats)
+                
+                # Periodic cleanup
+                if int(time.time()) % 3600 == 0:  # Every hour
+                    self.cleanup_logs(config["log_retention_days"])
+                
+                # Log status
+                logging.info(f"System check complete - CPU: {stats['cpu']['usage']:.1f}% "
+                           f"Memory: {stats['memory']['percent']:.1f}% "
+                           f"Processes: {stats['processes']}")
+                
+                time.sleep(update_interval)
+                
+            except KeyboardInterrupt:
+                logging.info("System monitor stopped by user")
+                break
+            except Exception as e:
+                logging.error(f"Error in monitoring loop: {e}")
+                time.sleep(update_interval)
+
+if __name__ == "__main__":
+    monitor = AegisSystemMonitor()
+    monitor.run_monitoring_loop()
