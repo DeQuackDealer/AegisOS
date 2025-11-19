@@ -1,7 +1,8 @@
 
 [Unit]
-Description=Aegis OS Kernel Interface - Freemium Edition
-After=systemd-modules-load.service
+Description=Aegis OS Kernel Interface - Kernel module management and integration
+After=multi-user.target network.target systemd-modules-load.service
+Wants=systemd-modules-load.service
 
 [Service]
 Type=oneshot
@@ -9,6 +10,7 @@ User=root
 ExecStart=/usr/local/bin/aegis-kernel-interface --load
 ExecStart=/usr/local/bin/aegis-kernel-interface --status
 RemainAfterExit=yes
+Restart=on-failure
 StandardOutput=journal
 StandardError=journal
 

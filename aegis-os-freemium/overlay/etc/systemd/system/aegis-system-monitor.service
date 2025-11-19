@@ -1,13 +1,14 @@
 
 [Unit]
-Description=Aegis OS System Monitor - Freemium Edition
-After=network.target
+Description=Aegis OS System Monitor - Continuous resource monitoring and alerting
+After=multi-user.target network.target
+Wants=network.target
 
 [Service]
 Type=simple
-User=root
+User=aegis
 ExecStart=/usr/local/bin/aegis-system-monitor
-Restart=always
+Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal

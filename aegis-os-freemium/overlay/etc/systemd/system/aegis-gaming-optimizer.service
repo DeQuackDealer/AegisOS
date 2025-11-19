@@ -1,15 +1,17 @@
 
 [Unit]
-Description=Aegis OS Gaming Optimizer - Freemium Edition
-After=graphical-session.target
+Description=Aegis OS Gaming Optimizer - System performance tuning for gaming
+After=multi-user.target network.target
+Wants=network.target
 
 [Service]
 Type=oneshot
 User=root
 ExecStart=/usr/local/bin/aegis-gaming-optimizer
 RemainAfterExit=yes
+Restart=on-failure
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=multi-user.target
