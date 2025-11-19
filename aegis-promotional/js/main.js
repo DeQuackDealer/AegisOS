@@ -1,20 +1,19 @@
 // Aegis OS Promotional Website - Main JavaScript
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Smooth scrolling for anchor links
+    // Smooth scrolling for navigation links
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function (e) {
             e.preventDefault();
-            const target = this.getAttribute('href');
-            if (!target || target === '#' || target.length <= 1) return;
-            const element = document.querySelector(target);
-            if (element) {
-                const offset = 48;
-                const elementPosition = element.offsetTop - offset;
-                window.scrollTo({
-                    top: elementPosition,
-                    behavior: 'smooth'
-                });
+            const href = this.getAttribute('href');
+            // Skip empty or just '#' hrefs
+            if (href && href !== '#' && href.length > 1) {
+                const target = document.querySelector(href);
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth'
+                    });
+                }
             }
         });
     });
