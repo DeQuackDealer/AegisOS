@@ -220,7 +220,26 @@
             btn.disabled = true;
             btn.innerHTML = '⏳ Building...';
             output.style.display = 'block';
-            output.innerHTML = 'Starting Aegis OS Freemium build process...\n\n';
+            output.innerHTML = 'Starting REAL Aegis OS Freemium build process...\n\n';
+            
+            // Trigger actual build via fetch to server
+            fetch('/api/build', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        output.innerHTML += '✅ Build completed successfully!\n';
+                        output.innerHTML += '📁 Files available in aegis-os-freemium/output/\n';
+                    } else {
+                        output.innerHTML += '❌ Build failed: ' + data.error + '\n';
+                    }
+                    btn.disabled = false;
+                    btn.innerHTML = '🚀 Start Build Process';
+                })
+                .catch(error => {
+                    output.innerHTML += '❌ Build error: ' + error + '\n';
+                    btn.disabled = false;
+                    btn.innerHTML = '🚀 Start Build Process';
+                });
             
             setTimeout(() => {
                 output.innerHTML += '📦 Downloading Buildroot 2023.08...\n';

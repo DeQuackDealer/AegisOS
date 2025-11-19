@@ -37,6 +37,33 @@ def serve_assets(filename):
     """Serve asset files"""
     return send_from_directory(os.path.join(BASE_DIR, 'assets'), filename)
 
+@app.route('/api/build', methods=['POST'])
+def trigger_build():
+    """Trigger the actual Aegis OS build process"""
+    import subprocess
+    import threading
+    
+    def run_build():
+        try:
+            # Run the Replit build system
+            result = subprocess.run([
+                'python3', '../aegis-os-freemium/build-replit.py'
+            ], capture_output=True, text=True, cwd=BASE_DIR)
+            
+            if result.returncode == 0:
+                print("✅ Aegis OS build completed successfully!")
+            else:
+                print(f"❌ Build failed: {result.stderr}")
+        except Exception as e:
+            print(f"❌ Build error: {e}")
+    
+    # Start build in background thread
+    build_thread = threading.Thread(target=run_build)
+    build_thread.daemon = True
+    build_thread.start()
+    
+    return {'success': True, 'message': 'Build started'}
+
 if __name__ == '__main__':
     print("🚀 Starting Aegis OS Promotional Website Server...")
     print("📄 Serving from:", BASE_DIR)

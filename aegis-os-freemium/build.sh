@@ -11,10 +11,13 @@ OUTPUT_DIR="$SCRIPT_DIR/output"
 
 echo "🚀 Starting Aegis OS Freemium Build Process..."
 
-# Check if buildroot is available
-if ! command -v make &> /dev/null; then
-    echo "❌ Make is required but not installed"
-    exit 1
+# Install build dependencies in Replit environment
+echo "📦 Installing build dependencies..."
+if command -v apt-get &> /dev/null; then
+    sudo apt-get update -qq
+    sudo apt-get install -y build-essential wget cpio unzip rsync bc libncurses5-dev
+elif command -v nix-env &> /dev/null; then
+    nix-env -iA nixpkgs.buildPackages.gcc nixpkgs.gnumake nixpkgs.wget nixpkgs.cpio nixpkgs.unzip nixpkgs.rsync nixpkgs.bc
 fi
 
 # Create build directories
