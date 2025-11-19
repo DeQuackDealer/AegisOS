@@ -32,6 +32,11 @@ def serve_js(filename):
     """Serve JavaScript files"""
     return send_from_directory(os.path.join(BASE_DIR, 'js'), filename)
 
+@app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    """Serve asset files"""
+    return send_from_directory(os.path.join(BASE_DIR, 'assets'), filename)
+
 if __name__ == '__main__':
     print("🚀 Starting Aegis OS Promotional Website Server...")
     print("📄 Serving from:", BASE_DIR)

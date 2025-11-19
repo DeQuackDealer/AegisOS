@@ -4,10 +4,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Smooth scrolling for navigation links
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function (e) {
-            e.preventDefault();
             const href = this.getAttribute('href');
             // Skip empty or just '#' hrefs
             if (href && href !== '#' && href.length > 1) {
+                e.preventDefault();
                 const target = document.querySelector(href);
                 if (target) {
                     target.scrollIntoView({
