@@ -32,6 +32,11 @@ chmod +x $TARGET_DIR/usr/local/bin/*
 chmod +x $TARGET_DIR/etc/init.d/*
 chmod +x $TARGET_DIR/usr/share/pixmaps/aegis-wallpaper-generator.py
 
+# Initialize desktop effects and wallpaper engine
+chroot $TARGET_DIR /usr/local/bin/aegis-desktop-effects
+chroot $TARGET_DIR /usr/local/bin/aegis-taskbar-manager
+chroot $TARGET_DIR /usr/local/bin/aegis-wallpaper-engine
+
 # Build and install kernel module
 echo "Building Aegis OS kernel module..."
 cd $TARGET_DIR/lib/modules/*/build

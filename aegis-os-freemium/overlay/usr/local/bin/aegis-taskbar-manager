@@ -1,0 +1,247 @@
+
+#!/usr/bin/env python3
+"""
+Aegis OS Taskbar Manager - Windows 10/11 style taskbar with transparency options
+"""
+
+import os
+import json
+import subprocess
+import gi
+
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk
+
+class AegisTaskbarManager:
+    def __init__(self):
+        self.config_file = "/etc/aegis/taskbar-config.json"
+        self.load_config()
+        
+    def load_config(self):
+        """Load taskbar configuration"""
+        default_config = {
+            "transparency_mode": "translucent",  # transparent, translucent, opaque
+            "blur_enabled": True,
+            "auto_hide": False,
+            "position": "bottom",  # bottom, top
+            "height": 48,
+            "corner_radius": 8,
+            "accent_color": "#0078d4",
+            "windows10_style": True
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                self.config = {**default_config, **json.load(f)}
+        except FileNotFoundError:
+            self.config = default_config
+            self.save_config()
+    
+    def save_config(self):
+        """Save taskbar configuration"""
+        os.makedirs("/etc/aegis", exist_ok=True)
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def apply_transparency(self, mode):
+        """Apply transparency mode to XFCE panel"""
+        transparency_values = {
+            "transparent": 0,      # Fully transparent
+            "translucent": 70,     # Windows 10 style translucent
+            "opaque": 100          # Fully opaque
+        }
+        
+        alpha = transparency_values.get(mode, 70)
+        
+        # Apply to XFCE panel
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/background-alpha',
+            '-s', str(alpha)
+        ])
+        
+        # Enable/disable blur effect
+        blur_enabled = "true" if self.config["blur_enabled"] and mode != "opaque" else "false"
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/background-rgba',
+            '-s', f"0.078,0.471,0.831,{alpha/100}"  # Aegis blue with transparency
+        ])
+        
+        self.config["transparency_mode"] = mode
+        self.save_config()
+        
+        print(f"✅ Taskbar transparency set to: {mode}")
+    
+    def apply_windows10_style(self):
+        """Apply Windows 10/11 styling to XFCE panel"""
+        # Set panel height
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/size',
+            '-s', str(self.config["height"])
+        ])
+        
+        # Position at bottom
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/position',
+            '-s', 'p=8;x=0;y=0'  # Bottom center
+        ])
+        
+        # Set background style
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/background-style',
+            '-s', '2'  # Custom background
+        ])
+        
+        # Apply corner radius via CSS
+        css_content = f"""
+/* Aegis OS Taskbar - Windows 10/11 Style */
+.xfce4-panel {{
+    background: rgba(13, 17, 23, 0.8);
+    border-radius: {self.config["corner_radius"]}px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(10px);
+}}
+
+.xfce4-panel button {{
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}}
+
+.xfce4-panel button:hover {{
+    background: rgba(255, 255, 255, 0.1);
+}}
+
+.xfce4-panel button:active {{
+    background: {self.config["accent_color"]};
+}}
+
+/* Start button styling */
+#whiskermenu-button {{
+    background: {self.config["accent_color"]};
+    border-radius: 6px;
+    padding: 8px 12px;
+}}
+
+/* System tray */
+.systray {{
+    background: transparent;
+}}
+"""
+        
+        css_dir = "/home/aegis/.config/gtk-3.0"
+        os.makedirs(css_dir, exist_ok=True)
+        
+        with open(f"{css_dir}/gtk.css", 'w') as f:
+            f.write(css_content)
+        
+        print("✅ Windows 10/11 taskbar styling applied")
+    
+    def set_auto_hide(self, enabled):
+        """Enable/disable taskbar auto-hide"""
+        hide_mode = "1" if enabled else "0"
+        
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/panels/panel-0/autohide-behavior',
+            '-s', hide_mode
+        ])
+        
+        self.config["auto_hide"] = enabled
+        self.save_config()
+        
+        print(f"✅ Taskbar auto-hide: {'Enabled' if enabled else 'Disabled'}")
+    
+    def create_start_menu_replacement(self):
+        """Create Windows-style start menu replacement"""
+        # Install and configure Whisker Menu (Windows-style start menu)
+        whisker_config = """<?xml version="1.0" encoding="UTF-8"?>
+<channel name="whiskermenu" version="1.0">
+  <property name="favorites" type="array">
+    <value type="string">exo-file-manager.desktop</value>
+    <value type="string">firefox.desktop</value>
+    <value type="string">steam.desktop</value>
+    <value type="string">aegis-welcome.desktop</value>
+  </property>
+  <property name="recent" type="array"/>
+  <property name="button-title" type="string">A</property>
+  <property name="button-icon" type="string">aegis-logo</property>
+  <property name="show-button-title" type="bool" value="true"/>
+  <property name="show-button-icon" type="bool" value="true"/>
+  <property name="launcher-show-name" type="bool" value="true"/>
+  <property name="launcher-show-description" type="bool" value="false"/>
+  <property name="launcher-show-tooltip" type="bool" value="true"/>
+  <property name="menu-width" type="int" value="400"/>
+  <property name="menu-height" type="int" value="500"/>
+  <property name="menu-opacity" type="int" value="90"/>
+</channel>"""
+        
+        whisker_dir = "/home/aegis/.config/xfce4/xfconf/xfce-perchannel-xml"
+        os.makedirs(whisker_dir, exist_ok=True)
+        
+        with open(f"{whisker_dir}/whiskermenu.xml", 'w') as f:
+            f.write(whisker_config)
+        
+        print("✅ Windows-style start menu configured")
+    
+    def setup_system_tray(self):
+        """Configure system tray with Windows 10 styling"""
+        # Configure system tray icons and layout
+        systray_config = {
+            "show_notifications": True,
+            "show_network": True,
+            "show_volume": True,
+            "show_clock": True,
+            "clock_format": "%I:%M %p\n%m/%d/%Y"  # Windows-style clock
+        }
+        
+        # Apply clock format
+        subprocess.run([
+            'xfconf-query', '-c', 'xfce4-panel',
+            '-p', '/plugins/plugin-6/digital-format',
+            '-s', systray_config["clock_format"]
+        ])
+        
+        print("✅ System tray configured")
+    
+    def apply_all_settings(self):
+        """Apply all Windows 10/11 taskbar settings"""
+        print("🚀 Applying Aegis OS Taskbar - Windows 10/11 Style...")
+        
+        self.apply_windows10_style()
+        self.apply_transparency(self.config["transparency_mode"])
+        self.set_auto_hide(self.config["auto_hide"])
+        self.create_start_menu_replacement()
+        self.setup_system_tray()
+        
+        # Restart XFCE panel to apply changes
+        subprocess.run(['xfce4-panel', '-r'], capture_output=True)
+        
+        print("✅ Aegis OS Taskbar fully configured!")
+        print(f"📱 Transparency: {self.config['transparency_mode'].title()}")
+        print(f"🎨 Windows 10/11 styling: Active")
+        print(f"🔧 Auto-hide: {'Enabled' if self.config['auto_hide'] else 'Disabled'}")
+
+if __name__ == "__main__":
+    import sys
+    
+    manager = AegisTaskbarManager()
+    
+    if len(sys.argv) > 1:
+        command = sys.argv[1]
+        
+        if command == "transparent":
+            manager.apply_transparency("transparent")
+        elif command == "translucent":
+            manager.apply_transparency("translucent")
+        elif command == "opaque":
+            manager.apply_transparency("opaque")
+        elif command == "toggle-hide":
+            manager.set_auto_hide(not manager.config["auto_hide"])
+        elif command == "reset":
+            manager.apply_all_settings()
+    else:
+        manager.apply_all_settings()
