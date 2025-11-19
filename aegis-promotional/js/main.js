@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
         anchor.addEventListener('click', function (e) {
             e.preventDefault();
             const target = this.getAttribute('href');
-            if (!target || target === '#') return;
+            if (!target || target === '#' || target.length <= 1) return;
             const element = document.querySelector(target);
             if (element) {
                 const offset = 48;
