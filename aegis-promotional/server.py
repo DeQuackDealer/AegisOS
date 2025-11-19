@@ -64,6 +64,29 @@ def trigger_build():
     
     return {'success': True, 'message': 'Build started'}
 
+@app.route('/api/download/<filename>')
+def download_file(filename):
+    """Download a built file from the output directory"""
+    output_dir = os.path.join(BASE_DIR, '../aegis-os-freemium/output')
+    
+    # Security check - only allow specific filenames
+    allowed_files = [
+        'aegis-os-freemium-rootfs.tar.gz',
+        'aegis_lkm.c', 
+        'Makefile',
+        'create-bootable-usb.sh',
+        'checksums.sha256',
+        'iso-metadata.json'
+    ]
+    
+    if filename not in allowed_files:
+        return {'error': 'File not allowed'}, 403
+    
+    try:
+        return send_from_directory(output_dir, filename, as_attachment=True)
+    except FileNotFoundError:
+        return {'error': 'File not found. Run build first.'}, 404
+
 if __name__ == '__main__':
     print("🚀 Starting Aegis OS Promotional Website Server...")
     print("📄 Serving from:", BASE_DIR)

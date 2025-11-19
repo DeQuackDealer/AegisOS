@@ -142,12 +142,38 @@
         </div>
 
         <div class="build-section">
+            <h3>📥 Download Built Files</h3>
+            <p>Download the built Aegis OS files from the output directory:</p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0;">
+                <button class="build-button" onclick="downloadFile('aegis-os-freemium-rootfs.tar.gz')" style="background: linear-gradient(135deg, #0078d4, #00ff88);">
+                    📦 Download Rootfs (24KB)
+                </button>
+                <button class="build-button" onclick="downloadFile('aegis_lkm.c')" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">
+                    🐧 Download Kernel Module
+                </button>
+                <button class="build-button" onclick="downloadFile('Makefile')" style="background: linear-gradient(135deg, #6f42c1, #e83e8c);">
+                    🔧 Download Makefile
+                </button>
+                <button class="build-button" onclick="downloadFile('create-bootable-usb.sh')" style="background: linear-gradient(135deg, #28a745, #20c997);">
+                    💾 Download USB Script
+                </button>
+                <button class="build-button" onclick="downloadFile('checksums.sha256')" style="background: linear-gradient(135deg, #fd7e14, #e74c3c);">
+                    🔐 Download Checksums
+                </button>
+                <button class="build-button" onclick="downloadAll()" style="background: linear-gradient(135deg, #6c757d, #495057); width: 100%;">
+                    📥 Download All Files
+                </button>
+            </div>
+        </div>
+
+        <div class="build-section">
             <h3>🎯 What You Get</h3>
             <ul style="list-style: none; padding: 0;">
-                <li>💿 <strong>aegis-os-freemium.iso</strong> - Bootable ISO image</li>
-                <li>🐧 <strong>aegis-kernel</strong> - Custom Linux kernel</li>
-                <li>💾 <strong>aegis-os-freemium.ext4</strong> - Root filesystem</li>
-                <li>🔐 <strong>checksums.txt</strong> - Integrity verification</li>
+                <li>💿 <strong>aegis-os-freemium-rootfs.tar.gz</strong> - Complete filesystem (24KB)</li>
+                <li>🐧 <strong>aegis_lkm.c</strong> - Custom kernel module source</li>
+                <li>🔧 <strong>Makefile</strong> - Build instructions</li>
+                <li>🔐 <strong>checksums.sha256</strong> - Integrity verification</li>
+                <li>💾 <strong>create-bootable-usb.sh</strong> - USB creation script</li>
             </ul>
         </div>
     </div>
@@ -313,6 +339,30 @@
             output.innerHTML += '  • Custom Aegis LKM for system optimization\n';
             output.innerHTML += '  • Hardware abstraction layer\n';
             output.innerHTML += '  • Performance monitoring interface\n';
+        }
+
+        function downloadFile(filename) {
+            const link = document.createElement('a');
+            link.href = `/api/download/${filename}`;
+            link.download = filename;
+            link.click();
+        }
+
+        function downloadAll() {
+            const files = [
+                'aegis-os-freemium-rootfs.tar.gz',
+                'aegis_lkm.c',
+                'Makefile',
+                'create-bootable-usb.sh',
+                'checksums.sha256',
+                'iso-metadata.json'
+            ];
+            
+            files.forEach((filename, index) => {
+                setTimeout(() => {
+                    downloadFile(filename);
+                }, index * 500); // Stagger downloads by 500ms
+            });
         }
     </script>
 </body>
