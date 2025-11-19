@@ -15,10 +15,18 @@ try:
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
+    # Set to None to avoid unbound variable errors
+    Image = None
+    ImageDraw = None
+    ImageFont = None
     print("⚠️  PIL not available, using SVG fallback")
 
 def create_aegis_wallpaper_pil():
     """Create wallpaper using PIL"""
+    # Type guard - this function is only called when PIL_AVAILABLE is True
+    if Image is None or ImageDraw is None or ImageFont is None:
+        raise ImportError("PIL modules are not available")
+    
     # Create 1920x1080 wallpaper
     width, height = 1920, 1080
     img = Image.new('RGB', (width, height), color='#0d1117')
