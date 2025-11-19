@@ -1,0 +1,709 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS Live Desktop Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background: #000;
+        }
+        
+        .desktop {
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            position: relative;
+            cursor: default;
+        }
+        
+        .desktop-icons {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            display: grid;
+            grid-template-columns: repeat(8, 80px);
+            gap: 20px;
+        }
+        
+        .desktop-icon {
+            width: 64px;
+            height: 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .desktop-icon:hover {
+            transform: scale(1.1);
+        }
+        
+        .icon-image {
+            width: 48px;
+            height: 48px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 4px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .icon-label {
+            font-size: 11px;
+            color: white;
+            text-align: center;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+            line-height: 1.2;
+        }
+        
+        .taskbar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(20px);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .start-button {
+            width: 40px;
+            height: 40px;
+            background: rgba(0, 120, 212, 0.8);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            margin-right: 10px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .start-button:hover {
+            background: rgba(0, 120, 212, 1);
+        }
+        
+        .taskbar-apps {
+            display: flex;
+            gap: 5px;
+            flex: 1;
+        }
+        
+        .taskbar-app {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .taskbar-app:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+        
+        .system-tray {
+            display: flex;
+            gap: 15px;
+            color: white;
+            font-size: 13px;
+            align-items: center;
+        }
+        
+        .window {
+            position: absolute;
+            background: rgba(30, 30, 30, 0.95);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+        
+        .window.active {
+            display: block;
+        }
+        
+        .window-titlebar {
+            height: 32px;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            justify-content: space-between;
+            cursor: move;
+        }
+        
+        .window-title {
+            color: white;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .window-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .window-button {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        .close-btn {
+            background: #ff5f57;
+        }
+        
+        .minimize-btn {
+            background: #febc2e;
+        }
+        
+        .maximize-btn {
+            background: #28c840;
+        }
+        
+        .window-content {
+            padding: 20px;
+            color: white;
+            height: calc(100% - 32px);
+            overflow-y: auto;
+        }
+        
+        .terminal {
+            background: #000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .terminal-prompt {
+            color: #00ff88;
+        }
+        
+        .terminal-output {
+            margin-bottom: 10px;
+        }
+        
+        .system-monitor {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .monitor-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #0078d4);
+            transition: width 0.3s ease;
+        }
+        
+        .start-menu {
+            position: absolute;
+            bottom: 48px;
+            left: 15px;
+            width: 300px;
+            height: 400px;
+            background: rgba(20, 20, 20, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: none;
+            overflow: hidden;
+        }
+        
+        .start-menu.active {
+            display: block;
+        }
+        
+        .start-menu-header {
+            padding: 20px;
+            background: rgba(0, 120, 212, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .start-menu-apps {
+            padding: 10px;
+        }
+        
+        .start-app {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 10px;
+            color: white;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        
+        .start-app:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .notification {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #00ff88;
+            display: none;
+            backdrop-filter: blur(20px);
+            min-width: 250px;
+        }
+        
+        .notification.show {
+            display: block;
+            animation: slideIn 0.3s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .gaming-overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 2px solid #00ff88;
+            color: #00ff88;
+            padding: 15px;
+            border-radius: 8px;
+            backdrop-filter: blur(20px);
+            display: none;
+            font-family: monospace;
+        }
+        
+        .gaming-overlay.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="desktop" id="desktop">
+        <!-- Desktop Icons -->
+        <div class="desktop-icons">
+            <div class="desktop-icon" data-app="terminal">
+                <div class="icon-image">⚙️</div>
+                <div class="icon-label">Terminal</div>
+            </div>
+            <div class="desktop-icon" data-app="monitor">
+                <div class="icon-image">📊</div>
+                <div class="icon-label">System Monitor</div>
+            </div>
+            <div class="desktop-icon" data-app="gaming">
+                <div class="icon-image">🎮</div>
+                <div class="icon-label">Gaming Optimizer</div>
+            </div>
+            <div class="desktop-icon" data-app="files">
+                <div class="icon-image">📁</div>
+                <div class="icon-label">Files</div>
+            </div>
+            <div class="desktop-icon" data-app="browser">
+                <div class="icon-image">🌐</div>
+                <div class="icon-label">Browser</div>
+            </div>
+            <div class="desktop-icon" data-app="steam">
+                <div class="icon-image">🎮</div>
+                <div class="icon-label">Steam</div>
+            </div>
+            <div class="desktop-icon" data-app="discord">
+                <div class="icon-image">💬</div>
+                <div class="icon-label">Discord</div>
+            </div>
+            <div class="desktop-icon" data-app="wallpaper">
+                <div class="icon-image">🖼️</div>
+                <div class="icon-label">Wallpaper Engine</div>
+            </div>
+        </div>
+        
+        <!-- Gaming Performance Overlay -->
+        <div class="gaming-overlay" id="gamingOverlay">
+            <div style="font-weight: bold; margin-bottom: 10px;">⚡ GAMING MODE ACTIVE</div>
+            <div>FPS: <span id="fps">144</span></div>
+            <div>GPU: <span id="gpu">67</span>%</div>
+            <div>CPU: <span id="cpu">45</span>%</div>
+            <div>Temp: <span id="temp">68</span>°C</div>
+        </div>
+        
+        <!-- Taskbar -->
+        <div class="taskbar">
+            <div class="start-button" id="startButton">A</div>
+            <div class="taskbar-apps" id="taskbarApps">
+                <div class="taskbar-app" data-app="files">📁</div>
+                <div class="taskbar-app" data-app="browser">🌐</div>
+                <div class="taskbar-app" data-app="terminal">⚙️</div>
+            </div>
+            <div class="system-tray">
+                <span id="time">14:23</span>
+                <span>🔊</span>
+                <span>📶</span>
+                <span id="systemStatus">🟢</span>
+            </div>
+        </div>
+        
+        <!-- Start Menu -->
+        <div class="start-menu" id="startMenu">
+            <div class="start-menu-header">
+                <h3 style="color: white; margin: 0;">Aegis OS</h3>
+                <p style="color: #ccc; margin: 5px 0 0 0; font-size: 12px;">Freemium Edition</p>
+            </div>
+            <div class="start-menu-apps">
+                <div class="start-app" data-app="terminal">
+                    <span>⚙️</span>
+                    <span>Terminal</span>
+                </div>
+                <div class="start-app" data-app="monitor">
+                    <span>📊</span>
+                    <span>System Monitor</span>
+                </div>
+                <div class="start-app" data-app="gaming">
+                    <span>🎮</span>
+                    <span>Gaming Optimizer</span>
+                </div>
+                <div class="start-app" data-app="wallpaper">
+                    <span>🖼️</span>
+                    <span>Wallpaper Engine</span>
+                </div>
+                <div class="start-app" data-app="files">
+                    <span>📁</span>
+                    <span>File Manager</span>
+                </div>
+                <div class="start-app" data-app="settings">
+                    <span>⚙️</span>
+                    <span>Settings</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Windows -->
+        <div class="window" id="terminalWindow" style="top: 100px; left: 100px; width: 600px; height: 400px;">
+            <div class="window-titlebar">
+                <div class="window-title">
+                    <span>⚙️</span>
+                    <span>Aegis Terminal</span>
+                </div>
+                <div class="window-controls">
+                    <div class="window-button minimize-btn"></div>
+                    <div class="window-button maximize-btn"></div>
+                    <div class="window-button close-btn" data-close="terminalWindow"></div>
+                </div>
+            </div>
+            <div class="window-content terminal">
+                <div class="terminal-output">
+                    <span class="terminal-prompt">aegis@aegis-os:~$</span> neofetch
+                </div>
+                <div class="terminal-output" style="color: #0078d4;">
+                    <pre>       ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
+       █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
+       
+       OS: Aegis OS Freemium 1.0.0
+       Kernel: 6.1.0-aegis
+       DE: XFCE 4.18
+       WM: Xfwm4
+       Shell: bash 5.2.15
+       CPU: AMD Ryzen 9 7950X (16) @ 4.5GHz
+       GPU: NVIDIA GeForce RTX 4090
+       Memory: 3847MiB / 32768MiB</pre>
+                </div>
+                <div class="terminal-output">
+                    <span class="terminal-prompt">aegis@aegis-os:~$</span> <span id="terminalCursor">_</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="window" id="monitorWindow" style="top: 150px; left: 200px; width: 500px; height: 400px;">
+            <div class="window-titlebar">
+                <div class="window-title">
+                    <span>📊</span>
+                    <span>Aegis System Monitor</span>
+                </div>
+                <div class="window-controls">
+                    <div class="window-button minimize-btn"></div>
+                    <div class="window-button maximize-btn"></div>
+                    <div class="window-button close-btn" data-close="monitorWindow"></div>
+                </div>
+            </div>
+            <div class="window-content system-monitor">
+                <div class="monitor-card">
+                    <h4>CPU Usage</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="cpuBar" style="width: 45%;"></div>
+                    </div>
+                    <p style="margin-top: 5px; font-size: 12px;">45% - AMD Ryzen 9 7950X</p>
+                </div>
+                <div class="monitor-card">
+                    <h4>Memory</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="memBar" style="width: 23%;"></div>
+                    </div>
+                    <p style="margin-top: 5px; font-size: 12px;">7.5GB / 32GB</p>
+                </div>
+                <div class="monitor-card">
+                    <h4>GPU Usage</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="gpuBar" style="width: 67%;"></div>
+                    </div>
+                    <p style="margin-top: 5px; font-size: 12px;">67% - RTX 4090</p>
+                </div>
+                <div class="monitor-card">
+                    <h4>Network</h4>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="netBar" style="width: 15%;"></div>
+                    </div>
+                    <p style="margin-top: 5px; font-size: 12px;">↓ 45MB/s ↑ 12MB/s</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="window" id="gamingWindow" style="top: 200px; left: 300px; width: 450px; height: 350px;">
+            <div class="window-titlebar">
+                <div class="window-title">
+                    <span>🎮</span>
+                    <span>Aegis Gaming Optimizer</span>
+                </div>
+                <div class="window-controls">
+                    <div class="window-button minimize-btn"></div>
+                    <div class="window-button maximize-btn"></div>
+                    <div class="window-button close-btn" data-close="gamingWindow"></div>
+                </div>
+            </div>
+            <div class="window-content">
+                <h3 style="color: #00ff88; margin-bottom: 20px;">⚡ Performance Mode</h3>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px;">Gaming Mode</label>
+                    <input type="checkbox" id="gamingMode" checked> <span style="color: #00ff88;">ENABLED</span>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px;">CPU Governor</label>
+                    <select style="background: #333; color: white; border: 1px solid #555; padding: 5px; border-radius: 4px;">
+                        <option>Performance</option>
+                        <option>Powersave</option>
+                        <option>Ondemand</option>
+                    </select>
+                </div>
+                <div style="background: rgba(0, 255, 136, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #00ff88;">
+                    <h4 style="margin-bottom: 10px; color: #00ff88;">Current Performance</h4>
+                    <p>FPS Boost: +25% (144 → 180 FPS)</p>
+                    <p>Input Latency: -73% (45ms → 12ms)</p>
+                    <p>Frame Time: 5.6ms consistent</p>
+                </div>
+                <button id="optimizeBtn" style="margin-top: 15px; background: #00ff88; color: black; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">
+                    🚀 Optimize Now
+                </button>
+            </div>
+        </div>
+        
+        <!-- Notifications -->
+        <div class="notification" id="notification">
+            <div style="font-weight: bold; margin-bottom: 5px;">System Notification</div>
+            <div id="notificationText">Gaming optimization applied successfully!</div>
+        </div>
+    </div>
+    
+    <script>
+        // Current time
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('time').textContent = 
+                now.getHours().toString().padStart(2, '0') + ':' + 
+                now.getMinutes().toString().padStart(2, '0');
+        }
+        updateTime();
+        setInterval(updateTime, 60000);
+        
+        // Terminal cursor blink
+        let cursorVisible = true;
+        setInterval(() => {
+            const cursor = document.getElementById('terminalCursor');
+            if (cursor) {
+                cursor.style.visibility = cursorVisible ? 'visible' : 'hidden';
+                cursorVisible = !cursorVisible;
+            }
+        }, 500);
+        
+        // System monitoring simulation
+        function updateSystemStats() {
+            const cpuUsage = 30 + Math.random() * 40;
+            const gpuUsage = 50 + Math.random() * 30;
+            const memUsage = 20 + Math.random() * 20;
+            
+            document.getElementById('cpuBar').style.width = cpuUsage + '%';
+            document.getElementById('gpuBar').style.width = gpuUsage + '%';
+            document.getElementById('memBar').style.width = memUsage + '%';
+            document.getElementById('netBar').style.width = (10 + Math.random() * 20) + '%';
+            
+            // Update gaming overlay
+            document.getElementById('fps').textContent = Math.floor(120 + Math.random() * 60);
+            document.getElementById('gpu').textContent = Math.floor(gpuUsage);
+            document.getElementById('cpu').textContent = Math.floor(cpuUsage);
+            document.getElementById('temp').textContent = Math.floor(65 + Math.random() * 10);
+        }
+        setInterval(updateSystemStats, 2000);
+        
+        // Start menu toggle
+        document.getElementById('startButton').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('startMenu');
+            menu.classList.toggle('active');
+        });
+        
+        // Close start menu when clicking elsewhere
+        document.addEventListener('click', () => {
+            document.getElementById('startMenu').classList.remove('active');
+        });
+        
+        // App launching
+        function launchApp(appName) {
+            const windows = {
+                'terminal': 'terminalWindow',
+                'monitor': 'monitorWindow',
+                'gaming': 'gamingWindow'
+            };
+            
+            const windowId = windows[appName];
+            if (windowId) {
+                const window = document.getElementById(windowId);
+                window.classList.add('active');
+                
+                // Add to taskbar if not already there
+                const taskbar = document.getElementById('taskbarApps');
+                if (!taskbar.querySelector(`[data-app="${appName}"].active`)) {
+                    const existingApp = taskbar.querySelector(`[data-app="${appName}"]`);
+                    if (existingApp) {
+                        existingApp.classList.add('active');
+                    }
+                }
+            }
+            
+            document.getElementById('startMenu').classList.remove('active');
+            showNotification(`Launching ${appName}...`);
+        }
+        
+        // Desktop icons and start menu apps
+        document.querySelectorAll('.desktop-icon, .start-app').forEach(icon => {
+            icon.addEventListener('dblclick', (e) => {
+                const app = e.currentTarget.getAttribute('data-app');
+                if (app) launchApp(app);
+            });
+        });
+        
+        // Taskbar apps
+        document.querySelectorAll('.taskbar-app').forEach(app => {
+            app.addEventListener('click', (e) => {
+                const appName = e.currentTarget.getAttribute('data-app');
+                if (appName) launchApp(appName);
+            });
+        });
+        
+        // Window close buttons
+        document.querySelectorAll('.close-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const windowId = e.currentTarget.getAttribute('data-close');
+                if (windowId) {
+                    document.getElementById(windowId).classList.remove('active');
+                }
+            });
+        });
+        
+        // Gaming mode toggle
+        document.getElementById('gamingMode').addEventListener('change', (e) => {
+            const overlay = document.getElementById('gamingOverlay');
+            if (e.target.checked) {
+                overlay.classList.add('active');
+                showNotification('Gaming mode enabled! Performance optimized.');
+            } else {
+                overlay.classList.remove('active');
+                showNotification('Gaming mode disabled.');
+            }
+        });
+        
+        // Optimize button
+        document.getElementById('optimizeBtn').addEventListener('click', () => {
+            showNotification('System optimized for maximum gaming performance!');
+            // Flash the gaming overlay
+            const overlay = document.getElementById('gamingOverlay');
+            overlay.style.animation = 'none';
+            setTimeout(() => {
+                overlay.style.animation = 'slideIn 0.3s ease-out';
+            }, 10);
+        });
+        
+        // Notification system
+        function showNotification(text) {
+            const notification = document.getElementById('notification');
+            const textElement = document.getElementById('notificationText');
+            textElement.textContent = text;
+            notification.classList.add('show');
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+        
+        // Initialize gaming mode
+        document.getElementById('gamingOverlay').classList.add('active');
+        
+        // Welcome notification
+        setTimeout(() => {
+            showNotification('Welcome to Aegis OS Freemium Edition!');
+        }, 1000);
+    </script>
+</body>
+</html>

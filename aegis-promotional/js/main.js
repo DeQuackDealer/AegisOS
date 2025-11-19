@@ -5,12 +5,14 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function (e) {
             e.preventDefault();
-            const target = document.querySelector(this.getAttribute('href'));
-            if (target) {
+            const target = this.getAttribute('href');
+            if (!target || target === '#') return;
+            const element = document.querySelector(target);
+            if (element) {
                 const offset = 48;
-                const targetPosition = target.offsetTop - offset;
+                const elementPosition = element.offsetTop - offset;
                 window.scrollTo({
-                    top: targetPosition,
+                    top: elementPosition,
                     behavior: 'smooth'
                 });
             }
@@ -20,8 +22,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add active class to current page nav button
     const currentPage = window.location.pathname.split('/').pop() || 'index.html';
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        const btnHref = btn.getAttribute('onclick');
-        if (btnHref && btnHref.includes(currentPage)) {
+        // Check if onclick attribute exists and contains the current page
+        const onclickAttr = btn.getAttribute('onclick');
+        if (onclickAttr && onclickAttr.includes(currentPage)) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
