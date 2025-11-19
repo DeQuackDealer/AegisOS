@@ -11,9 +11,19 @@ import subprocess
 import threading
 import time
 import math
-import psutil
-from PIL import Image, ImageTk
-import tkinter as tk
+
+# Try to import optional dependencies
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 class AegisWallpaperEngine:
     def __init__(self):
@@ -66,19 +76,37 @@ class AegisWallpaperEngine:
             pass
         
         # Fallback: estimate from system load
-        return int(psutil.cpu_percent() * 0.8)
+        if PSUTIL_AVAILABLE:
+            return int(psutil.cpu_percent() * 0.8)
+        else:
+            # Use /proc/loadavg as fallback
+            try:
+                with open('/proc/loadavg', 'r') as f:
+                    load1 = float(f.read().split()[0])
+                    return min(int(load1 * 20), 100)
+            except:
+                return 50
     
     def is_game_running(self):
         """Detect if gaming applications are running"""
         gaming_processes = ['steam', 'lutris', 'wine', 'proton', 'gamemode']
         
-        for proc in psutil.process_iter(['name']):
+        if PSUTIL_AVAILABLE:
+            for proc in psutil.process_iter(['name']):
+                try:
+                    proc_name = proc.info['name'].lower()
+                    if any(game in proc_name for game in gaming_processes):
+                        return True
+                except:
+                    continue
+        else:
+            # Fallback: use ps command
             try:
-                proc_name = proc.info['name'].lower()
-                if any(game in proc_name for game in gaming_processes):
-                    return True
+                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+                processes = result.stdout.lower()
+                return any(game in processes for game in gaming_processes)
             except:
-                continue
+                pass
         return False
     
     def set_wallpaper(self, wallpaper_path, mode="static"):
@@ -184,30 +212,54 @@ WantedBy=graphical-session.target
         frames_dir = f"{self.wallpaper_dir}/aegis-animated-frames"
         os.makedirs(frames_dir, exist_ok=True)
         
-        # Generate 60 frames for smooth animation
-        for frame in range(60):
-            img = Image.new('RGB', (1920, 1080), color='#0d1117')
+        if PIL_AVAILABLE:
+            # Generate 60 frames for smooth animation
+            for frame in range(60):
+                img = Image.new('RGB', (1920, 1080), color='#0d1117')
+                
+                # Create breathing effect with opacity changes
+                opacity = int(100 + 155 * abs(math.sin(frame * math.pi / 30)))
+                
+                # Generate frame and save
+                img_path = f"{frames_dir}/frame_{frame:03d}.jpg"
+                img.save(img_path, 'JPEG', quality=85)
             
-            # Create breathing effect with opacity changes
-            opacity = int(100 + 155 * abs(math.sin(frame * math.pi / 30)))
-            
-            # Generate frame and save
-            img_path = f"{frames_dir}/frame_{frame:03d}.jpg"
-            img.save(img_path, 'JPEG', quality=85)
-        
-        print("✅ Animated Aegis wallpaper created")
+            print("✅ Animated Aegis wallpaper created")
+        else:
+            # Create a simple placeholder without PIL
+            placeholder_path = f"{frames_dir}/frame_000.jpg"
+            # Use ImageMagick convert if available as fallback
+            try:
+                subprocess.run([
+                    'convert', '-size', '1920x1080', 
+                    'xc:#0d1117', placeholder_path
+                ], capture_output=True)
+                print("✅ Simple wallpaper created (PIL not available)")
+            except:
+                print("⚠️  Cannot create animated wallpaper without PIL")
     
     def create_gaming_wallpaper(self):
         """Create optimized gaming wallpaper (low resource usage)"""
-        img = Image.new('RGB', (1920, 1080), color='#1a1a1a')
-        
-        # Simple Aegis logo without complex effects
-        # Optimized for minimal GPU usage during gaming
-        
         gaming_wallpaper = f"{self.wallpaper_dir}/gaming-optimized.jpg"
-        img.save(gaming_wallpaper, 'JPEG', quality=75)
         
-        print("✅ Gaming-optimized wallpaper created")
+        if PIL_AVAILABLE:
+            img = Image.new('RGB', (1920, 1080), color='#1a1a1a')
+            
+            # Simple Aegis logo without complex effects
+            # Optimized for minimal GPU usage during gaming
+            
+            img.save(gaming_wallpaper, 'JPEG', quality=75)
+            print("✅ Gaming-optimized wallpaper created")
+        else:
+            # Use ImageMagick as fallback
+            try:
+                subprocess.run([
+                    'convert', '-size', '1920x1080',
+                    'xc:#1a1a1a', gaming_wallpaper
+                ], capture_output=True)
+                print("✅ Gaming wallpaper created with ImageMagick")
+            except:
+                print("⚠️  Cannot create gaming wallpaper without PIL or ImageMagick")
 
 if __name__ == "__main__":
     engine = AegisWallpaperEngine()

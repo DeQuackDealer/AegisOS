@@ -5,11 +5,18 @@ Aegis OS Welcome Application - Freemium Edition
 Displays welcome information and setup options
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
 import subprocess
-import webbrowser
 import os
+import sys
+
+# Try to import tkinter
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    import webbrowser
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
 
 class AegisWelcome:
     def __init__(self):
@@ -199,6 +206,50 @@ X-GNOME-Autostart-enabled=true
         """Run the welcome application"""
         self.root.mainloop()
 
+def show_cli_welcome():
+    """Display welcome message in CLI when tkinter is not available"""
+    print("""
+╔════════════════════════════════════════════════════════════════╗
+║                   WELCOME TO AEGIS OS                         ║
+║                    Freemium Edition                           ║
+╚════════════════════════════════════════════════════════════════╝
+
+    ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
+    █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
+    
+The Gold Standard for Gaming
+
+WHAT'S INCLUDED:
+✅ Linux-based foundation for stability and security
+✅ Proton and Wine pre-configured for Windows game compatibility
+✅ Lightweight XFCE desktop environment
+✅ Essential system utilities and optimization tools
+✅ Community support and forums access
+✅ Completely free with no hidden costs
+
+QUICK START COMMANDS:
+• System Information : aegis-system-info
+• Gaming Optimizer   : aegis-gaming-optimizer
+• System Monitor     : aegis-system-monitor
+• License Manager    : aegis-license-manager
+
+COMMUNITY & SUPPORT:
+• Forums    : https://community.aegis-os.com
+• Wiki      : https://wiki.aegis-os.com
+• Upgrades  : https://aegis-os.com/editions
+
+═══════════════════════════════════════════════════════════════════
+💎 Ready to unlock full potential? Visit aegis-os.com for Pro editions!
+═══════════════════════════════════════════════════════════════════
+""")
+
 if __name__ == "__main__":
-    app = AegisWelcome()
-    app.run()
+    if TKINTER_AVAILABLE:
+        try:
+            app = AegisWelcome()
+            app.run()
+        except Exception as e:
+            print(f"GUI failed: {e}")
+            show_cli_welcome()
+    else:
+        show_cli_welcome()

@@ -7,10 +7,16 @@ Aegis OS Taskbar Manager - Windows 10/11 style taskbar with transparency options
 import os
 import json
 import subprocess
-import gi
 
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+# Try to import GTK dependencies
+GTK_AVAILABLE = False
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk
+    GTK_AVAILABLE = True
+except ImportError:
+    print("⚠️  GTK not available, using xfconf-query commands only")
 
 class AegisTaskbarManager:
     def __init__(self):
