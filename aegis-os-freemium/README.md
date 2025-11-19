@@ -53,10 +53,26 @@ The completely free, community-driven edition of Aegis OS with gaming-ready feat
 
 ## Installation
 
+### Virtual Machine (Recommended for Testing)
+**VMware/VirtualBox:**
+1. Create new VM with 4GB RAM minimum
+2. Mount `aegis-os-freemium.iso` as CD/DVD
+3. Boot and install normally
+4. Enable 3D acceleration in VM settings
+
+**Hyper-V (Windows):**
+1. Enable Hyper-V in Windows Features
+2. Create Generation 2 VM
+3. Disable Secure Boot
+4. Mount ISO and install
+
 ### Creating Bootable Media
 ```bash
 # For USB drive (replace /dev/sdX with your USB device)
 sudo dd if=output/aegis-os-freemium.iso of=/dev/sdX bs=4M status=progress
+
+# Windows Media Creation Tool alternative
+# Use Rufus or balenaEtcher with the ISO file
 ```
 
 ### System Requirements

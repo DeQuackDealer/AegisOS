@@ -32,6 +32,9 @@ chmod +x $TARGET_DIR/usr/local/bin/*
 chmod +x $TARGET_DIR/etc/init.d/*
 chmod +x $TARGET_DIR/usr/share/pixmaps/aegis-wallpaper-generator.py
 
+# Run VM optimization if in VM
+chroot $TARGET_DIR /usr/local/bin/aegis-vm-optimizer
+
 # Initialize desktop effects and wallpaper engine
 chroot $TARGET_DIR /usr/local/bin/aegis-desktop-effects
 chroot $TARGET_DIR /usr/local/bin/aegis-taskbar-manager
