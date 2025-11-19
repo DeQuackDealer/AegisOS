@@ -1,0 +1,15 @@
+
+[Unit]
+Description=Aegis OS License Manager - Freemium Edition
+After=network.target aegis-system-monitor.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/aegis-license-manager --status
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

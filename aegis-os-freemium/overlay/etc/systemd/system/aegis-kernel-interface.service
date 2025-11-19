@@ -1,0 +1,16 @@
+
+[Unit]
+Description=Aegis OS Kernel Interface - Freemium Edition
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/aegis-kernel-interface --load
+ExecStart=/usr/local/bin/aegis-kernel-interface --status
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
