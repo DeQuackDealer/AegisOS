@@ -699,118 +699,245 @@ def serve_html(filename):
         logger.error(f"HTML serve error: {filename} - {e}")
         return Response('Server error', status=500)
 
-# Direct page routes - serve HTML directly like index
-def serve_page(filename):
-    """Serve any HTML page directly"""
-    try:
-        filepath = os.path.join(BASE_DIR, 'html', filename)
-        logger.info(f"Attempting to serve: {filepath}")
-        if not os.path.isfile(filepath):
-            logger.error(f"File not found: {filepath}")
-            return jsonify({'error': f'File not found: {filepath}'}), 404
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read()
-            logger.info(f"Successfully served {filename} ({len(content)} bytes)")
-            return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
-    except Exception as e:
-        logger.error(f"Exception serving {filename}: {type(e).__name__}: {e}")
-        return jsonify({'error': f'Error: {str(e)}'}), 500
-
 @app.route('/freemium')
+@rate_limit(limit=1000)
 def page_freemium():
-    return serve_page('freemium.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'freemium.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found', 'details': str(e)}), 404
 
 @app.route('/basic')
+@rate_limit(limit=1000)
 def page_basic():
-    return serve_page('basic.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'basic.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/gamer')
+@rate_limit(limit=1000)
 def page_gamer():
-    return serve_page('gamer.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'gamer.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/ai')
+@rate_limit(limit=1000)
 def page_ai():
-    return serve_page('ai.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'ai.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/server')
+@rate_limit(limit=1000)
 def page_server():
-    return serve_page('server.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'server.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/admin')
+@rate_limit(limit=1000)
 def page_admin():
-    return serve_page('admin.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/faq')
+@rate_limit(limit=1000)
 def page_faq():
-    return serve_page('faq.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'faq.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/contact')
+@rate_limit(limit=1000)
 def page_contact():
-    return serve_page('contact.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'contact.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/use-cases')
+@rate_limit(limit=1000)
 def page_use_cases():
-    return serve_page('use-cases.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'use-cases.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/security-comparison')
+@rate_limit(limit=1000)
 def page_security():
-    return serve_page('security-comparison.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'security-comparison.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/testimonials')
+@rate_limit(limit=1000)
 def page_testimonials():
-    return serve_page('testimonials.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'testimonials.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/pricing-tiers-detailed')
+@rate_limit(limit=1000)
 def page_pricing():
-    return serve_page('pricing-tiers-detailed.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'pricing-tiers-detailed.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/blog')
+@rate_limit(limit=1000)
 def page_blog():
-    return serve_page('blog.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'blog.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/features')
+@rate_limit(limit=1000)
 def page_features():
-    return serve_page('features.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'features.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/developers')
+@rate_limit(limit=1000)
 def page_developers():
-    return serve_page('developers.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'developers.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/download')
+@rate_limit(limit=1000)
 def page_download():
-    return serve_page('download.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'download.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/security-audit')
+@rate_limit(limit=1000)
 def page_security_audit():
-    return serve_page('security-audit.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'security-audit.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/system-requirements')
+@rate_limit(limit=1000)
 def page_system_requirements():
-    return serve_page('system-requirements.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'system-requirements.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/compliance')
+@rate_limit(limit=1000)
 def page_compliance():
-    return serve_page('compliance.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'compliance.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/technical-specs')
+@rate_limit(limit=1000)
 def page_technical_specs():
-    return serve_page('technical-specs.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'technical-specs.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/iso-download')
+@rate_limit(limit=1000)
 def page_iso_download():
-    return serve_page('iso-download.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'iso-download.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/iso-verification')
+@rate_limit(limit=1000)
 def page_iso_verification():
-    return serve_page('iso-verification.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'iso-verification.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/install-guide')
+@rate_limit(limit=1000)
 def page_install_guide():
-    return serve_page('install-guide.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'install-guide.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/gaming-compatibility')
+@rate_limit(limit=1000)
 def page_gaming_compatibility():
-    return serve_page('gaming-compatibility.html')
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'gaming-compatibility.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
 
 # ============= LICENSING SYSTEM =============
 
