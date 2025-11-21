@@ -448,10 +448,6 @@ def get_audit_log():
         'last_entries': audit_log[-10:] if audit_log else []
     }), 200
 
-if __name__ == '__main__':
-    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security")
-    app.run(host='0.0.0.0', port=5000, debug=False)
-
 # ============= ROUTES: TIER-SPECIFIC FEATURES =============
 
 @app.route('/api/v1/tier/basic/features')
@@ -513,10 +509,6 @@ def server_features():
             'enterprise': ['24/7 support', 'Compliance ready', 'Enterprise backup']
         }
     }), 200
-
-if __name__ == '__main__':
-    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
-    app.run(host='0.0.0.0', port=5000, debug=False)
 
 # ============= ADDITIONAL TIER FEATURE ENDPOINTS =============
 
