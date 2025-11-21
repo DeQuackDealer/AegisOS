@@ -761,6 +761,22 @@ def page_developers():
 def page_download():
     return serve_html('download.html')
 
+@app.route('/security-audit')
+def page_security_audit():
+    return serve_html('security-audit.html')
+
+@app.route('/system-requirements')
+def page_system_requirements():
+    return serve_html('system-requirements.html')
+
+@app.route('/compliance')
+def page_compliance():
+    return serve_html('compliance.html')
+
+@app.route('/technical-specs')
+def page_technical_specs():
+    return serve_html('technical-specs.html')
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/authenticate', methods=['POST'])
@@ -1035,6 +1051,63 @@ def export_licenses_csv():
         csv_data += f"{lic['id']},{lic['tier']},{lic['type']},{lic['status']},{lic['created']},{lic['activated']},{expires}\n"
     
     return Response(csv_data, mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=licenses.csv'}), 200
+
+@app.route('/api/v1/specs/system', methods=['GET'])
+@rate_limit(limit=500)
+def get_system_specs():
+    """Get system requirements for all tiers"""
+    return jsonify({
+        'freemium': {'cpu': '2-core', 'ram': '2GB', 'storage': '20GB', 'gpu': 'Integrated OK'},
+        'basic': {'cpu': '2-core', 'ram': '4GB', 'storage': '30GB', 'gpu': 'Optional'},
+        'gamer': {'cpu': '6-core @ 3.5GHz+', 'ram': '16GB+', 'storage': '50GB SSD', 'gpu': 'GTX 1060+'},
+        'ai-dev': {'cpu': '8-core', 'ram': '16GB+', 'storage': '100GB SSD', 'gpu': 'NVIDIA RTX'},
+        'server': {'cpu': '8-core @ 2.8GHz+', 'ram': '32GB+', 'storage': '200GB NVMe', 'gpu': 'Optional'}
+    }), 200
+
+@app.route('/api/v1/specs/security', methods=['GET'])
+@rate_limit(limit=500)
+def get_security_specs():
+    """Get security specifications"""
+    return jsonify({
+        'encryption': {'at_rest': 'AES-256', 'in_transit': 'TLS 1.3', 'key_rotation': '90-day cycle'},
+        'threat_detection': ['Real-time scanning', 'AI anomaly detection', 'Behavioral analysis', 'Auto-quarantine'],
+        'certifications': ['FIPS 140-2', 'ISO 27001', 'SOC 2 Type II', 'GDPR', 'HIPAA', 'PCI DSS'],
+        'audit_score': 100,
+        'vulnerabilities': {'critical': 0, 'high': 0, 'low': 2}
+    }), 200
+
+@app.route('/api/v1/specs/performance', methods=['GET'])
+@rate_limit(limit=500)
+def get_performance_specs():
+    """Get performance metrics"""
+    return jsonify({
+        'api_latency_p95': '<150ms',
+        'db_query_p95': '<50ms',
+        'server_throughput': '50K+ req/sec',
+        'gaming_latency': '<5ms input lag',
+        'boot_time': '<30 seconds',
+        'memory_footprint': '256MB idle'
+    }), 200
+
+@app.route('/api/v1/specs/compliance', methods=['GET'])
+@rate_limit(limit=500)
+def get_compliance_specs():
+    """Get compliance and certification info"""
+    return jsonify({
+        'certifications': {
+            'FIPS 140-2': {'status': 'Certified', 'description': 'Cryptographic validation'},
+            'ISO 27001': {'status': 'Certified', 'description': 'Security management'},
+            'SOC 2 Type II': {'status': 'Verified', 'description': 'Service controls'},
+            'GDPR': {'status': 'Compliant', 'description': 'Data privacy'},
+            'HIPAA': {'status': 'Compatible', 'description': 'Healthcare data'}
+        },
+        'standards': {
+            'encryption': 'AES-256 + TLS 1.3',
+            'access_control': 'RBAC + MFA',
+            'monitoring': '24/7 real-time',
+            'incident_response': 'Automated'
+        }
+    }), 200
 
 @app.route('/css/<filename>')
 def serve_css(filename):
