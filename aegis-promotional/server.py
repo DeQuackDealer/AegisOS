@@ -704,11 +704,17 @@ def serve_page(filename):
     """Serve any HTML page directly"""
     try:
         filepath = os.path.join(BASE_DIR, 'html', filename)
+        logger.info(f"Attempting to serve: {filepath}")
+        if not os.path.isfile(filepath):
+            logger.error(f"File not found: {filepath}")
+            return jsonify({'error': f'File not found: {filepath}'}), 404
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+            content = f.read()
+            logger.info(f"Successfully served {filename} ({len(content)} bytes)")
+            return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
     except Exception as e:
-        logger.error(f"Error serving {filename}: {e}")
-        return jsonify({'error': f'Page not found: {filename}'}), 404
+        logger.error(f"Exception serving {filename}: {type(e).__name__}: {e}")
+        return jsonify({'error': f'Error: {str(e)}'}), 500
 
 @app.route('/freemium')
 def page_freemium():
