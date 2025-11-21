@@ -3,7 +3,7 @@ Aegis OS - ULTRA-SECURE v4.0
 100/100 Security Score - Enterprise Grade - Absolute Perfection
 """
 
-from flask import Flask, send_from_directory, redirect, jsonify, request, make_response
+from flask import Flask, send_from_directory, redirect, jsonify, request, make_response, Response
 from functools import wraps, lru_cache
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -690,49 +690,67 @@ def serve_html(filename):
 
 @app.route('/css/<filename>')
 def serve_css(filename):
-    """Serve CSS files - NO rate limit"""
+    """Serve CSS files"""
     if '..' in filename or filename.startswith('/'):
-        return jsonify({'error': 'Invalid path'}), 403
+        return Response('Forbidden', status=403)
     filepath = os.path.join(BASE_DIR, 'css', filename)
+    if not os.path.exists(filepath):
+        return Response('', status=404)
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'public, max-age=3600'}
-    except:
-        return '', 404
+            resp = make_response(f.read())
+            resp.headers['Content-Type'] = 'text/css; charset=utf-8'
+            resp.headers['Cache-Control'] = 'public, max-age=3600'
+            return resp
+    except Exception as e:
+        logger.error(f"CSS error: {e}")
+        return Response('', status=500)
 
 @app.route('/js/<filename>')
 def serve_js(filename):
-    """Serve JS files - NO rate limit"""
+    """Serve JS files"""
     if '..' in filename or filename.startswith('/'):
-        return jsonify({'error': 'Invalid path'}), 403
+        return Response('Forbidden', status=403)
     filepath = os.path.join(BASE_DIR, 'js', filename)
+    if not os.path.exists(filepath):
+        return Response('', status=404)
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600'}
-    except:
-        return '', 404
+            resp = make_response(f.read())
+            resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+            resp.headers['Cache-Control'] = 'public, max-age=3600'
+            return resp
+    except Exception as e:
+        logger.error(f"JS error: {e}")
+        return Response('', status=500)
 
 @app.route('/assets/<filename>')
 def serve_assets(filename):
-    """Serve asset files - NO rate limit"""
+    """Serve asset files"""
     if '..' in filename or filename.startswith('/'):
-        return jsonify({'error': 'Invalid path'}), 403
+        return Response('Forbidden', status=403)
     filepath = os.path.join(BASE_DIR, 'assets', filename)
+    if not os.path.exists(filepath):
+        return Response('', status=404)
     try:
         with open(filepath, 'rb') as f:
             content = f.read()
+            resp = make_response(content)
             if filename.endswith('.svg'):
-                return content, 200, {'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400'}
+                resp.headers['Content-Type'] = 'image/svg+xml'
             elif filename.endswith('.png'):
-                return content, 200, {'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400'}
+                resp.headers['Content-Type'] = 'image/png'
             elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
-                return content, 200, {'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400'}
+                resp.headers['Content-Type'] = 'image/jpeg'
             elif filename.endswith('.gif'):
-                return content, 200, {'Content-Type': 'image/gif', 'Cache-Control': 'public, max-age=86400'}
+                resp.headers['Content-Type'] = 'image/gif'
             else:
-                return content, 200, {'Content-Type': 'application/octet-stream'}
-    except:
-        return '', 404
+                resp.headers['Content-Type'] = 'application/octet-stream'
+            resp.headers['Cache-Control'] = 'public, max-age=86400'
+            return resp
+    except Exception as e:
+        logger.error(f"Asset error: {e}")
+        return Response('', status=500)
 
 if __name__ == '__main__':
     logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
