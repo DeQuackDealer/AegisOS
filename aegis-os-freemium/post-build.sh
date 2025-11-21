@@ -42,28 +42,35 @@ chroot $TARGET_DIR /usr/local/bin/aegis-wallpaper-engine
 
 # Build and install kernel module
 echo "Building Aegis OS kernel module..."
-cd $TARGET_DIR/lib/modules/*/build
-if [ -d "$PWD" ]; then
-    # Copy kernel module source
-    mkdir -p $TARGET_DIR/usr/src/aegis-lkm
-    cp -r $(dirname $0)/kernel-module/* $TARGET_DIR/usr/src/aegis-lkm/
-    
-    # Build kernel module
-    cd $TARGET_DIR/usr/src/aegis-lkm
-    make KERNEL_SOURCE=$TARGET_DIR/lib/modules/*/build || echo "Kernel module build failed (will use stub)"
-    
-    # Install kernel module if built successfully
-    if [ -f "aegis_lkm.ko" ]; then
-        mkdir -p $TARGET_DIR/lib/modules/*/extra
-        cp aegis_lkm.ko $TARGET_DIR/lib/modules/*/extra/
-        echo "aegis_lkm" >> $TARGET_DIR/etc/modules-load.d/aegis.conf
-        echo "✅ Kernel module installed"
+if [ -d "$TARGET_DIR/lib/modules" ]; then
+    # Copy kernel module source - get absolute path from environment if available
+    KERNEL_MOD_SRC="${KERNEL_MODULE_SOURCE:-.}"
+    if [ -d "$KERNEL_MOD_SRC/kernel-module" ]; then
+        mkdir -p $TARGET_DIR/usr/src/aegis-lkm
+        cp -r $KERNEL_MOD_SRC/kernel-module/* $TARGET_DIR/usr/src/aegis-lkm/ 2>/dev/null || true
+        
+        # Build kernel module
+        if [ -f "$TARGET_DIR/usr/src/aegis-lkm/Makefile" ]; then
+            cd $TARGET_DIR/usr/src/aegis-lkm
+            make KERNEL_SOURCE=$TARGET_DIR/lib/modules/*/build 2>/dev/null || echo "⚠️  Kernel module build skipped (using stub)"
+            
+            # Install kernel module if built successfully
+            if [ -f "aegis_lkm.ko" ]; then
+                mkdir -p $TARGET_DIR/lib/modules/*/extra
+                cp aegis_lkm.ko $TARGET_DIR/lib/modules/*/extra/
+                mkdir -p $TARGET_DIR/etc/modules-load.d
+                echo "aegis_lkm" >> $TARGET_DIR/etc/modules-load.d/aegis.conf
+                echo "✅ Kernel module installed"
+            fi
+        fi
     fi
 fi
 
-# Generate wallpaper
+# Generate wallpaper (optional, not critical for boot)
 if command -v python3 >/dev/null 2>&1; then
-    chroot $TARGET_DIR /usr/share/pixmaps/aegis-wallpaper-generator.py || echo "Wallpaper generation failed"
+    if [ -f "$TARGET_DIR/usr/share/pixmaps/aegis-wallpaper-generator.py" ]; then
+        chroot $TARGET_DIR python3 /usr/share/pixmaps/aegis-wallpaper-generator.py 2>/dev/null || echo "⚠️  Wallpaper generation skipped"
+    fi
 fi
 
 # Create default directories
