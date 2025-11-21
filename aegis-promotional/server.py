@@ -136,15 +136,16 @@ def get_tiers():
     })
 
 @app.route('/api/v1/tier/<tier_name>', methods=['GET'])
-def get_tier(tier_name):
+def get_tier(tier_name: str):
     """Get specific tier details"""
-    if tier_name not in TIERS:
+    if not isinstance(tier_name, str) or tier_name not in TIERS:
         return jsonify({'error': 'Tier not found'}), 404
     
+    tier_data: dict = TIERS[tier_name]
     return jsonify({
         'tier': tier_name,
-        'price': TIERS[tier_name]['price'],
-        'features': TIERS[tier_name]['features'],
+        'price': tier_data['price'],
+        'features': tier_data['features'],
         'description': f'Aegis OS {tier_name.capitalize()} Edition'
     })
 
@@ -154,10 +155,10 @@ def get_tier(tier_name):
 def initiate_payment():
     """Initiate payment for tier (Stripe integration ready)"""
     data = request.json or {}
-    tier = data.get('tier')
-    email = data.get('email')
+    tier = data.get('tier', '')
+    email = data.get('email', '')
     
-    if tier not in TIERS:
+    if not isinstance(tier, str) or tier not in TIERS:
         return jsonify({'error': 'Invalid tier'}), 400
     
     if not email:
@@ -165,10 +166,11 @@ def initiate_payment():
     
     # Stripe integration would go here
     # For now, return payment intent structure
+    price: int = TIERS[tier]['price']
     return jsonify({
         'status': 'ready_for_payment',
         'tier': tier,
-        'amount': TIERS[tier]['price'],
+        'amount': price,
         'currency': 'USD',
         'payment_method': 'stripe',
         'note': 'Stripe integration available - contact admin@aegis-os.dev'
@@ -178,14 +180,19 @@ def initiate_payment():
 def verify_payment():
     """Verify payment and issue license"""
     data = request.json or {}
-    transaction_id = data.get('transaction_id')
+    transaction_id = data.get('transaction_id', '')
+    tier = data.get('tier', 'basic')
     
     if not transaction_id:
         return jsonify({'error': 'Transaction ID required'}), 400
     
+    if not isinstance(tier, str) or tier not in TIERS:
+        tier = 'basic'
+    
+    license_key: str = f'AEGIS-{tier.upper()}-2024-{hashlib.md5(transaction_id.encode()).hexdigest()[:12].upper()}'
     return jsonify({
         'verified': True,
-        'license_key': f'AEGIS-{data.get("tier", "basic").upper()}-2024-{hashlib.md5(transaction_id.encode()).hexdigest()[:12].upper()}',
+        'license_key': license_key,
         'message': 'Payment verified. Use license key to activate.'
     })
 
