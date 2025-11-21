@@ -1437,6 +1437,13 @@ def get_full_stack_compatibility():
         'desktop': 'XFCE 4.18 (250MB idle)',
         'gaming_runtime': 'Wine 8.21 + Proton 9.0+',
         'graphics': 'Vulkan 1.3, OpenGL 4.6, DirectX 12',
+        'nvidia_support': {
+            'driver': 'Enhanced Nouveau',
+            'supported_cards': ['GTX 900+', 'RTX 20/30/40 series'],
+            'features': ['3D acceleration', 'Vulkan support', 'Power management'],
+            'optimization': 'Gaming-focused',
+            'status': 'Production ready'
+        },
         'performance': {
             'boot_time': '<30 seconds',
             'input_latency': '<5ms',

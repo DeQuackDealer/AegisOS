@@ -1,4 +1,3 @@
-
 #!/bin/bash
 set -e
 
@@ -27,8 +26,28 @@ chroot $TARGET_DIR systemctl enable aegis-license-manager
 chroot $TARGET_DIR systemctl enable aegis-kernel-interface
 chroot $TARGET_DIR systemctl enable NetworkManager
 
-# Set executable permissions
-chmod +x $TARGET_DIR/usr/local/bin/*
+# Make scripts executable
+chmod +x $TARGET_DIR/usr/local/bin/aegis-*
+
+# Set up nouveau optimizations
+echo "Setting up Nouveau NVIDIA driver optimizations..."
+if [ -f $TARGET_DIR/usr/local/bin/aegis-nouveau-optimizer ]; then
+    chmod +x $TARGET_DIR/usr/local/bin/aegis-nouveau-optimizer
+fi
+
+if [ -f $TARGET_DIR/usr/local/bin/aegis-nvidia-info ]; then
+    chmod +x $TARGET_DIR/usr/local/bin/aegis-nvidia-info
+fi
+
+# Enable nouveau optimizer service
+if [ -f $TARGET_DIR/etc/systemd/system/aegis-nouveau-optimizer.service ]; then
+    ln -sf /etc/systemd/system/aegis-nouveau-optimizer.service \
+           $TARGET_DIR/etc/systemd/system/multi-user.target.wants/aegis-nouveau-optimizer.service
+fi
+
+# Create X11 config directory
+mkdir -p $TARGET_DIR/etc/X11/xorg.conf.d
+
 chmod +x $TARGET_DIR/etc/init.d/*
 chmod +x $TARGET_DIR/usr/share/pixmaps/aegis-wallpaper-generator.py
 
@@ -48,12 +67,12 @@ if [ -d "$TARGET_DIR/lib/modules" ]; then
     if [ -d "$KERNEL_MOD_SRC/kernel-module" ]; then
         mkdir -p $TARGET_DIR/usr/src/aegis-lkm
         cp -r $KERNEL_MOD_SRC/kernel-module/* $TARGET_DIR/usr/src/aegis-lkm/ 2>/dev/null || true
-        
+
         # Build kernel module
         if [ -f "$TARGET_DIR/usr/src/aegis-lkm/Makefile" ]; then
             cd $TARGET_DIR/usr/src/aegis-lkm
             make KERNEL_SOURCE=$TARGET_DIR/lib/modules/*/build 2>/dev/null || echo "⚠️  Kernel module build skipped (using stub)"
-            
+
             # Install kernel module if built successfully
             if [ -f "aegis_lkm.ko" ]; then
                 mkdir -p $TARGET_DIR/lib/modules/*/extra
@@ -88,7 +107,7 @@ cat > $TARGET_DIR/etc/issue << 'EOF'
 
     ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
     █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
-    
+
 Aegis OS Freemium Edition - Genesis
 The Gold Standard for Gaming
 
