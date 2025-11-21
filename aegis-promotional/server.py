@@ -308,7 +308,14 @@ def internal_error(e):
 @app.route('/')
 @rate_limit(limit=1000)
 def index():
-    return redirect('/html/index.html')
+    """Serve homepage directly"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'index.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving index: {e}")
+        return jsonify({'error': 'Homepage not available', 'debug': str(e)}), 500
 
 @app.route('/health')
 @rate_limit(limit=1000)
@@ -681,63 +688,51 @@ def serve_html(filename):
         logger.error(f"Error serving HTML {filename}: {e}")
         return jsonify({'error': 'Error reading file'}), 500
 
-@app.route('/css/<path:filename>')
-@rate_limit(limit=1000)
+@app.route('/css/<filename>')
 def serve_css(filename):
-    """Serve CSS files"""
-    if '..' in filename or filename.startswith('/') or '/' in filename:
+    """Serve CSS files - NO rate limit"""
+    if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 403
     filepath = os.path.join(BASE_DIR, 'css', filename)
-    if not os.path.isfile(filepath):
-        return jsonify({'error': 'File not found'}), 404
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/css; charset=utf-8'}
-    except Exception as e:
-        logger.error(f"Error serving CSS {filename}: {e}")
-        return jsonify({'error': 'Error reading file'}), 500
+            return f.read(), 200, {'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'public, max-age=3600'}
+    except:
+        return '', 404
 
-@app.route('/js/<path:filename>')
-@rate_limit(limit=1000)
+@app.route('/js/<filename>')
 def serve_js(filename):
-    """Serve JS files"""
-    if '..' in filename or filename.startswith('/') or '/' in filename:
+    """Serve JS files - NO rate limit"""
+    if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 403
     filepath = os.path.join(BASE_DIR, 'js', filename)
-    if not os.path.isfile(filepath):
-        return jsonify({'error': 'File not found'}), 404
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'application/javascript; charset=utf-8'}
-    except Exception as e:
-        logger.error(f"Error serving JS {filename}: {e}")
-        return jsonify({'error': 'Error reading file'}), 500
+            return f.read(), 200, {'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600'}
+    except:
+        return '', 404
 
-@app.route('/assets/<path:filename>')
-@rate_limit(limit=1000)
+@app.route('/assets/<filename>')
 def serve_assets(filename):
-    """Serve asset files"""
-    if '..' in filename or filename.startswith('/') or '/' in filename:
+    """Serve asset files - NO rate limit"""
+    if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 403
     filepath = os.path.join(BASE_DIR, 'assets', filename)
-    if not os.path.isfile(filepath):
-        return jsonify({'error': 'File not found'}), 404
     try:
         with open(filepath, 'rb') as f:
             content = f.read()
             if filename.endswith('.svg'):
-                return content, 200, {'Content-Type': 'image/svg+xml'}
+                return content, 200, {'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400'}
             elif filename.endswith('.png'):
-                return content, 200, {'Content-Type': 'image/png'}
+                return content, 200, {'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400'}
             elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
-                return content, 200, {'Content-Type': 'image/jpeg'}
+                return content, 200, {'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400'}
             elif filename.endswith('.gif'):
-                return content, 200, {'Content-Type': 'image/gif'}
+                return content, 200, {'Content-Type': 'image/gif', 'Cache-Control': 'public, max-age=86400'}
             else:
                 return content, 200, {'Content-Type': 'application/octet-stream'}
-    except Exception as e:
-        logger.error(f"Error serving asset {filename}: {e}")
-        return jsonify({'error': 'Error reading file'}), 500
+    except:
+        return '', 404
 
 if __name__ == '__main__':
     logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
