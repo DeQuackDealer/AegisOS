@@ -699,102 +699,112 @@ def serve_html(filename):
         logger.error(f"HTML serve error: {filename} - {e}")
         return Response('Server error', status=500)
 
-# Direct tier page routes (GUARANTEED TO WORK)
+# Direct page routes - serve HTML directly like index
+def serve_page(filename):
+    """Serve any HTML page directly"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving {filename}: {e}")
+        return jsonify({'error': f'Page not found: {filename}'}), 404
+
 @app.route('/freemium')
 def page_freemium():
-    return serve_html('freemium.html')
+    return serve_page('freemium.html')
 
 @app.route('/basic')
 def page_basic():
-    return serve_html('basic.html')
+    return serve_page('basic.html')
 
 @app.route('/gamer')
 def page_gamer():
-    return serve_html('gamer.html')
+    return serve_page('gamer.html')
 
 @app.route('/ai')
 def page_ai():
-    return serve_html('ai.html')
+    return serve_page('ai.html')
 
 @app.route('/server')
 def page_server():
-    return serve_html('server.html')
+    return serve_page('server.html')
 
 @app.route('/admin')
 def page_admin():
-    return serve_html('admin.html')
+    return serve_page('admin.html')
 
 @app.route('/faq')
 def page_faq():
-    return serve_html('faq.html')
+    return serve_page('faq.html')
 
 @app.route('/contact')
 def page_contact():
-    return serve_html('contact.html')
+    return serve_page('contact.html')
 
 @app.route('/use-cases')
 def page_use_cases():
-    return serve_html('use-cases.html')
+    return serve_page('use-cases.html')
 
 @app.route('/security-comparison')
 def page_security():
-    return serve_html('security-comparison.html')
+    return serve_page('security-comparison.html')
 
 @app.route('/testimonials')
 def page_testimonials():
-    return serve_html('testimonials.html')
+    return serve_page('testimonials.html')
 
 @app.route('/pricing-tiers-detailed')
 def page_pricing():
-    return serve_html('pricing-tiers-detailed.html')
+    return serve_page('pricing-tiers-detailed.html')
 
 @app.route('/blog')
 def page_blog():
-    return serve_html('blog.html')
+    return serve_page('blog.html')
 
 @app.route('/features')
 def page_features():
-    return serve_html('features.html')
+    return serve_page('features.html')
 
 @app.route('/developers')
 def page_developers():
-    return serve_html('developers.html')
+    return serve_page('developers.html')
 
 @app.route('/download')
 def page_download():
-    return serve_html('download.html')
+    return serve_page('download.html')
 
 @app.route('/security-audit')
 def page_security_audit():
-    return serve_html('security-audit.html')
+    return serve_page('security-audit.html')
 
 @app.route('/system-requirements')
 def page_system_requirements():
-    return serve_html('system-requirements.html')
+    return serve_page('system-requirements.html')
 
 @app.route('/compliance')
 def page_compliance():
-    return serve_html('compliance.html')
+    return serve_page('compliance.html')
 
 @app.route('/technical-specs')
 def page_technical_specs():
-    return serve_html('technical-specs.html')
+    return serve_page('technical-specs.html')
 
 @app.route('/iso-download')
 def page_iso_download():
-    return serve_html('iso-download.html')
+    return serve_page('iso-download.html')
 
 @app.route('/iso-verification')
 def page_iso_verification():
-    return serve_html('iso-verification.html')
+    return serve_page('iso-verification.html')
 
 @app.route('/install-guide')
 def page_install_guide():
-    return serve_html('install-guide.html')
+    return serve_page('install-guide.html')
 
 @app.route('/gaming-compatibility')
 def page_gaming_compatibility():
-    return serve_html('gaming-compatibility.html')
+    return serve_page('gaming-compatibility.html')
 
 # ============= LICENSING SYSTEM =============
 
