@@ -675,6 +675,8 @@ def documentation():
 # In-memory license storage
 LICENSES = {}
 ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
+ADMIN_PWD = os.getenv('ADMIN_PWD', 'DefaultAdminPassword123!')
+ADMIN_TOKENS = {}  # Simple token storage for authenticated sessions
 
 @app.route('/html/<filename>')
 def serve_html(filename):
@@ -760,6 +762,22 @@ def page_download():
     return serve_html('download.html')
 
 # ============= LICENSING SYSTEM =============
+
+@app.route('/api/v1/admin/authenticate', methods=['POST'])
+@rate_limit(limit=50)
+def authenticate_admin():
+    """Authenticate admin with password"""
+    data = request.get_json() or {}
+    password = data.get('password', '')
+    
+    if password == ADMIN_PWD:
+        token = str(uuid.uuid4())
+        ADMIN_TOKENS[token] = {'created': datetime.now().isoformat()}
+        tamper_protected_audit_log('admin_login_success', {'ip': request.remote_addr}, 'INFO')
+        return jsonify({'authenticated': True, 'token': token}), 200
+    
+    tamper_protected_audit_log('admin_login_failed', {'ip': request.remote_addr}, 'HIGH')
+    return jsonify({'authenticated': False, 'error': 'Invalid password'}), 401
 
 @app.route('/api/v1/admin/license/create', methods=['POST'])
 @rate_limit(limit=100)
