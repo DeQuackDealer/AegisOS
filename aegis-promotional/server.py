@@ -676,7 +676,15 @@ def documentation():
 def serve_html(filename):
     """Serve HTML files"""
     try:
-        return send_from_directory(os.path.join(BASE_DIR, 'html'), filename)
+        html_dir = os.path.abspath(os.path.join(BASE_DIR, 'html'))
+        filepath = os.path.abspath(os.path.join(html_dir, filename))
+        if not filepath.startswith(html_dir) or not os.path.isfile(filepath):
+            return jsonify({'error': 'Not found'}), 404
+        with open(filepath, 'r', encoding='utf-8') as f:
+            resp = make_response(f.read())
+            resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+            resp.headers['Cache-Control'] = 'no-cache'
+            return resp
     except Exception as e:
         logger.error(f"HTML error: {e}")
         return jsonify({'error': 'Not found'}), 404
