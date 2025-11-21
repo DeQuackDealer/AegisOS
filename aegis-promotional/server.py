@@ -672,22 +672,163 @@ def documentation():
 
 # ============= ROUTES: STATIC FILES =============
 
+# In-memory license storage
+LICENSES = {}
+ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
+
 @app.route('/html/<filename>')
 def serve_html(filename):
-    """Serve HTML files"""
+    """Serve HTML files - FIXED ROUTE"""
+    if '..' in filename or filename.startswith('/') or not filename.endswith('.html'):
+        return Response('Forbidden', status=403)
+    filepath = os.path.join(BASE_DIR, 'html', filename)
+    if not os.path.isfile(filepath):
+        return Response('Not found', status=404)
     try:
-        html_dir = os.path.abspath(os.path.join(BASE_DIR, 'html'))
-        filepath = os.path.abspath(os.path.join(html_dir, filename))
-        if not filepath.startswith(html_dir) or not os.path.isfile(filepath):
-            return jsonify({'error': 'Not found'}), 404
         with open(filepath, 'r', encoding='utf-8') as f:
             resp = make_response(f.read())
             resp.headers['Content-Type'] = 'text/html; charset=utf-8'
-            resp.headers['Cache-Control'] = 'no-cache'
+            resp.headers['Cache-Control'] = 'no-cache, must-revalidate'
             return resp
     except Exception as e:
-        logger.error(f"HTML error: {e}")
-        return jsonify({'error': 'Not found'}), 404
+        logger.error(f"HTML serve error: {filename} - {e}")
+        return Response('Server error', status=500)
+
+# Direct tier page routes (GUARANTEED TO WORK)
+@app.route('/freemium')
+def page_freemium():
+    return serve_html('freemium.html')
+
+@app.route('/basic')
+def page_basic():
+    return serve_html('basic.html')
+
+@app.route('/gamer')
+def page_gamer():
+    return serve_html('gamer.html')
+
+@app.route('/ai')
+def page_ai():
+    return serve_html('ai.html')
+
+@app.route('/server')
+def page_server():
+    return serve_html('server.html')
+
+@app.route('/admin')
+def page_admin():
+    return serve_html('admin.html')
+
+# ============= LICENSING SYSTEM =============
+
+@app.route('/api/v1/admin/license/create', methods=['POST'])
+@rate_limit(limit=100)
+def create_license():
+    """Create a new license (lifetime or recurring)"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        tamper_protected_audit_log('unauthorized_license_create', {'ip': request.remote_addr}, 'HIGH')
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    data = request.get_json() or {}
+    license_type = data.get('type', 'recurring')  # 'lifetime' or 'recurring'
+    tier = data.get('tier', 'basic')
+    
+    license_id = str(uuid.uuid4())[:12]
+    
+    license_data = {
+        'id': license_id,
+        'tier': tier,
+        'type': license_type,
+        'created': datetime.now().isoformat(),
+        'status': 'active',
+        'activated': False,
+        'activated_date': None
+    }
+    
+    if license_type == 'recurring':
+        days = int(data.get('days', 365))
+        license_data['start_date'] = datetime.now().isoformat()
+        license_data['end_date'] = (datetime.now() + timedelta(days=days)).isoformat()
+        license_data['renewal_date'] = (datetime.now() + timedelta(days=days)).isoformat()
+    
+    LICENSES[license_id] = license_data
+    tamper_protected_audit_log('license_created', {'license_id': license_id, 'type': license_type, 'tier': tier}, 'INFO')
+    
+    return jsonify({'license': license_data}), 201
+
+@app.route('/api/v1/admin/licenses', methods=['GET'])
+@rate_limit(limit=100)
+def list_licenses():
+    """List all licenses (admin only)"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    return jsonify({'licenses': list(LICENSES.values())}), 200
+
+@app.route('/api/v1/license/verify', methods=['POST'])
+@rate_limit(limit=500)
+def verify_license():
+    """Verify a license is valid"""
+    data = request.get_json() or {}
+    license_id = data.get('license_id')
+    
+    if not license_id or license_id not in LICENSES:
+        return jsonify({'valid': False, 'error': 'Invalid license'}), 400
+    
+    license_data = LICENSES[license_id]
+    
+    if license_data['status'] != 'active':
+        return jsonify({'valid': False, 'error': 'License inactive'}), 400
+    
+    # Check expiration for recurring licenses
+    if license_data['type'] == 'recurring':
+        end_date = datetime.fromisoformat(license_data['end_date'])
+        if datetime.now() > end_date:
+            license_data['status'] = 'expired'
+            return jsonify({'valid': False, 'error': 'License expired'}), 400
+    
+    return jsonify({
+        'valid': True,
+        'license_id': license_id,
+        'tier': license_data['tier'],
+        'type': license_data['type'],
+        'activated': license_data['activated']
+    }), 200
+
+@app.route('/api/v1/license/activate', methods=['POST'])
+@rate_limit(limit=100)
+def activate_license():
+    """Activate a license"""
+    data = request.get_json() or {}
+    license_id = data.get('license_id')
+    
+    if not license_id or license_id not in LICENSES:
+        return jsonify({'error': 'Invalid license'}), 400
+    
+    license_data = LICENSES[license_id]
+    license_data['activated'] = True
+    license_data['activated_date'] = datetime.now().isoformat()
+    
+    tamper_protected_audit_log('license_activated', {'license_id': license_id}, 'INFO')
+    return jsonify({'message': 'License activated', 'license': license_data}), 200
+
+@app.route('/api/v1/admin/license/<license_id>', methods=['DELETE'])
+@rate_limit(limit=100)
+def revoke_license(license_id):
+    """Revoke a license"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    if license_id not in LICENSES:
+        return jsonify({'error': 'License not found'}), 404
+    
+    LICENSES[license_id]['status'] = 'revoked'
+    tamper_protected_audit_log('license_revoked', {'license_id': license_id}, 'HIGH')
+    
+    return jsonify({'message': 'License revoked'}), 200
 
 @app.route('/css/<filename>')
 def serve_css(filename):

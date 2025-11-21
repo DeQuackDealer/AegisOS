@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Aegis OS License Management</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root { --primary: #6366f1; --secondary: #8b5cf6; --accent: #ec4899; --success: #10b981; --danger: #ef4444; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f9fafb;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .navbar {
+            background: #fff;
+            padding: 1rem 2rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .admin-badge {
+            background: var(--primary);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        .header {
+            margin-bottom: 2rem;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        .card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e5e7eb;
+        }
+        .card h3 {
+            color: var(--primary);
+            margin-bottom: 1rem;
+            font-size: 1.3rem;
+        }
+        .stat {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            margin: 1rem 0;
+        }
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #1f2937;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+        }
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .section {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+        .section h2 {
+            color: var(--primary);
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1.5rem;
+        }
+        th {
+            background: #f3f4f6;
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #1f2937;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        tr:hover {
+            background: #f9fafb;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .badge-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .badge-warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .badge-danger {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .message {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 1px solid #6ee7b7;
+            display: block;
+        }
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fca5a5;
+            display: block;
+        }
+        @media (max-width: 768px) {
+            .container { padding: 1rem; }
+            .dashboard { grid-template-columns: 1fr; }
+            .header h1 { font-size: 2rem; }
+            table { font-size: 0.9rem; }
+            th, td { padding: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="nav-container">
+            <div class="logo">🛡️ Aegis Admin</div>
+            <div class="admin-badge">License Management System</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>License Management Dashboard</h1>
+            <p>Create, manage, and monitor Aegis OS licenses (lifetime and recurring)</p>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="dashboard">
+            <div class="card">
+                <h3>📊 Total Licenses</h3>
+                <div class="stat" id="total-licenses">0</div>
+                <p>Active licenses across all tiers</p>
+            </div>
+            <div class="card">
+                <h3>⏰ Lifetime Licenses</h3>
+                <div class="stat" id="lifetime-count">0</div>
+                <p>One-time purchase licenses</p>
+            </div>
+            <div class="card">
+                <h3>🔄 Recurring Licenses</h3>
+                <div class="stat" id="recurring-count">0</div>
+                <p>Subscription-based licenses</p>
+            </div>
+        </div>
+
+        <!-- CREATE LICENSE SECTION -->
+        <div class="section">
+            <h2>➕ Create New License</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tier">Tier</label>
+                    <select id="tier">
+                        <option value="freemium">Freemium (Free)</option>
+                        <option value="basic">Basic ($49)</option>
+                        <option value="gamer">Gamer ($99)</option>
+                        <option value="ai-dev">AI Developer ($149)</option>
+                        <option value="server">Server ($199)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="type">License Type</label>
+                    <select id="type">
+                        <option value="lifetime">Lifetime (One-time)</option>
+                        <option value="recurring">Recurring (Annual)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="days">Renewal Period (days)</label>
+                    <input type="number" id="days" value="365" min="1">
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="createLicense()">Create License</button>
+            <p style="margin-top: 1rem; font-size: 0.9rem; color: #666;">
+                Make sure to set the Admin Key header before creating licenses
+            </p>
+        </div>
+
+        <!-- LICENSES TABLE -->
+        <div class="section">
+            <h2>📋 All Licenses</h2>
+            <table id="licenses-table">
+                <thead>
+                    <tr>
+                        <th>License ID</th>
+                        <th>Tier</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Activated</th>
+                        <th>Expires</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="licenses-tbody">
+                    <tr><td colspan="8" style="text-align: center; color: #999;">No licenses created yet</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- LICENSE VERIFICATION -->
+        <div class="section">
+            <h2>🔍 Verify License</h2>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="verify-license-id">License ID</label>
+                    <input type="text" id="verify-license-id" placeholder="Enter license ID">
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="verifyLicense()">Verify License</button>
+            <div id="verify-result" style="margin-top: 1rem;"></div>
+        </div>
+
+        <!-- API DOCUMENTATION -->
+        <div class="section">
+            <h2>📚 API Endpoints</h2>
+            <div style="background: #f3f4f6; padding: 1rem; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 0.9rem;">
+                <p><strong>Create License:</strong> POST /api/v1/admin/license/create</p>
+                <p>Header: X-Admin-Key: admin-secret-key-123</p>
+                <p>Body: { "type": "lifetime" | "recurring", "tier": "basic", "days": 365 }</p>
+                <br>
+                <p><strong>List Licenses:</strong> GET /api/v1/admin/licenses</p>
+                <p>Header: X-Admin-Key: admin-secret-key-123</p>
+                <br>
+                <p><strong>Verify License:</strong> POST /api/v1/license/verify</p>
+                <p>Body: { "license_id": "xxxxx" }</p>
+                <br>
+                <p><strong>Activate License:</strong> POST /api/v1/license/activate</p>
+                <p>Body: { "license_id": "xxxxx" }</p>
+                <br>
+                <p><strong>Revoke License:</strong> DELETE /api/v1/admin/license/&lt;license_id&gt;</p>
+                <p>Header: X-Admin-Key: admin-secret-key-123</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ADMIN_KEY = 'admin-secret-key-123';
+
+        async function createLicense() {
+            const tier = document.getElementById('tier').value;
+            const type = document.getElementById('type').value;
+            const days = parseInt(document.getElementById('days').value);
+
+            try {
+                const response = await fetch('/api/v1/admin/license/create', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Key': ADMIN_KEY
+                    },
+                    body: JSON.stringify({
+                        tier: tier,
+                        type: type,
+                        days: days
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showMessage(`✅ License created: ${data.license.id}`, 'success');
+                    loadLicenses();
+                } else {
+                    showMessage(`❌ Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadLicenses() {
+            try {
+                const response = await fetch('/api/v1/admin/licenses', {
+                    method: 'GET',
+                    headers: {
+                        'X-Admin-Key': ADMIN_KEY
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const licenses = data.licenses || [];
+                    updateDashboard(licenses);
+                    updateTable(licenses);
+                }
+            } catch (error) {
+                console.error('Error loading licenses:', error);
+            }
+        }
+
+        function updateDashboard(licenses) {
+            const total = licenses.length;
+            const lifetime = licenses.filter(l => l.type === 'lifetime').length;
+            const recurring = licenses.filter(l => l.type === 'recurring').length;
+
+            document.getElementById('total-licenses').textContent = total;
+            document.getElementById('lifetime-count').textContent = lifetime;
+            document.getElementById('recurring-count').textContent = recurring;
+        }
+
+        function updateTable(licenses) {
+            const tbody = document.getElementById('licenses-tbody');
+
+            if (licenses.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #999;">No licenses created yet</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = licenses.map(license => `
+                <tr>
+                    <td><code style="background: #f3f4f6; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.85rem;">${license.id}</code></td>
+                    <td>${license.tier}</td>
+                    <td><span class="badge badge-warning">${license.type}</span></td>
+                    <td><span class="badge ${license.status === 'active' ? 'badge-success' : 'badge-danger'}">${license.status}</span></td>
+                    <td>${new Date(license.created).toLocaleDateString()}</td>
+                    <td>${license.activated ? '✅ Yes' : '❌ No'}</td>
+                    <td>${license.type === 'lifetime' ? '∞ Forever' : new Date(license.end_date).toLocaleDateString()}</td>
+                    <td>
+                        <button class="btn btn-success" onclick="activateLicense('${license.id}')" ${license.activated ? 'disabled' : ''}>Activate</button>
+                        <button class="btn btn-danger" onclick="revokeLicense('${license.id}')" ${license.status !== 'active' ? 'disabled' : ''}>Revoke</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function activateLicense(licenseId) {
+            try {
+                const response = await fetch('/api/v1/license/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ license_id: licenseId })
+                });
+
+                if (response.ok) {
+                    showMessage(`✅ License ${licenseId} activated!`, 'success');
+                    loadLicenses();
+                } else {
+                    showMessage(`❌ Failed to activate license`, 'error');
+                }
+            } catch (error) {
+                showMessage(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function revokeLicense(licenseId) {
+            if (!confirm('Are you sure you want to revoke this license?')) return;
+
+            try {
+                const response = await fetch(`/api/v1/admin/license/${licenseId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Admin-Key': ADMIN_KEY }
+                });
+
+                if (response.ok) {
+                    showMessage(`✅ License ${licenseId} revoked!`, 'success');
+                    loadLicenses();
+                } else {
+                    showMessage(`❌ Failed to revoke license`, 'error');
+                }
+            } catch (error) {
+                showMessage(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function verifyLicense() {
+            const licenseId = document.getElementById('verify-license-id').value;
+            if (!licenseId) {
+                showMessage('❌ Please enter a license ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/v1/license/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ license_id: licenseId })
+                });
+
+                const data = await response.json();
+                const result = document.getElementById('verify-result');
+
+                if (response.ok) {
+                    result.innerHTML = `
+                        <div class="message success">
+                            ✅ License Valid<br>
+                            <strong>Tier:</strong> ${data.tier}<br>
+                            <strong>Type:</strong> ${data.type}<br>
+                            <strong>Status:</strong> ${data.activated ? 'Activated' : 'Not Activated'}
+                        </div>
+                    `;
+                } else {
+                    result.innerHTML = `<div class="message error">❌ ${data.error}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('verify-result').innerHTML = `<div class="message error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        function showMessage(text, type) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = `message ${type}`;
+            setTimeout(() => msg.className = 'message', 5000);
+        }
+
+        // Load licenses on page load
+        loadLicenses();
+    </script>
+</body>
+</html>
