@@ -830,6 +830,88 @@ def revoke_license(license_id):
     
     return jsonify({'message': 'License revoked'}), 200
 
+@app.route('/api/v1/admin/license/<license_id>', methods=['PATCH'])
+@rate_limit(limit=100)
+def update_license(license_id):
+    """Update a license"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    if license_id not in LICENSES:
+        return jsonify({'error': 'License not found'}), 404
+    
+    data = request.get_json() or {}
+    license_data = LICENSES[license_id]
+    
+    # Allow updating tier, status, and notes
+    if 'tier' in data:
+        license_data['tier'] = data['tier']
+    if 'status' in data:
+        license_data['status'] = data['status']
+    if 'notes' in data:
+        license_data['notes'] = data['notes']
+    
+    tamper_protected_audit_log('license_updated', {'license_id': license_id}, 'INFO')
+    return jsonify({'license': license_data}), 200
+
+@app.route('/api/v1/admin/license/<license_id>/extend', methods=['POST'])
+@rate_limit(limit=100)
+def extend_license(license_id):
+    """Extend a recurring license"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    if license_id not in LICENSES:
+        return jsonify({'error': 'License not found'}), 404
+    
+    license_data = LICENSES[license_id]
+    if license_data['type'] != 'recurring':
+        return jsonify({'error': 'Only recurring licenses can be extended'}), 400
+    
+    data = request.get_json() or {}
+    days = int(data.get('days', 365))
+    
+    if 'end_date' in license_data:
+        old_end = datetime.fromisoformat(license_data['end_date'])
+        new_end = old_end + timedelta(days=days)
+    else:
+        new_end = datetime.now() + timedelta(days=days)
+    
+    license_data['end_date'] = new_end.isoformat()
+    license_data['renewal_date'] = new_end.isoformat()
+    
+    tamper_protected_audit_log('license_extended', {'license_id': license_id, 'new_end': new_end.isoformat()}, 'INFO')
+    return jsonify({'license': license_data}), 200
+
+@app.route('/api/v1/admin/stats', methods=['GET'])
+@rate_limit(limit=100)
+def get_stats():
+    """Get licensing statistics"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    total = len(LICENSES)
+    active = sum(1 for l in LICENSES.values() if l['status'] == 'active')
+    lifetime = sum(1 for l in LICENSES.values() if l['type'] == 'lifetime')
+    recurring = sum(1 for l in LICENSES.values() if l['type'] == 'recurring')
+    
+    tier_breakdown = {}
+    for license_data in LICENSES.values():
+        tier = license_data['tier']
+        tier_breakdown[tier] = tier_breakdown.get(tier, 0) + 1
+    
+    return jsonify({
+        'total': total,
+        'active': active,
+        'lifetime': lifetime,
+        'recurring': recurring,
+        'tiers': tier_breakdown,
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
 @app.route('/css/<filename>')
 def serve_css(filename):
     """Serve CSS files"""
