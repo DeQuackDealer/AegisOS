@@ -1,0 +1,17 @@
+
+[Unit]
+Description=Aegis OS License Manager - License validation and feature management
+After=multi-user.target network.target aegis-system-monitor.service
+Wants=network.target
+
+[Service]
+Type=oneshot
+User=aegis
+ExecStart=/usr/local/bin/aegis-license-manager --status
+RemainAfterExit=yes
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

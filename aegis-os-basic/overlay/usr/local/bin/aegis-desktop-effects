@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Desktop Effects - Windows 11 style visual enhancements
+"""
+
+import os
+import json
+import subprocess
+
+class AegisDesktopEffects:
+    def __init__(self):
+        self.config_file = "/etc/aegis/desktop-effects.json"
+        self.load_config()
+        
+    def load_config(self):
+        """Load desktop effects configuration"""
+        default_config = {
+            "blur_enabled": True,
+            "transparency_enabled": True,
+            "animations_enabled": True,
+            "rounded_corners": True,
+            "drop_shadows": True,
+            "acrylic_effect": True,
+            "performance_mode": "balanced"  # performance, balanced, quality
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                self.config = {**default_config, **json.load(f)}
+        except FileNotFoundError:
+            self.config = default_config
+            self.save_config()
+    
+    def save_config(self):
+        """Save desktop effects configuration"""
+        os.makedirs("/etc/aegis", exist_ok=True)
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def setup_compositor(self):
+        """Setup compositor for advanced visual effects"""
+        # Configure XFCE compositor for Windows 11 style effects
+        compositor_settings = [
+            ('/general/use_compositing', 'true'),
+            ('/general/frame_rate', '60'),
+            ('/general/synchronize_drawing', 'true'),
+            ('/general/present_windows', 'true'),
+            ('/general/show_frame_extents', 'false'),
+            ('/general/show_popup_shadow', 'true'),
+            ('/general/show_dock_shadow', 'true'),
+            ('/general/show_workspace_names', 'true'),
+        ]
+        
+        for setting, value in compositor_settings:
+            subprocess.run([
+                'xfconf-query', '-c', 'xfwm4',
+                '-p', setting, '-s', value
+            ])
+        
+        print("✅ Compositor configured for advanced effects")
+    
+    def apply_window_effects(self):
+        """Apply Windows 11 style window effects"""
+        # Window manager settings for modern look
+        window_settings = [
+            ('/general/theme', 'Aegis-Win11'),
+            ('/general/title_font', 'Segoe UI 9'),
+            ('/general/button_layout', 'O|HMC'),  # Windows button layout
+            ('/general/shadow_opacity_active', '50'),
+            ('/general/shadow_opacity_inactive', '30'),
+            ('/general/show_app_icon', 'true'),
+            ('/general/snap_to_border', 'true'),
+            ('/general/snap_to_windows', 'true'),
+            ('/general/wrap_windows', 'false'),
+            ('/general/zoom_desktop', 'true')
+        ]
+        
+        for setting, value in window_settings:
+            subprocess.run([
+                'xfconf-query', '-c', 'xfwm4',
+                '-p', setting, '-s', value
+            ])
+    
+    def create_window_theme(self):
+        """Create Windows 11 style window theme"""
+        theme_dir = "/usr/share/themes/Aegis-Win11/xfwm4"
+        os.makedirs(theme_dir, exist_ok=True)
+        
+        # Create themerc file
+        themerc_content = """# Aegis OS - Windows 11 Style Theme
+button_offset=6
+button_spacing=1
+full_width_title=true
+maximized_offset=0
+shadow_delta_height=2
+shadow_delta_width=0
+shadow_delta_x=0
+shadow_delta_y=-5
+shadow_opacity=50
+show_app_icon=true
+title_horizontal_offset=3
+title_shadow_active=false
+title_shadow_inactive=false
+title_vertical_offset_active=1
+title_vertical_offset_inactive=1
+"""
+        
+        with open(f"{theme_dir}/themerc", 'w') as f:
+            f.write(themerc_content)
+        
+        print("✅ Windows 11 window theme created")
+    
+    def setup_animations(self):
+        """Configure smooth animations"""
+        if not self.config["animations_enabled"]:
+            return
+            
+        # Enable window animations
+        animation_settings = [
+            ('/general/cycle_draw_frame', 'true'),
+            ('/general/cycle_ghost', 'true'),
+            ('/general/cycle_minimum', 'true'),
+            ('/general/cycle_preview', 'true'),
+            ('/general/cycle_tabwin_mode', '1'),
+            ('/general/zoom_pointer', 'true'),
+            ('/general/workspace_count', '4'),
+            ('/general/wrap_cycle', 'false')
+        ]
+        
+        for setting, value in animation_settings:
+            subprocess.run([
+                'xfconf-query', '-c', 'xfwm4',
+                '-p', setting, '-s', value
+            ])
+        
+        print("✅ Smooth animations configured")
+    
+    def apply_all_effects(self):
+        """Apply all desktop effects"""
+        print("🎨 Applying Aegis OS Desktop Effects - Windows 11 Style...")
+        
+        self.setup_compositor()
+        self.create_window_theme()
+        self.apply_window_effects()
+        self.setup_animations()
+        
+        # Restart window manager
+        subprocess.run(['xfwm4', '--replace'], capture_output=True)
+        
+        print("✅ Windows 11 style desktop effects applied!")
+
+if __name__ == "__main__":
+    effects = AegisDesktopEffects()
+    effects.apply_all_effects()

@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""
+Aegis OS System Information Utility
+Displays comprehensive system information and Aegis OS branding
+"""
+
+import os
+import platform
+import subprocess
+import time
+import socket
+from datetime import datetime
+
+class AegisSystemInfo:
+    def __init__(self):
+        self.version = "Freemium 1.0.0"
+        self.codename = "Genesis"
+        
+    def get_hardware_info(self):
+        """Get comprehensive hardware information"""
+        hw_info = {}
+        
+        # CPU Information
+        try:
+            with open('/proc/cpuinfo', 'r') as f:
+                cpu_info = f.read()
+            
+            # Get CPU model
+            cpu_model = "Unknown CPU"
+            for line in cpu_info.split('\n'):
+                if 'model name' in line:
+                    cpu_model = line.split(':')[1].strip()
+                    break
+            
+            # Count CPU cores
+            cores = cpu_info.count('processor')
+            
+            hw_info['cpu'] = cpu_model
+            hw_info['cpu_cores'] = cores
+            
+            # Get CPU frequency
+            try:
+                with open('/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq', 'r') as f:
+                    freq_khz = int(f.read().strip())
+                    hw_info['cpu_freq'] = f"{freq_khz / 1000000:.2f} GHz"
+            except:
+                hw_info['cpu_freq'] = "N/A"
+                
+        except:
+            hw_info['cpu'] = "Unknown CPU"
+            hw_info['cpu_cores'] = 0
+            hw_info['cpu_freq'] = "N/A"
+            
+        # Memory Information
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                mem_info = f.read()
+            
+            mem_total = 0
+            mem_available = 0
+            swap_total = 0
+            
+            for line in mem_info.split('\n'):
+                if 'MemTotal' in line:
+                    mem_total = int(line.split()[1])
+                elif 'MemAvailable' in line:
+                    mem_available = int(line.split()[1])
+                elif 'SwapTotal' in line:
+                    swap_total = int(line.split()[1])
+            
+            hw_info['memory'] = f"{mem_total / 1024 / 1024:.2f} GB"
+            hw_info['memory_available'] = f"{mem_available / 1024 / 1024:.2f} GB"
+            hw_info['swap'] = f"{swap_total / 1024 / 1024:.2f} GB"
+        except:
+            hw_info['memory'] = "Unknown"
+            hw_info['memory_available'] = "Unknown"
+            hw_info['swap'] = "Unknown"
+            
+        # Architecture
+        hw_info['architecture'] = platform.machine()
+        
+        # GPU Information
+        hw_info['gpu'] = self.get_gpu_info()
+        
+        # Disk Information
+        hw_info['disk'] = self.get_disk_info()
+        
+        return hw_info
+    
+    def get_gpu_info(self):
+        """Get GPU information"""
+        # Try NVIDIA
+        try:
+            result = subprocess.run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except:
+            pass
+        
+        # Try AMD
+        try:
+            result = subprocess.run(['lspci'], capture_output=True, text=True)
+            for line in result.stdout.split('\n'):
+                if 'VGA' in line or 'Display' in line:
+                    # Extract GPU model from lspci output
+                    parts = line.split(': ', 1)
+                    if len(parts) > 1:
+                        return parts[1].strip()
+        except:
+            pass
+        
+        # Try reading from /sys
+        try:
+            for device in os.listdir('/sys/class/drm'):
+                if device.startswith('card'):
+                    card_path = f'/sys/class/drm/{device}/device/vendor'
+                    if os.path.exists(card_path):
+                        return "Graphics Device Detected"
+        except:
+            pass
+        
+        return "Unknown/Integrated"
+    
+    def get_disk_info(self):
+        """Get disk information"""
+        try:
+            result = subprocess.run(['df', '-h', '/'], capture_output=True, text=True)
+            lines = result.stdout.strip().split('\n')
+            if len(lines) > 1:
+                parts = lines[1].split()
+                if len(parts) >= 4:
+                    return f"{parts[1]}B total, {parts[2]}B used ({parts[4]})"
+        except:
+            pass
+        return "Unknown"
+    
+    def get_system_info(self):
+        """Get system-level information"""
+        sys_info = {}
+        
+        # Hostname
+        sys_info['hostname'] = socket.gethostname()
+        
+        # Kernel version
+        sys_info['kernel'] = platform.release()
+        
+        # OS Information
+        try:
+            with open('/etc/os-release', 'r') as f:
+                os_release = f.read()
+            for line in os_release.split('\n'):
+                if 'AEGIS_OS_VERSION' in line:
+                    sys_info['aegis_version'] = line.split('=')[1].strip('"')
+                elif 'AEGIS_OS_CODENAME' in line:
+                    sys_info['aegis_codename'] = line.split('=')[1].strip('"')
+                elif 'AEGIS_OS_EDITION' in line:
+                    sys_info['aegis_edition'] = line.split('=')[1].strip('"')
+        except:
+            sys_info['aegis_version'] = self.version
+            sys_info['aegis_codename'] = self.codename
+            sys_info['aegis_edition'] = "Freemium"
+        
+        # Python version
+        sys_info['python'] = platform.python_version()
+        
+        # Load average
+        try:
+            with open('/proc/loadavg', 'r') as f:
+                loadavg = f.read().strip().split()[:3]
+                sys_info['load'] = ', '.join(loadavg)
+        except:
+            sys_info['load'] = "N/A"
+        
+        # Network interfaces
+        sys_info['network'] = self.get_network_info()
+        
+        return sys_info
+    
+    def get_network_info(self):
+        """Get network interface information"""
+        interfaces = []
+        try:
+            result = subprocess.run(['ip', 'addr', 'show'], capture_output=True, text=True)
+            current_iface = None
+            for line in result.stdout.split('\n'):
+                if line and line[0].isdigit():
+                    # New interface
+                    parts = line.split(': ')
+                    if len(parts) >= 2:
+                        current_iface = parts[1].split('@')[0]
+                elif 'inet ' in line and current_iface:
+                    # IPv4 address
+                    addr = line.strip().split()[1].split('/')[0]
+                    if current_iface != 'lo':  # Skip loopback
+                        interfaces.append(f"{current_iface}: {addr}")
+        except:
+            pass
+        
+        return ', '.join(interfaces) if interfaces else "No network configured"
+    
+    def get_uptime(self):
+        """Get system uptime"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_seconds = float(f.readline().split()[0])
+            
+            days = int(uptime_seconds // 86400)
+            hours = int((uptime_seconds % 86400) // 3600)
+            minutes = int((uptime_seconds % 3600) // 60)
+            
+            if days > 0:
+                return f"{days}d {hours}h {minutes}m"
+            elif hours > 0:
+                return f"{hours}h {minutes}m"
+            else:
+                return f"{minutes}m"
+        except:
+            return "Unknown"
+    
+    def check_virtualization(self):
+        """Check if running in a virtual environment"""
+        vm_indicators = {
+            'VMware': ['vmware', 'vmxnet'],
+            'VirtualBox': ['vboxguest', 'vboxsf'],
+            'Hyper-V': ['hv_vmbus', 'hyperv'],
+            'QEMU/KVM': ['virtio', 'qemu'],
+            'Xen': ['xen'],
+            'Docker': ['docker'],
+            'LXC': ['lxc']
+        }
+        
+        try:
+            # Check kernel modules
+            with open('/proc/modules', 'r') as f:
+                modules = f.read().lower()
+            
+            # Check dmesg
+            try:
+                result = subprocess.run(['dmesg'], capture_output=True, text=True)
+                dmesg = result.stdout.lower()
+            except:
+                dmesg = ""
+            
+            for vm_name, indicators in vm_indicators.items():
+                if any(indicator in modules or indicator in dmesg for indicator in indicators):
+                    return vm_name
+            
+            # Check systemd-detect-virt if available
+            try:
+                result = subprocess.run(['systemd-detect-virt'], capture_output=True, text=True)
+                if result.returncode == 0 and result.stdout.strip() != 'none':
+                    return result.stdout.strip().title()
+            except:
+                pass
+                
+        except:
+            pass
+        
+        return None
+    
+    def display_info(self):
+        """Display formatted system information"""
+        hw_info = self.get_hardware_info()
+        sys_info = self.get_system_info()
+        uptime = self.get_uptime()
+        vm_type = self.check_virtualization()
+        
+        # ASCII Art logo
+        logo = """
+    ╔═══════════════════════════════════════╗
+    ║     ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀        ║
+    ║     █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█        ║
+    ╚═══════════════════════════════════════╝"""
+        
+        print(logo)
+        print()
+        print(f"    Aegis OS {sys_info.get('aegis_version', self.version)} \"{sys_info.get('aegis_codename', self.codename)}\"")
+        print("    ═" * 40)
+        
+        # System Information
+        print("\n  📊 SYSTEM INFORMATION")
+        print("  " + "─" * 38)
+        print(f"  Edition       : {sys_info.get('aegis_edition', 'Freemium')} (Community)")
+        print(f"  Hostname      : {sys_info['hostname']}")
+        print(f"  Kernel        : {sys_info['kernel']}")
+        print(f"  Architecture  : {hw_info['architecture']}")
+        print(f"  Python        : {sys_info['python']}")
+        print(f"  Uptime        : {uptime}")
+        print(f"  Load Average  : {sys_info['load']}")
+        
+        if vm_type:
+            print(f"  Virtualization: {vm_type} ✓")
+        
+        # Hardware Information
+        print("\n  🖥️  HARDWARE INFORMATION")
+        print("  " + "─" * 38)
+        print(f"  CPU           : {hw_info['cpu']}")
+        print(f"  CPU Cores     : {hw_info['cpu_cores']}")
+        print(f"  CPU Frequency : {hw_info['cpu_freq']}")
+        print(f"  Memory        : {hw_info['memory']} total")
+        print(f"  Available     : {hw_info['memory_available']}")
+        print(f"  Swap          : {hw_info['swap']}")
+        print(f"  GPU           : {hw_info['gpu']}")
+        print(f"  Disk (/)      : {hw_info['disk']}")
+        
+        # Network Information
+        print("\n  🌐 NETWORK INFORMATION")
+        print("  " + "─" * 38)
+        print(f"  Interfaces    : {sys_info['network']}")
+        
+        # Features
+        print("\n  🎮 GAMING FEATURES")
+        print("  " + "─" * 38)
+        print("  Gaming        : Proton + Wine Ready")
+        print("  Optimization  : Basic (Freemium)")
+        print("  Steam Support : Compatible")
+        print("  GPU Driver    : Auto-detected")
+        
+        # Support Information
+        print("\n  🚀 SUPPORT & UPGRADES")
+        print("  " + "─" * 38)
+        print("  Support       : Community Forums")
+        print("  Updates       : Community-driven")
+        print("  Documentation : wiki.aegis-os.com")
+        print("  Upgrade       : aegis-os.com/upgrade")
+        
+        print("\n  " + "═" * 40)
+        print("  💎 Ready to unlock full potential?")
+        print("     Visit aegis-os.com for Pro editions!")
+        print()
+
+if __name__ == "__main__":
+    import sys
+    
+    info = AegisSystemInfo()
+    
+    # Check for command-line arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--json":
+            import json
+            data = {
+                "hardware": info.get_hardware_info(),
+                "system": info.get_system_info(),
+                "uptime": info.get_uptime(),
+                "virtualization": info.check_virtualization()
+            }
+            print(json.dumps(data, indent=2))
+        elif sys.argv[1] == "--help":
+            print("Aegis OS System Information")
+            print("Usage:")
+            print("  aegis-system-info         Show formatted system information")
+            print("  aegis-system-info --json  Output as JSON")
+            print("  aegis-system-info --help  Show this help")
+        else:
+            print(f"Unknown option: {sys.argv[1]}")
+            print("Use --help for usage information")
+    else:
+        info.display_info()

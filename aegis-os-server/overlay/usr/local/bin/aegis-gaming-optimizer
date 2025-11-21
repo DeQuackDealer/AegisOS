@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Gaming Optimizer - Freemium Edition
+Basic gaming optimizations without AI features
+"""
+
+import os
+import subprocess
+import json
+import logging
+
+class AegisGamingOptimizer:
+    def __init__(self):
+        self.config_file = "/etc/aegis/gaming-config.json"
+        self.log_file = "/var/log/aegis-gaming.log"
+        self.setup_logging()
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(self.log_file),
+                logging.StreamHandler()
+            ]
+        )
+        
+    def load_config(self):
+        """Load gaming configuration"""
+        default_config = {
+            "cpu_governor": "performance",
+            "swappiness": 10,
+            "dirty_ratio": 15,
+            "proton_enabled": True,
+            "wine_version": "stable"
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                config = json.load(f)
+                return {**default_config, **config}
+        except FileNotFoundError:
+            os.makedirs("/etc/aegis", exist_ok=True)
+            with open(self.config_file, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+    
+    def set_cpu_governor(self, governor):
+        """Set CPU governor for performance"""
+        try:
+            cpus = os.listdir("/sys/devices/system/cpu/")
+            cpu_dirs = [cpu for cpu in cpus if cpu.startswith("cpu") and cpu[3:].isdigit()]
+            
+            for cpu in cpu_dirs:
+                governor_path = f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor"
+                if os.path.exists(governor_path):
+                    with open(governor_path, 'w') as f:
+                        f.write(governor)
+                        
+            logging.info(f"CPU governor set to {governor}")
+        except Exception as e:
+            logging.error(f"Failed to set CPU governor: {e}")
+    
+    def optimize_memory(self, swappiness, dirty_ratio):
+        """Optimize memory settings for gaming"""
+        try:
+            with open("/proc/sys/vm/swappiness", 'w') as f:
+                f.write(str(swappiness))
+                
+            with open("/proc/sys/vm/dirty_ratio", 'w') as f:
+                f.write(str(dirty_ratio))
+                
+            logging.info("Memory optimization applied")
+        except Exception as e:
+            logging.error(f"Failed to optimize memory: {e}")
+    
+    def setup_proton(self):
+        """Setup Proton for Steam compatibility"""
+        proton_dir = "/home/aegis/.steam/steam/steamapps/common/"
+        
+        if not os.path.exists(proton_dir):
+            logging.info("Steam not detected, skipping Proton setup")
+            return
+            
+        # Set environment variables for Proton
+        env_vars = {
+            "PROTON_USE_WINED3D": "1",
+            "PROTON_NO_ESYNC": "0",
+            "PROTON_NO_FSYNC": "0",
+            "PROTON_FORCE_LARGE_ADDRESS_AWARE": "1"
+        }
+        
+        profile_path = "/home/aegis/.profile"
+        with open(profile_path, 'a') as f:
+            f.write("\n# Aegis OS Proton Configuration\n")
+            for var, value in env_vars.items():
+                f.write(f"export {var}={value}\n")
+                
+        logging.info("Proton configuration applied")
+    
+    def setup_wine(self):
+        """Setup Wine for Windows application compatibility"""
+        wine_prefix = "/home/aegis/.wine"
+        
+        if not os.path.exists("/usr/bin/wine"):
+            logging.info("Wine not installed, skipping configuration")
+            return
+            
+        try:
+            # Initialize Wine prefix
+            subprocess.run([
+                "sudo", "-u", "aegis", 
+                "WINEPREFIX=" + wine_prefix, 
+                "winecfg", "/S"
+            ], check=True, capture_output=True)
+            
+            # Install essential Windows libraries
+            libraries = ["vcrun2019", "dotnet48", "corefonts"]
+            for lib in libraries:
+                subprocess.run([
+                    "sudo", "-u", "aegis",
+                    "WINEPREFIX=" + wine_prefix,
+                    "winetricks", "-q", lib
+                ], capture_output=True)
+                
+            logging.info("Wine configuration completed")
+        except Exception as e:
+            logging.error(f"Wine setup failed: {e}")
+    
+    def apply_optimizations(self):
+        """Apply all gaming optimizations"""
+        logging.info("Starting Aegis Gaming Optimizer - Freemium Edition")
+        
+        config = self.load_config()
+        
+        # Apply CPU optimization
+        self.set_cpu_governor(config["cpu_governor"])
+        
+        # Apply memory optimization
+        self.optimize_memory(config["swappiness"], config["dirty_ratio"])
+        
+        # Setup gaming compatibility layers
+        if config["proton_enabled"]:
+            self.setup_proton()
+            
+        self.setup_wine()
+        
+        logging.info("Gaming optimizations applied successfully")
+        print("🎮 Aegis Gaming Optimizer - Freemium Edition")
+        print("✅ Basic gaming optimizations applied")
+        print("ℹ️  Upgrade to Gamer Edition for AI-powered optimizations")
+
+if __name__ == "__main__":
+    optimizer = AegisGamingOptimizer()
+    optimizer.apply_optimizations()

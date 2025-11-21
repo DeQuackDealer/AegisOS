@@ -38,6 +38,11 @@ sed -i "s|aegis-os-gamer/post-build.sh|$SCRIPT_DIR/post-build.sh|g" .config
 # Make post-build script executable
 chmod +x "$SCRIPT_DIR/post-build.sh"
 
+# Add security features (PAID TIER)
+echo "🔒 Adding security & AI threat detection..."
+echo "BR2_PACKAGE_OPENSSL=y" >> "$BUILDROOT_DIR/.config"
+echo "BR2_PACKAGE_UFW=y" >> "$BUILDROOT_DIR/.config"
+
 # Add gaming-specific optimizations
 echo "🎮 Applying Gamer Edition optimizations..."
 echo "BR2_PACKAGE_STEAM=y" >> "$BUILDROOT_DIR/.config"

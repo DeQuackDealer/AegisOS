@@ -1,0 +1,17 @@
+
+[Unit]
+Description=Aegis OS System Monitor - Continuous resource monitoring and alerting
+After=multi-user.target network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=aegis
+ExecStart=/usr/local/bin/aegis-system-monitor
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

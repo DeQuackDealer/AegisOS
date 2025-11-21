@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Advanced License Management System - Freemium Edition
+Professional-grade license validation and system integration
+"""
+
+import os
+import sys
+import json
+import time
+import hashlib
+import platform
+import subprocess
+import urllib.request
+import urllib.parse
+import urllib.error
+from datetime import datetime, timedelta
+import logging
+
+class AegisLicenseManager:
+    def __init__(self):
+        self.version = "1.0.0-freemium"
+        self.config_file = "/etc/aegis/license-config.json"
+        self.license_file = "/etc/aegis/license.json"
+        self.log_file = "/var/log/aegis-license.log"
+        self.hardware_id_file = "/var/lib/aegis/hardware-id"
+        
+        self.setup_directories()
+        self.setup_logging()
+        
+    def setup_directories(self):
+        """Ensure all required directories exist"""
+        dirs = ["/etc/aegis", "/var/lib/aegis", "/var/log"]
+        for directory in dirs:
+            os.makedirs(directory, exist_ok=True)
+    
+    def setup_logging(self):
+        """Configure logging system"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(self.log_file),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger("AegisLicense")
+    
+    def generate_hardware_id(self):
+        """Generate unique hardware identifier"""
+        try:
+            # Collect hardware information
+            machine_info = {
+                'hostname': platform.node(),
+                'machine': platform.machine(),
+                'processor': platform.processor(),
+                'system': platform.system(),
+                'release': platform.release()
+            }
+            
+            # Add CPU information
+            try:
+                with open('/proc/cpuinfo', 'r') as f:
+                    cpu_info = f.read()
+                    for line in cpu_info.split('\n'):
+                        if 'Serial' in line:
+                            machine_info['cpu_serial'] = line.split(':')[1].strip()
+                        elif 'model name' in line:
+                            machine_info['cpu_model'] = line.split(':')[1].strip()
+                            break
+            except:
+                pass
+            
+            # Add memory information
+            try:
+                with open('/proc/meminfo', 'r') as f:
+                    for line in f:
+                        if 'MemTotal' in line:
+                            machine_info['memory'] = line.split()[1]
+                            break
+            except:
+                pass
+            
+            # Create hash from machine info
+            machine_str = json.dumps(machine_info, sort_keys=True)
+            hardware_id = hashlib.sha256(machine_str.encode()).hexdigest()[:16].upper()
+            
+            # Save hardware ID
+            with open(self.hardware_id_file, 'w') as f:
+                f.write(hardware_id)
+            
+            return hardware_id
+            
+        except Exception as e:
+            self.logger.error(f"Failed to generate hardware ID: {e}")
+            return "UNKNOWN-HARDWARE-ID"
+    
+    def get_hardware_id(self):
+        """Get or generate hardware ID"""
+        if os.path.exists(self.hardware_id_file):
+            with open(self.hardware_id_file, 'r') as f:
+                return f.read().strip()
+        else:
+            return self.generate_hardware_id()
+    
+    def load_config(self):
+        """Load license configuration"""
+        default_config = {
+            "license_server": "https://license.aegis-os.com",
+            "check_interval": 86400,  # 24 hours
+            "retry_interval": 3600,   # 1 hour
+            "max_retries": 5,
+            "edition": "freemium",
+            "features_enabled": [
+                "basic_monitoring",
+                "gaming_optimization",
+                "community_support"
+            ],
+            "features_disabled": [
+                "priority_updates",
+                "ai_optimization",
+                "professional_support",
+                "advanced_monitoring"
+            ]
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                config = json.load(f)
+                return {**default_config, **config}
+        except FileNotFoundError:
+            with open(self.config_file, 'w') as f:
+                json.dump(default_config, f, indent=2)
+            return default_config
+    
+    def load_license(self):
+        """Load current license information"""
+        try:
+            with open(self.license_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return None
+    
+    def save_license(self, license_data):
+        """Save license information"""
+        with open(self.license_file, 'w') as f:
+            json.dump(license_data, f, indent=2)
+    
+    def validate_license_format(self, license_key):
+        """Validate license key format"""
+        # Expected format: AEGIS-EDITION-YEAR-STATUS (e.g., AEGIS-BASIC-2024-ACTIVE)
+        parts = license_key.split('-')
+        if len(parts) != 4:
+            return False
+        
+        if parts[0] != 'AEGIS':
+            return False
+        
+        valid_editions = ['BASIC', 'GAMER', 'AI', 'SERVER']
+        if parts[1] not in valid_editions:
+            return False
+        
+        try:
+            year = int(parts[2])
+            if year < 2024 or year > 2030:
+                return False
+        except ValueError:
+            return False
+        
+        if parts[3] not in ['ACTIVE', 'TRIAL', 'EXPIRED']:
+            return False
+        
+        return True
+    
+    def attempt_license_activation(self, license_key):
+        """Attempt to activate a license key"""
+        self.logger.info(f"Attempting license activation for: {license_key}")
+        
+        if not self.validate_license_format(license_key):
+            self.logger.error("Invalid license key format")
+            return {
+                'success': False,
+                'error': 'Invalid license key format',
+                'code': 'INVALID_FORMAT'
+            }
+        
+        config = self.load_config()
+        hardware_id = self.get_hardware_id()
+        
+        # In freemium edition, we simulate license server communication
+        # Real editions would make actual HTTP requests to license server
+        
+        self.logger.warning("Freemium Edition: License activation simulation")
+        
+        # Simulate different responses based on license key
+        edition = license_key.split('-')[1]
+        
+        if edition in ['BASIC', 'GAMER', 'AI', 'SERVER']:
+            # Simulate license server rejection for freemium users
+            return {
+                'success': False,
+                'error': 'License activation requires paid edition',
+                'code': 'FREEMIUM_LIMITATION',
+                'message': 'Please visit https://aegis-os.com to purchase a license',
+                'upgrade_url': 'https://aegis-os.com/upgrade'
+            }
+        
+        return {
+            'success': False,
+            'error': 'Unknown license edition',
+            'code': 'UNKNOWN_EDITION'
+        }
+    
+    def get_license_status(self):
+        """Get current license status"""
+        license_data = self.load_license()
+        config = self.load_config()
+        
+        status = {
+            'edition': 'freemium',
+            'status': 'active',
+            'features': config['features_enabled'],
+            'disabled_features': config['features_disabled'],
+            'hardware_id': self.get_hardware_id(),
+            'last_check': datetime.now().isoformat(),
+            'next_check': (datetime.now() + timedelta(seconds=config['check_interval'])).isoformat(),
+            'upgrade_available': True,
+            'upgrade_url': 'https://aegis-os.com/upgrade'
+        }
+        
+        if license_data:
+            status.update({
+                'license_key': license_data.get('key', 'NONE'),
+                'activation_date': license_data.get('activation_date', 'N/A'),
+                'expiry_date': license_data.get('expiry_date', 'N/A')
+            })
+        
+        return status
+    
+    def display_status(self):
+        """Display detailed license status"""
+        status = self.get_license_status()
+        
+        print("\n" + "="*60)
+        print("🛡️  AEGIS OS LICENSE MANAGER")
+        print("="*60)
+        print(f"Edition: {status['edition'].upper()}")
+        print(f"Status: {status['status'].upper()}")
+        print(f"Hardware ID: {status['hardware_id']}")
+        print(f"Last Check: {status['last_check'][:19]}")
+        
+        print("\n📊 ENABLED FEATURES:")
+        for feature in status['features']:
+            print(f"  ✅ {feature.replace('_', ' ').title()}")
+        
+        print("\n🔒 DISABLED FEATURES (Upgrade Required):")
+        for feature in status['disabled_features']:
+            print(f"  ❌ {feature.replace('_', ' ').title()}")
+        
+        if status.get('upgrade_available'):
+            print(f"\n🚀 UPGRADE AVAILABLE:")
+            print(f"   Visit: {status['upgrade_url']}")
+            print(f"   Unlock advanced features and priority support!")
+        
+        print("="*60 + "\n")
+    
+    def activate_license(self, license_key):
+        """Activate a license key"""
+        print(f"\n🔑 Activating License: {license_key}")
+        print("="*50)
+        
+        result = self.attempt_license_activation(license_key)
+        
+        if result['success']:
+            print("✅ License activated successfully!")
+            license_data = {
+                'key': license_key,
+                'activation_date': datetime.now().isoformat(),
+                'hardware_id': self.get_hardware_id(),
+                'status': 'active'
+            }
+            self.save_license(license_data)
+        else:
+            print(f"❌ License activation failed!")
+            print(f"Error: {result['error']}")
+            print(f"Code: {result['code']}")
+            
+            if result.get('upgrade_url'):
+                print(f"\n🌐 Upgrade at: {result['upgrade_url']}")
+        
+        print("="*50 + "\n")
+        return result['success']
+
+def main():
+    """Main CLI interface"""
+    manager = AegisLicenseManager()
+    
+    if len(sys.argv) == 1:
+        # Show status
+        manager.display_status()
+    
+    elif len(sys.argv) == 2:
+        command = sys.argv[1]
+        
+        if command == "--status":
+            manager.display_status()
+        elif command == "--hardware-id":
+            print(f"Hardware ID: {manager.get_hardware_id()}")
+        elif command == "--help":
+            print("""
+Aegis OS License Manager - Freemium Edition
+
+Usage:
+  aegis-license-manager                    Show license status
+  aegis-license-manager --status          Show detailed status
+  aegis-license-manager --hardware-id     Show hardware ID
+  aegis-license-manager --activate KEY    Activate license key
+  aegis-license-manager --help            Show this help
+
+License Key Format:
+  AEGIS-EDITION-YEAR-STATUS
+  Example: AEGIS-BASIC-2024-ACTIVE
+
+Freemium Edition Limitations:
+  - No license activation capability
+  - Community support only
+  - Basic features only
+  
+Upgrade: https://aegis-os.com
+            """)
+        else:
+            print(f"Unknown command: {command}")
+            print("Use --help for usage information")
+    
+    elif len(sys.argv) == 3:
+        if sys.argv[1] == "--activate":
+            license_key = sys.argv[2]
+            manager.activate_license(license_key)
+        else:
+            print("Invalid command format")
+            print("Use --help for usage information")
+    
+    else:
+        print("Too many arguments")
+        print("Use --help for usage information")
+
+if __name__ == "__main__":
+    main()
