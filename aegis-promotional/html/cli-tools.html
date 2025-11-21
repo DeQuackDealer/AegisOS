@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLI Tools - Aegis OS</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <style>
+        .command-card { background: white; padding: 1.5rem; margin: 1rem 0; border-radius: 8px; border-left: 4px solid #6366f1; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .command-name { font-family: monospace; background: #f3f4f6; padding: 0.5rem 1rem; border-radius: 4px; font-weight: bold; color: #dc2626; }
+        .command-desc { color: #666; margin: 0.5rem 0; font-size: 0.95em; }
+        .command-usage { background: #1f2937; color: #e5e7eb; padding: 1rem; border-radius: 4px; margin: 1rem 0; overflow-x: auto; font-family: monospace; font-size: 0.9em; }
+        .example { background: #f8f9fa; padding: 1rem; margin: 1rem 0; border-left: 3px solid #10b981; }
+        .group-title { font-size: 1.3em; font-weight: bold; color: #6366f1; margin-top: 2rem; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; padding: 3rem 2rem; text-align: center;">
+        <h1>Aegis CLI Tools</h1>
+        <p style="font-size: 1.1em;">Complete command-line interface for system management</p>
+    </div>
+
+    <div style="max-width: 1000px; margin: 0 auto; padding: 2rem;">
+        <div class="group-title">🔑 Authentication & Licensing</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli activate</div>
+            <div class="command-desc">Activate or validate a license key</div>
+            <div class="command-usage">$ aegis-cli activate --key AEGIS-XXXX-XXXX-XXXX</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli activate --key AEGIS-BASIC-2024-A1B2C3<br>
+                ✓ License activated successfully<br>
+                Tier: Basic<br>
+                Expires: 2025-11-21
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli license check</div>
+            <div class="command-desc">Check current license status and expiration</div>
+            <div class="command-usage">$ aegis-cli license check</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli license check<br>
+                License: AEGIS-GAMER-2024-X1Y2Z3<br>
+                Tier: Gamer<br>
+                Status: Active<br>
+                Expires: 2026-11-21<br>
+                Days Remaining: 365
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli license renew</div>
+            <div class="command-desc">Renew an expiring license</div>
+            <div class="command-usage">$ aegis-cli license renew [--auto]</div>
+        </div>
+
+        <div class="group-title">🛡️ Security Commands</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli security scan</div>
+            <div class="command-desc">Run full system security scan</div>
+            <div class="command-usage">$ aegis-cli security scan [--quick | --full | --deep]</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli security scan --quick<br>
+                Scanning system for threats...<br>
+                ✓ System files checked<br>
+                ✓ Network connections scanned<br>
+                ✓ Process behavior analyzed<br>
+                Result: Safe (0 threats found)<br>
+                Scan time: 2m 15s
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli security report</div>
+            <div class="command-desc">Generate security report</div>
+            <div class="command-usage">$ aegis-cli security report [--format pdf|json|html]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli security firewall</div>
+            <div class="command-desc">Manage firewall rules</div>
+            <div class="command-usage">$ aegis-cli security firewall [enable|disable|list|add|remove]</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli security firewall enable<br>
+                ✓ Firewall enabled<br>
+                $ aegis-cli security firewall add --port 8080 --protocol tcp<br>
+                ✓ Port 8080 (TCP) allowed
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli 2fa enable</div>
+            <div class="command-desc">Enable two-factor authentication</div>
+            <div class="command-usage">$ aegis-cli 2fa enable [--totp | --hardware]</div>
+        </div>
+
+        <div class="group-title">💾 Backup & Recovery</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli backup create</div>
+            <div class="command-desc">Create manual backup</div>
+            <div class="command-usage">$ aegis-cli backup create [--full | --incremental]</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli backup create --full<br>
+                Starting backup...<br>
+                ✓ System files backed up<br>
+                ✓ Database backed up<br>
+                ✓ Configuration backed up<br>
+                Backup size: 15.2 GB<br>
+                Time: 5m 30s
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli backup list</div>
+            <div class="command-desc">List all backups</div>
+            <div class="command-usage">$ aegis-cli backup list [--date YYYY-MM-DD]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli backup restore</div>
+            <div class="command-desc">Restore from backup</div>
+            <div class="command-usage">$ aegis-cli backup restore --id BACKUP_ID [--verify]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli backup schedule</div>
+            <div class="command-desc">Schedule automatic backups</div>
+            <div class="command-usage">$ aegis-cli backup schedule --frequency [hourly|daily|weekly] --retention DAYS</div>
+        </div>
+
+        <div class="group-title">📊 System Status & Monitoring</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli status</div>
+            <div class="command-desc">Check system status</div>
+            <div class="command-usage">$ aegis-cli status</div>
+            <div class="example">
+                <strong>Example:</strong><br>
+                $ aegis-cli status<br>
+                System: Online<br>
+                Uptime: 45 days<br>
+                CPU: 15% usage<br>
+                Memory: 8.2 GB / 16 GB<br>
+                Disk: 180 GB / 500 GB<br>
+                Network: 125 Mbps
+            </div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli health</div>
+            <div class="command-desc">Full system health check</div>
+            <div class="command-usage">$ aegis-cli health [--verbose]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli info</div>
+            <div class="command-desc">Display system information</div>
+            <div class="command-usage">$ aegis-cli info</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli metrics</div>
+            <div class="command-desc">Show performance metrics</div>
+            <div class="command-usage">$ aegis-cli metrics [--cpu | --memory | --disk | --network]</div>
+        </div>
+
+        <div class="group-title">🔄 Updates & Maintenance</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli update check</div>
+            <div class="command-desc">Check for available updates</div>
+            <div class="command-usage">$ aegis-cli update check</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli update install</div>
+            <div class="command-desc">Install available updates (no reboot)</div>
+            <div class="command-usage">$ aegis-cli update install [--dry-run]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli patch list</div>
+            <div class="command-desc">List available kernel patches</div>
+            <div class="command-usage">$ aegis-cli patch list</div>
+        </div>
+
+        <div class="group-title">🚀 Performance Tuning</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli tune cpu</div>
+            <div class="command-desc">Optimize CPU performance</div>
+            <div class="command-usage">$ aegis-cli tune cpu [--profile gaming|server|ai|balanced]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli tune memory</div>
+            <div class="command-desc">Optimize memory usage</div>
+            <div class="command-usage">$ aegis-cli tune memory [--aggressive | --balanced]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli tune network</div>
+            <div class="command-desc">Optimize network performance</div>
+            <div class="command-usage">$ aegis-cli tune network [--low-latency | --throughput | --balanced]</div>
+        </div>
+
+        <div class="group-title">👥 User Management</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli user add</div>
+            <div class="command-desc">Add new user</div>
+            <div class="command-usage">$ aegis-cli user add USERNAME [--admin] [--shell /bin/bash]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli user list</div>
+            <div class="command-desc">List all users</div>
+            <div class="command-usage">$ aegis-cli user list [--detailed]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli user remove</div>
+            <div class="command-desc">Remove user</div>
+            <div class="command-usage">$ aegis-cli user remove USERNAME [--force]</div>
+        </div>
+
+        <div class="group-title">🔗 System Integration</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli api</div>
+            <div class="command-desc">API management and testing</div>
+            <div class="command-usage">$ aegis-cli api [test | docs | status]</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli webhook</div>
+            <div class="command-desc">Manage webhooks</div>
+            <div class="command-usage">$ aegis-cli webhook [list | add | remove | test]</div>
+        </div>
+
+        <div class="group-title">⚙️ Configuration</div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli config get</div>
+            <div class="command-desc">Get configuration value</div>
+            <div class="command-usage">$ aegis-cli config get KEY</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli config set</div>
+            <div class="command-desc">Set configuration value</div>
+            <div class="command-usage">$ aegis-cli config set KEY VALUE</div>
+        </div>
+
+        <div class="command-card">
+            <div class="command-name">aegis-cli config export</div>
+            <div class="command-desc">Export all configuration</div>
+            <div class="command-usage">$ aegis-cli config export [--format yaml|json]</div>
+        </div>
+
+        <div style="background: #f3f4f6; padding: 2rem; border-radius: 8px; margin-top: 2rem;">
+            <h3>Getting Help</h3>
+            <div class="command-usage">$ aegis-cli --help<br>$ aegis-cli COMMAND --help<br>$ aegis-cli man</div>
+        </div>
+    </div>
+</body>
+</html>
