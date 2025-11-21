@@ -789,6 +789,10 @@ def page_iso_verification():
 def page_install_guide():
     return serve_html('install-guide.html')
 
+@app.route('/gaming-compatibility')
+def page_gaming_compatibility():
+    return serve_html('gaming-compatibility.html')
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/authenticate', methods=['POST'])
@@ -1183,6 +1187,104 @@ def get_iso_requirements():
             'gamer': {'cpu': '6+ cores @ 3.5GHz', 'ram': '16+ GB', 'storage': '100 GB NVMe', 'gpu': 'Dedicated GPU'},
             'ai-dev': {'cpu': '8+ cores', 'ram': '16+ GB', 'storage': '100 GB NVMe', 'gpu': 'NVIDIA RTX'},
             'server': {'cpu': '8+ cores @ 2.8GHz', 'ram': '32+ GB', 'storage': '200+ GB NVMe', 'networking': 'Gigabit+'}
+        }
+    }), 200
+
+@app.route('/api/v1/gaming/wine-proton', methods=['GET'])
+@rate_limit(limit=500)
+def get_wine_proton_specs():
+    """Get Wine/Proton compatibility specifications"""
+    return jsonify({
+        'wine_version': '8.21',
+        'proton_version': '9.0+',
+        'dxvk_support': True,
+        'vkd3d_proton': True,
+        'vulkan_version': '1.3',
+        'opengl_version': '4.6',
+        'directx_support': ['9.0c', '10.0', '11.0', '12.0'],
+        'verified_games': 1000,
+        'input_latency': '<5ms',
+        'compatibility_percentage': '90%+',
+        'supported_features': {
+            'steam_integration': True,
+            'game_prefixes': 'Auto-created',
+            'cloud_saves': 'Supported',
+            'controller_support': True,
+            'rgb_support': True,
+            'vr_support': False
+        }
+    }), 200
+
+@app.route('/api/v1/buildroot/system', methods=['GET'])
+@rate_limit(limit=500)
+def get_buildroot_specs():
+    """Get Buildroot optimization specifications"""
+    return jsonify({
+        'build_system': 'Buildroot',
+        'kernel_version': '6.6+ LTS',
+        'kernel_patches': 'Gaming-optimized, real-time scheduler',
+        'init_system': 'Optimized for fast boot',
+        'boot_time_seconds': '<30',
+        'minimal_dependencies': True,
+        'iso_size_gb': '2.1',
+        'security_hardening': ['SELinux', 'AppArmor', 'seccomp'],
+        'custom_features': {
+            'gaming_patches': True,
+            'real_time_scheduler': True,
+            'parallel_init': True,
+            'security_hardened': True
+        }
+    }), 200
+
+@app.route('/api/v1/desktop/xfce', methods=['GET'])
+@rate_limit(limit=500)
+def get_xfce_specs():
+    """Get XFCE desktop environment specifications"""
+    return jsonify({
+        'xfce_version': '4.18',
+        'memory_idle_mb': '250',
+        'lightweight': True,
+        'responsive': True,
+        'gaming_optimized': True,
+        'customization': {
+            'themes': 'Full support',
+            'panels': 'Unlimited customization',
+            'workspace_switching': True,
+            'window_management': 'Tiling support'
+        },
+        'applications_included': {
+            'file_manager': 'Thunar',
+            'terminal': 'Xfce4 Terminal',
+            'text_editor': 'Mousepad',
+            'screenshot': 'Xfce4 Screenshooter'
+        },
+        'gpu_acceleration': True,
+        'smooth_animations': True
+    }), 200
+
+@app.route('/api/v1/compatibility/full-stack', methods=['GET'])
+@rate_limit(limit=500)
+def get_full_stack_compatibility():
+    """Get complete Buildroot + XFCE + Wine/Proton compatibility stack"""
+    return jsonify({
+        'build_system': 'Buildroot-optimized',
+        'desktop': 'XFCE 4.18 (250MB idle)',
+        'gaming_runtime': 'Wine 8.21 + Proton 9.0+',
+        'graphics': 'Vulkan 1.3, OpenGL 4.6, DirectX 12',
+        'performance': {
+            'boot_time': '<30 seconds',
+            'input_latency': '<5ms',
+            'game_compatibility': '1000+ verified',
+            'memory_overhead': 'Minimal'
+        },
+        'integration_status': 'Perfect',
+        'verified': True,
+        'all_tiers_support': ['freemium', 'basic', 'gamer', 'ai-dev', 'server'],
+        'gaming_performance': {
+            'smooth_gameplay': True,
+            'gpu_acceleration': True,
+            'cpu_optimization': True,
+            'minimal_latency': True
         }
     }), 200
 
