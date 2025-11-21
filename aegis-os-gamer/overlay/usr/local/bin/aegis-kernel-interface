@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Kernel Interface - Freemium Edition
+Interface layer between userspace and Aegis kernel module
+"""
+
+import os
+import sys
+import subprocess
+import logging
+from pathlib import Path
+
+class AegisKernelInterface:
+    def __init__(self):
+        self.sysfs_path = "/sys/kernel/aegis/tier"
+        self.module_name = "aegis_lkm"
+        self.log_file = "/var/log/aegis-kernel.log"
+        
+        self.setup_logging()
+    
+    def setup_logging(self):
+        """Setup logging configuration"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(self.log_file),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("AegisKernel")
+    
+    def is_module_loaded(self):
+        """Check if Aegis kernel module is loaded"""
+        try:
+            with open('/proc/modules', 'r') as f:
+                modules = f.read()
+                return self.module_name in modules
+        except:
+            return False
+    
+    def load_module(self):
+        """Load the Aegis kernel module"""
+        if self.is_module_loaded():
+            self.logger.info("Aegis kernel module already loaded")
+            return True
+        
+        try:
+            # Try to load the module
+            result = subprocess.run(['modprobe', self.module_name], 
+                                  capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                self.logger.info("Aegis kernel module loaded successfully")
+                return True
+            else:
+                self.logger.error(f"Failed to load module: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Exception loading module: {e}")
+            return False
+    
+    def get_license_tier(self):
+        """Get license tier from kernel module"""
+        if not os.path.exists(self.sysfs_path):
+            if not self.load_module():
+                self.logger.error("Kernel module not available")
+                return None
+        
+        try:
+            with open(self.sysfs_path, 'r') as f:
+                tier = f.read().strip()
+                return int(tier)
+        except Exception as e:
+            self.logger.error(f"Failed to read license tier: {e}")
+            return None
+    
+    def get_tier_name(self, tier):
+        """Convert tier number to name"""
+        tier_names = {
+            0: "unlicensed",
+            1: "professional",
+            2: "freemium",
+            3: "gamer",
+            4: "ai_developer",
+            5: "server"
+        }
+        return tier_names.get(tier, "unknown")
+    
+    def check_feature_access(self, feature):
+        """Check if a feature is accessible in current tier"""
+        tier = self.get_license_tier()
+        if tier is None:
+            return False
+        
+        # Freemium (tier 2) feature access matrix
+        freemium_features = {
+            'basic_monitoring': True,
+            'gaming_optimization': True,
+            'community_support': True,
+            'proton_wine': True,
+            'system_utilities': True,
+            
+            'priority_updates': False,
+            'ai_optimization': False,
+            'professional_support': False,
+            'advanced_monitoring': False,
+            'kernel_enhancements': False,
+            'enterprise_features': False
+        }
+        
+        if tier == 2:  # Freemium
+            return freemium_features.get(feature, False)
+        
+        # Other tiers would have different feature matrices
+        return False
+    
+    def display_kernel_status(self):
+        """Display kernel module and tier status"""
+        print("\n" + "="*50)
+        print("🔧 AEGIS KERNEL INTERFACE")
+        print("="*50)
+        
+        # Module status
+        if self.is_module_loaded():
+            print("✅ Kernel Module: LOADED")
+        else:
+            print("❌ Kernel Module: NOT LOADED")
+        
+        # License tier
+        tier = self.get_license_tier()
+        if tier is not None:
+            tier_name = self.get_tier_name(tier)
+            print(f"🎯 License Tier: {tier} ({tier_name.upper()})")
+        else:
+            print("❌ License Tier: UNAVAILABLE")
+        
+        # SysFS path
+        if os.path.exists(self.sysfs_path):
+            print(f"📁 SysFS Path: {self.sysfs_path} ✅")
+        else:
+            print(f"📁 SysFS Path: {self.sysfs_path} ❌")
+        
+        print("="*50 + "\n")
+    
+    def test_feature_access(self):
+        """Test access to various features"""
+        print("\n🧪 FEATURE ACCESS TEST")
+        print("="*40)
+        
+        features = [
+            'basic_monitoring',
+            'gaming_optimization',
+            'community_support',
+            'proton_wine',
+            'system_utilities',
+            'priority_updates',
+            'ai_optimization',
+            'professional_support',
+            'advanced_monitoring',
+            'kernel_enhancements',
+            'enterprise_features'
+        ]
+        
+        for feature in features:
+            access = self.check_feature_access(feature)
+            status = "✅ ENABLED" if access else "❌ DISABLED"
+            print(f"{feature.replace('_', ' ').title():<20}: {status}")
+        
+        print("="*40 + "\n")
+
+def main():
+    """Main CLI interface"""
+    interface = AegisKernelInterface()
+    
+    if len(sys.argv) == 1:
+        interface.display_kernel_status()
+    
+    elif len(sys.argv) == 2:
+        command = sys.argv[1]
+        
+        if command == "--status":
+            interface.display_kernel_status()
+        elif command == "--load":
+            if interface.load_module():
+                print("✅ Kernel module loaded successfully")
+            else:
+                print("❌ Failed to load kernel module")
+        elif command == "--tier":
+            tier = interface.get_license_tier()
+            if tier is not None:
+                print(f"License Tier: {tier} ({interface.get_tier_name(tier)})")
+            else:
+                print("License tier unavailable")
+        elif command == "--test":
+            interface.display_kernel_status()
+            interface.test_feature_access()
+        elif command == "--help":
+            print("""
+Aegis OS Kernel Interface
+
+Usage:
+  aegis-kernel-interface                Show kernel status
+  aegis-kernel-interface --status      Show detailed status
+  aegis-kernel-interface --load        Load kernel module
+  aegis-kernel-interface --tier        Show license tier
+  aegis-kernel-interface --test        Test feature access
+  aegis-kernel-interface --help        Show this help
+            """)
+        else:
+            print(f"Unknown command: {command}")
+    else:
+        print("Invalid arguments. Use --help for usage information")
+
+if __name__ == "__main__":
+    main()
