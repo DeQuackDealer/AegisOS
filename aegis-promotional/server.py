@@ -678,19 +678,22 @@ ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
 ADMIN_PWD = os.getenv('ADMIN_PWD', 'DefaultAdminPassword123!')
 ADMIN_TOKENS = {}  # Simple token storage for authenticated sessions
 
-@app.route('/html/<filename>')
 def serve_html(filename):
-    """Serve HTML files - FIXED ROUTE"""
+    """Serve HTML files - Helper function (NOT a route)"""
     if '..' in filename or filename.startswith('/') or not filename.endswith('.html'):
+        logger.warning(f"Invalid filename: {filename}")
         return Response('Forbidden', status=403)
     filepath = os.path.join(BASE_DIR, 'html', filename)
+    logger.info(f"Serving HTML: {filepath}")
     if not os.path.isfile(filepath):
+        logger.error(f"File not found: {filepath}")
         return Response('Not found', status=404)
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             resp = make_response(f.read())
             resp.headers['Content-Type'] = 'text/html; charset=utf-8'
             resp.headers['Cache-Control'] = 'no-cache, must-revalidate'
+            logger.info(f"Successfully served: {filename}")
             return resp
     except Exception as e:
         logger.error(f"HTML serve error: {filename} - {e}")
