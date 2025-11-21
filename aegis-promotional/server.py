@@ -743,6 +743,22 @@ def page_testimonials():
 def page_pricing():
     return serve_html('pricing-tiers-detailed.html')
 
+@app.route('/blog')
+def page_blog():
+    return serve_html('blog.html')
+
+@app.route('/features')
+def page_features():
+    return serve_html('features.html')
+
+@app.route('/developers')
+def page_developers():
+    return serve_html('developers.html')
+
+@app.route('/download')
+def page_download():
+    return serve_html('download.html')
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/license/create', methods=['POST'])
@@ -935,6 +951,72 @@ def get_stats():
         'tiers': tier_breakdown,
         'timestamp': datetime.now().isoformat()
     }), 200
+
+@app.route('/api/v1/admin/license/batch', methods=['POST'])
+@rate_limit(limit=100)
+def batch_create_licenses():
+    """Create multiple licenses at once"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    data = request.get_json() or {}
+    licenses_data = data.get('licenses', [])
+    
+    created = []
+    for lic in licenses_data:
+        license_id = str(uuid.uuid4())[:12]
+        license_type = lic.get('type', 'recurring')
+        tier = lic.get('tier', 'basic')
+        
+        license_obj = {
+            'id': license_id,
+            'tier': tier,
+            'type': license_type,
+            'created': datetime.now().isoformat(),
+            'status': 'active',
+            'activated': False,
+            'activated_date': None
+        }
+        
+        if license_type == 'recurring':
+            days = int(lic.get('days', 365))
+            license_obj['start_date'] = datetime.now().isoformat()
+            license_obj['end_date'] = (datetime.now() + timedelta(days=days)).isoformat()
+            license_obj['renewal_date'] = (datetime.now() + timedelta(days=days)).isoformat()
+        
+        LICENSES[license_id] = license_obj
+        created.append(license_obj)
+    
+    tamper_protected_audit_log('batch_license_created', {'count': len(created)}, 'INFO')
+    return jsonify({'licenses': created, 'count': len(created)}), 201
+
+@app.route('/api/v1/features', methods=['GET'])
+@rate_limit(limit=500)
+def get_features():
+    """Get all features by tier"""
+    return jsonify({
+        'freemium': {'security': 0, 'gaming': False, 'ml': False, 'enterprise': False},
+        'basic': {'security': 7, 'gaming': False, 'ml': False, 'enterprise': False},
+        'gamer': {'security': 7, 'gaming': True, 'ml': False, 'enterprise': False},
+        'ai-dev': {'security': 7, 'gaming': False, 'ml': True, 'enterprise': False},
+        'server': {'security': 7, 'gaming': False, 'ml': False, 'enterprise': True}
+    }), 200
+
+@app.route('/api/v1/admin/export/csv', methods=['GET'])
+@rate_limit(limit=100)
+def export_licenses_csv():
+    """Export licenses as CSV"""
+    auth = request.headers.get('X-Admin-Key')
+    if auth != ADMIN_KEY:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    csv_data = "License ID,Tier,Type,Status,Created,Activated,Expires\n"
+    for lic in LICENSES.values():
+        expires = lic.get('end_date', 'Lifetime')
+        csv_data += f"{lic['id']},{lic['tier']},{lic['type']},{lic['status']},{lic['created']},{lic['activated']},{expires}\n"
+    
+    return Response(csv_data, mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=licenses.csv'}), 200
 
 @app.route('/css/<filename>')
 def serve_css(filename):
