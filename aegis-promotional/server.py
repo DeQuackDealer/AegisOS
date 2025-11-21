@@ -919,6 +919,41 @@ def page_gaming_compatibility():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
+# ============= LEGAL PAGES =============
+
+@app.route('/terms')
+def page_terms():
+    """Serve Terms of Service page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'terms.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving terms.html: {e}")
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/privacy')
+def page_privacy():
+    """Serve Privacy Policy page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'privacy.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving privacy.html: {e}")
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/disclaimer')
+def page_disclaimer():
+    """Serve Legal Disclaimer page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'disclaimer.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving disclaimer.html: {e}")
+        return jsonify({'error': 'Page not found'}), 404
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/authenticate', methods=['POST'])
