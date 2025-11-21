@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Build Aegis OS - Complete Guide</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <style>
+        .build-section {
+            background: white;
+            padding: 2rem;
+            margin: 2rem auto;
+            max-width: 900px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .step-card {
+            background: linear-gradient(135deg, #f0f4ff, #f9f3ff);
+            padding: 2rem;
+            margin: 1rem 0;
+            border-left: 4px solid #6366f1;
+            border-radius: 8px;
+        }
+        .step-num-big {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 50px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-right: 1rem;
+        }
+        .step-title {
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .code-block {
+            background: #1f2937;
+            color: #10b981;
+            padding: 1.5rem;
+            border-radius: 8px;
+            font-family: 'Monaco', monospace;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        .highlight {
+            background: #fff3cd;
+            padding: 1rem;
+            border-left: 4px solid #ffc107;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo"><img src="../assets/logo.svg" class="logo-icon" style="width: 32px; height: 32px;"> Aegis OS</div>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="freemium.html" class="nav-link">Freemium</a>
+                <a href="basic.html" class="nav-link">Basic</a>
+                <a href="gamer.html" class="nav-link">Gamer</a>
+                <a href="ai.html" class="nav-link">AI Dev</a>
+                <a href="server.html" class="nav-link">Server</a>
+                <a href="build.html" class="nav-link active">Build</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero-modern">
+        <div class="hero-content">
+            <h1>Build Aegis OS</h1>
+            <p class="hero-subtitle">Complete Buildroot Guide</p>
+            <p class="hero-desc">Build → ISO → Balena Etcher → USB → Boot</p>
+        </div>
+        <div class="hero-bg"></div>
+    </section>
+
+    <div class="build-section">
+        <h2>📋 Overview: 5 Simple Steps</h2>
+        <p>Build your own Aegis OS from source using Buildroot. Complete guide with Balena Etcher integration.</p>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 2rem 0;">
+            <div style="text-align: center; padding: 1rem; background: #f0f4ff; border-radius: 8px;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🛠️</div>
+                <strong>1. Setup Linux</strong><br>
+                <small>10 min</small>
+            </div>
+            <div style="text-align: center; padding: 1rem; background: #f0f4ff; border-radius: 8px;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">📥</div>
+                <strong>2. Download</strong><br>
+                <small>5 min</small>
+            </div>
+            <div style="text-align: center; padding: 1rem; background: #f0f4ff; border-radius: 8px;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">⚙️</div>
+                <strong>3. Build</strong><br>
+                <small>90-120 min</small>
+            </div>
+            <div style="text-align: center; padding: 1rem; background: #f0f4ff; border-radius: 8px;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">💾</div>
+                <strong>4. Balena Etcher</strong><br>
+                <small>5 min</small>
+            </div>
+            <div style="text-align: center; padding: 1rem; background: #f0f4ff; border-radius: 8px;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🚀</div>
+                <strong>5. Boot</strong><br>
+                <small>1 min</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>🛠️ Step 1: Setup Linux</h2>
+        
+        <div class="step-card">
+            <h3>Requirements</h3>
+            <ul>
+                <li>📀 Linux OS (Ubuntu 20.04+ or Debian 11+)</li>
+                <li>💾 20-30GB free disk space</li>
+                <li>🧠 8GB RAM minimum (16GB recommended)</li>
+                <li>🌐 Internet connection</li>
+            </ul>
+        </div>
+
+        <div class="step-card">
+            <h3>Install Build Tools</h3>
+            <p>Open terminal and run:</p>
+            <div class="code-block">
+$ sudo apt-get update<br>
+$ sudo apt-get install -y build-essential wget cpio unzip rsync bc
+            </div>
+            <p><small>⏱️ Takes ~5 minutes</small></p>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>📥 Step 2: Download & Extract</h2>
+        
+        <div class="step-card">
+            <div class="code-block">
+$ cd Downloads<br>
+$ tar -xzf aegis-os-builder.tar.gz<br>
+$ cd iso-builder<br>
+$ ls
+            </div>
+            <p>You should see:</p>
+            <ul>
+                <li>✓ <code>build.sh</code> - main build script</li>
+                <li>✓ <code>post-build.sh</code> - setup script</li>
+                <li>✓ <code>buildroot.config</code> - configuration</li>
+            </ul>
+        </div>
+
+        <div class="step-card">
+            <h3>Make Scripts Executable</h3>
+            <div class="code-block">
+$ chmod +x build.sh post-build.sh
+            </div>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>⚙️ Step 3: Build with Buildroot</h2>
+        
+        <div class="step-card">
+            <h3>Start the Build</h3>
+            <p>Just run:</p>
+            <div class="code-block">
+$ ./build.sh
+            </div>
+            <p>The script automatically:</p>
+            <ul>
+                <li>✅ Downloads Buildroot 2023.08</li>
+                <li>✅ Downloads Linux kernel 6.6.7</li>
+                <li>✅ Compiles ~461 packages (XFCE, Wine, Proton, tools)</li>
+                <li>✅ Generates bootable ISO</li>
+                <li>✅ Creates checksums</li>
+            </ul>
+        </div>
+
+        <div class="highlight">
+            <strong>☕ Wait Time: 90-120 minutes</strong><br>
+            <small>First build downloads ~2GB. Subsequent builds are faster with caching.</small>
+        </div>
+
+        <div class="step-card">
+            <h3>Build Succeeds When You See:</h3>
+            <div class="code-block">
+✅ Aegis OS Freemium build completed successfully!<br>
+📁 Output files are in: ./output/
+            </div>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>💾 Step 4: Create Bootable USB with Balena Etcher</h2>
+        
+        <div class="step-card">
+            <h3>Why Balena Etcher?</h3>
+            <ul>
+                <li>✅ Super easy - no terminal needed!</li>
+                <li>✅ Works on Windows, Mac, Linux</li>
+                <li>✅ Safe - prevents accidents</li>
+                <li>✅ Fast and reliable</li>
+                <li>✅ Free and open source</li>
+            </ul>
+        </div>
+
+        <div class="step-card">
+            <h3>1️⃣ Download Balena Etcher</h3>
+            <p>Visit: <a href="https://balena.io/etcher" target="_blank"><strong>balena.io/etcher</strong></a></p>
+            <p>Choose your OS (Windows/Mac/Linux) and install.</p>
+        </div>
+
+        <div class="step-card">
+            <h3>2️⃣ Write ISO to USB (3 Clicks!)</h3>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: 1rem 0;">
+                <div style="background: #f0f4ff; padding: 1rem; border-radius: 8px; text-align: center;">
+                    <strong style="font-size: 1.5rem;">1️⃣</strong><br>
+                    Select image<br>
+                    <small>aegis-os-freemium.iso</small>
+                </div>
+                <div style="background: #f0f4ff; padding: 1rem; border-radius: 8px; text-align: center;">
+                    <strong style="font-size: 1.5rem;">2️⃣</strong><br>
+                    Select target<br>
+                    <small>Your USB drive</small>
+                </div>
+                <div style="background: #f0f4ff; padding: 1rem; border-radius: 8px; text-align: center;">
+                    <strong style="font-size: 1.5rem;">3️⃣</strong><br>
+                    Flash<br>
+                    <small>Watch progress</small>
+                </div>
+            </div>
+            <div class="highlight">
+                <strong>⚠️ WARNING:</strong> Will erase USB! Make sure you select the correct USB drive.
+            </div>
+            <p><small>⏱️ Takes 5-10 minutes</small></p>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>🚀 Step 5: Boot & Use</h2>
+        
+        <div class="step-card">
+            <h3>Boot from USB</h3>
+            <ol>
+                <li>Plug USB into computer</li>
+                <li>Restart computer</li>
+                <li>Press F2, F12, or DEL during startup</li>
+                <li>Select USB as boot device</li>
+                <li>Boot!</li>
+            </ol>
+        </div>
+
+        <div class="step-card">
+            <h3>You're In! 🎉</h3>
+            <p>Aegis OS auto-boots to XFCE desktop</p>
+            <ul>
+                <li>✅ Username: <code>aegis</code></li>
+                <li>✅ Password: (auto-login)</li>
+                <li>✅ Everything pre-configured and ready!</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="build-section">
+        <h2>📖 Need More Help?</h2>
+        <p>Download the complete guide from the downloads section:</p>
+        <div class="cta-buttons" style="display: flex; gap: 1rem; flex-wrap: wrap;">
+            <a href="/download/iso" class="btn btn-primary">⬇️ Download ISO Builder</a>
+            <a href="index.html" class="btn btn-secondary">🔄 Back to Home</a>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>&copy; 2025 Aegis OS - The Gold Standard for Gamers, AI Developers, and Servers</p>
+    </footer>
+
+    <script src="../js/main.js"></script>
+</body>
+</html>
