@@ -663,3 +663,56 @@ def documentation():
         }
     }), 200
 
+# ============= ROUTES: STATIC FILES =============
+
+@app.route('/html/<path:filename>')
+@rate_limit(limit=1000)
+def serve_html(filename):
+    """Serve HTML files safely"""
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 403
+    try:
+        return send_from_directory(os.path.join(BASE_DIR, 'html'), filename)
+    except:
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/css/<path:filename>')
+@rate_limit(limit=1000)
+def serve_css(filename):
+    """Serve CSS files"""
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 403
+    try:
+        response = make_response(send_from_directory(os.path.join(BASE_DIR, 'css'), filename))
+        response.headers['Content-Type'] = 'text/css'
+        return response
+    except:
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/js/<path:filename>')
+@rate_limit(limit=1000)
+def serve_js(filename):
+    """Serve JS files"""
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 403
+    try:
+        response = make_response(send_from_directory(os.path.join(BASE_DIR, 'js'), filename))
+        response.headers['Content-Type'] = 'application/javascript'
+        return response
+    except:
+        return jsonify({'error': 'File not found'}), 404
+
+@app.route('/assets/<path:filename>')
+@rate_limit(limit=1000)
+def serve_assets(filename):
+    """Serve asset files"""
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 403
+    try:
+        return send_from_directory(os.path.join(BASE_DIR, 'assets'), filename)
+    except:
+        return jsonify({'error': 'File not found'}), 404
+
+if __name__ == '__main__':
+    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
+    app.run(host='0.0.0.0', port=5000, debug=False)
