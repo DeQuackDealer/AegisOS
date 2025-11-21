@@ -700,17 +700,15 @@ def serve_html(filename):
         return Response('Server error', status=500)
 
 @app.route('/freemium')
-@rate_limit(limit=1000)
 def page_freemium():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'freemium.html')
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
     except Exception as e:
-        return jsonify({'error': 'Page not found', 'details': str(e)}), 404
+        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/basic')
-@rate_limit(limit=1000)
 def page_basic():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'basic.html')
@@ -720,7 +718,6 @@ def page_basic():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/gamer')
-@rate_limit(limit=1000)
 def page_gamer():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'gamer.html')
@@ -730,7 +727,6 @@ def page_gamer():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/ai')
-@rate_limit(limit=1000)
 def page_ai():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'ai.html')
@@ -740,7 +736,6 @@ def page_ai():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/server')
-@rate_limit(limit=1000)
 def page_server():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'server.html')
@@ -750,7 +745,6 @@ def page_server():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/admin')
-@rate_limit(limit=1000)
 def page_admin():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'admin.html')
@@ -760,7 +754,6 @@ def page_admin():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/faq')
-@rate_limit(limit=1000)
 def page_faq():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'faq.html')
@@ -770,7 +763,6 @@ def page_faq():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/contact')
-@rate_limit(limit=1000)
 def page_contact():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'contact.html')
@@ -780,7 +772,6 @@ def page_contact():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/use-cases')
-@rate_limit(limit=1000)
 def page_use_cases():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'use-cases.html')
@@ -790,7 +781,6 @@ def page_use_cases():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/security-comparison')
-@rate_limit(limit=1000)
 def page_security():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'security-comparison.html')
@@ -800,7 +790,6 @@ def page_security():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/testimonials')
-@rate_limit(limit=1000)
 def page_testimonials():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'testimonials.html')
@@ -810,7 +799,6 @@ def page_testimonials():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/pricing-tiers-detailed')
-@rate_limit(limit=1000)
 def page_pricing():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'pricing-tiers-detailed.html')
@@ -820,7 +808,6 @@ def page_pricing():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/blog')
-@rate_limit(limit=1000)
 def page_blog():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'blog.html')
@@ -830,7 +817,6 @@ def page_blog():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/features')
-@rate_limit(limit=1000)
 def page_features():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'features.html')
@@ -840,7 +826,6 @@ def page_features():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/developers')
-@rate_limit(limit=1000)
 def page_developers():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'developers.html')
@@ -850,7 +835,6 @@ def page_developers():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/download')
-@rate_limit(limit=1000)
 def page_download():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'download.html')
@@ -860,7 +844,6 @@ def page_download():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/security-audit')
-@rate_limit(limit=1000)
 def page_security_audit():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'security-audit.html')
@@ -870,7 +853,6 @@ def page_security_audit():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/system-requirements')
-@rate_limit(limit=1000)
 def page_system_requirements():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'system-requirements.html')
@@ -880,7 +862,6 @@ def page_system_requirements():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/compliance')
-@rate_limit(limit=1000)
 def page_compliance():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'compliance.html')
@@ -890,7 +871,6 @@ def page_compliance():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/technical-specs')
-@rate_limit(limit=1000)
 def page_technical_specs():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'technical-specs.html')
@@ -900,7 +880,6 @@ def page_technical_specs():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/iso-download')
-@rate_limit(limit=1000)
 def page_iso_download():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'iso-download.html')
@@ -910,7 +889,6 @@ def page_iso_download():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/iso-verification')
-@rate_limit(limit=1000)
 def page_iso_verification():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'iso-verification.html')
@@ -920,7 +898,6 @@ def page_iso_verification():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/install-guide')
-@rate_limit(limit=1000)
 def page_install_guide():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'install-guide.html')
@@ -930,7 +907,6 @@ def page_install_guide():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/gaming-compatibility')
-@rate_limit(limit=1000)
 def page_gaming_compatibility():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'gaming-compatibility.html')
