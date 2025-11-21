@@ -719,6 +719,30 @@ def page_server():
 def page_admin():
     return serve_html('admin.html')
 
+@app.route('/faq')
+def page_faq():
+    return serve_html('faq.html')
+
+@app.route('/contact')
+def page_contact():
+    return serve_html('contact.html')
+
+@app.route('/use-cases')
+def page_use_cases():
+    return serve_html('use-cases.html')
+
+@app.route('/security-comparison')
+def page_security():
+    return serve_html('security-comparison.html')
+
+@app.route('/testimonials')
+def page_testimonials():
+    return serve_html('testimonials.html')
+
+@app.route('/pricing-tiers-detailed')
+def page_pricing():
+    return serve_html('pricing-tiers-detailed.html')
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/license/create', methods=['POST'])
