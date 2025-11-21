@@ -144,7 +144,7 @@ def rate_limit(limit: int = 100, window: int = 3600, lockout_time: int = 900):
                     )
                     return jsonify({'error': 'Account locked', 'code': 'LOCKED'}), 429
                 elif current_time >= float(fa['locked_until']):
-                    FAILED_ATTEMPTS[key] = {'count': 0, 'locked_until': 0.0}
+                    FAILED_ATTEMPTS[key] = {'count': 0, 'locked_until': int(0)}
             
             # Rate limiting
             if key in RATE_LIMIT_STORAGE:
@@ -391,7 +391,7 @@ def login():
         client_ip = request.remote_addr
         FAILED_ATTEMPTS[client_ip]['count'] += 1
         if FAILED_ATTEMPTS[client_ip]['count'] >= 5:
-            FAILED_ATTEMPTS[client_ip]['locked_until'] = time.time() + 900
+            FAILED_ATTEMPTS[client_ip]['locked_until'] = int(time.time() + 900)
         
         tamper_protected_audit_log("LOGIN_FAILED", {"email": email[:50]}, "HIGH")
         return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
@@ -443,4 +443,70 @@ def get_audit_log():
 
 if __name__ == '__main__':
     logger.info("Starting Aegis OS Server v4.0 - 100/100 Security")
+    app.run(host='0.0.0.0', port=5000, debug=False)
+
+# ============= ROUTES: TIER-SPECIFIC FEATURES =============
+
+@app.route('/api/v1/tier/basic/features')
+@rate_limit(limit=500)
+def basic_features():
+    """Basic tier features"""
+    tamper_protected_audit_log("GET_BASIC_FEATURES", {})
+    return jsonify({
+        'tier': 'basic',
+        'features': {
+            'office': ['LibreOffice Writer', 'LibreOffice Calc', 'Thunderbird Email'],
+            'productivity': ['PostgreSQL client', 'CSV tools', 'Spreadsheet tools'],
+            'domain': ['DNS management', 'SSL auto-renewal', 'Subdomain routing'],
+            'web': ['Apache/Nginx', 'Web hosting', 'Static site hosting']
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer/features')
+@rate_limit(limit=500)
+def gamer_features():
+    """Gamer tier features"""
+    tamper_protected_audit_log("GET_GAMER_FEATURES", {})
+    return jsonify({
+        'tier': 'gamer',
+        'features': {
+            'ai_upscaler': ['2x upscaling', '4x upscaling', '8x upscaling', 'Denoise'],
+            'settings': ['Auto optimizer', 'FPS monitor', 'Latency checker', 'Thermal control'],
+            'gaming': ['1000+ game profiles', 'Profile sync', 'Cloud saves'],
+            'performance': ['GPU acceleration', 'Input lag <5ms', 'Frame rate control']
+        }
+    }), 200
+
+@app.route('/api/v1/tier/ai-dev/features')
+@rate_limit(limit=500)
+def ai_dev_features():
+    """AI Dev tier features"""
+    tamper_protected_audit_log("GET_AI_DEV_FEATURES", {})
+    return jsonify({
+        'tier': 'ai-dev',
+        'features': {
+            'docker': ['Docker pre-installed', 'Docker Compose', 'GPU support', 'ML images'],
+            'jupyter': ['Jupyter Lab', 'GPU kernel', 'Collaborative', 'Extensions'],
+            'ml_tools': ['PyTorch 2.1', 'TensorFlow 2.14', 'MLflow', 'TensorBoard'],
+            'gpu': ['CUDA 12.0', 'cuDNN 8.6', 'NCCL', 'Multi-GPU training']
+        }
+    }), 200
+
+@app.route('/api/v1/tier/server/features')
+@rate_limit(limit=500)
+def server_features():
+    """Server tier features"""
+    tamper_protected_audit_log("GET_SERVER_FEATURES", {})
+    return jsonify({
+        'tier': 'server',
+        'features': {
+            'performance': ['Nginx 50k+ req/sec', 'PostgreSQL 10k+ TPS', 'Zero-downtime'],
+            'monitoring': ['Prometheus', 'Grafana', '50+ dashboards'],
+            'reliability': ['99.95% SLA', 'Auto failover', 'Rebootless patching'],
+            'enterprise': ['24/7 support', 'Compliance ready', 'Enterprise backup']
+        }
+    }), 200
+
+if __name__ == '__main__':
+    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
     app.run(host='0.0.0.0', port=5000, debug=False)
