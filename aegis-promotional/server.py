@@ -676,14 +676,19 @@ def documentation():
 @rate_limit(limit=1000)
 def serve_html(filename):
     """Serve HTML files safely"""
-    if '..' in filename or filename.startswith('/') or '/' in filename:
+    if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 403
+    
     filepath = os.path.join(BASE_DIR, 'html', filename)
-    if not os.path.isfile(filepath):
-        return jsonify({'error': 'File not found', 'code': 'NOT_FOUND'}), 404
+    logger.info(f"Serving HTML: {filepath}")
+    
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+        if os.path.isfile(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache'}
+        else:
+            logger.warning(f"File not found: {filepath}")
+            return jsonify({'error': 'File not found', 'code': 'NOT_FOUND'}), 404
     except Exception as e:
         logger.error(f"Error serving HTML {filename}: {e}")
         return jsonify({'error': 'Error reading file'}), 500
