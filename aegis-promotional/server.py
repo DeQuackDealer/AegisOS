@@ -673,25 +673,17 @@ def documentation():
 # ============= ROUTES: STATIC FILES =============
 
 @app.route('/html/<path:filename>')
-@rate_limit(limit=1000)
 def serve_html(filename):
-    """Serve HTML files safely"""
+    """Serve HTML files - Flask native method"""
     if '..' in filename or filename.startswith('/'):
         return jsonify({'error': 'Invalid path'}), 403
-    
-    filepath = os.path.join(BASE_DIR, 'html', filename)
-    logger.info(f"Serving HTML: {filepath}")
-    
     try:
-        if os.path.isfile(filepath):
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache'}
-        else:
-            logger.warning(f"File not found: {filepath}")
-            return jsonify({'error': 'File not found', 'code': 'NOT_FOUND'}), 404
-    except Exception as e:
-        logger.error(f"Error serving HTML {filename}: {e}")
-        return jsonify({'error': 'Error reading file'}), 500
+        resp = make_response(send_from_directory(os.path.join(BASE_DIR, 'html'), filename))
+        resp.headers['Cache-Control'] = 'no-cache'
+        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+        return resp
+    except:
+        return jsonify({'error': 'File not found'}), 404
 
 @app.route('/css/<filename>')
 def serve_css(filename):
