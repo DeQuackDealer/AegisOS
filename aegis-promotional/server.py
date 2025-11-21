@@ -669,49 +669,75 @@ def documentation():
 @rate_limit(limit=1000)
 def serve_html(filename):
     """Serve HTML files safely"""
-    if '..' in filename or filename.startswith('/'):
+    if '..' in filename or filename.startswith('/') or '/' in filename:
         return jsonify({'error': 'Invalid path'}), 403
+    filepath = os.path.join(BASE_DIR, 'html', filename)
+    if not os.path.isfile(filepath):
+        return jsonify({'error': 'File not found', 'code': 'NOT_FOUND'}), 404
     try:
-        return send_from_directory(os.path.join(BASE_DIR, 'html'), filename)
-    except:
-        return jsonify({'error': 'File not found'}), 404
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving HTML {filename}: {e}")
+        return jsonify({'error': 'Error reading file'}), 500
 
 @app.route('/css/<path:filename>')
 @rate_limit(limit=1000)
 def serve_css(filename):
     """Serve CSS files"""
-    if '..' in filename or filename.startswith('/'):
+    if '..' in filename or filename.startswith('/') or '/' in filename:
         return jsonify({'error': 'Invalid path'}), 403
-    try:
-        response = make_response(send_from_directory(os.path.join(BASE_DIR, 'css'), filename))
-        response.headers['Content-Type'] = 'text/css'
-        return response
-    except:
+    filepath = os.path.join(BASE_DIR, 'css', filename)
+    if not os.path.isfile(filepath):
         return jsonify({'error': 'File not found'}), 404
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/css; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving CSS {filename}: {e}")
+        return jsonify({'error': 'Error reading file'}), 500
 
 @app.route('/js/<path:filename>')
 @rate_limit(limit=1000)
 def serve_js(filename):
     """Serve JS files"""
-    if '..' in filename or filename.startswith('/'):
+    if '..' in filename or filename.startswith('/') or '/' in filename:
         return jsonify({'error': 'Invalid path'}), 403
-    try:
-        response = make_response(send_from_directory(os.path.join(BASE_DIR, 'js'), filename))
-        response.headers['Content-Type'] = 'application/javascript'
-        return response
-    except:
+    filepath = os.path.join(BASE_DIR, 'js', filename)
+    if not os.path.isfile(filepath):
         return jsonify({'error': 'File not found'}), 404
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'application/javascript; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving JS {filename}: {e}")
+        return jsonify({'error': 'Error reading file'}), 500
 
 @app.route('/assets/<path:filename>')
 @rate_limit(limit=1000)
 def serve_assets(filename):
     """Serve asset files"""
-    if '..' in filename or filename.startswith('/'):
+    if '..' in filename or filename.startswith('/') or '/' in filename:
         return jsonify({'error': 'Invalid path'}), 403
-    try:
-        return send_from_directory(os.path.join(BASE_DIR, 'assets'), filename)
-    except:
+    filepath = os.path.join(BASE_DIR, 'assets', filename)
+    if not os.path.isfile(filepath):
         return jsonify({'error': 'File not found'}), 404
+    try:
+        with open(filepath, 'rb') as f:
+            content = f.read()
+            if filename.endswith('.svg'):
+                return content, 200, {'Content-Type': 'image/svg+xml'}
+            elif filename.endswith('.png'):
+                return content, 200, {'Content-Type': 'image/png'}
+            elif filename.endswith('.jpg') or filename.endswith('.jpeg'):
+                return content, 200, {'Content-Type': 'image/jpeg'}
+            elif filename.endswith('.gif'):
+                return content, 200, {'Content-Type': 'image/gif'}
+            else:
+                return content, 200, {'Content-Type': 'application/octet-stream'}
+    except Exception as e:
+        logger.error(f"Error serving asset {filename}: {e}")
+        return jsonify({'error': 'Error reading file'}), 500
 
 if __name__ == '__main__':
     logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
