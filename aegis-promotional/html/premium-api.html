@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium API - Aegis OS</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <style>
+        .endpoint-card { background: white; padding: 1.5rem; margin: 1rem 0; border-radius: 8px; border-left: 4px solid #6366f1; }
+        .method { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .get { background: #e0e7ff; color: #4f46e5; }
+        .post { background: #dbeafe; color: #0284c7; }
+        .put { background: #fed7aa; color: #b45309; }
+        .delete { background: #fee2e2; color: #dc2626; }
+        .code-block { background: #1f2937; color: #e5e7eb; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 0.9em; }
+        .rate-limit-table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; }
+        .rate-limit-table th { background: #f3f4f6; padding: 1rem; text-align: left; border-bottom: 2px solid #ddd; }
+        .rate-limit-table td { padding: 1rem; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div style="background: linear-gradient(135deg, #6366f1, #4f46e5); color: white; padding: 3rem 2rem; text-align: center;">
+        <h1>Premium API Documentation</h1>
+        <p style="font-size: 1.1em;">Advanced endpoints for power users and enterprises</p>
+    </div>
+
+    <div style="max-width: 1200px; margin: 0 auto; padding: 2rem;">
+        <h2>API Rate Limits & Tiers</h2>
+        <table class="rate-limit-table">
+            <tr>
+                <th>Tier</th>
+                <th>Requests/Hour</th>
+                <th>Concurrent Connections</th>
+                <th>Burst Limit</th>
+                <th>Priority Queue</th>
+            </tr>
+            <tr>
+                <td><strong>Basic</strong></td>
+                <td>1,000</td>
+                <td>10</td>
+                <td>50 req/min</td>
+                <td>Standard</td>
+            </tr>
+            <tr>
+                <td><strong>Gamer</strong></td>
+                <td>1,000</td>
+                <td>10</td>
+                <td>50 req/min</td>
+                <td>Standard</td>
+            </tr>
+            <tr>
+                <td><strong>AI Dev</strong></td>
+                <td>10,000</td>
+                <td>100</td>
+                <td>500 req/min</td>
+                <td>High</td>
+            </tr>
+            <tr>
+                <td><strong>Server</strong></td>
+                <td>Unlimited</td>
+                <td>1,000+</td>
+                <td>Unlimited</td>
+                <td>Enterprise</td>
+            </tr>
+        </table>
+
+        <h2>Premium Analytics Endpoints</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method get">GET</span> /api/v1/premium/analytics/advanced
+            </div>
+            <p>Get advanced analytics with custom time ranges and dimensions.</p>
+            <div class="code-block">curl -X GET http://localhost:5000/api/v1/premium/analytics/advanced \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "metric": "revenue",
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "dimensions": ["tier", "region", "source"],
+    "format": "json"
+  }'</div>
+        </div>
+
+        <div class="endpoint-card">
+            <div>
+                <span class="method get">GET</span> /api/v1/premium/analytics/cohorts
+            </div>
+            <p>Cohort analysis for user retention and lifecycle metrics.</p>
+            <div class="code-block">curl -X GET http://localhost:5000/api/v1/premium/analytics/cohorts \
+  -H "X-API-Key: your-api-key"</div>
+        </div>
+
+        <h2>Premium Reporting Endpoints</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/reports/generate
+            </div>
+            <p>Generate advanced reports with custom formatting.</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/reports/generate \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "report_type": "comprehensive",
+    "format": "pdf",
+    "include_graphs": true,
+    "export_data": true
+  }'</div>
+        </div>
+
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/reports/schedule
+            </div>
+            <p>Schedule automated report generation and delivery.</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/reports/schedule \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "report_type": "executive_summary",
+    "frequency": "monthly",
+    "recipients": ["admin@example.com"],
+    "format": "pdf"
+  }'</div>
+        </div>
+
+        <h2>Premium Webhook Endpoints</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/webhooks/batch
+            </div>
+            <p>Register multiple webhooks in a single request.</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/webhooks/batch \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "webhooks": [
+      {"url": "https://example.com/webhook1", "events": ["payment.completed"]},
+      {"url": "https://example.com/webhook2", "events": ["license.renewed"]}
+    ]
+  }'</div>
+        </div>
+
+        <h2>Premium License Management</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/licenses/batch-issue
+            </div>
+            <p>Issue multiple licenses in one request (Enterprise only).</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/licenses/batch-issue \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "licenses": [
+      {"tier": "basic", "count": 10},
+      {"tier": "gamer", "count": 5}
+    ],
+    "duration_days": 365
+  }'</div>
+        </div>
+
+        <div class="endpoint-card">
+            <div>
+                <span class="method">PUT</span> /api/v1/premium/licenses/bulk-update
+            </div>
+            <p>Update multiple licenses with new tiers or expiration dates.</p>
+            <div class="code-block">curl -X PUT http://localhost:5000/api/v1/premium/licenses/bulk-update \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "license_ids": ["lic-1", "lic-2", "lic-3"],
+    "new_tier": "gamer"
+  }'</div>
+        </div>
+
+        <h2>Premium Monitoring & Alerts</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/monitoring/create-alert
+            </div>
+            <p>Create custom monitoring alerts with advanced conditions.</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/monitoring/create-alert \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High CPU Usage",
+    "metric": "cpu_usage",
+    "condition": "greater_than",
+    "threshold": 80,
+    "duration_seconds": 300,
+    "webhook_url": "https://example.com/alert"
+  }'</div>
+        </div>
+
+        <h2>Premium Data Export</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/export/bulk
+            </div>
+            <p>Export large datasets in multiple formats.</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/export/bulk \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "data_type": "users",
+    "format": "csv",
+    "include_metadata": true,
+    "compression": "gzip"
+  }'</div>
+        </div>
+
+        <h2>Premium Team Management</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/teams/create
+            </div>
+            <p>Create and manage team accounts (Paid tiers only).</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/teams/create \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "team_name": "Acme Corp",
+    "billing_email": "billing@acme.com",
+    "plan": "team_pro"
+  }'</div>
+        </div>
+
+        <h2>Premium Integrations</h2>
+        <div class="endpoint-card">
+            <div>
+                <span class="method">POST</span> /api/v1/premium/integrations/configure
+            </div>
+            <p>Configure third-party integrations (Slack, Discord, GitHub, etc).</p>
+            <div class="code-block">curl -X POST http://localhost:5000/api/v1/premium/integrations/configure \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "integration": "slack",
+    "webhook_url": "https://hooks.slack.com/services/...",
+    "events": ["payment.completed", "security.alert"]
+  }'</div>
+        </div>
+
+        <h2>API Response Examples</h2>
+        <div style="background: #f8f9fa; padding: 2rem; border-radius: 8px; margin: 2rem 0;">
+            <h4>Successful Response (200)</h4>
+            <div class="code-block">{
+  "status": "success",
+  "data": {
+    "id": "req-123",
+    "timestamp": "2025-11-21T10:30:00Z",
+    "result": "License issued successfully"
+  },
+  "rate_limit": {
+    "remaining": 999,
+    "reset": 1700601000
+  }
+}</div>
+
+            <h4 style="margin-top: 2rem;">Error Response (400)</h4>
+            <div class="code-block">{
+  "status": "error",
+  "error_code": "INVALID_TIER",
+  "message": "The specified tier does not exist",
+  "details": "Valid tiers: freemium, basic, gamer, ai-dev, server"
+}</div>
+        </div>
+    </div>
+</body>
+</html>
