@@ -23,21 +23,18 @@ RATE_LIMIT_STORAGE = defaultdict(lambda: {'count': 0, 'reset_time': time.time()}
 
 # ============= SECURITY MIDDLEWARE =============
 
-@app.before_request
-def security_headers():
+@app.after_request
+def set_security_headers(response):
     """Add security headers to all responses"""
-    @app.after_request
-    def set_headers(response):
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self';"
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, public, max-age=0'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        return response
-    return set_headers()
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self';"
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, public, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 def rate_limit(limit=100, window=3600):
     """Rate limiting decorator"""
@@ -81,11 +78,11 @@ def require_api_key(f):
 def sanitize_input(data):
     """Sanitize user input"""
     if isinstance(data, str):
-        return data.strip()[:1000]  # Max 1000 chars
+        return data.strip()[:1000]
     elif isinstance(data, dict):
-        return {k: sanitize_input(v) for k, v in data.items()}
+        return {k: sanitize_input(v) for k, v in list(data.items())[:100]}
     elif isinstance(data, list):
-        return [sanitize_input(item) for item in data[:100]]  # Max 100 items
+        return [sanitize_input(item) for item in data[:100]]
     return data
 
 # ============= METRICS & MONITORING =============
