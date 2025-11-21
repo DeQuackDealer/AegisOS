@@ -1,9 +1,10 @@
 """
-Simple web server for Aegis OS promotional website
+Aegis OS Promotional Website Server
 Serves the promotional HTML files on port 5000
+Handles ISO downloads and builds
 """
 
-from flask import Flask, send_from_directory, redirect
+from flask import Flask, send_from_directory, redirect, jsonify
 import os
 
 app = Flask(__name__)
@@ -35,52 +36,53 @@ def serve_assets(filename):
   """Serve asset files"""
   return send_from_directory(os.path.join(BASE_DIR, 'assets'), filename)
 
-@app.route('/api/build', methods=['POST'])
-def trigger_build():
-  """Trigger the actual Aegis OS build process"""
-  import subprocess
-  import threading
-  
-  def run_build():
-    try:
-      result = subprocess.run([
-        'python3', '../aegis-os-freemium/build-replit.py'
-      ], capture_output=True, text=True, cwd=BASE_DIR)
-      
-      if result.returncode == 0:
-        print("✅ Aegis OS build completed successfully!")
-      else:
-        print(f"❌ Build failed: {result.stderr}")
-    except Exception as e:
-      print(f"❌ Build error: {e}")
-  
-  build_thread = threading.Thread(target=run_build)
-  build_thread.daemon = True
-  build_thread.start()
-  
-  return {'success': True, 'message': 'Build started'}
-
-@app.route('/api/download/<filename>')
-def download_file(filename):
-  """Download a built file from the output directory"""
-  output_dir = os.path.join(BASE_DIR, '../aegis-os-freemium/output')
-  
-  allowed_files = [
-    'aegis-os-freemium-rootfs.tar.gz',
-    'aegis_lkm.c', 
-    'Makefile',
-    'create-bootable-usb.sh',
-    'checksums.sha256',
-    'iso-metadata.json'
-  ]
-  
-  if filename not in allowed_files:
-    return {'error': 'File not allowed'}, 403
-  
+@app.route('/favicon.ico')
+def favicon():
+  """Serve favicon"""
   try:
-    return send_from_directory(output_dir, filename, as_attachment=True)
-  except FileNotFoundError:
-    return {'error': 'File not found. Run build first.'}, 404
+    return send_from_directory(os.path.join(BASE_DIR, 'assets'), 'logo.svg')
+  except:
+    return '', 204
+
+@app.route('/download/iso')
+def download_iso():
+  """Download the Aegis OS ISO file"""
+  iso_file = os.path.join(BASE_DIR, 'downloads', 'aegis-os-freemium.iso')
+  
+  if os.path.exists(iso_file):
+    return send_from_directory(
+      os.path.join(BASE_DIR, 'downloads'),
+      'aegis-os-freemium.iso',
+      as_attachment=True,
+      download_name='aegis-os-freemium.iso'
+    )
+  else:
+    return jsonify({'error': 'ISO file not available yet. Use build scripts to create it.'}), 404
+
+@app.route('/download/build-scripts')
+def download_build_scripts():
+  """Download the Buildroot build scripts"""
+  script_file = os.path.join(BASE_DIR, 'downloads', 'iso-builder', 'build.sh')
+  
+  if os.path.exists(script_file):
+    return send_from_directory(
+      os.path.join(BASE_DIR, 'downloads', 'iso-builder'),
+      'build.sh',
+      as_attachment=True,
+      download_name='build.sh'
+    )
+  else:
+    return jsonify({'error': 'Build scripts not found'}), 404
+
+@app.route('/api/status')
+def api_status():
+  """Get system status"""
+  iso_exists = os.path.exists(os.path.join(BASE_DIR, 'downloads', 'aegis-os-freemium.iso'))
+  return jsonify({
+    'website': 'online',
+    'iso_available': iso_exists,
+    'build_scripts': 'available'
+  })
 
 if __name__ == '__main__':
   print("🚀 Starting Aegis OS Promotional Website Server...")
