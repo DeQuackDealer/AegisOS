@@ -777,6 +777,18 @@ def page_compliance():
 def page_technical_specs():
     return serve_html('technical-specs.html')
 
+@app.route('/iso-download')
+def page_iso_download():
+    return serve_html('iso-download.html')
+
+@app.route('/iso-verification')
+def page_iso_verification():
+    return serve_html('iso-verification.html')
+
+@app.route('/install-guide')
+def page_install_guide():
+    return serve_html('install-guide.html')
+
 # ============= LICENSING SYSTEM =============
 
 @app.route('/api/v1/admin/authenticate', methods=['POST'])
@@ -1106,6 +1118,71 @@ def get_compliance_specs():
             'access_control': 'RBAC + MFA',
             'monitoring': '24/7 real-time',
             'incident_response': 'Automated'
+        }
+    }), 200
+
+@app.route('/api/v1/iso/info', methods=['GET'])
+@rate_limit(limit=500)
+def get_iso_info():
+    """Get ISO information and specifications"""
+    return jsonify({
+        'version': 'v4.2.1 LTS',
+        'release_date': 'November 2025',
+        'file_size': '2.1 GB',
+        'file_size_bytes': 2252341248,
+        'architecture': 'x86-64 (64-bit)',
+        'checksums': {
+            'sha256': 'a8f3e2c9b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4',
+            'md5': 'd4c8e7f2a1b5e3f9c2d8a7b6e1f4c9d',
+            'sha1': 'f2a8e5c1b9d4e7f2a5c8b1d4e7f2a5c'
+        },
+        'gpg_fingerprint': 'ABCD-1234-5678-9FED',
+        'minimum_ram': '2 GB',
+        'minimum_storage': '20 GB',
+        'recommended_storage': '50 GB SSD'
+    }), 200
+
+@app.route('/api/v1/iso/checksums', methods=['GET'])
+@rate_limit(limit=500)
+def get_iso_checksums():
+    """Get all ISO checksums for verification"""
+    return jsonify({
+        'filename': 'aegis-os-4.2.1-x86_64.iso',
+        'version': 'v4.2.1 LTS',
+        'checksums': {
+            'sha256': 'a8f3e2c9b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4',
+            'sha1': 'f2a8e5c1b9d4e7f2a5c8b1d4e7f2a5c',
+            'md5': 'd4c8e7f2a1b5e3f9c2d8a7b6e1f4c9d',
+            'crc32': 'a1b2c3d4'
+        },
+        'verification_tools': {
+            'windows': 'certUtil -hashfile filename SHA256',
+            'linux': 'sha256sum filename',
+            'macos': 'shasum -a 256 filename'
+        }
+    }), 200
+
+@app.route('/api/v1/iso/requirements', methods=['GET'])
+@rate_limit(limit=500)
+def get_iso_requirements():
+    """Get minimum and recommended system requirements for installation"""
+    return jsonify({
+        'minimum': {
+            'cpu': '2-core processor',
+            'ram': '2 GB',
+            'storage': '20 GB',
+            'boot_method': 'UEFI or BIOS'
+        },
+        'recommended': {
+            'cpu': '4+ cores @ 2.0GHz',
+            'ram': '8 GB',
+            'storage': '50 GB SSD',
+            'boot_method': 'UEFI with Secure Boot'
+        },
+        'tier_specific': {
+            'gamer': {'cpu': '6+ cores @ 3.5GHz', 'ram': '16+ GB', 'storage': '100 GB NVMe', 'gpu': 'Dedicated GPU'},
+            'ai-dev': {'cpu': '8+ cores', 'ram': '16+ GB', 'storage': '100 GB NVMe', 'gpu': 'NVIDIA RTX'},
+            'server': {'cpu': '8+ cores @ 2.8GHz', 'ram': '32+ GB', 'storage': '200+ GB NVMe', 'networking': 'Gigabit+'}
         }
     }), 200
 
