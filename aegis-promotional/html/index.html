@@ -903,7 +903,7 @@
 
             <div class="tier-card">
                 <div class="tier-name">Basic</div>
-                <div class="tier-price">$49<span>/year</span></div>
+                <div class="tier-price">$69<span>/year</span></div>
                 <p class="tier-desc">Security-focused professionals</p>
                 <ul class="feature-list">
                     <li>Enterprise security features</li>
@@ -913,12 +913,12 @@
                     <li>Priority email support</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/basic'">Learn More</button>
-                <button class="btn-tier order" onclick="location.href='/order'">Purchase License</button>
+                <button class="btn-tier order" onclick="checkout('basic')">Buy Now</button>
             </div>
 
             <div class="tier-card featured">
                 <div class="tier-name">Gamer</div>
-                <div class="tier-price">$99<span>/year</span></div>
+                <div class="tier-price">$119<span>/year</span></div>
                 <p class="tier-desc">Ultimate gaming performance</p>
                 <ul class="feature-list">
                     <li>&lt;5ms input latency guarantee</li>
@@ -928,12 +928,12 @@
                     <li>Gaming optimization tools</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/gamer'">Learn More</button>
-                <button class="btn-tier order" onclick="location.href='/order'">Purchase License</button>
+                <button class="btn-tier order" onclick="checkout('gamer')">Buy Now</button>
             </div>
 
             <div class="tier-card">
                 <div class="tier-name">AI Developer</div>
-                <div class="tier-price">$149<span>/year</span></div>
+                <div class="tier-price">$139<span>/year</span></div>
                 <p class="tier-desc">Complete ML/AI platform</p>
                 <ul class="feature-list">
                     <li>PyTorch 2.1 & TensorFlow 2.14</li>
@@ -943,12 +943,12 @@
                     <li>24/7 developer support</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/ai'">Learn More</button>
-                <button class="btn-tier order" onclick="location.href='/order'">Purchase License</button>
+                <button class="btn-tier order" onclick="checkout('ai-dev')">Buy Now</button>
             </div>
 
             <div class="tier-card">
                 <div class="tier-name">Enterprise Server</div>
-                <div class="tier-price">$199<span>/year</span></div>
+                <div class="tier-price" style="font-size: 1.5rem">Contact Us</div>
                 <p class="tier-desc">Production-ready deployment</p>
                 <ul class="feature-list">
                     <li>Nginx: 50K+ requests/sec</li>
@@ -958,7 +958,7 @@
                     <li>24/7 enterprise SLA support</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/server'">Learn More</button>
-                <button class="btn-tier order" onclick="location.href='/order'">Purchase License</button>
+                <button class="btn-tier order" onclick="location.href='mailto:riley.liang@hotmail.com?subject=Server Edition Quote'">Get Quote</button>
             </div>
         </div>
     </section>
@@ -1095,6 +1095,29 @@
             
             lastScrollTop = scrollTop;
         });
+        
+        // Stripe checkout function
+        async function checkout(tier) {
+            try {
+                const response = await fetch('/api/checkout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ tier: tier })
+                });
+                
+                const data = await response.json();
+                
+                if (data.url) {
+                    window.location.href = data.url;
+                } else if (data.error) {
+                    alert(data.error);
+                }
+            } catch (error) {
+                alert('Payment processing unavailable. Please contact riley.liang@hotmail.com');
+            }
+        }
     </script>
 </body>
 </html>

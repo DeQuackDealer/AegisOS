@@ -10,6 +10,7 @@ from collections import defaultdict
 import os, json, hashlib, uuid, time, logging, hmac, secrets
 import jwt
 from typing import Dict, Tuple, Any
+import stripe
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
@@ -28,13 +29,17 @@ FAILED_ATTEMPTS = defaultdict(lambda: {'count': 0, 'locked_until': 0})
 JWT_SECRET = os.getenv('JWT_SECRET', secrets.token_urlsafe(32))
 CSRF_TOKENS = {}
 
+# Stripe configuration - supports card, Google Pay, PayPal
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_PUBLISHABLE = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+
 TIERS = {
     "freemium": {"price": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
-    "basic": {"price": 49, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
-    "workplace": {"price": 79, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
-    "gamer": {"price": 99, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
-    "ai-dev": {"price": 149, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
-    "server": {"price": 199, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
+    "basic": {"price": 69, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
+    "workplace": {"price": 99, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
+    "gamer": {"price": 119, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
+    "ai-dev": {"price": 139, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
+    "server": {"price": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
 }
 
 # ============= SECURITY: AUDIT LOGGING =============
@@ -2242,86 +2247,79 @@ def serve_assets(filename):
         logger.error(f"Asset error: {e}")
         return Response('', status=500)
 
-@app.route('/order', methods=['GET'])
-def order_page():
-    """Simple order page"""
-    html = """
+@app.route('/api/checkout', methods=['POST'])
+@rate_limit(limit=20, window=3600)
+def create_checkout_session():
+    """Create Stripe checkout session"""
+    try:
+        data = request.get_json()
+        tier = data.get('tier', '').lower()
+        
+        if tier not in TIERS:
+            return jsonify({'error': 'Invalid tier'}), 400
+        
+        if TIERS[tier]['price'] == 0:
+            if tier == 'server':
+                return jsonify({'error': 'Server edition requires contacting sales'}), 400
+            return jsonify({'error': 'Freemium is free, no payment needed'}), 400
+        
+        domain = request.host_url.rstrip('/')
+        
+        # Create Stripe checkout session with Google Pay and PayPal support
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],  # Card payments including Google Pay
+            line_items=[
+                {
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {
+                            'name': f'Aegis OS - {tier.capitalize()} Edition',
+                            'description': f'Annual license - ${TIERS[tier]["price"]}/year',
+                        },
+                        'unit_amount': int(TIERS[tier]['price'] * 100),
+                    },
+                    'quantity': 1,
+                }
+            ],
+            mode='payment',
+            success_url=f'{domain}/success?tier={tier}',
+            cancel_url=f'{domain}/',
+            allow_promotion_codes=True,
+        )
+        
+        tamper_protected_audit_log('CHECKOUT_CREATED', {'tier': tier, 'session_id': session.id})
+        return jsonify({'url': session.url}), 200
+    
+    except Exception as e:
+        logger.error(f"Checkout error: {str(e)}")
+        return jsonify({'error': 'Payment processing error'}), 500
+
+@app.route('/success')
+def payment_success():
+    """Payment success page"""
+    tier = request.args.get('tier', 'basic')
+    html = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Order Aegis OS</title>
+        <title>Success - Aegis OS</title>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; padding: 2rem; margin: 0; }
-            .container { background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto; }
-            h1 { color: #1f2937; margin-top: 0; }
-            .tier-list { margin: 2rem 0; }
-            .tier-item { padding: 1rem; border: 1px solid #e5e7eb; border-radius: 8px; margin: 1rem 0; display: flex; justify-content: space-between; align-items: center; }
-            .price { font-size: 1.5rem; font-weight: bold; color: #6366f1; }
-            .contact { background: #f3f4f6; padding: 2rem; border-radius: 8px; margin-top: 2rem; }
-            .button { display: inline-block; background: #6366f1; color: white; padding: 0.875rem 2rem; border-radius: 8px; text-decoration: none; font-weight: 600; }
-            .button:hover { background: #4f46e5; }
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }}
+            .container {{ background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 500px; }}
+            h1 {{ color: #10b981; margin-top: 0; }}
+            p {{ color: #6b7280; font-size: 1.1rem; }}
+            .button {{ display: inline-block; background: #6366f1; color: white; padding: 0.875rem 2rem; border-radius: 8px; text-decoration: none; margin-top: 1rem; font-weight: 600; }}
+            .button:hover {{ background: #4f46e5; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Order Aegis OS</h1>
-            <p>Choose your edition and contact us to complete your purchase.</p>
-            
-            <div class="tier-list">
-                <div class="tier-item">
-                    <div>
-                        <strong>Freemium Edition</strong><br>
-                        <small>Perfect for learning Linux</small>
-                    </div>
-                    <div class="price">FREE</div>
-                </div>
-                <div class="tier-item">
-                    <div>
-                        <strong>Basic Edition</strong><br>
-                        <small>Security-focused for home users</small>
-                    </div>
-                    <div class="price">$49</div>
-                </div>
-                <div class="tier-item">
-                    <div>
-                        <strong>Gamer Edition</strong><br>
-                        <small>Optimized for gaming performance</small>
-                    </div>
-                    <div class="price">$99</div>
-                </div>
-                <div class="tier-item">
-                    <div>
-                        <strong>AI Developer Edition</strong><br>
-                        <small>ML/AI development tools</small>
-                    </div>
-                    <div class="price">$149</div>
-                </div>
-                <div class="tier-item">
-                    <div>
-                        <strong>Server Edition</strong><br>
-                        <small>Enterprise deployment ready</small>
-                    </div>
-                    <div class="price">$199</div>
-                </div>
-            </div>
-            
-            <div class="contact">
-                <h2>How to Order</h2>
-                <p>To complete your purchase, contact us at:</p>
-                <p style="font-size: 1.2rem; font-weight: bold;">
-                    <a href="mailto:riley.liang@hotmail.com?subject=Aegis OS Order">riley.liang@hotmail.com</a>
-                </p>
-                <p>Include the edition you want and we'll send payment instructions.</p>
-                <p style="color: #6b7280; font-size: 0.9rem; margin-top: 1rem;">
-                    Payment methods accepted: Bank transfer, Zelle, Venmo, Cash App
-                </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 2rem;">
-                <a href="/" class="button">Back to Home</a>
-            </div>
+            <h1>✅ Payment Successful!</h1>
+            <p>Thank you for purchasing Aegis OS {tier.capitalize()} Edition</p>
+            <p>Check your email for download instructions.</p>
+            <a href="/" class="button">Back to Home</a>
         </div>
     </body>
     </html>
