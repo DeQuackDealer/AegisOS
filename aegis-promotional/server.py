@@ -77,7 +77,7 @@ def set_security_headers(response):
     # HSTS with preload
     response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains; preload'
     
-    # CSP with strict policy
+    # CSP with strict policy 
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
         "script-src 'self' 'unsafe-inline'; "
