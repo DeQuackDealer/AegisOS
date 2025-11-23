@@ -10,7 +10,6 @@ from collections import defaultdict
 import os, json, hashlib, uuid, time, logging, hmac, secrets
 import jwt
 from typing import Dict, Tuple, Any
-import stripe
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
@@ -28,11 +27,6 @@ RATE_LIMIT_STORAGE = defaultdict(lambda: {'count': 0, 'reset_time': time.time()}
 FAILED_ATTEMPTS = defaultdict(lambda: {'count': 0, 'locked_until': 0})
 JWT_SECRET = os.getenv('JWT_SECRET', secrets.token_urlsafe(32))
 CSRF_TOKENS = {}
-
-# ============= STRIPE CONFIGURATION =============
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
-STRIPE_PUBLISHABLE = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
-STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 
 TIERS = {
     "freemium": {"price": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
@@ -2248,113 +2242,86 @@ def serve_assets(filename):
         logger.error(f"Asset error: {e}")
         return Response('', status=500)
 
-@app.route('/api/checkout', methods=['POST'])
-@rate_limit(limit=20, window=3600)
-def create_checkout_session():
-    """Create Stripe checkout session for tier purchase"""
-    try:
-        data = request.get_json()
-        tier = data.get('tier', '').lower()
-        
-        if tier not in TIERS:
-            return jsonify({'error': 'Invalid tier'}), 400
-        
-        if TIERS[tier]['price'] == 0:
-            return jsonify({'error': 'Freemium is free, no payment needed'}), 400
-        
-        domain = request.host_url.rstrip('/')
-        
-        # Create Stripe checkout session
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[
-                {
-                    'price_data': {
-                        'currency': 'usd',
-                        'product_data': {
-                            'name': f'Aegis OS - {tier.capitalize()} Edition',
-                            'description': f'Annual subscription - ${TIERS[tier]["price"]}/year',
-                            'images': [f'{domain}/assets/aegis-logo.png'] if os.path.exists(os.path.join(BASE_DIR, 'assets', 'aegis-logo.png')) else [],
-                        },
-                        'unit_amount': int(TIERS[tier]['price'] * 100),
-                    },
-                    'quantity': 1,
-                }
-            ],
-            mode='payment',
-            success_url=f'{domain}/checkout-success?tier={tier}',
-            cancel_url=f'{domain}/checkout-cancel',
-        )
-        
-        tamper_protected_audit_log('CHECKOUT_SESSION_CREATED', {'tier': tier, 'session_id': session.id})
-        
-        return jsonify({'sessionId': session.id, 'publishableKey': STRIPE_PUBLISHABLE}), 200
-    
-    except Exception as e:
-        logger.error(f"Checkout error: {str(e)}")
-        tamper_protected_audit_log('CHECKOUT_ERROR', {'error': str(e)}, 'HIGH')
-        return jsonify({'error': 'Payment processing error'}), 500
-
-@app.route('/checkout-success')
-def checkout_success():
-    """Payment success page"""
-    tier = request.args.get('tier', 'basic').lower()
-    if tier not in TIERS:
-        tier = 'basic'
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Payment Successful - Aegis OS</title>
-        <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }}
-            .container {{ background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 500px; }}
-            h1 {{ color: #10b981; margin-top: 0; }}
-            p {{ color: #6b7280; font-size: 1.1rem; }}
-            .button {{ display: inline-block; background: #6366f1; color: white; padding: 0.75rem 2rem; border-radius: 8px; text-decoration: none; margin-top: 1rem; font-weight: 600; }}
-            .button:hover {{ background: #4f46e5; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>✅ Payment Successful!</h1>
-            <p>Thank you for purchasing Aegis OS {tier.capitalize()} Edition</p>
-            <p>Your license is now active. Download your ISO and get started.</p>
-            <a href="/" class="button">Back to Home</a>
-        </div>
-    </body>
-    </html>
-    """
-    return html
-
-@app.route('/checkout-cancel')
-def checkout_cancel():
-    """Payment cancelled page"""
+@app.route('/order', methods=['GET'])
+def order_page():
+    """Simple order page"""
     html = """
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Payment Cancelled - Aegis OS</title>
+        <title>Order Aegis OS</title>
         <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }}
-            .container {{ background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 500px; }}
-            h1 {{ color: #dc2626; margin-top: 0; }}
-            p {{ color: #6b7280; font-size: 1.1rem; }}
-            .button {{ display: inline-block; background: #6366f1; color: white; padding: 0.75rem 2rem; border-radius: 8px; text-decoration: none; margin-top: 1rem; font-weight: 600; }}
-            .button:hover {{ background: #4f46e5; }}
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; padding: 2rem; margin: 0; }
+            .container { background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto; }
+            h1 { color: #1f2937; margin-top: 0; }
+            .tier-list { margin: 2rem 0; }
+            .tier-item { padding: 1rem; border: 1px solid #e5e7eb; border-radius: 8px; margin: 1rem 0; display: flex; justify-content: space-between; align-items: center; }
+            .price { font-size: 1.5rem; font-weight: bold; color: #6366f1; }
+            .contact { background: #f3f4f6; padding: 2rem; border-radius: 8px; margin-top: 2rem; }
+            .button { display: inline-block; background: #6366f1; color: white; padding: 0.875rem 2rem; border-radius: 8px; text-decoration: none; font-weight: 600; }
+            .button:hover { background: #4f46e5; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>Payment Cancelled</h1>
-            <p>Your payment was cancelled. No charges were made.</p>
-            <p>Feel free to try again or contact us at riley.liang@hotmail.com</p>
-            <a href="/" class="button">Back to Home</a>
+            <h1>Order Aegis OS</h1>
+            <p>Choose your edition and contact us to complete your purchase.</p>
+            
+            <div class="tier-list">
+                <div class="tier-item">
+                    <div>
+                        <strong>Freemium Edition</strong><br>
+                        <small>Perfect for learning Linux</small>
+                    </div>
+                    <div class="price">FREE</div>
+                </div>
+                <div class="tier-item">
+                    <div>
+                        <strong>Basic Edition</strong><br>
+                        <small>Security-focused for home users</small>
+                    </div>
+                    <div class="price">$49</div>
+                </div>
+                <div class="tier-item">
+                    <div>
+                        <strong>Gamer Edition</strong><br>
+                        <small>Optimized for gaming performance</small>
+                    </div>
+                    <div class="price">$99</div>
+                </div>
+                <div class="tier-item">
+                    <div>
+                        <strong>AI Developer Edition</strong><br>
+                        <small>ML/AI development tools</small>
+                    </div>
+                    <div class="price">$149</div>
+                </div>
+                <div class="tier-item">
+                    <div>
+                        <strong>Server Edition</strong><br>
+                        <small>Enterprise deployment ready</small>
+                    </div>
+                    <div class="price">$199</div>
+                </div>
+            </div>
+            
+            <div class="contact">
+                <h2>How to Order</h2>
+                <p>To complete your purchase, contact us at:</p>
+                <p style="font-size: 1.2rem; font-weight: bold;">
+                    <a href="mailto:riley.liang@hotmail.com?subject=Aegis OS Order">riley.liang@hotmail.com</a>
+                </p>
+                <p>Include the edition you want and we'll send payment instructions.</p>
+                <p style="color: #6b7280; font-size: 0.9rem; margin-top: 1rem;">
+                    Payment methods accepted: Bank transfer, Zelle, Venmo, Cash App
+                </p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 2rem;">
+                <a href="/" class="button">Back to Home</a>
+            </div>
         </div>
     </body>
     </html>
