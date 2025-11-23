@@ -2290,13 +2290,10 @@ def create_checkout_session():
         
         return jsonify({'sessionId': session.id, 'publishableKey': STRIPE_PUBLISHABLE}), 200
     
-    except stripe.error.StripeError as e:
-        logger.error(f"Stripe error: {str(e)}")
-        tamper_protected_audit_log('STRIPE_ERROR', {'error': str(e)}, 'HIGH')
-        return jsonify({'error': 'Payment processing error'}), 500
     except Exception as e:
         logger.error(f"Checkout error: {str(e)}")
-        return jsonify({'error': 'Checkout error'}), 500
+        tamper_protected_audit_log('CHECKOUT_ERROR', {'error': str(e)}, 'HIGH')
+        return jsonify({'error': 'Payment processing error'}), 500
 
 @app.route('/checkout-success')
 def checkout_success():
