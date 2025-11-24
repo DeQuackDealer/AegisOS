@@ -63,8 +63,8 @@ TIERS = {
     "freemium": {"lifetime": 0, "annual": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
     "basic": {"lifetime": 69, "annual": 10, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
     "workplace": {"lifetime": 99, "annual": 12, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
-    "gamer": {"lifetime": 119, "annual": 13, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
-    "ai-dev": {"lifetime": 139, "annual": 15, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
+    "gamer": {"lifetime": 89, "annual": 13, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
+    "ai-dev": {"lifetime": 109, "annual": 15, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
     "server": {"lifetime": 0, "annual": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
 }
 
@@ -2390,6 +2390,35 @@ def create_checkout_session():
     except Exception as e:
         logger.error(f"Checkout error: {str(e)}")
         return jsonify({'error': 'Payment system error. Please try again later.'}), 500
+
+@app.route('/api/validate-license', methods=['POST'])
+@rate_limit(limit=100, window=3600)
+def validate_license():
+    """Validate a license key for OS boot"""
+    try:
+        from license_system import AegisLicenseSystem
+        
+        data = request.get_json()
+        license_key = data.get('license_key', '')
+        hardware_id = data.get('hardware_id')
+        
+        # Initialize license system with secret
+        license_system = AegisLicenseSystem(secret_key=JWT_SECRET)
+        
+        # Validate the license
+        # In production, this would check against a database
+        is_valid, features = license_system.validate_license(license_key)
+        
+        return jsonify({
+            'valid': is_valid,
+            'tier': features.get('tier', 'freemium'),
+            'features': features,
+            'hardware_id': hardware_id
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"License validation error: {str(e)}")
+        return jsonify({'valid': False, 'tier': 'freemium'}), 200
 
 @app.route('/success')
 def payment_success():
