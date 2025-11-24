@@ -3,11 +3,11 @@ Aegis OS - ULTRA-SECURE v4.0
 100/100 Security Score - Enterprise Grade - Absolute Perfection
 """
 
-from flask import Flask, send_from_directory, redirect, jsonify, request, make_response, Response
+from flask import Flask, send_from_directory, redirect, jsonify, request, make_response, Response, send_file
 from functools import wraps, lru_cache
 from datetime import datetime, timedelta
 from collections import defaultdict
-import os, json, hashlib, uuid, time, logging, hmac, secrets
+import os, json, hashlib, uuid, time, logging, hmac, secrets, re
 import jwt
 from typing import Dict, Tuple, Any
 import stripe
@@ -2538,34 +2538,7 @@ def create_checkout_session():
         logger.error(f"Checkout error: {str(e)}")
         return jsonify({'error': 'Payment system error. Please try again later.'}), 500
 
-@app.route('/api/validate-license', methods=['POST'])
-@rate_limit(limit=100, window=3600)
-def validate_license():
-    """Validate a license key for OS boot"""
-    try:
-        from license_system import AegisLicenseSystem
-        
-        data = request.get_json()
-        license_key = data.get('license_key', '')
-        hardware_id = data.get('hardware_id')
-        
-        # Initialize license system with secret
-        license_system = AegisLicenseSystem(secret_key=JWT_SECRET)
-        
-        # Validate the license
-        # In production, this would check against a database
-        is_valid, features = license_system.validate_license(license_key)
-        
-        return jsonify({
-            'valid': is_valid,
-            'tier': features.get('tier', 'freemium'),
-            'features': features,
-            'hardware_id': hardware_id
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"License validation error: {str(e)}")
-        return jsonify({'valid': False, 'tier': 'freemium'}), 200
+# License validation route removed - now using the updated one at line 882
 
 @app.route('/success')
 def payment_success():
