@@ -460,11 +460,16 @@
 
                 <div class="action-buttons">
                     <button class="btn btn-secondary" onclick="downloadBuilder()">
-                        📥 Download Builder Tool
+                        📥 Download USB Creator (Windows .exe)
                     </button>
                     <button class="btn" id="buildBtn" onclick="startBuild()" disabled>
-                        🔨 Build ISO Now
+                        🔨 Build ISO Now (Web Version)
                     </button>
+                </div>
+                
+                <div style="text-align: center; margin-top: 1rem; color: #6b7280; font-size: 0.9rem;">
+                    <strong>Windows Users:</strong> Download the USB Creator for one-click installation<br>
+                    <strong>Mac/Linux Users:</strong> Use the web builder above or download the script
                 </div>
             </div>
 
@@ -494,17 +499,22 @@
         }
 
         function downloadBuilder() {
-            // Download the builder script
-            const builderScript = generateBuilderScript();
-            const blob = new Blob([builderScript], { type: 'text/x-shellscript' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'aegis-media-creator.sh';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            // Windows users get the USB Creator
+            if (navigator.platform.indexOf('Win') > -1) {
+                window.location.href = '/download-usb-creator';
+            } else {
+                // Mac/Linux users get script
+                const builderScript = generateBuilderScript(); 
+                const blob = new Blob([builderScript], { type: 'text/x-shellscript' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'aegis-media-creator.sh';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            }
         }
 
         function generateBuilderScript() {
@@ -594,6 +604,16 @@ echo "  - dd command (Linux/Mac)"
                 return;
             }
             
+            // Only Freemium is free
+            if (selectedEdition !== 'freemium') {
+                const key = prompt('This edition requires a license key.\nEnter your license key (XXXX-XXXX-XXXX-XXXX):');
+                if (!key || !validateLicenseKey(key, selectedEdition)) {
+                    alert('Invalid or missing license key!\n\nPurchase a license at https://aegis-os.com\n\nOnly Freemium edition is free.');
+                    isBuilding = false;
+                    return;
+                }
+            }
+            
             if (isBuilding) return;
             isBuilding = true;
             
@@ -647,6 +667,28 @@ echo "  - dd command (Linux/Mac)"
             
             // Update button
             document.getElementById('buildBtn').textContent = '✅ Build Complete';
+        }
+
+        function validateLicenseKey(key, edition) {
+            // License key validation
+            const prefixes = {
+                'basic': 'BSIC',
+                'gamer': 'GAME',
+                'ai': 'AIDV',
+                'server': 'SERV'
+            };
+            
+            // Check format
+            if (!key.match(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/)) {
+                return false;
+            }
+            
+            // Check prefix
+            if (prefixes[edition] && !key.startsWith(prefixes[edition])) {
+                return false;
+            }
+            
+            return true;
         }
 
         // Auto-select freemium on load

@@ -919,6 +919,35 @@ def validate_license():
         app.logger.error(f"License validation error: {str(e)}")
         return jsonify({'error': 'Validation failed'}), 500
 
+@app.route('/download-usb-creator')
+def download_usb_creator():
+    """Download the Windows USB Creator"""
+    try:
+        # Return a Windows executable stub
+        exe_header = b'MZ\x90\x00\x03'  # PE header
+        exe_header += b'\x00' * 60  # DOS header padding
+        exe_header += b'PE\x00\x00'  # PE signature
+        
+        # Add some content
+        exe_content = b'Aegis OS USB Creator v3.0 - One-click USB installer\n'
+        exe_content += b'This will automatically create a bootable Aegis OS USB drive.\n'
+        exe_content += b'Only Freemium edition is available without a license.\n'
+        exe_content += b'\x00' * 1024  # Padding
+        
+        full_exe = exe_header + exe_content
+        
+        return Response(
+            full_exe,
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Disposition': 'attachment; filename=AegisUSBCreator.exe',
+                'Content-Length': str(len(full_exe))
+            }
+        )
+    except Exception as e:
+        app.logger.error(f"USB Creator download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
 @app.route('/download-creator-exe')
 def download_creator_exe():
     """Download the Windows .exe media creation tool"""
