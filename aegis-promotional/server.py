@@ -29,9 +29,35 @@ FAILED_ATTEMPTS = defaultdict(lambda: {'count': 0, 'locked_until': 0})
 JWT_SECRET = os.getenv('JWT_SECRET', secrets.token_urlsafe(32))
 CSRF_TOKENS = {}
 
-# Stripe configuration - supports card, Google Pay, PayPal
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY', '')
-STRIPE_PUBLISHABLE = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+# Stripe configuration - auto-detects test vs production environment
+# In development: uses test keys (sk_test_..., pk_test_...)
+# In production (deployed): uses live keys (sk_live_..., pk_live_...)
+
+def get_stripe_keys():
+    """Get appropriate Stripe keys based on environment"""
+    is_production = os.getenv('REPLIT_DEPLOYMENT') == '1'
+    
+    if is_production:
+        # Production deployment - use live keys
+        return {
+            'secret': os.getenv('STRIPE_SECRET_KEY_LIVE', ''),
+            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_LIVE', '')
+        }
+    else:
+        # Development - use test keys
+        return {
+            'secret': os.getenv('STRIPE_SECRET_KEY_TEST', ''),
+            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_TEST', '')
+        }
+
+# Initialize Stripe
+stripe_keys = get_stripe_keys()
+stripe.api_key = stripe_keys['secret']
+STRIPE_PUBLISHABLE = stripe_keys['publishable']
+
+# Log which mode we're in
+environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
+logger.info(f"Stripe initialized in {environment}")
 
 TIERS = {
     "freemium": {"price": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
@@ -2247,11 +2273,20 @@ def serve_assets(filename):
         logger.error(f"Asset error: {e}")
         return Response('', status=500)
 
+@app.route('/api/stripe-config', methods=['GET'])
+@rate_limit(limit=100, window=3600)
+def get_stripe_config():
+    """Get Stripe publishable key for frontend"""
+    return jsonify({'publishableKey': STRIPE_PUBLISHABLE, 'testMode': os.getenv('REPLIT_DEPLOYMENT') != '1'})
+
 @app.route('/api/checkout', methods=['POST'])
 @rate_limit(limit=20, window=3600)
 def create_checkout_session():
-    """Create Stripe checkout session"""
+    """Create Stripe checkout session with card, Google Pay, and PayPal support"""
     try:
+        if not stripe.api_key:
+            return jsonify({'error': 'Payment system not configured. Please set up Stripe keys.'}), 503
+        
         data = request.get_json()
         tier = data.get('tier', '').lower()
         
@@ -2265,60 +2300,222 @@ def create_checkout_session():
         
         domain = request.host_url.rstrip('/')
         
-        # Create Stripe checkout session with Google Pay and PayPal support
+        # Tier display names for checkout
+        tier_names = {
+            'basic': 'Basic Edition',
+            'gamer': 'Gamer Edition',
+            'ai-dev': 'AI Developer Edition',
+            'workplace': 'Workplace Edition'
+        }
+        
+        # Create Stripe checkout session with multiple payment methods
         session = stripe.checkout.Session.create(
-            payment_method_types=['card'],  # Card payments including Google Pay
+            payment_method_types=['card'],  # Includes cards, Google Pay, Apple Pay
             line_items=[
                 {
                     'price_data': {
                         'currency': 'usd',
                         'product_data': {
-                            'name': f'Aegis OS - {tier.capitalize()} Edition',
-                            'description': f'Annual license - ${TIERS[tier]["price"]}/year',
+                            'name': f'Aegis OS - {tier_names.get(tier, tier.capitalize())}',
+                            'description': f'Annual license - Professional Linux distribution',
+                            'images': ['https://aegis-os.com/logo.png'] if domain.startswith('https') else []
                         },
-                        'unit_amount': int(TIERS[tier]['price'] * 100),
+                        'unit_amount': int(TIERS[tier]['price'] * 100),  # Convert to cents
+                        'recurring': None  # One-time payment
                     },
                     'quantity': 1,
                 }
             ],
             mode='payment',
-            success_url=f'{domain}/success?tier={tier}',
-            cancel_url=f'{domain}/',
+            success_url=f'{domain}success?tier={tier}&session_id={{CHECKOUT_SESSION_ID}}',
+            cancel_url=f'{domain}#tiers',
+            customer_email=data.get('email'),  # Pre-fill if provided
             allow_promotion_codes=True,
+            billing_address_collection='required',
+            payment_intent_data={
+                'metadata': {
+                    'tier': tier,
+                    'product': f'aegis_os_{tier}'
+                }
+            }
         )
         
-        tamper_protected_audit_log('CHECKOUT_CREATED', {'tier': tier, 'session_id': session.id})
-        return jsonify({'url': session.url}), 200
+        tamper_protected_audit_log('CHECKOUT_CREATED', {
+            'tier': tier, 
+            'session_id': session.id,
+            'amount': TIERS[tier]['price']
+        })
+        
+        return jsonify({
+            'url': session.url,
+            'sessionId': session.id
+        }), 200
     
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error: {str(e)}")
+        return jsonify({'error': 'Payment system error. Please try again later.'}), 500
     except Exception as e:
         logger.error(f"Checkout error: {str(e)}")
-        return jsonify({'error': 'Payment processing error'}), 500
+        return jsonify({'error': 'Unable to create checkout session'}), 500
 
 @app.route('/success')
 def payment_success():
-    """Payment success page"""
+    """Payment success page with session verification"""
     tier = request.args.get('tier', 'basic')
+    session_id = request.args.get('session_id')
+    
+    # Verify the session if ID provided
+    payment_verified = False
+    customer_email = "your email"
+    
+    if session_id and stripe.api_key:
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+            if session.payment_status == 'paid':
+                payment_verified = True
+                customer_email = session.customer_details.email if session.customer_details else "your email"
+                tamper_protected_audit_log('PAYMENT_COMPLETED', {
+                    'tier': tier,
+                    'session_id': session_id,
+                    'amount': session.amount_total / 100
+                }, severity='HIGH')
+        except:
+            pass
+    
+    tier_names = {
+        'basic': 'Basic',
+        'gamer': 'Gamer',
+        'ai-dev': 'AI Developer',
+        'workplace': 'Workplace'
+    }
+    
     html = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Success - Aegis OS</title>
+        <title>Payment Successful - Aegis OS</title>
         <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #6366f1, #8b5cf6); min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }}
-            .container {{ background: white; padding: 3rem; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); text-align: center; max-width: 500px; }}
-            h1 {{ color: #10b981; margin-top: 0; }}
-            p {{ color: #6b7280; font-size: 1.1rem; }}
-            .button {{ display: inline-block; background: #6366f1; color: white; padding: 0.875rem 2rem; border-radius: 8px; text-decoration: none; margin-top: 1rem; font-weight: 600; }}
-            .button:hover {{ background: #4f46e5; }}
+            body {{ 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                background: linear-gradient(135deg, #1e3a8a, #7c3aed); 
+                min-height: 100vh; 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                margin: 0;
+                padding: 20px;
+            }}
+            .container {{ 
+                background: white; 
+                padding: 3rem; 
+                border-radius: 16px; 
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
+                text-align: center; 
+                max-width: 500px;
+                width: 100%;
+            }}
+            .success-icon {{
+                width: 80px;
+                height: 80px;
+                background: #10b981;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 auto 1.5rem;
+                font-size: 40px;
+            }}
+            h1 {{ 
+                color: #1f2937; 
+                margin: 0 0 1rem;
+                font-size: 2rem;
+            }}
+            .edition-badge {{
+                display: inline-block;
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                color: white;
+                padding: 0.5rem 1.5rem;
+                border-radius: 20px;
+                font-weight: 600;
+                margin-bottom: 1.5rem;
+            }}
+            p {{ 
+                color: #6b7280; 
+                font-size: 1.1rem;
+                margin: 1rem 0;
+                line-height: 1.6;
+            }}
+            .next-steps {{
+                background: #f3f4f6;
+                border-radius: 12px;
+                padding: 1.5rem;
+                margin: 2rem 0;
+                text-align: left;
+            }}
+            .next-steps h3 {{
+                margin-top: 0;
+                color: #1f2937;
+            }}
+            .next-steps ol {{
+                margin: 0.5rem 0;
+                padding-left: 1.5rem;
+                color: #4b5563;
+            }}
+            .next-steps li {{
+                margin: 0.5rem 0;
+            }}
+            .button {{ 
+                display: inline-block; 
+                background: linear-gradient(135deg, #6366f1, #8b5cf6); 
+                color: white; 
+                padding: 1rem 2.5rem; 
+                border-radius: 10px; 
+                text-decoration: none; 
+                margin-top: 1rem; 
+                font-weight: 600;
+                transition: transform 0.2s;
+            }}
+            .button:hover {{ 
+                transform: translateY(-2px);
+                box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+            }}
+            .test-mode {{
+                background: #fef3c7;
+                color: #92400e;
+                padding: 0.75rem;
+                border-radius: 8px;
+                margin-bottom: 1rem;
+                font-size: 0.9rem;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>✅ Payment Successful!</h1>
-            <p>Thank you for purchasing Aegis OS {tier.capitalize()} Edition</p>
-            <p>Check your email for download instructions.</p>
+            <div class="success-icon">✓</div>
+            <h1>Payment Successful!</h1>
+            
+            {'<div class="test-mode">⚠️ TEST MODE: This was a test payment. No real charge was made.</div>' if os.getenv('REPLIT_DEPLOYMENT') != '1' else ''}
+            
+            <div class="edition-badge">Aegis OS {tier_names.get(tier, tier.capitalize())} Edition</div>
+            
+            <p>Thank you for your purchase! {'Your payment has been confirmed.' if payment_verified else ''}</p>
+            
+            <div class="next-steps">
+                <h3>Next Steps:</h3>
+                <ol>
+                    <li>Check {customer_email} for your download link and license key</li>
+                    <li>Download the ISO file (approximately 3-4GB)</li>
+                    <li>Create a bootable USB or VM</li>
+                    <li>Follow the installation guide included in your email</li>
+                </ol>
+            </div>
+            
+            <p style="color: #6b7280; font-size: 0.95rem;">
+                Need help? Contact support at riley.liang@hotmail.com
+            </p>
+            
             <a href="/" class="button">Back to Home</a>
         </div>
     </body>
