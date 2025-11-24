@@ -60,12 +60,12 @@ environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == 
 logger.info(f"Stripe initialized in {environment}")
 
 TIERS = {
-    "freemium": {"price": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
-    "basic": {"price": 69, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
-    "workplace": {"price": 99, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
-    "gamer": {"price": 119, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
-    "ai-dev": {"price": 139, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
-    "server": {"price": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
+    "freemium": {"lifetime": 0, "annual": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
+    "basic": {"lifetime": 69, "annual": 10, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
+    "workplace": {"lifetime": 99, "annual": 12, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
+    "gamer": {"lifetime": 119, "annual": 13, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
+    "ai-dev": {"lifetime": 139, "annual": 15, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
+    "server": {"lifetime": 0, "annual": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
 }
 
 # ============= SECURITY: AUDIT LOGGING =============
@@ -2289,14 +2289,19 @@ def create_checkout_session():
         
         data = request.get_json()
         tier = data.get('tier', '').lower()
+        payment_type = data.get('type', 'lifetime')  # 'lifetime' or 'annual'
         
         if tier not in TIERS:
             return jsonify({'error': 'Invalid tier'}), 400
         
-        if TIERS[tier]['price'] == 0:
+        # Get the appropriate price based on payment type
+        price = TIERS[tier].get(payment_type, 0)
+        
+        if price == 0:
             if tier == 'server':
                 return jsonify({'error': 'Server edition requires contacting sales'}), 400
-            return jsonify({'error': 'Freemium is free, no payment needed'}), 400
+            elif tier == 'freemium':
+                return jsonify({'error': 'Freemium is free, no payment needed'}), 400
         
         # Get proper Replit domain for Stripe URLs
         replit_domain = os.getenv('REPLIT_DOMAINS', '').split(',')[0] if os.getenv('REPLIT_DOMAINS') else None
@@ -2314,40 +2319,67 @@ def create_checkout_session():
             'workplace': 'Workplace Edition'
         }
         
-        # Create Stripe checkout session with multiple payment methods
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],  # Includes cards, Google Pay, Apple Pay
-            line_items=[
-                {
-                    'price_data': {
-                        'currency': 'usd',
-                        'product_data': {
-                            'name': f'Aegis OS - {tier_names.get(tier, tier.capitalize())}',
-                            'description': f'Annual license - Professional Linux distribution',
-                        },
-                        'unit_amount': int(TIERS[tier]['price'] * 100),  # Convert to cents
+        # Create line items based on payment type
+        if payment_type == 'annual':
+            # Recurring annual subscription
+            line_items = [{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {
+                        'name': f'Aegis OS - {tier_names.get(tier, tier.capitalize())}',
+                        'description': f'Annual subscription - Professional Linux distribution',
                     },
-                    'quantity': 1,
-                }
-            ],
-            mode='payment',
-            success_url=f'{domain}/success?tier={tier}&session_id={{CHECKOUT_SESSION_ID}}',
-            cancel_url=f'{domain}/#tiers',
-            customer_email=data.get('email'),  # Pre-fill if provided
-            allow_promotion_codes=True,
-            billing_address_collection='required',
-            payment_intent_data={
+                    'unit_amount': int(price * 100),  # Convert to cents
+                    'recurring': {
+                        'interval': 'year'
+                    }
+                },
+                'quantity': 1,
+            }]
+            mode = 'subscription'
+        else:
+            # One-time lifetime payment
+            line_items = [{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {
+                        'name': f'Aegis OS - {tier_names.get(tier, tier.capitalize())}',
+                        'description': f'Lifetime license - Professional Linux distribution',
+                    },
+                    'unit_amount': int(price * 100),  # Convert to cents
+                },
+                'quantity': 1,
+            }]
+            mode = 'payment'
+        
+        # Create Stripe checkout session with multiple payment methods
+        session_params = {
+            'payment_method_types': ['card'],  # Includes cards, Google Pay, Apple Pay
+            'line_items': line_items,
+            'mode': mode,
+            'success_url': f'{domain}/success?tier={tier}&session_id={{CHECKOUT_SESSION_ID}}',
+            'cancel_url': f'{domain}/#tiers',
+            'customer_email': data.get('email'),  # Pre-fill if provided
+            'allow_promotion_codes': True,
+            'billing_address_collection': 'required',
+        }
+        
+        # Only add payment_intent_data for one-time payments
+        if mode == 'payment':
+            session_params['payment_intent_data'] = {
                 'metadata': {
                     'tier': tier,
                     'product': f'aegis_os_{tier}'
                 }
             }
-        )
+        
+        session = stripe.checkout.Session.create(**session_params)
         
         tamper_protected_audit_log('CHECKOUT_CREATED', {
             'tier': tier, 
             'session_id': session.id,
-            'amount': TIERS[tier]['price']
+            'payment_type': payment_type,
+            'amount': price
         })
         
         return jsonify({

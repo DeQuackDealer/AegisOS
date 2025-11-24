@@ -903,7 +903,10 @@
 
             <div class="tier-card">
                 <div class="tier-name">Basic</div>
-                <div class="tier-price">$69<span>/year</span></div>
+                <div style="margin-bottom: 10px;">
+                    <div class="tier-price">$69<span> lifetime</span></div>
+                    <div style="color: #6b7280; font-size: 0.9rem; margin-top: 5px;">or $10/year</div>
+                </div>
                 <p class="tier-desc">Security-focused professionals</p>
                 <ul class="feature-list">
                     <li>Enterprise security features</li>
@@ -913,12 +916,18 @@
                     <li>Priority email support</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/basic'">Learn More</button>
-                <button class="btn-tier order" onclick="checkout('basic')">Buy Now</button>
+                <div style="display: flex; gap: 5px; margin-top: 10px;">
+                    <button class="btn-tier order" style="flex: 1" onclick="checkout('basic', 'lifetime')">Buy Lifetime</button>
+                    <button class="btn-tier order" style="flex: 1; background: #059669" onclick="checkout('basic', 'annual')">$10/year</button>
+                </div>
             </div>
 
             <div class="tier-card featured">
                 <div class="tier-name">Gamer</div>
-                <div class="tier-price">$119<span>/year</span></div>
+                <div style="margin-bottom: 10px;">
+                    <div class="tier-price">$119<span> lifetime</span></div>
+                    <div style="color: #fbbf24; font-size: 0.9rem; margin-top: 5px;">or $13/year</div>
+                </div>
                 <p class="tier-desc">Ultimate gaming performance</p>
                 <ul class="feature-list">
                     <li>&lt;5ms input latency guarantee</li>
@@ -928,12 +937,18 @@
                     <li>Gaming optimization tools</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/gamer'">Learn More</button>
-                <button class="btn-tier order" onclick="checkout('gamer')">Buy Now</button>
+                <div style="display: flex; gap: 5px; margin-top: 10px;">
+                    <button class="btn-tier order" style="flex: 1" onclick="checkout('gamer', 'lifetime')">Buy Lifetime</button>
+                    <button class="btn-tier order" style="flex: 1; background: #059669" onclick="checkout('gamer', 'annual')">$13/year</button>
+                </div>
             </div>
 
             <div class="tier-card">
                 <div class="tier-name">AI Developer</div>
-                <div class="tier-price">$139<span>/year</span></div>
+                <div style="margin-bottom: 10px;">
+                    <div class="tier-price">$139<span> lifetime</span></div>
+                    <div style="color: #6b7280; font-size: 0.9rem; margin-top: 5px;">or $15/year</div>
+                </div>
                 <p class="tier-desc">Complete ML/AI platform</p>
                 <ul class="feature-list">
                     <li>PyTorch 2.1 & TensorFlow 2.14</li>
@@ -943,7 +958,10 @@
                     <li>24/7 developer support</li>
                 </ul>
                 <button class="btn-tier" onclick="location.href='/ai'">Learn More</button>
-                <button class="btn-tier order" onclick="checkout('ai-dev')">Buy Now</button>
+                <div style="display: flex; gap: 5px; margin-top: 10px;">
+                    <button class="btn-tier order" style="flex: 1" onclick="checkout('ai-dev', 'lifetime')">Buy Lifetime</button>
+                    <button class="btn-tier order" style="flex: 1; background: #059669" onclick="checkout('ai-dev', 'annual')">$15/year</button>
+                </div>
             </div>
 
             <div class="tier-card">
@@ -1096,15 +1114,15 @@
             lastScrollTop = scrollTop;
         });
         
-        // Stripe checkout function
-        async function checkout(tier) {
+        // Stripe checkout function with payment type
+        async function checkout(tier, type = 'lifetime') {
             try {
                 const response = await fetch('/api/checkout', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ tier: tier })
+                    body: JSON.stringify({ tier: tier, type: type })
                 });
                 
                 const data = await response.json();
