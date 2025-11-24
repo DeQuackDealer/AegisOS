@@ -879,6 +879,75 @@ def media_creator():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
+@app.route('/api/validate-license', methods=['POST'])
+def validate_license():
+    """License validation endpoint"""
+    try:
+        data = request.json
+        key = data.get('key', '')
+        edition = data.get('edition', '')
+        machine_id = data.get('machine_id', '')
+        
+        # Demo license validation logic
+        # In production, this would check against a real database
+        valid_prefixes = {
+            'basic': 'BSIC',
+            'gamer': 'GAME',
+            'ai': 'AIDV',
+            'server': 'SERV'
+        }
+        
+        # Check key format
+        if not re.match(r'^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$', key):
+            return jsonify({'valid': False, 'message': 'Invalid key format'}), 400
+        
+        # Check edition prefix
+        if edition in valid_prefixes:
+            if not key.startswith(valid_prefixes[edition]):
+                return jsonify({'valid': False, 'message': f'Invalid key for {edition} edition'}), 400
+        
+        # Demo: Accept any properly formatted key for demonstration
+        # In production, would validate against purchased licenses
+        return jsonify({
+            'valid': True,
+            'message': 'License validated (Demo)',
+            'edition': edition,
+            'expires': (datetime.now() + timedelta(days=7)).isoformat()
+        })
+        
+    except Exception as e:
+        app.logger.error(f"License validation error: {str(e)}")
+        return jsonify({'error': 'Validation failed'}), 500
+
+@app.route('/download-creator-exe')
+def download_creator_exe():
+    """Download the Windows .exe media creation tool"""
+    try:
+        # Check if compiled .exe exists
+        exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'dist', 'AegisMediaCreator.exe')
+        
+        if os.path.exists(exe_path):
+            return send_file(exe_path, as_attachment=True, 
+                           download_name='AegisMediaCreator.exe',
+                           mimetype='application/octet-stream')
+        else:
+            # Return a demo executable notification
+            demo_content = b'MZ'  # PE header for Windows exe
+            demo_content += b'\x90' * 100  # NOP padding
+            demo_content += b'This is a demonstration executable. '
+            demo_content += b'The full Media Creation Tool will be available soon.'
+            
+            return Response(
+                demo_content,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisMediaCreator-Demo.exe'
+                }
+            )
+    except Exception as e:
+        app.logger.error(f"EXE download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
 @app.route('/download-creator')
 def download_creator():
     """Download the media creation tool script"""
