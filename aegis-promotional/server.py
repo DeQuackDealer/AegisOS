@@ -883,7 +883,7 @@ def media_creator():
 def validate_license():
     """License validation endpoint"""
     try:
-        data = request.json
+        data = request.json or {}
         key = data.get('key', '')
         edition = data.get('edition', '')
         machine_id = data.get('machine_id', '')
