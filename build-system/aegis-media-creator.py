@@ -39,9 +39,10 @@ EDITIONS = {
         "license_required": False,
         "features": [
             "XFCE 4.18 Desktop",
-            "Firefox Browser",
+            "Firefox Browser", 
             "Basic System Tools",
-            "Network Manager"
+            "Network Manager",
+            "Aegis DeskLink Basic (Control 2 PCs)"
         ]
     },
     "basic": {
@@ -56,7 +57,8 @@ EDITIONS = {
             "500+ Professional Apps",
             "Development Tools",
             "Office Suite",
-            "Media Editors"
+            "Media Editors",
+            "Aegis DeskLink Pro (Unlimited PCs)"
         ]
     },
     "gamer": {
@@ -71,7 +73,8 @@ EDITIONS = {
             "Steam & Lutris",
             "Wine/Proton Compatibility",
             "Gaming Optimizations",
-            "Discord & OBS"
+            "Discord & OBS",
+            "Aegis DeskLink Gamer (Ultra-low latency)"
         ]
     },
     "ai": {
@@ -86,7 +89,8 @@ EDITIONS = {
             "TensorFlow & PyTorch",
             "CUDA Toolkit",
             "Jupyter Notebooks",
-            "ML Frameworks"
+            "ML Frameworks",
+            "Aegis DeskLink Developer (Cloud VM support)"
         ]
     },
     "server": {
@@ -101,7 +105,8 @@ EDITIONS = {
             "Docker & Kubernetes",
             "Database Servers",
             "Web Servers",
-            "Monitoring Stack"
+            "Monitoring Stack",
+            "Aegis DeskLink Enterprise (Cross-network)"
         ]
     }
 }
