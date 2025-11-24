@@ -2298,7 +2298,13 @@ def create_checkout_session():
                 return jsonify({'error': 'Server edition requires contacting sales'}), 400
             return jsonify({'error': 'Freemium is free, no payment needed'}), 400
         
-        domain = request.host_url.rstrip('/')
+        # Get proper Replit domain for Stripe URLs
+        replit_domain = os.getenv('REPLIT_DOMAINS', '').split(',')[0] if os.getenv('REPLIT_DOMAINS') else None
+        if replit_domain:
+            domain = f'https://{replit_domain}'
+        else:
+            # Fallback for local development
+            domain = 'https://example.com'  # Stripe requires a valid domain
         
         # Tier display names for checkout
         tier_names = {
@@ -2318,7 +2324,6 @@ def create_checkout_session():
                         'product_data': {
                             'name': f'Aegis OS - {tier_names.get(tier, tier.capitalize())}',
                             'description': f'Annual license - Professional Linux distribution',
-                            'images': ['https://aegis-os.com/logo.png'] if domain.startswith('https') else []
                         },
                         'unit_amount': int(TIERS[tier]['price'] * 100),  # Convert to cents
                     },
@@ -2326,8 +2331,8 @@ def create_checkout_session():
                 }
             ],
             mode='payment',
-            success_url=f'{domain}success?tier={tier}&session_id={{CHECKOUT_SESSION_ID}}',
-            cancel_url=f'{domain}#tiers',
+            success_url=f'{domain}/success?tier={tier}&session_id={{CHECKOUT_SESSION_ID}}',
+            cancel_url=f'{domain}/#tiers',
             customer_email=data.get('email'),  # Pre-fill if provided
             allow_promotion_codes=True,
             billing_address_collection='required',
