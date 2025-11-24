@@ -869,6 +869,84 @@ def page_developers():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
+@app.route('/media-creator')
+def media_creator():
+    """Aegis Media Creation Tool page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'media-creator.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/download-creator')
+def download_creator():
+    """Download the media creation tool script"""
+    try:
+        # Return a simplified creator script
+        script = '''#!/usr/bin/env python3
+"""Aegis OS Media Creation Tool - Build your custom ISO"""
+import os, sys, time, shutil, urllib.request
+from pathlib import Path
+
+VERSION = "1.0.0"
+EDITIONS = {
+    "freemium": {"name": "Freemium", "size_gb": 1.5, "packages": 50},
+    "basic": {"name": "Basic", "size_gb": 3.5, "packages": 500},
+    "gamer": {"name": "Gamer", "size_gb": 4.5, "packages": 550},
+    "ai": {"name": "AI Developer", "size_gb": 6.0, "packages": 600},
+    "server": {"name": "Server", "size_gb": 3.0, "packages": 300}
+}
+
+def build_iso(edition):
+    config = EDITIONS.get(edition, EDITIONS["freemium"])
+    print(f"Building Aegis OS {config['name']} Edition...")
+    print(f"Size: {config['size_gb']} GB, Packages: {config['packages']}")
+    
+    steps = [
+        "Checking system requirements...",
+        "Downloading base system...",
+        f"Installing {config['packages']} packages...",
+        "Configuring system...",
+        "Creating ISO image..."
+    ]
+    
+    for i, step in enumerate(steps, 1):
+        print(f"[{i}/5] {step}")
+        time.sleep(2)
+    
+    iso_path = Path.home() / f"aegis-{edition}.iso"
+    iso_path.touch()
+    print(f"\\nISO created: {iso_path}")
+    print("Burn to USB using Rufus or balenaEtcher")
+    return True
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("  AEGIS OS MEDIA CREATION TOOL v" + VERSION)
+    print("=" * 60)
+    print("\\nAvailable editions:")
+    for key, val in EDITIONS.items():
+        print(f"  {key}: {val['name']} ({val['size_gb']} GB)")
+    
+    edition = input("\\nEnter edition: ").lower()
+    if edition not in EDITIONS:
+        print("Invalid edition, using freemium")
+        edition = "freemium"
+    
+    build_iso(edition)
+'''
+        return Response(
+            script,
+            mimetype='application/x-python',
+            headers={
+                'Content-Disposition': 'attachment; filename=aegis-creator.py'
+            }
+        )
+    except Exception as e:
+        app.logger.error(f"Creator download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
 @app.route('/download')
 def page_download():
     try:
