@@ -2321,7 +2321,6 @@ def create_checkout_session():
                             'images': ['https://aegis-os.com/logo.png'] if domain.startswith('https') else []
                         },
                         'unit_amount': int(TIERS[tier]['price'] * 100),  # Convert to cents
-                        'recurring': None  # One-time payment
                     },
                     'quantity': 1,
                 }
@@ -2351,12 +2350,9 @@ def create_checkout_session():
             'sessionId': session.id
         }), 200
     
-    except stripe.error.StripeError as e:
-        logger.error(f"Stripe error: {str(e)}")
-        return jsonify({'error': 'Payment system error. Please try again later.'}), 500
     except Exception as e:
         logger.error(f"Checkout error: {str(e)}")
-        return jsonify({'error': 'Unable to create checkout session'}), 500
+        return jsonify({'error': 'Payment system error. Please try again later.'}), 500
 
 @app.route('/success')
 def payment_success():
@@ -2377,7 +2373,7 @@ def payment_success():
                 tamper_protected_audit_log('PAYMENT_COMPLETED', {
                     'tier': tier,
                     'session_id': session_id,
-                    'amount': session.amount_total / 100
+                    'amount': session.amount_total / 100 if session.amount_total else 0
                 }, severity='HIGH')
         except:
             pass
