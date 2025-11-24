@@ -54,6 +54,8 @@ The build system uses Python scripts to orchestrate the creation of bootable ISO
 - CSRF token protection
 - Audit logging with cryptographic signatures
 - Failed login attempt tracking
+- Legal disclaimers on all pages ("Anything represented may not be true. Use at your own risk.")
+- Removed all support promises to avoid legal liability
 
 **API Design**: RESTful endpoints for:
 - License management
