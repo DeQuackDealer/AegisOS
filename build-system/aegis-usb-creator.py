@@ -115,6 +115,25 @@ EDITIONS = {
         ],
         "checksum": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
     },
+    "gamer-ai": {
+        "name": "Aegis OS Gamer + AI",
+        "display_name": "Gamer + AI ($149 Lifetime)",
+        "size_gb": 8.0,
+        "size_bytes": 8589934592,
+        "license_required": True,
+        "license_prefix": "GMAI",
+        "color": "#ec4899",
+        "icon": "$149",
+        "features": [
+            "All Gamer Features",
+            "All AI Developer Features",
+            "AI-Powered Game Optimization",
+            "Neural Upscaling for Games",
+            "Aegis DeskLink Ultimate",
+            "Priority Combined Support"
+        ],
+        "checksum": "e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6"
+    },
     "server": {
         "name": "Aegis OS Server",
         "display_name": "Server (Enterprise)",
