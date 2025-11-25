@@ -487,7 +487,7 @@
             <p style="font-size: 1.2rem; margin-bottom: 2rem; color: var(--text-muted);">
                 Download Aegis OS Freemium now and start your Linux journey
             </p>
-            <button class="btn" onclick="parent.checkout('freemium', 'free')">
+            <button class="btn" onclick="checkout('freemium', 'free')">
                 Download Free Edition
             </button>
             <button class="btn btn-secondary" onclick="location.href='/#tiers'">
@@ -530,3 +530,23 @@
     </footer>
 </body>
 </html>
+<script>
+async function checkout(tier, type = 'lifetime') {
+    try {
+        const response = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier, type })
+        });
+        
+        const data = await response.json();
+        if (data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.error || 'Payment processing unavailable. Contact: riley.liang@hotmail.com');
+        }
+    } catch (error) {
+        alert('Payment processing unavailable. Contact: riley.liang@hotmail.com');
+    }
+}
+</script>

@@ -375,7 +375,7 @@
                     <h3>Custom Pricing</h3>
                     <div class="price">Contact Us</div>
                     <div class="period">Enterprise licensing</div>
-                    <button class="btn" style="margin-top: 1rem;" onclick="parent.checkout('server', 'contact')">Get Quote</button>
+                    <button class="btn" style="margin-top: 1rem;" onclick="checkout('server', 'contact')">Get Quote</button>
                 </div>
             </div>
             <div class="badges">
@@ -603,10 +603,10 @@
                 Get custom pricing for your organization's needs
             </p>
             <div class="btn-group">
-                <button class="btn" onclick="parent.checkout('server', 'contact')">
+                <button class="btn" onclick="checkout('server', 'contact')">
                     Contact Sales Team
                 </button>
-                <button class="btn btn-secondary" onclick="parent.checkout('server', 'demo')">
+                <button class="btn btn-secondary" onclick="checkout('server', 'demo')">
                     Request Demo
                 </button>
             </div>
@@ -648,3 +648,23 @@
     </footer>
 </body>
 </html>
+<script>
+async function checkout(tier, type = 'lifetime') {
+    try {
+        const response = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier, type })
+        });
+        
+        const data = await response.json();
+        if (data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.error || 'Payment processing unavailable. Contact: riley.liang@hotmail.com');
+        }
+    } catch (error) {
+        alert('Payment processing unavailable. Contact: riley.liang@hotmail.com');
+    }
+}
+</script>

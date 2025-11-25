@@ -462,13 +462,13 @@
                     <h3>Annual License</h3>
                     <div class="price">$20</div>
                     <div class="period">per year</div>
-                    <button class="btn" style="margin-top: 1rem;" onclick="parent.checkout('gamer-ai', 'annual')">Subscribe</button>
+                    <button class="btn" style="margin-top: 1rem;" onclick="checkout('gamer-ai', 'annual')">Subscribe</button>
                 </div>
                 <div class="price-box featured">
                     <h3>Lifetime License</h3>
                     <div class="price">$149</div>
                     <div class="period">one-time payment</div>
-                    <button class="btn" style="margin-top: 1rem;" onclick="parent.checkout('gamer-ai', 'lifetime')">Buy Now</button>
+                    <button class="btn" style="margin-top: 1rem;" onclick="checkout('gamer-ai', 'lifetime')">Buy Now</button>
                 </div>
             </div>
             <div class="badges">
@@ -874,10 +874,10 @@
                 Join creators who demand both peak gaming and serious AI capabilities
             </p>
             <div class="btn-group">
-                <button class="btn" onclick="parent.checkout('gamer-ai', 'lifetime')">
+                <button class="btn" onclick="checkout('gamer-ai', 'lifetime')">
                     Get Lifetime License - $149
                 </button>
-                <button class="btn btn-secondary" onclick="parent.checkout('gamer-ai', 'annual')">
+                <button class="btn btn-secondary" onclick="checkout('gamer-ai', 'annual')">
                     Try Annual - $20/year
                 </button>
             </div>
@@ -934,3 +934,24 @@
     </footer>
 </body>
 </html>
+
+<script>
+async function checkout(tier, type = 'lifetime') {
+    try {
+        const response = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier, type })
+        });
+        
+        const data = await response.json();
+        if (data.url) {
+            window.location.href = data.url;
+        } else {
+            alert(data.error || 'Payment processing unavailable. Contact: riley.liang@hotmail.com');
+        }
+    } catch (error) {
+        alert('Payment processing unavailable. Contact: riley.liang@hotmail.com');
+    }
+}
+</script>
