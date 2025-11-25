@@ -93,6 +93,22 @@ EDITIONS = {
             "Aegis DeskLink Developer (Cloud VM support)"
         ]
     },
+    "workplace": {
+        "name": "Aegis OS Workplace",
+        "version": "22H2",
+        "size_gb": 4.0,
+        "size_bytes": 4294967296,  # 4.0 GB
+        "packages": 400,
+        "license_required": True,
+        "features": [
+            "All Basic Features",
+            "Office 365 Compatibility",
+            "Team Collaboration Tools",
+            "Remote Desktop",
+            "Enterprise Security",
+            "Aegis DeskLink Pro (Business)"
+        ]
+    },
     "server": {
         "name": "Aegis OS Server",
         "version": "22H2",

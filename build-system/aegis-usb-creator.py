@@ -77,6 +77,26 @@ EDITIONS = {
         ],
         "checksum": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
     },
+    "workplace": {
+        "name": "Aegis OS Workplace",
+        "display_name": "Workplace ($49 Lifetime)",
+        "size_gb": 4.0,
+        "size_bytes": 4294967296,
+        "license_required": True,
+        "license_prefix": "WORK",
+        "color": "#0ea5e9",
+        "icon": "$49",
+        "features": [
+            "All Basic Features",
+            "Office 365 Compatibility",
+            "Team Collaboration Tools",
+            "Remote Desktop & Screen Share",
+            "Enterprise Security & SSO",
+            "Aegis DeskLink Pro (Business)",
+            "24/7 Business Support"
+        ],
+        "checksum": "c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+    },
     "gamer": {
         "name": "Aegis OS Gamer",
         "display_name": "Gamer ($89 Lifetime)",
