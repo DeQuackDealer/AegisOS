@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing - Aegis OS Linux Distribution</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #6366f1;
+            --accent: #8b5cf6;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-light: #64748b;
+            --bg-white: #ffffff;
+            --bg-gray: #f8fafc;
+            --bg-dark: #0f172a;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-white);
+        }
+
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .nav-menu {
+            display: flex;
+            list-style: none;
+            gap: 2rem;
+        }
+
+        .nav-menu a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-menu a:hover {
+            color: var(--primary);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .header {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: linear-gradient(180deg, var(--bg-white) 0%, var(--bg-gray) 100%);
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .pricing-container {
+            padding: 4rem 2rem;
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 2rem;
+            margin-top: 3rem;
+        }
+
+        .pricing-card {
+            background: var(--bg-white);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .pricing-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 10px 30px rgba(37, 99, 235, 0.1);
+            transform: translateY(-5px);
+        }
+
+        .pricing-card.featured {
+            border-color: var(--primary);
+            box-shadow: 0 10px 30px rgba(37, 99, 235, 0.15);
+            transform: scale(1.05);
+            position: relative;
+            z-index: 10;
+        }
+
+        .pricing-badge {
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            width: fit-content;
+        }
+
+        .pricing-badge.popular {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        }
+
+        .pricing-name {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .pricing-price {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 1rem 0;
+            color: var(--primary);
+        }
+
+        .pricing-price .period {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        .pricing-desc {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            flex-grow: 1;
+        }
+
+        .pricing-features {
+            list-style: none;
+            margin: 2rem 0;
+            flex-grow: 1;
+        }
+
+        .pricing-features li {
+            padding: 0.75rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .pricing-features li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: 700;
+            font-size: 1.2rem;
+        }
+
+        .pricing-cta {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 1rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: auto;
+        }
+
+        .pricing-cta:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
+        .pricing-cta.secondary {
+            background: var(--bg-gray);
+            color: var(--primary);
+        }
+
+        .pricing-cta.secondary:hover {
+            background: var(--border);
+        }
+
+        .pricing-cta.contact {
+            background: var(--primary);
+            color: white;
+        }
+
+        .comparison {
+            margin-top: 4rem;
+            padding: 2rem;
+            background: var(--bg-gray);
+            border-radius: 12px;
+        }
+
+        .comparison h3 {
+            margin-bottom: 1.5rem;
+            font-size: 1.5rem;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .feature-check {
+            color: var(--success);
+            font-weight: 700;
+        }
+
+        .feature-cross {
+            color: var(--text-light);
+        }
+
+        .footer {
+            background: var(--bg-dark);
+            color: white;
+            padding: 3rem 2rem;
+            margin-top: 4rem;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .footer-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .footer-links a {
+            color: var(--text-light);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: white;
+        }
+
+        .footer-bottom {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 2rem;
+            color: var(--text-light);
+            font-size: 0.9rem;
+        }
+
+        .legal-notice {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 1rem;
+            margin: 2rem 0;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            color: #78350f;
+        }
+
+        @media (max-width: 768px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .pricing-card.featured {
+                transform: scale(1);
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .pricing-table {
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="logo">🛡️ Aegis OS</a>
+            <ul class="nav-menu">
+                <li><a href="/">Home</a></li>
+                <li><a href="/#features">Features</a></li>
+                <li><a href="/pricing">Pricing</a></li>
+                <li><a href="/download">Download</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="container">
+            <h1>Simple, Transparent Pricing</h1>
+            <p>Choose the perfect edition for your needs. All plans include 30-day money-back guarantee and professional support.</p>
+        </div>
+    </div>
+
+    <!-- Legal Notice -->
+    <div class="container">
+        <div class="legal-notice">
+            <strong>⚠️ Technical Preview:</strong> Aegis OS is demonstration software provided "as-is" without warranty. For evaluation purposes only. No support guarantee. Use at your own risk.
+        </div>
+    </div>
+
+    <!-- Pricing Section -->
+    <div class="container">
+        <div class="pricing-container">
+            <div class="pricing-grid">
+                <!-- Freemium -->
+                <div class="pricing-card">
+                    <div class="pricing-badge">FREE</div>
+                    <h3 class="pricing-name">Freemium</h3>
+                    <div class="pricing-price">$0<span class="period">/forever</span></div>
+                    <p class="pricing-desc">Perfect for learning and evaluation</p>
+                    <ul class="pricing-features">
+                        <li>Base Linux OS + XFCE Desktop</li>
+                        <li>Wine & Proton Support</li>
+                        <li>Aegis DeskLink Basic (2 PCs)</li>
+                        <li>Community Support</li>
+                        <li>Open Source Apps</li>
+                    </ul>
+                    <button class="pricing-cta secondary" onclick="window.location.href='/freemium.html'">Learn More</button>
+                </div>
+
+                <!-- Basic -->
+                <div class="pricing-card featured">
+                    <div class="pricing-badge popular">MOST POPULAR</div>
+                    <h3 class="pricing-name">Basic</h3>
+                    <div class="pricing-price">$69<span class="period"> lifetime</span></div>
+                    <p class="pricing-desc">Complete professional suite for power users</p>
+                    <ul class="pricing-features">
+                        <li>500+ Professional Apps</li>
+                        <li>Aegis DeskLink Pro (Unlimited PCs)</li>
+                        <li>System Utilities Suite</li>
+                        <li>Mobile Link Integration</li>
+                        <li>Productivity Suite</li>
+                        <li>Priority Support</li>
+                    </ul>
+                    <button class="pricing-cta" onclick="checkout('basic')">Get Started</button>
+                </div>
+
+                <!-- Gamer -->
+                <div class="pricing-card">
+                    <div class="pricing-badge">🎮</div>
+                    <h3 class="pricing-name">Gamer</h3>
+                    <div class="pricing-price">$89<span class="period"> lifetime</span></div>
+                    <p class="pricing-desc">Optimized for gaming performance</p>
+                    <ul class="pricing-features">
+                        <li>All Basic Features</li>
+                        <li>98%+ Game Compatibility</li>
+                        <li>Ultra-low Latency (<1ms)</li>
+                        <li>Gaming Mode & Optimization</li>
+                        <li>OBS Studio & Streaming Tools</li>
+                        <li>Game Recording with Overlay</li>
+                    </ul>
+                    <button class="pricing-cta secondary" onclick="window.location.href='/gamer.html'">Learn More</button>
+                </div>
+
+                <!-- AI Developer -->
+                <div class="pricing-card">
+                    <div class="pricing-badge">🧠</div>
+                    <h3 class="pricing-name">AI Developer</h3>
+                    <div class="pricing-price">$109<span class="period"> lifetime</span></div>
+                    <p class="pricing-desc">ML/AI development powerhouse</p>
+                    <ul class="pricing-features">
+                        <li>All Basic Features</li>
+                        <li>CUDA & GPU Acceleration</li>
+                        <li>Python ML Frameworks</li>
+                        <li>Jupyter & VS Code</li>
+                        <li>Docker & Kubernetes</li>
+                        <li>TensorFlow & PyTorch</li>
+                    </ul>
+                    <button class="pricing-cta secondary" onclick="window.location.href='/ai.html'">Learn More</button>
+                </div>
+
+                <!-- Gamer + AI -->
+                <div class="pricing-card">
+                    <div class="pricing-badge">⚡</div>
+                    <h3 class="pricing-name">Gamer + AI</h3>
+                    <div class="pricing-price">$149<span class="period"> lifetime</span></div>
+                    <p class="pricing-desc">Gaming + AI development combined</p>
+                    <ul class="pricing-features">
+                        <li>All Gamer Features</li>
+                        <li>All AI Developer Features</li>
+                        <li>98%+ Game Compatibility</li>
+                        <li>ML Training & Inference</li>
+                        <li>Stream & Develop Together</li>
+                        <li>Ultimate Performance</li>
+                    </ul>
+                    <button class="pricing-cta" onclick="checkout('gamer-ai')">Get Started</button>
+                </div>
+
+                <!-- Server -->
+                <div class="pricing-card">
+                    <div class="pricing-badge">🚀</div>
+                    <h3 class="pricing-name">Server</h3>
+                    <div class="pricing-price">Custom<span class="period"> pricing</span></div>
+                    <p class="pricing-desc">Enterprise infrastructure & scaling</p>
+                    <ul class="pricing-features">
+                        <li>All Basic Features</li>
+                        <li>Container Orchestration</li>
+                        <li>Kubernetes Ready</li>
+                        <li>24/7 Enterprise Support</li>
+                        <li>SLA Guarantees</li>
+                        <li>Volume Licensing</li>
+                    </ul>
+                    <button class="pricing-cta contact" onclick="window.location.href='mailto:riley.liang@hotmail.com?subject=Server%20Edition%20Inquiry'">Contact Sales</button>
+                </div>
+            </div>
+
+            <!-- Feature Comparison -->
+            <div class="comparison">
+                <h3>Feature Comparison</h3>
+                <div style="overflow-x: auto;">
+                    <table class="comparison-table">
+                        <thead>
+                            <tr>
+                                <th>Feature</th>
+                                <th>Freemium</th>
+                                <th>Basic</th>
+                                <th>Gamer</th>
+                                <th>AI Dev</th>
+                                <th>Gamer+AI</th>
+                                <th>Server</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Price</td>
+                                <td>Free</td>
+                                <td>$69</td>
+                                <td>$89</td>
+                                <td>$109</td>
+                                <td>$149</td>
+                                <td>Custom</td>
+                            </tr>
+                            <tr>
+                                <td>Professional Apps</td>
+                                <td><span class="feature-cross">50</span></td>
+                                <td><span class="feature-check">500+</span></td>
+                                <td><span class="feature-check">500+</span></td>
+                                <td><span class="feature-check">500+</span></td>
+                                <td><span class="feature-check">500+</span></td>
+                                <td><span class="feature-check">500+</span></td>
+                            </tr>
+                            <tr>
+                                <td>DeskLink Computers</td>
+                                <td><span class="feature-cross">2</span></td>
+                                <td><span class="feature-check">Unlimited</span></td>
+                                <td><span class="feature-check">Unlimited</span></td>
+                                <td><span class="feature-check">Unlimited</span></td>
+                                <td><span class="feature-check">Unlimited</span></td>
+                                <td><span class="feature-check">Unlimited + WAN</span></td>
+                            </tr>
+                            <tr>
+                                <td>Game Compatibility</td>
+                                <td><span class="feature-cross">Basic</span></td>
+                                <td><span class="feature-cross">Good</span></td>
+                                <td><span class="feature-check">98%+</span></td>
+                                <td><span class="feature-cross">Good</span></td>
+                                <td><span class="feature-check">98%+</span></td>
+                                <td><span class="feature-cross">N/A</span></td>
+                            </tr>
+                            <tr>
+                                <td>Input Latency</td>
+                                <td><span class="feature-cross">~5ms</span></td>
+                                <td><span class="feature-cross">~3ms</span></td>
+                                <td><span class="feature-check">&lt;1ms</span></td>
+                                <td><span class="feature-cross">~3ms</span></td>
+                                <td><span class="feature-check">&lt;1ms</span></td>
+                                <td>N/A</td>
+                            </tr>
+                            <tr>
+                                <td>ML/AI Tools</td>
+                                <td><span class="feature-cross">✗</span></td>
+                                <td><span class="feature-cross">✗</span></td>
+                                <td><span class="feature-cross">✗</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                            </tr>
+                            <tr>
+                                <td>Support</td>
+                                <td>Community</td>
+                                <td>Priority Email</td>
+                                <td>Priority Email</td>
+                                <td>Priority Email</td>
+                                <td>Priority Email</td>
+                                <td>24/7 Phone + SLA</td>
+                            </tr>
+                            <tr>
+                                <td>Money-Back Guarantee</td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                                <td><span class="feature-check">✓</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-links">
+                <a href="/">Home</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/download">Download</a>
+                <a href="/terms">Terms</a>
+                <a href="/privacy">Privacy</a>
+                <a href="mailto:riley.liang@hotmail.com">Contact</a>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 Aegis OS. All rights reserved.</p>
+                <p>Disclaimer: Technical preview software. No warranty expressed or implied. Use at your own risk.</p>
+                <p>Contact: riley.liang@hotmail.com</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        async function checkout(tier) {
+            try {
+                const response = await fetch('/api/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tier, type: 'lifetime' })
+                });
+                
+                const data = await response.json();
+                if (data.url) {
+                    window.location.href = data.url;
+                } else {
+                    alert('Payment processing unavailable. Contact: riley.liang@hotmail.com');
+                }
+            } catch (error) {
+                alert('Payment processing unavailable. Contact: riley.liang@hotmail.com');
+            }
+        }
+    </script>
+</body>
+</html>
