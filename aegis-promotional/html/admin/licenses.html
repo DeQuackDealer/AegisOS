@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS - License Management</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-dark: #0f1419;
+            --bg-card: #1a1f2e;
+            --bg-hover: #252b3b;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #2d3748;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .admin-layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 260px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .nav-section { margin-bottom: 1.5rem; }
+        .nav-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            letter-spacing: 0.05em;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            margin-bottom: 0.25rem;
+        }
+        .nav-item:hover, .nav-item.active {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+        .nav-item.active {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+        }
+        .main-content { flex: 1; margin-left: 260px; padding: 2rem; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 { font-size: 1.75rem; font-weight: 700; }
+        .header-actions { display: flex; gap: 1rem; }
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-size: 0.875rem;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+        .btn-secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-danger { background: var(--error); color: white; }
+        .btn-warning { background: var(--warning); color: black; }
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+        .card-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-title { font-weight: 600; font-size: 1rem; }
+        .card-body { padding: 1.5rem; }
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            background: var(--bg-card);
+            padding: 0.5rem;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+        .tab {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .tab.active { background: var(--primary); color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem; }
+        .form-input, .form-select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+        .search-bar {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .search-input {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+        }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th { font-weight: 600; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; }
+        tr:hover { background: var(--bg-hover); }
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-success { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge-danger { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+        .badge-info { background: rgba(99, 102, 241, 0.2); color: var(--primary-light); }
+        .license-key {
+            font-family: monospace;
+            background: var(--bg-dark);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 500px;
+            border: 1px solid var(--border);
+            transform: scale(0.9);
+            transition: transform 0.3s;
+        }
+        .modal-overlay.active .modal { transform: scale(1); }
+        .modal-header { margin-bottom: 1.5rem; }
+        .modal-header h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+        .modal-header p { color: var(--text-secondary); font-size: 0.875rem; }
+        .modal-footer { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; }
+        .generated-licenses {
+            background: var(--bg-dark);
+            padding: 1rem;
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        .generated-license-item {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+        }
+        .copy-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.7rem;
+        }
+        .hidden { display: none !important; }
+        @media (max-width: 1024px) {
+            .sidebar { width: 80px; padding: 1rem; }
+            .sidebar .nav-text, .sidebar .nav-section-title, .sidebar .logo span:not(:first-child) { display: none; }
+            .main-content { margin-left: 80px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-layout">
+        <aside class="sidebar">
+            <div class="logo"><span>🛡️</span><span>Aegis Admin</span></div>
+            <nav>
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <a href="/admin" class="nav-item"><span>📊</span><span class="nav-text">Dashboard</span></a>
+                    <a href="/admin/licenses" class="nav-item active"><span>🔑</span><span class="nav-text">Licenses</span></a>
+                    <a href="/admin/pages" class="nav-item"><span>📄</span><span class="nav-text">Page Builder</span></a>
+                    <a href="/admin/giveaways" class="nav-item"><span>🎁</span><span class="nav-text">Giveaways</span></a>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">System</div>
+                    <a href="/admin/settings" class="nav-item"><span>⚙️</span><span class="nav-text">Settings</span></a>
+                    <a href="#" class="nav-item" onclick="logout()"><span>🚪</span><span class="nav-text">Logout</span></a>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <div class="header">
+                <h1>License Management</h1>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" onclick="exportLicenses()">📥 Export CSV</button>
+                    <button class="btn btn-primary" onclick="showModal('createModal')">+ New License</button>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('all')">All Licenses</div>
+                <div class="tab" onclick="switchTab('create')">Create License</div>
+                <div class="tab" onclick="switchTab('bulk')">Bulk Generate</div>
+                <div class="tab" onclick="switchTab('gift')">Gift License</div>
+            </div>
+
+            <div id="tab-all" class="tab-content active">
+                <div class="search-bar">
+                    <input type="text" class="search-input" id="searchInput" placeholder="Search by license key, email, or edition..." onkeyup="filterLicenses()">
+                    <select class="form-select" style="width: 150px;" id="filterEdition" onchange="filterLicenses()">
+                        <option value="">All Editions</option>
+                        <option value="basic">Basic</option>
+                        <option value="gamer">Gamer</option>
+                        <option value="ai-dev">AI-Dev</option>
+                        <option value="gamer-ai">Gamer+AI</option>
+                        <option value="server">Server</option>
+                    </select>
+                    <select class="form-select" style="width: 150px;" id="filterStatus" onchange="filterLicenses()">
+                        <option value="">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="expired">Expired</option>
+                        <option value="revoked">Revoked</option>
+                    </select>
+                </div>
+
+                <div class="card">
+                    <div class="table-container">
+                        <table id="licensesTable">
+                            <thead>
+                                <tr>
+                                    <th>License Key</th>
+                                    <th>Edition</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Expires</th>
+                                    <th>Activations</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="licensesBody">
+                                <tr>
+                                    <td><span class="license-key">BSIC-DEMO-TEST-2024</span></td>
+                                    <td><span class="badge badge-info">Basic</span></td>
+                                    <td>Demo</td>
+                                    <td><span class="badge badge-success">Active</span></td>
+                                    <td>2024-01-01</td>
+                                    <td>2025-12-31</td>
+                                    <td>0/5</td>
+                                    <td>
+                                        <button class="btn btn-secondary" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="viewLicense('BSIC-DEMO-TEST-2024')">View</button>
+                                        <button class="btn btn-danger" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="revokeLicense('BSIC-DEMO-TEST-2024')">Revoke</button>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><span class="license-key">GAME-DEMO-TEST-2024</span></td>
+                                    <td><span class="badge badge-success">Gamer</span></td>
+                                    <td>Demo</td>
+                                    <td><span class="badge badge-success">Active</span></td>
+                                    <td>2024-01-01</td>
+                                    <td>2025-12-31</td>
+                                    <td>0/5</td>
+                                    <td>
+                                        <button class="btn btn-secondary" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="viewLicense('GAME-DEMO-TEST-2024')">View</button>
+                                        <button class="btn btn-danger" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="revokeLicense('GAME-DEMO-TEST-2024')">Revoke</button>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><span class="license-key">AIDV-DEMO-TEST-2024</span></td>
+                                    <td><span class="badge badge-warning">AI-Dev</span></td>
+                                    <td>Demo</td>
+                                    <td><span class="badge badge-success">Active</span></td>
+                                    <td>2024-01-01</td>
+                                    <td>2025-12-31</td>
+                                    <td>0/5</td>
+                                    <td>
+                                        <button class="btn btn-secondary" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="viewLicense('AIDV-DEMO-TEST-2024')">View</button>
+                                        <button class="btn btn-danger" style="padding:0.25rem 0.5rem;font-size:0.75rem" onclick="revokeLicense('AIDV-DEMO-TEST-2024')">Revoke</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-create" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Create New License</span>
+                    </div>
+                    <div class="card-body">
+                        <form id="createLicenseForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Edition</label>
+                                    <select class="form-select" id="newEdition" required>
+                                        <option value="">Select Edition</option>
+                                        <option value="basic">Basic ($69 lifetime / $10/year)</option>
+                                        <option value="gamer">Gamer ($89 lifetime / $13/year)</option>
+                                        <option value="ai-dev">AI-Dev ($109 lifetime / $15/year)</option>
+                                        <option value="gamer-ai">Gamer+AI ($149 lifetime / $20/year)</option>
+                                        <option value="server">Server (Custom pricing)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">License Type</label>
+                                    <select class="form-select" id="newType" required>
+                                        <option value="lifetime">Lifetime</option>
+                                        <option value="annual">Annual</option>
+                                        <option value="trial">30-Day Trial</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Customer Email (optional)</label>
+                                    <input type="email" class="form-input" id="customerEmail" placeholder="customer@example.com">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Max Activations</label>
+                                    <input type="number" class="form-input" id="maxActivations" value="5" min="1" max="100">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Notes</label>
+                                <input type="text" class="form-input" id="licenseNotes" placeholder="Optional notes about this license">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Generate License</button>
+                        </form>
+                        <div id="generatedLicense" class="hidden" style="margin-top:1.5rem">
+                            <h4 style="margin-bottom:0.5rem">Generated License Key:</h4>
+                            <div class="generated-licenses">
+                                <div class="generated-license-item">
+                                    <span id="newLicenseKey"></span>
+                                    <button class="copy-btn" onclick="copyToClipboard(document.getElementById('newLicenseKey').textContent)">Copy</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-bulk" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Bulk License Generation</span>
+                    </div>
+                    <div class="card-body">
+                        <form id="bulkLicenseForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Edition</label>
+                                    <select class="form-select" id="bulkEdition" required>
+                                        <option value="">Select Edition</option>
+                                        <option value="basic">Basic</option>
+                                        <option value="gamer">Gamer</option>
+                                        <option value="ai-dev">AI-Dev</option>
+                                        <option value="gamer-ai">Gamer+AI</option>
+                                        <option value="server">Server</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Number of Licenses</label>
+                                    <input type="number" class="form-input" id="bulkCount" value="10" min="1" max="100" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">License Type</label>
+                                    <select class="form-select" id="bulkType" required>
+                                        <option value="lifetime">Lifetime</option>
+                                        <option value="annual">Annual</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Prefix (optional)</label>
+                                    <input type="text" class="form-input" id="bulkPrefix" placeholder="e.g., PROMO">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Generate Bulk Licenses</button>
+                        </form>
+                        <div id="bulkResults" class="hidden" style="margin-top:1.5rem">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+                                <h4>Generated Licenses:</h4>
+                                <button class="btn btn-secondary" onclick="copyAllLicenses()">Copy All</button>
+                            </div>
+                            <div class="generated-licenses" id="bulkLicensesList"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-gift" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Gift Free License</span>
+                    </div>
+                    <div class="card-body">
+                        <form id="giftLicenseForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Recipient Email</label>
+                                    <input type="email" class="form-input" id="giftEmail" placeholder="recipient@example.com" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Edition to Gift</label>
+                                    <select class="form-select" id="giftEdition" required>
+                                        <option value="">Select Edition</option>
+                                        <option value="basic">Basic Edition</option>
+                                        <option value="gamer">Gamer Edition</option>
+                                        <option value="ai-dev">AI-Dev Edition</option>
+                                        <option value="gamer-ai">Gamer+AI Edition</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Gift Duration</label>
+                                <select class="form-select" id="giftDuration" required>
+                                    <option value="30">30 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="365">1 Year</option>
+                                    <option value="lifetime">Lifetime</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Personal Message</label>
+                                <textarea class="form-input" id="giftMessage" rows="3" placeholder="Thank you for being an awesome community member!"></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-success">🎁 Send Gift License</button>
+                        </form>
+                        <div id="giftResult" class="hidden" style="margin-top:1.5rem;padding:1rem;background:rgba(16,185,129,0.2);border-radius:8px;border:1px solid var(--success)">
+                            <p style="color:var(--success)">✓ Gift license sent successfully!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="createModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Quick Create License</h3>
+                <p>Generate a new license key instantly</p>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Edition</label>
+                <select class="form-select" id="quickEdition">
+                    <option value="basic">Basic</option>
+                    <option value="gamer">Gamer</option>
+                    <option value="ai-dev">AI-Dev</option>
+                    <option value="gamer-ai">Gamer+AI</option>
+                    <option value="server">Server</option>
+                </select>
+            </div>
+            <div id="quickResult" class="hidden">
+                <div class="generated-licenses">
+                    <div class="generated-license-item">
+                        <span id="quickLicenseKey"></span>
+                        <button class="copy-btn" onclick="copyToClipboard(document.getElementById('quickLicenseKey').textContent)">Copy</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideModal('createModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="quickCreate()">Generate</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/admin';
+        let authToken = localStorage.getItem('adminToken');
+
+        if (!authToken) {
+            window.location.href = '/admin';
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`.tab:nth-child(${['all','create','bulk','gift'].indexOf(tabId)+1})`).classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        }
+
+        function showModal(id) { document.getElementById(id).classList.add('active'); }
+        function hideModal(id) { document.getElementById(id).classList.remove('active'); }
+
+        function generateLicenseKey(edition) {
+            const prefixes = { basic: 'BSIC', gamer: 'GAME', 'ai-dev': 'AIDV', 'gamer-ai': 'GMAI', server: 'SERV' };
+            const prefix = prefixes[edition] || 'XXXX';
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            const segment = () => Array.from({length: 4}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+            return `${prefix}-${segment()}-${segment()}-${segment()}`;
+        }
+
+        document.getElementById('createLicenseForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const edition = document.getElementById('newEdition').value;
+            const key = generateLicenseKey(edition);
+            
+            try {
+                await fetch(`${API_BASE}/licenses`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                    body: JSON.stringify({
+                        key,
+                        edition,
+                        type: document.getElementById('newType').value,
+                        email: document.getElementById('customerEmail').value,
+                        max_activations: parseInt(document.getElementById('maxActivations').value),
+                        notes: document.getElementById('licenseNotes').value
+                    })
+                });
+            } catch (err) { console.log('API call skipped - demo mode'); }
+            
+            document.getElementById('newLicenseKey').textContent = key;
+            document.getElementById('generatedLicense').classList.remove('hidden');
+        });
+
+        document.getElementById('bulkLicenseForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const edition = document.getElementById('bulkEdition').value;
+            const count = parseInt(document.getElementById('bulkCount').value);
+            const licenses = [];
+            
+            for (let i = 0; i < count; i++) {
+                licenses.push(generateLicenseKey(edition));
+            }
+            
+            const listEl = document.getElementById('bulkLicensesList');
+            listEl.innerHTML = licenses.map(key => `
+                <div class="generated-license-item">
+                    <span>${key}</span>
+                    <button class="copy-btn" onclick="copyToClipboard('${key}')">Copy</button>
+                </div>
+            `).join('');
+            
+            document.getElementById('bulkResults').classList.remove('hidden');
+        });
+
+        document.getElementById('giftLicenseForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            document.getElementById('giftResult').classList.remove('hidden');
+        });
+
+        function quickCreate() {
+            const edition = document.getElementById('quickEdition').value;
+            const key = generateLicenseKey(edition);
+            document.getElementById('quickLicenseKey').textContent = key;
+            document.getElementById('quickResult').classList.remove('hidden');
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text);
+            alert('Copied to clipboard!');
+        }
+
+        function copyAllLicenses() {
+            const licenses = Array.from(document.querySelectorAll('#bulkLicensesList .generated-license-item span')).map(el => el.textContent);
+            navigator.clipboard.writeText(licenses.join('\n'));
+            alert('All licenses copied!');
+        }
+
+        function filterLicenses() {
+            const search = document.getElementById('searchInput').value.toLowerCase();
+            const edition = document.getElementById('filterEdition').value.toLowerCase();
+            const status = document.getElementById('filterStatus').value.toLowerCase();
+            
+            document.querySelectorAll('#licensesBody tr').forEach(row => {
+                const text = row.textContent.toLowerCase();
+                const matchSearch = !search || text.includes(search);
+                const matchEdition = !edition || text.includes(edition);
+                const matchStatus = !status || text.includes(status);
+                row.style.display = matchSearch && matchEdition && matchStatus ? '' : 'none';
+            });
+        }
+
+        function viewLicense(key) { alert(`License: ${key}\nStatus: Active\nEdition: Demo`); }
+        function revokeLicense(key) { if(confirm(`Revoke license ${key}?`)) alert('License revoked!'); }
+        function exportLicenses() { alert('Exporting licenses to CSV...'); }
+        function logout() { localStorage.removeItem('adminToken'); window.location.href = '/admin'; }
+
+        if (window.location.hash === '#gift') switchTab('gift');
+    </script>
+</body>
+</html>

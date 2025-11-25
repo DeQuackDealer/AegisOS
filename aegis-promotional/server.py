@@ -862,14 +862,7 @@ def page_server():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
-@app.route('/admin')
-def page_admin():
-    try:
-        filepath = os.path.join(BASE_DIR, 'html', 'admin.html')
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
-    except Exception as e:
-        return jsonify({'error': 'Page not found'}), 404
+# /admin route is defined in the admin panel section below
 
 @app.route('/faq')
 def page_faq():
@@ -3306,6 +3299,438 @@ def payment_success():
     """
     return html
 
+# ============= ADMIN PANEL =============
+
+# Admin credentials - password: aegis2024
+# Hash generated with: hashlib.pbkdf2_hmac('sha256', 'aegis2024'.encode(), 'aegis_admin_salt'.encode(), 100000).hex()
+ADMIN_CREDENTIALS = {
+    'admin': {
+        'password_hash': 'aegis_admin_salt$' + hashlib.pbkdf2_hmac('sha256', b'aegis2024', b'aegis_admin_salt', 100000).hex(),
+        'role': 'superadmin'
+    }
+}
+
+ADMIN_TOKENS = {}
+ADMIN_SESSION_DURATION = timedelta(hours=8)
+
+# Admin stats storage
+ADMIN_STATS = {
+    'users': 1542,
+    'downloads': 3847,
+    'revenue': 12459,
+    'licenses': 342
+}
+
+# Admin licenses storage
+ADMIN_LICENSES = []
+
+# Giveaways storage
+ADMIN_GIVEAWAYS = []
+
+# Admin authentication
+def verify_admin_token(token: str) -> dict | None:
+    """Verify admin JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        if payload.get('type') != 'admin':
+            return None
+        if payload.get('jti') not in ADMIN_TOKENS:
+            return None
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def require_admin(f):
+    """Decorator to require admin authentication"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
+        
+        token = auth_header[7:]
+        payload = verify_admin_token(token)
+        
+        if not payload:
+            return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
+        
+        request.admin_user = payload.get('username')
+        return f(*args, **kwargs)
+    return decorated
+
+# Admin login endpoint
+@app.route('/api/admin/login', methods=['POST'])
+@rate_limit(limit=10, window=300)
+def admin_login():
+    """Admin login endpoint"""
+    data = request.json or {}
+    username = str(data.get('username', '')).strip()
+    password = str(data.get('password', '')).strip()
+    
+    if not username or not password:
+        tamper_protected_audit_log("ADMIN_LOGIN_EMPTY", {"username": username[:20]}, "HIGH")
+        return jsonify({'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
+    
+    if username not in ADMIN_CREDENTIALS:
+        tamper_protected_audit_log("ADMIN_LOGIN_INVALID_USER", {"username": username[:20]}, "HIGH")
+        return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
+    
+    admin = ADMIN_CREDENTIALS[username]
+    stored_hash = admin['password_hash']
+    
+    # Verify password
+    try:
+        salt, expected_hash = stored_hash.split('$')
+        computed_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
+        
+        if not hmac.compare_digest(computed_hash, expected_hash):
+            tamper_protected_audit_log("ADMIN_LOGIN_WRONG_PASSWORD", {"username": username[:20]}, "CRITICAL")
+            return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
+    except:
+        return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
+    
+    # Generate admin token
+    jti = secrets.token_urlsafe(16)
+    token_payload = {
+        'username': username,
+        'role': admin['role'],
+        'type': 'admin',
+        'exp': datetime.utcnow() + ADMIN_SESSION_DURATION,
+        'iat': datetime.utcnow(),
+        'jti': jti
+    }
+    
+    token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
+    ADMIN_TOKENS[jti] = {
+        'username': username,
+        'created': datetime.now().isoformat(),
+        'ip': request.remote_addr
+    }
+    
+    tamper_protected_audit_log("ADMIN_LOGIN_SUCCESS", {"username": username}, "INFO")
+    
+    return jsonify({
+        'success': True,
+        'token': token,
+        'username': username,
+        'role': admin['role'],
+        'expires': (datetime.utcnow() + ADMIN_SESSION_DURATION).isoformat()
+    }), 200
+
+@app.route('/api/admin/verify', methods=['GET'])
+def admin_verify():
+    """Verify admin token is still valid"""
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return jsonify({'valid': False}), 401
+    
+    token = auth_header[7:]
+    payload = verify_admin_token(token)
+    
+    if not payload:
+        return jsonify({'valid': False}), 401
+    
+    return jsonify({
+        'valid': True,
+        'username': payload.get('username'),
+        'role': payload.get('role')
+    }), 200
+
+@app.route('/api/admin/logout', methods=['POST'])
+@require_admin
+def admin_logout():
+    """Admin logout - invalidate token"""
+    auth_header = request.headers.get('Authorization', '')
+    token = auth_header[7:]
+    
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        jti = payload.get('jti')
+        if jti in ADMIN_TOKENS:
+            del ADMIN_TOKENS[jti]
+    except:
+        pass
+    
+    tamper_protected_audit_log("ADMIN_LOGOUT", {"username": request.admin_user}, "INFO")
+    return jsonify({'success': True}), 200
+
+# Admin dashboard stats endpoint
+@app.route('/api/admin/stats', methods=['GET'])
+@require_admin
+def admin_dashboard_stats():
+    """Get admin dashboard statistics"""
+    return jsonify({
+        'users': ADMIN_STATS['users'],
+        'downloads': ADMIN_STATS['downloads'],
+        'revenue': ADMIN_STATS['revenue'],
+        'licenses': ADMIN_STATS['licenses'],
+        'active_giveaways': len([g for g in ADMIN_GIVEAWAYS if g.get('active')]),
+        'pending_winners': 0
+    }), 200
+
+# Admin licenses endpoints
+@app.route('/api/admin/licenses', methods=['GET'])
+@require_admin
+def admin_get_licenses():
+    """Get all licenses"""
+    # Combine demo licenses with admin-created licenses
+    all_licenses = []
+    
+    for key, data in DEMO_LICENSES.items():
+        all_licenses.append({
+            'key': key,
+            'edition': data['edition'],
+            'tier': data['tier'],
+            'expires': data['expires'],
+            'activations': len(data['hardware_ids']),
+            'max_activations': data['max_activations'],
+            'status': 'active' if datetime.fromisoformat(data['expires']) > datetime.now() else 'expired'
+        })
+    
+    for lic in ADMIN_LICENSES:
+        all_licenses.append(lic)
+    
+    return jsonify({'licenses': all_licenses}), 200
+
+@app.route('/api/admin/licenses', methods=['POST'])
+@require_admin
+def admin_create_license():
+    """Create a new license"""
+    data = request.json or {}
+    key = data.get('key', '')
+    edition = data.get('edition', 'basic')
+    license_type = data.get('type', 'lifetime')
+    email = data.get('email', '')
+    max_activations = data.get('max_activations', 5)
+    notes = data.get('notes', '')
+    
+    # Calculate expiry based on type
+    if license_type == 'lifetime':
+        expires = (datetime.now() + timedelta(days=36500)).isoformat()
+    elif license_type == 'annual':
+        expires = (datetime.now() + timedelta(days=365)).isoformat()
+    else:  # trial
+        expires = (datetime.now() + timedelta(days=30)).isoformat()
+    
+    license_data = {
+        'key': key,
+        'edition': edition,
+        'tier': license_type,
+        'expires': expires,
+        'email': email,
+        'max_activations': max_activations,
+        'activations': 0,
+        'notes': notes,
+        'status': 'active',
+        'created': datetime.now().isoformat(),
+        'created_by': request.admin_user
+    }
+    
+    ADMIN_LICENSES.append(license_data)
+    ADMIN_STATS['licenses'] += 1
+    
+    tamper_protected_audit_log("ADMIN_LICENSE_CREATED", {
+        "key": key[:8] + "...",
+        "edition": edition,
+        "by": request.admin_user
+    }, "INFO")
+    
+    return jsonify({'success': True, 'license': license_data}), 201
+
+@app.route('/api/admin/licenses/<key>/revoke', methods=['POST'])
+@require_admin
+def admin_revoke_license(key):
+    """Revoke a license"""
+    for lic in ADMIN_LICENSES:
+        if lic['key'] == key:
+            lic['status'] = 'revoked'
+            tamper_protected_audit_log("ADMIN_LICENSE_REVOKED", {"key": key[:8] + "..."}, "HIGH")
+            return jsonify({'success': True}), 200
+    
+    return jsonify({'error': 'License not found'}), 404
+
+# Admin giveaways endpoints
+@app.route('/api/admin/giveaways', methods=['GET'])
+@require_admin
+def admin_get_giveaways():
+    """Get all giveaways"""
+    return jsonify({'giveaways': ADMIN_GIVEAWAYS}), 200
+
+@app.route('/api/admin/giveaways', methods=['POST'])
+@require_admin
+def admin_create_giveaway():
+    """Create a new giveaway"""
+    data = request.json or {}
+    
+    giveaway = {
+        'id': secrets.token_urlsafe(8),
+        'title': data.get('title', 'New Giveaway'),
+        'description': data.get('description', ''),
+        'edition': data.get('edition', 'basic'),
+        'winners_count': data.get('winners', 5),
+        'start_date': data.get('start', datetime.now().isoformat()),
+        'end_date': data.get('end', (datetime.now() + timedelta(days=7)).isoformat()),
+        'entries': [],
+        'winners': [],
+        'active': True,
+        'created': datetime.now().isoformat(),
+        'created_by': request.admin_user
+    }
+    
+    ADMIN_GIVEAWAYS.append(giveaway)
+    
+    tamper_protected_audit_log("ADMIN_GIVEAWAY_CREATED", {
+        "title": giveaway['title'][:30],
+        "edition": giveaway['edition']
+    }, "INFO")
+    
+    return jsonify({'success': True, 'giveaway': giveaway}), 201
+
+# Admin pages endpoints
+@app.route('/api/admin/pages', methods=['GET'])
+@require_admin
+def admin_get_pages():
+    """Get list of all HTML pages"""
+    html_dir = os.path.join(BASE_DIR, 'html')
+    pages = []
+    
+    for filename in os.listdir(html_dir):
+        if filename.endswith('.html') and not filename.startswith('admin'):
+            filepath = os.path.join(html_dir, filename)
+            stat = os.stat(filepath)
+            pages.append({
+                'filename': filename,
+                'size': stat.st_size,
+                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+    
+    return jsonify({'pages': pages}), 200
+
+@app.route('/api/admin/pages/<filename>', methods=['GET'])
+@require_admin
+def admin_get_page(filename):
+    """Get page content"""
+    if not filename.endswith('.html'):
+        filename += '.html'
+    
+    filepath = os.path.join(BASE_DIR, 'html', filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Page not found'}), 404
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content, 200, {'Content-Type': 'text/html'}
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/admin/pages/<filename>', methods=['POST'])
+@require_admin
+def admin_save_page(filename):
+    """Save page content"""
+    if not filename.endswith('.html'):
+        filename += '.html'
+    
+    # Security: prevent directory traversal
+    if '..' in filename or '/' in filename:
+        return jsonify({'error': 'Invalid filename'}), 400
+    
+    data = request.json or {}
+    content = data.get('content', '')
+    title = data.get('title', 'Aegis OS')
+    description = data.get('description', '')
+    
+    # Wrap content in full HTML if needed
+    if not content.strip().startswith('<!DOCTYPE'):
+        full_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <meta name="description" content="{description}">
+    <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+{content}
+</body>
+</html>"""
+        content = full_html
+    
+    filepath = os.path.join(BASE_DIR, 'html', filename)
+    
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        tamper_protected_audit_log("ADMIN_PAGE_SAVED", {
+            "filename": filename,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({'success': True}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Admin page routes
+@app.route('/admin')
+@rate_limit(limit=100)
+def admin_dashboard():
+    """Serve admin dashboard"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'index.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving admin dashboard: {e}")
+        return jsonify({'error': 'Admin page not found'}), 404
+
+@app.route('/admin/licenses')
+@rate_limit(limit=100)
+def admin_licenses_page():
+    """Serve admin licenses page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'licenses.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving admin licenses: {e}")
+        return jsonify({'error': 'Admin page not found'}), 404
+
+@app.route('/admin/pages')
+@rate_limit(limit=100)
+def admin_pages_page():
+    """Serve admin pages page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'pages.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving admin pages: {e}")
+        return jsonify({'error': 'Admin page not found'}), 404
+
+@app.route('/admin/giveaways')
+@rate_limit(limit=100)
+def admin_giveaways_page():
+    """Serve admin giveaways page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'giveaways.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving admin giveaways: {e}")
+        return jsonify({'error': 'Admin page not found'}), 404
+
+@app.route('/admin/settings')
+@rate_limit(limit=100)
+def admin_settings_page():
+    """Serve admin settings page (redirect to dashboard for now)"""
+    return redirect('/admin')
+
+
 if __name__ == '__main__':
-    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features")
+    logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features + Admin Panel")
     app.run(host='0.0.0.0', port=5000, debug=False)

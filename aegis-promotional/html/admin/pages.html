@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS - Page Builder</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-dark: #0f1419;
+            --bg-card: #1a1f2e;
+            --bg-hover: #252b3b;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #2d3748;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .admin-layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 260px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .nav-section { margin-bottom: 1.5rem; }
+        .nav-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            margin-bottom: 0.25rem;
+        }
+        .nav-item:hover, .nav-item.active { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-item.active { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
+        .main-content { flex: 1; margin-left: 260px; padding: 2rem; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 { font-size: 1.75rem; font-weight: 700; }
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-size: 0.875rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); }
+        .btn-secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-danger { background: var(--error); color: white; }
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+        .card-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-title { font-weight: 600; }
+        .card-body { padding: 1.5rem; }
+        .pages-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+        .page-card {
+            background: var(--bg-hover);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .page-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-4px);
+        }
+        .page-preview {
+            height: 150px;
+            background: var(--bg-dark);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            font-size: 3rem;
+        }
+        .page-info { padding: 1.25rem; }
+        .page-title { font-weight: 600; margin-bottom: 0.5rem; }
+        .page-meta { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 1rem; }
+        .page-actions { display: flex; gap: 0.5rem; }
+        .page-actions .btn { padding: 0.375rem 0.75rem; font-size: 0.75rem; }
+        .editor-container {
+            display: none;
+            grid-template-columns: 250px 1fr 300px;
+            gap: 1.5rem;
+            height: calc(100vh - 150px);
+        }
+        .editor-container.active { display: grid; }
+        .editor-sidebar {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        .editor-sidebar h3 { font-size: 0.875rem; margin-bottom: 1rem; color: var(--text-secondary); }
+        .component-item {
+            padding: 0.75rem;
+            background: var(--bg-hover);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.875rem;
+        }
+        .component-item:hover { background: var(--primary); }
+        .editor-main {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        .editor-toolbar {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .toolbar-btn {
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-hover);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        .toolbar-btn:hover { background: var(--primary); border-color: var(--primary); }
+        .editor-canvas {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            background: white;
+        }
+        .editor-canvas-content {
+            min-height: 100%;
+            outline: none;
+            color: #1a1a1a;
+        }
+        .editor-properties {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            padding: 1rem;
+            overflow-y: auto;
+        }
+        .property-group { margin-bottom: 1.5rem; }
+        .property-group h4 { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.75rem; text-transform: uppercase; }
+        .property-item { margin-bottom: 0.75rem; }
+        .property-label { font-size: 0.8rem; margin-bottom: 0.25rem; display: block; }
+        .property-input {
+            width: 100%;
+            padding: 0.5rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-size: 0.8rem;
+        }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem; }
+        .form-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+        }
+        .form-input:focus { outline: none; border-color: var(--primary); }
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 500px;
+            border: 1px solid var(--border);
+        }
+        .modal-header { margin-bottom: 1.5rem; }
+        .modal-header h3 { font-size: 1.25rem; }
+        .modal-footer { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; }
+        .hidden { display: none !important; }
+        @media (max-width: 1200px) {
+            .editor-container { grid-template-columns: 1fr; }
+            .editor-sidebar, .editor-properties { display: none; }
+        }
+        @media (max-width: 1024px) {
+            .sidebar { width: 80px; padding: 1rem; }
+            .sidebar .nav-text, .sidebar .nav-section-title, .sidebar .logo span:not(:first-child) { display: none; }
+            .main-content { margin-left: 80px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-layout">
+        <aside class="sidebar">
+            <div class="logo"><span>🛡️</span><span>Aegis Admin</span></div>
+            <nav>
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <a href="/admin" class="nav-item"><span>📊</span><span class="nav-text">Dashboard</span></a>
+                    <a href="/admin/licenses" class="nav-item"><span>🔑</span><span class="nav-text">Licenses</span></a>
+                    <a href="/admin/pages" class="nav-item active"><span>📄</span><span class="nav-text">Page Builder</span></a>
+                    <a href="/admin/giveaways" class="nav-item"><span>🎁</span><span class="nav-text">Giveaways</span></a>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">System</div>
+                    <a href="/admin/settings" class="nav-item"><span>⚙️</span><span class="nav-text">Settings</span></a>
+                    <a href="#" class="nav-item" onclick="logout()"><span>🚪</span><span class="nav-text">Logout</span></a>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <div class="header">
+                <h1 id="pageTitle">Page Builder</h1>
+                <div style="display:flex;gap:1rem;">
+                    <button class="btn btn-secondary" id="backBtn" onclick="backToList()" style="display:none;">← Back to Pages</button>
+                    <button class="btn btn-primary" id="newPageBtn" onclick="showModal('newPageModal')">+ New Page</button>
+                    <button class="btn btn-success" id="saveBtn" onclick="savePage()" style="display:none;">💾 Save Page</button>
+                </div>
+            </div>
+
+            <div id="pagesList">
+                <div class="pages-grid">
+                    <div class="page-card">
+                        <div class="page-preview">🏠</div>
+                        <div class="page-info">
+                            <div class="page-title">index.html</div>
+                            <div class="page-meta">Homepage • Last modified: Today</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('index.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">💻</div>
+                        <div class="page-info">
+                            <div class="page-title">freemium.html</div>
+                            <div class="page-meta">Freemium Edition • Last modified: Yesterday</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('freemium.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/freemium')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">🎮</div>
+                        <div class="page-info">
+                            <div class="page-title">gamer.html</div>
+                            <div class="page-meta">Gamer Edition • Last modified: 2 days ago</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('gamer.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/gamer')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">🤖</div>
+                        <div class="page-info">
+                            <div class="page-title">ai.html</div>
+                            <div class="page-meta">AI-Dev Edition • Last modified: 3 days ago</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('ai.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/ai')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">🏢</div>
+                        <div class="page-info">
+                            <div class="page-title">workplace.html</div>
+                            <div class="page-meta">Workplace Edition • Last modified: 4 days ago</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('workplace.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/workplace')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">🖥️</div>
+                        <div class="page-info">
+                            <div class="page-title">server.html</div>
+                            <div class="page-meta">Server Edition • Last modified: 5 days ago</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('server.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/server')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card">
+                        <div class="page-preview">📥</div>
+                        <div class="page-info">
+                            <div class="page-title">download.html</div>
+                            <div class="page-meta">Download Page • Last modified: 1 week ago</div>
+                            <div class="page-actions">
+                                <button class="btn btn-secondary" onclick="editPage('download.html')">Edit</button>
+                                <button class="btn btn-secondary" onclick="previewPage('/download')">Preview</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="page-card" style="border-style: dashed; background: transparent;">
+                        <div class="page-preview" style="background: transparent;">➕</div>
+                        <div class="page-info">
+                            <div class="page-title">Create New Page</div>
+                            <div class="page-meta">Click to add a new page</div>
+                            <div class="page-actions">
+                                <button class="btn btn-primary" onclick="showModal('newPageModal')">Create Page</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="editorContainer" class="editor-container">
+                <div class="editor-sidebar">
+                    <h3>Components</h3>
+                    <div class="component-item" onclick="insertComponent('heading')">📌 Heading</div>
+                    <div class="component-item" onclick="insertComponent('paragraph')">📝 Paragraph</div>
+                    <div class="component-item" onclick="insertComponent('button')">🔘 Button</div>
+                    <div class="component-item" onclick="insertComponent('image')">🖼️ Image</div>
+                    <div class="component-item" onclick="insertComponent('hero')">🎯 Hero Section</div>
+                    <div class="component-item" onclick="insertComponent('features')">⭐ Features Grid</div>
+                    <div class="component-item" onclick="insertComponent('pricing')">💰 Pricing Card</div>
+                    <div class="component-item" onclick="insertComponent('cta')">📢 Call to Action</div>
+                    <div class="component-item" onclick="insertComponent('footer')">📋 Footer</div>
+                    <div class="component-item" onclick="insertComponent('divider')">➖ Divider</div>
+                    <div class="component-item" onclick="insertComponent('spacer')">⬜ Spacer</div>
+                </div>
+                <div class="editor-main">
+                    <div class="editor-toolbar">
+                        <button class="toolbar-btn" onclick="execCmd('bold')"><b>B</b></button>
+                        <button class="toolbar-btn" onclick="execCmd('italic')"><i>I</i></button>
+                        <button class="toolbar-btn" onclick="execCmd('underline')"><u>U</u></button>
+                        <button class="toolbar-btn" onclick="execCmd('strikeThrough')"><s>S</s></button>
+                        <button class="toolbar-btn" onclick="execCmd('justifyLeft')">⬅</button>
+                        <button class="toolbar-btn" onclick="execCmd('justifyCenter')">⬌</button>
+                        <button class="toolbar-btn" onclick="execCmd('justifyRight')">➡</button>
+                        <button class="toolbar-btn" onclick="execCmd('insertUnorderedList')">• List</button>
+                        <button class="toolbar-btn" onclick="execCmd('insertOrderedList')">1. List</button>
+                        <button class="toolbar-btn" onclick="insertLink()">🔗 Link</button>
+                        <button class="toolbar-btn" onclick="toggleCode()">{ } Code</button>
+                    </div>
+                    <div class="editor-canvas">
+                        <div id="editorContent" class="editor-canvas-content" contenteditable="true">
+                            <h1>Welcome to Aegis OS</h1>
+                            <p>Start editing your page content here...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="editor-properties">
+                    <div class="property-group">
+                        <h4>Page Settings</h4>
+                        <div class="property-item">
+                            <label class="property-label">Page Title</label>
+                            <input type="text" class="property-input" id="propTitle" value="Aegis OS">
+                        </div>
+                        <div class="property-item">
+                            <label class="property-label">Meta Description</label>
+                            <input type="text" class="property-input" id="propDescription" value="Enterprise Linux Distribution">
+                        </div>
+                    </div>
+                    <div class="property-group">
+                        <h4>Styles</h4>
+                        <div class="property-item">
+                            <label class="property-label">Background Color</label>
+                            <input type="color" class="property-input" id="propBgColor" value="#ffffff">
+                        </div>
+                        <div class="property-item">
+                            <label class="property-label">Text Color</label>
+                            <input type="color" class="property-input" id="propTextColor" value="#1a1a1a">
+                        </div>
+                    </div>
+                    <div class="property-group">
+                        <h4>Quick Actions</h4>
+                        <button class="btn btn-secondary" style="width:100%;margin-bottom:0.5rem" onclick="previewCurrent()">👁️ Preview</button>
+                        <button class="btn btn-secondary" style="width:100%;margin-bottom:0.5rem" onclick="exportHTML()">📥 Export HTML</button>
+                        <button class="btn btn-danger" style="width:100%" onclick="clearEditor()">🗑️ Clear All</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="newPageModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Create New Page</h3>
+            </div>
+            <form id="newPageForm">
+                <div class="form-group">
+                    <label class="form-label">Page Name</label>
+                    <input type="text" class="form-input" id="newPageName" placeholder="e.g., about-us" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Page Title</label>
+                    <input type="text" class="form-input" id="newPageTitle" placeholder="e.g., About Us - Aegis OS" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Template</label>
+                    <select class="form-input" id="newPageTemplate">
+                        <option value="blank">Blank Page</option>
+                        <option value="landing">Landing Page</option>
+                        <option value="product">Product Page</option>
+                        <option value="blog">Blog Post</option>
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('newPageModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Page</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/admin';
+        let authToken = localStorage.getItem('adminToken');
+        let currentPage = null;
+        let showingCode = false;
+
+        if (!authToken) window.location.href = '/admin';
+
+        function showModal(id) { document.getElementById(id).classList.add('active'); }
+        function hideModal(id) { document.getElementById(id).classList.remove('active'); }
+
+        function editPage(filename) {
+            currentPage = filename;
+            document.getElementById('pageTitle').textContent = `Editing: ${filename}`;
+            document.getElementById('pagesList').style.display = 'none';
+            document.getElementById('editorContainer').classList.add('active');
+            document.getElementById('newPageBtn').style.display = 'none';
+            document.getElementById('backBtn').style.display = 'inline-flex';
+            document.getElementById('saveBtn').style.display = 'inline-flex';
+            
+            fetch(`/api/admin/pages/${filename}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            }).then(r => r.ok ? r.text() : '').then(content => {
+                if (content) {
+                    const match = content.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                    document.getElementById('editorContent').innerHTML = match ? match[1] : content;
+                }
+            }).catch(() => {});
+        }
+
+        function backToList() {
+            currentPage = null;
+            document.getElementById('pageTitle').textContent = 'Page Builder';
+            document.getElementById('pagesList').style.display = 'block';
+            document.getElementById('editorContainer').classList.remove('active');
+            document.getElementById('newPageBtn').style.display = 'inline-flex';
+            document.getElementById('backBtn').style.display = 'none';
+            document.getElementById('saveBtn').style.display = 'none';
+        }
+
+        function previewPage(url) { window.open(url, '_blank'); }
+        function previewCurrent() { previewPage('/' + currentPage.replace('.html', '')); }
+
+        function savePage() {
+            const content = document.getElementById('editorContent').innerHTML;
+            const title = document.getElementById('propTitle').value;
+            const description = document.getElementById('propDescription').value;
+            
+            fetch(`/api/admin/pages/${currentPage}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                body: JSON.stringify({ content, title, description })
+            }).then(() => alert('Page saved successfully!')).catch(() => alert('Error saving page'));
+        }
+
+        function execCmd(cmd, value = null) {
+            document.execCommand(cmd, false, value);
+            document.getElementById('editorContent').focus();
+        }
+
+        function insertLink() {
+            const url = prompt('Enter URL:');
+            if (url) execCmd('createLink', url);
+        }
+
+        function toggleCode() {
+            const editor = document.getElementById('editorContent');
+            if (showingCode) {
+                editor.innerHTML = editor.textContent;
+            } else {
+                editor.textContent = editor.innerHTML;
+            }
+            showingCode = !showingCode;
+        }
+
+        function insertComponent(type) {
+            const components = {
+                heading: '<h2 style="color:#1e3a8a;margin:1rem 0">New Heading</h2>',
+                paragraph: '<p style="margin:1rem 0;line-height:1.6">Enter your paragraph text here...</p>',
+                button: '<a href="#" style="display:inline-block;padding:12px 24px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:white;text-decoration:none;border-radius:8px;font-weight:600">Click Here</a>',
+                image: '<img src="https://via.placeholder.com/600x300" alt="Image" style="max-width:100%;border-radius:8px;margin:1rem 0">',
+                hero: '<section style="background:linear-gradient(135deg,#1e3a8a,#7c3aed);color:white;padding:4rem 2rem;text-align:center;border-radius:12px;margin:1rem 0"><h1 style="font-size:2.5rem;margin-bottom:1rem">Hero Title</h1><p style="font-size:1.2rem;opacity:0.9;margin-bottom:2rem">Subtitle text goes here</p><a href="#" style="display:inline-block;padding:12px 24px;background:white;color:#1e3a8a;text-decoration:none;border-radius:8px;font-weight:600">Get Started</a></section>',
+                features: '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;margin:2rem 0"><div style="background:#f8fafc;padding:1.5rem;border-radius:8px;text-align:center"><div style="font-size:2rem;margin-bottom:1rem">🚀</div><h3 style="margin-bottom:0.5rem">Feature 1</h3><p style="color:#64748b;font-size:0.9rem">Description text</p></div><div style="background:#f8fafc;padding:1.5rem;border-radius:8px;text-align:center"><div style="font-size:2rem;margin-bottom:1rem">⚡</div><h3 style="margin-bottom:0.5rem">Feature 2</h3><p style="color:#64748b;font-size:0.9rem">Description text</p></div><div style="background:#f8fafc;padding:1.5rem;border-radius:8px;text-align:center"><div style="font-size:2rem;margin-bottom:1rem">🛡️</div><h3 style="margin-bottom:0.5rem">Feature 3</h3><p style="color:#64748b;font-size:0.9rem">Description text</p></div></div>',
+                pricing: '<div style="background:#f8fafc;padding:2rem;border-radius:12px;text-align:center;max-width:300px;margin:1rem auto;border:2px solid #e2e8f0"><h3 style="margin-bottom:0.5rem">Pro Plan</h3><div style="font-size:2.5rem;font-weight:bold;color:#6366f1;margin:1rem 0">$99</div><p style="color:#64748b;margin-bottom:1.5rem">per month</p><ul style="list-style:none;text-align:left;margin-bottom:1.5rem"><li style="padding:0.5rem 0">✓ Feature one</li><li style="padding:0.5rem 0">✓ Feature two</li><li style="padding:0.5rem 0">✓ Feature three</li></ul><a href="#" style="display:block;padding:12px;background:#6366f1;color:white;text-decoration:none;border-radius:8px">Get Started</a></div>',
+                cta: '<section style="background:linear-gradient(135deg,#6366f1,#ec4899);color:white;padding:3rem 2rem;text-align:center;border-radius:12px;margin:2rem 0"><h2 style="font-size:2rem;margin-bottom:1rem">Ready to Get Started?</h2><p style="margin-bottom:1.5rem;opacity:0.9">Join thousands of satisfied users today</p><a href="#" style="display:inline-block;padding:12px 24px;background:white;color:#6366f1;text-decoration:none;border-radius:8px;font-weight:600">Sign Up Now</a></section>',
+                footer: '<footer style="background:#0f172a;color:#94a3b8;padding:2rem;text-align:center;border-radius:8px;margin-top:2rem"><p>© 2025 Aegis OS. All rights reserved.</p></footer>',
+                divider: '<hr style="border:none;height:1px;background:linear-gradient(90deg,transparent,#e2e8f0,transparent);margin:2rem 0">',
+                spacer: '<div style="height:2rem"></div>'
+            };
+            
+            const selection = window.getSelection();
+            const range = selection.getRangeAt(0);
+            const div = document.createElement('div');
+            div.innerHTML = components[type];
+            range.insertNode(div.firstChild);
+        }
+
+        function exportHTML() {
+            const content = document.getElementById('editorContent').innerHTML;
+            const title = document.getElementById('propTitle').value;
+            const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+</head>
+<body>
+${content}
+</body>
+</html>`;
+            
+            const blob = new Blob([html], {type: 'text/html'});
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = currentPage || 'page.html';
+            a.click();
+        }
+
+        function clearEditor() {
+            if (confirm('Clear all content?')) {
+                document.getElementById('editorContent').innerHTML = '<p>Start editing...</p>';
+            }
+        }
+
+        document.getElementById('newPageForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('newPageName').value;
+            const filename = name.endsWith('.html') ? name : name + '.html';
+            hideModal('newPageModal');
+            editPage(filename);
+        });
+
+        function logout() { localStorage.removeItem('adminToken'); window.location.href = '/admin'; }
+    </script>
+</body>
+</html>

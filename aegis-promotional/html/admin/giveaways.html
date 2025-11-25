@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis OS - Giveaway System</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-dark: #0f1419;
+            --bg-card: #1a1f2e;
+            --bg-hover: #252b3b;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --border: #2d3748;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .admin-layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 260px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .nav-section { margin-bottom: 1.5rem; }
+        .nav-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: all 0.2s;
+            margin-bottom: 0.25rem;
+        }
+        .nav-item:hover, .nav-item.active { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-item.active { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
+        .main-content { flex: 1; margin-left: 260px; padding: 2rem; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        .header h1 { font-size: 1.75rem; font-weight: 700; }
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            font-size: 0.875rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); }
+        .btn-secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-warning { background: var(--warning); color: black; }
+        .btn-danger { background: var(--error); color: white; }
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            background: var(--bg-card);
+            padding: 0.5rem;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+        }
+        .tab {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .tab.active { background: var(--primary); color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+        .card-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-title { font-weight: 600; }
+        .card-body { padding: 1.5rem; }
+        .giveaway-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+        .giveaway-card {
+            background: var(--bg-hover);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .giveaway-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-4px);
+        }
+        .giveaway-header {
+            padding: 1.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+        }
+        .giveaway-header h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+        .giveaway-header p { opacity: 0.9; font-size: 0.875rem; }
+        .giveaway-body { padding: 1.5rem; }
+        .giveaway-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .giveaway-stat {
+            text-align: center;
+            padding: 0.75rem;
+            background: var(--bg-dark);
+            border-radius: 8px;
+        }
+        .giveaway-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--primary-light); }
+        .giveaway-stat-label { font-size: 0.75rem; color: var(--text-secondary); }
+        .giveaway-actions { display: flex; gap: 0.5rem; }
+        .giveaway-actions .btn { flex: 1; justify-content: center; padding: 0.5rem; }
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-success { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge-danger { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+        .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem; }
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+        .form-textarea { min-height: 100px; resize: vertical; }
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+        .puzzle-preview {
+            background: var(--bg-dark);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            margin-top: 1.5rem;
+        }
+        .puzzle-icon { font-size: 4rem; margin-bottom: 1rem; }
+        .puzzle-hint {
+            font-size: 1.25rem;
+            font-style: italic;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+        .puzzle-answer-input {
+            max-width: 300px;
+            margin: 0 auto 1rem;
+        }
+        .riddle-container {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+            border: 1px solid var(--primary);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+        }
+        .riddle-text {
+            font-size: 1.5rem;
+            font-style: italic;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+        .winners-list { max-height: 300px; overflow-y: auto; }
+        .winner-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .winner-item:last-child { border-bottom: none; }
+        .winner-info { display: flex; align-items: center; gap: 1rem; }
+        .winner-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .winner-email { font-size: 0.875rem; }
+        .winner-date { font-size: 0.75rem; color: var(--text-secondary); }
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2rem;
+            width: 100%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+        }
+        .modal-header { margin-bottom: 1.5rem; }
+        .modal-header h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+        .modal-header p { color: var(--text-secondary); font-size: 0.875rem; }
+        .modal-footer { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; }
+        .countdown {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--warning);
+            font-family: monospace;
+        }
+        .hidden { display: none !important; }
+        @media (max-width: 1024px) {
+            .sidebar { width: 80px; padding: 1rem; }
+            .sidebar .nav-text, .sidebar .nav-section-title, .sidebar .logo span:not(:first-child) { display: none; }
+            .main-content { margin-left: 80px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-layout">
+        <aside class="sidebar">
+            <div class="logo"><span>🛡️</span><span>Aegis Admin</span></div>
+            <nav>
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <a href="/admin" class="nav-item"><span>📊</span><span class="nav-text">Dashboard</span></a>
+                    <a href="/admin/licenses" class="nav-item"><span>🔑</span><span class="nav-text">Licenses</span></a>
+                    <a href="/admin/pages" class="nav-item"><span>📄</span><span class="nav-text">Page Builder</span></a>
+                    <a href="/admin/giveaways" class="nav-item active"><span>🎁</span><span class="nav-text">Giveaways</span></a>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">System</div>
+                    <a href="/admin/settings" class="nav-item"><span>⚙️</span><span class="nav-text">Settings</span></a>
+                    <a href="#" class="nav-item" onclick="logout()"><span>🚪</span><span class="nav-text">Logout</span></a>
+                </div>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <div class="header">
+                <h1>Giveaway System</h1>
+                <div style="display:flex;gap:1rem;">
+                    <button class="btn btn-secondary" onclick="showModal('riddleModal')">🧩 Create Riddle</button>
+                    <button class="btn btn-primary" onclick="showModal('createModal')">+ New Giveaway</button>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('active')">Active Giveaways</div>
+                <div class="tab" onclick="switchTab('puzzles')">Puzzle Games</div>
+                <div class="tab" onclick="switchTab('riddles')">Riddle Unlocks</div>
+                <div class="tab" onclick="switchTab('winners')">Winners</div>
+            </div>
+
+            <div id="tab-active" class="tab-content active">
+                <div class="giveaway-grid">
+                    <div class="giveaway-card">
+                        <div class="giveaway-header">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                                <div>
+                                    <h3>🎮 Gamer Edition Launch</h3>
+                                    <p>Win a free lifetime Gamer license!</p>
+                                </div>
+                                <span class="badge badge-success">Active</span>
+                            </div>
+                        </div>
+                        <div class="giveaway-body">
+                            <div class="giveaway-stats">
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value">247</div>
+                                    <div class="giveaway-stat-label">Entries</div>
+                                </div>
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value">5</div>
+                                    <div class="giveaway-stat-label">Prizes</div>
+                                </div>
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value countdown" id="countdown1">2d 14h</div>
+                                    <div class="giveaway-stat-label">Time Left</div>
+                                </div>
+                            </div>
+                            <div class="giveaway-actions">
+                                <button class="btn btn-secondary" onclick="viewGiveaway(1)">View</button>
+                                <button class="btn btn-warning" onclick="drawWinner(1)">Draw Winner</button>
+                                <button class="btn btn-danger" onclick="endGiveaway(1)">End</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="giveaway-card">
+                        <div class="giveaway-header" style="background: linear-gradient(135deg, var(--success), #059669);">
+                            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                                <div>
+                                    <h3>🤖 AI-Dev Special</h3>
+                                    <p>Developer community giveaway</p>
+                                </div>
+                                <span class="badge badge-success">Active</span>
+                            </div>
+                        </div>
+                        <div class="giveaway-body">
+                            <div class="giveaway-stats">
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value">183</div>
+                                    <div class="giveaway-stat-label">Entries</div>
+                                </div>
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value">3</div>
+                                    <div class="giveaway-stat-label">Prizes</div>
+                                </div>
+                                <div class="giveaway-stat">
+                                    <div class="giveaway-stat-value countdown" id="countdown2">5d 8h</div>
+                                    <div class="giveaway-stat-label">Time Left</div>
+                                </div>
+                            </div>
+                            <div class="giveaway-actions">
+                                <button class="btn btn-secondary" onclick="viewGiveaway(2)">View</button>
+                                <button class="btn btn-warning" onclick="drawWinner(2)">Draw Winner</button>
+                                <button class="btn btn-danger" onclick="endGiveaway(2)">End</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="giveaway-card" style="border-style: dashed; background: transparent;">
+                        <div class="giveaway-header" style="background: transparent; border-bottom: 1px dashed var(--border);">
+                            <div style="text-align:center;width:100%">
+                                <div style="font-size:3rem;margin-bottom:0.5rem">➕</div>
+                                <h3>Create New Giveaway</h3>
+                            </div>
+                        </div>
+                        <div class="giveaway-body">
+                            <p style="text-align:center;color:var(--text-secondary);margin-bottom:1rem">Start a new giveaway campaign to engage your community</p>
+                            <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="showModal('createModal')">Create Giveaway</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-puzzles" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🧩 Active Puzzle Games</span>
+                        <button class="btn btn-primary" onclick="showModal('puzzleModal')">+ New Puzzle</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="giveaway-grid">
+                            <div class="puzzle-preview">
+                                <div class="puzzle-icon">🔐</div>
+                                <h3>Cipher Challenge</h3>
+                                <p class="puzzle-hint">"Decode the message: NRTV-BF-TNZRE"</p>
+                                <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:1rem">Hint: Think like Caesar...</p>
+                                <div class="form-group puzzle-answer-input">
+                                    <input type="text" class="form-input" placeholder="Enter answer to win...">
+                                </div>
+                                <div style="display:flex;gap:0.5rem;justify-content:center">
+                                    <span class="badge badge-success">12 solved</span>
+                                    <span class="badge badge-warning">38 attempts</span>
+                                </div>
+                            </div>
+
+                            <div class="puzzle-preview">
+                                <div class="puzzle-icon">🎯</div>
+                                <h3>Find the Key</h3>
+                                <p class="puzzle-hint">"The license is hidden in plain sight on our website..."</p>
+                                <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:1rem">Hint: Check the source</p>
+                                <div class="form-group puzzle-answer-input">
+                                    <input type="text" class="form-input" placeholder="Enter the hidden key...">
+                                </div>
+                                <div style="display:flex;gap:0.5rem;justify-content:center">
+                                    <span class="badge badge-success">5 solved</span>
+                                    <span class="badge badge-warning">24 attempts</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-riddles" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🧠 Riddle-Based License Unlocks</span>
+                        <button class="btn btn-primary" onclick="showModal('riddleModal')">+ New Riddle</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="riddle-container" style="margin-bottom:1.5rem">
+                            <div style="font-size:2rem;margin-bottom:1rem">🤔</div>
+                            <p class="riddle-text">"I have keys but no locks, I have space but no room, you can enter but can't go inside. What am I?"</p>
+                            <div class="form-group" style="max-width:300px;margin:0 auto 1rem">
+                                <input type="text" class="form-input" placeholder="Your answer..." id="riddleAnswer">
+                            </div>
+                            <button class="btn btn-success" onclick="checkRiddle()">Submit Answer</button>
+                            <div style="margin-top:1rem">
+                                <span class="badge badge-info" style="background:rgba(99,102,241,0.2);color:var(--primary-light)">Prize: Gamer Edition License</span>
+                                <span class="badge badge-success">3 winners</span>
+                                <span class="badge badge-warning">2 remaining</span>
+                            </div>
+                        </div>
+
+                        <div class="riddle-container">
+                            <div style="font-size:2rem;margin-bottom:1rem">💡</div>
+                            <p class="riddle-text">"I speak without a mouth and hear without ears. I have no body, but I come alive with the wind. What am I?"</p>
+                            <div class="form-group" style="max-width:300px;margin:0 auto 1rem">
+                                <input type="text" class="form-input" placeholder="Your answer...">
+                            </div>
+                            <button class="btn btn-success">Submit Answer</button>
+                            <div style="margin-top:1rem">
+                                <span class="badge badge-info" style="background:rgba(99,102,241,0.2);color:var(--primary-light)">Prize: AI-Dev Edition License</span>
+                                <span class="badge badge-success">1 winner</span>
+                                <span class="badge badge-warning">4 remaining</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-winners" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">🏆 Recent Winners</span>
+                        <button class="btn btn-secondary" onclick="exportWinners()">📥 Export CSV</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="winners-list">
+                            <div class="winner-item">
+                                <div class="winner-info">
+                                    <div class="winner-avatar">🎮</div>
+                                    <div>
+                                        <div class="winner-email">john.d***@gmail.com</div>
+                                        <div class="winner-date">Gamer Edition Launch • Won 2 hours ago</div>
+                                    </div>
+                                </div>
+                                <span class="badge badge-success">License Sent</span>
+                            </div>
+                            <div class="winner-item">
+                                <div class="winner-info">
+                                    <div class="winner-avatar">🤖</div>
+                                    <div>
+                                        <div class="winner-email">dev.m***@outlook.com</div>
+                                        <div class="winner-date">AI-Dev Special • Solved riddle 5 hours ago</div>
+                                    </div>
+                                </div>
+                                <span class="badge badge-success">License Sent</span>
+                            </div>
+                            <div class="winner-item">
+                                <div class="winner-info">
+                                    <div class="winner-avatar">🧩</div>
+                                    <div>
+                                        <div class="winner-email">sarah.k***@yahoo.com</div>
+                                        <div class="winner-date">Cipher Challenge • Solved yesterday</div>
+                                    </div>
+                                </div>
+                                <span class="badge badge-success">License Sent</span>
+                            </div>
+                            <div class="winner-item">
+                                <div class="winner-info">
+                                    <div class="winner-avatar">🎯</div>
+                                    <div>
+                                        <div class="winner-email">mike.t***@proton.me</div>
+                                        <div class="winner-date">Find the Key • Found 2 days ago</div>
+                                    </div>
+                                </div>
+                                <span class="badge badge-warning">Pending</span>
+                            </div>
+                            <div class="winner-item">
+                                <div class="winner-info">
+                                    <div class="winner-avatar">🎮</div>
+                                    <div>
+                                        <div class="winner-email">alex.w***@gmail.com</div>
+                                        <div class="winner-date">Gamer Edition Launch • Won 3 days ago</div>
+                                    </div>
+                                </div>
+                                <span class="badge badge-success">License Sent</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="createModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Create New Giveaway</h3>
+                <p>Set up a new license giveaway campaign</p>
+            </div>
+            <form id="createGiveawayForm">
+                <div class="form-group">
+                    <label class="form-label">Giveaway Title</label>
+                    <input type="text" class="form-input" id="giveawayTitle" placeholder="e.g., Summer Special Giveaway" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-textarea" id="giveawayDesc" placeholder="Describe the giveaway..."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Edition to Give Away</label>
+                        <select class="form-select" id="giveawayEdition" required>
+                            <option value="basic">Basic Edition</option>
+                            <option value="gamer">Gamer Edition</option>
+                            <option value="ai-dev">AI-Dev Edition</option>
+                            <option value="gamer-ai">Gamer+AI Edition</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Number of Winners</label>
+                        <input type="number" class="form-input" id="giveawayWinners" value="5" min="1" max="100" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="datetime-local" class="form-input" id="giveawayStart" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Date</label>
+                        <input type="datetime-local" class="form-input" id="giveawayEnd" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Entry Requirements</label>
+                    <select class="form-select" id="giveawayReq">
+                        <option value="email">Email Signup Only</option>
+                        <option value="social">Social Media Follow</option>
+                        <option value="referral">Referral Required</option>
+                        <option value="none">No Requirements</option>
+                    </select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('createModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Giveaway</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="riddleModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Create Riddle Challenge</h3>
+                <p>Create a riddle for users to solve and win licenses</p>
+            </div>
+            <form id="createRiddleForm">
+                <div class="form-group">
+                    <label class="form-label">Riddle Question</label>
+                    <textarea class="form-textarea" id="riddleQuestion" placeholder="Enter your riddle..." required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Correct Answer</label>
+                    <input type="text" class="form-input" id="riddleCorrectAnswer" placeholder="The answer to the riddle" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Prize Edition</label>
+                        <select class="form-select" id="riddlePrize" required>
+                            <option value="basic">Basic Edition</option>
+                            <option value="gamer">Gamer Edition</option>
+                            <option value="ai-dev">AI-Dev Edition</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Winners</label>
+                        <input type="number" class="form-input" id="riddleMaxWinners" value="5" min="1" max="50" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Hint (optional)</label>
+                    <input type="text" class="form-input" id="riddleHint" placeholder="A hint to help solvers...">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('riddleModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Riddle</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="puzzleModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Create Puzzle Game</h3>
+                <p>Create a puzzle or treasure hunt for licenses</p>
+            </div>
+            <form id="createPuzzleForm">
+                <div class="form-group">
+                    <label class="form-label">Puzzle Title</label>
+                    <input type="text" class="form-input" id="puzzleTitle" placeholder="e.g., Cipher Challenge" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Puzzle Type</label>
+                    <select class="form-select" id="puzzleType" required>
+                        <option value="cipher">Cipher Decode</option>
+                        <option value="hunt">Treasure Hunt</option>
+                        <option value="trivia">Trivia Questions</option>
+                        <option value="hidden">Hidden Key</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Puzzle Content/Clue</label>
+                    <textarea class="form-textarea" id="puzzleContent" placeholder="Enter the puzzle or clue..." required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Solution</label>
+                    <input type="text" class="form-input" id="puzzleSolution" placeholder="The answer/key to find" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Prize Edition</label>
+                        <select class="form-select" id="puzzlePrize" required>
+                            <option value="basic">Basic Edition</option>
+                            <option value="gamer">Gamer Edition</option>
+                            <option value="ai-dev">AI-Dev Edition</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Solvers</label>
+                        <input type="number" class="form-input" id="puzzleMaxSolvers" value="10" min="1" max="100" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('puzzleModal')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Puzzle</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/admin';
+        let authToken = localStorage.getItem('adminToken');
+
+        if (!authToken) window.location.href = '/admin';
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`.tab:nth-child(${['active','puzzles','riddles','winners'].indexOf(tabId)+1})`).classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        }
+
+        function showModal(id) { document.getElementById(id).classList.add('active'); }
+        function hideModal(id) { document.getElementById(id).classList.remove('active'); }
+
+        function viewGiveaway(id) { alert(`Viewing giveaway ${id}`); }
+        function drawWinner(id) { 
+            if(confirm('Draw a random winner now?')) {
+                alert('Winner drawn! Email notification sent.');
+            }
+        }
+        function endGiveaway(id) {
+            if(confirm('End this giveaway? This action cannot be undone.')) {
+                alert('Giveaway ended.');
+            }
+        }
+
+        function checkRiddle() {
+            const answer = document.getElementById('riddleAnswer').value.toLowerCase().trim();
+            if (answer === 'keyboard') {
+                alert('🎉 Correct! You won a Gamer Edition license! Check your email.');
+            } else {
+                alert('❌ Incorrect. Try again!');
+            }
+        }
+
+        function exportWinners() { alert('Exporting winners to CSV...'); }
+
+        document.getElementById('createGiveawayForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            hideModal('createModal');
+            alert('Giveaway created successfully!');
+        });
+
+        document.getElementById('createRiddleForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            hideModal('riddleModal');
+            alert('Riddle created successfully!');
+        });
+
+        document.getElementById('createPuzzleForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            hideModal('puzzleModal');
+            alert('Puzzle created successfully!');
+        });
+
+        function logout() { localStorage.removeItem('adminToken'); window.location.href = '/admin'; }
+    </script>
+</body>
+</html>
