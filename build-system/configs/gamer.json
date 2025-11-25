@@ -1,0 +1,80 @@
+{
+  "edition": "gamer",
+  "name": "Aegis OS Gamer",
+  "version": "1.0.0",
+  "description": "Gaming-optimized edition with low-latency kernel and Steam",
+  "base_system": "ubuntu-22.04-minimal",
+  "kernel": "linux-lowlatency-hwe-22.04",
+  "desktop_environment": "xfce4",
+  "packages": {
+    "system": [
+      "systemd", "systemd-sysv", "systemd-timesyncd",
+      "network-manager", "network-manager-gnome",
+      "linux-firmware", "linux-modules-extra",
+      "gamemode", "mangohud"
+    ],
+    "desktop": [
+      "xfce4", "xfce4-terminal", "xfce4-panel",
+      "xfce4-session", "xfce4-settings", "xfce4-appfinder",
+      "xfce4-power-manager", "xfce4-screenshooter",
+      "thunar", "thunar-volman", "thunar-archive-plugin",
+      "lightdm", "lightdm-gtk-greeter"
+    ],
+    "applications": [
+      "firefox", "thunderbird",
+      "mousepad", "ristretto",
+      "file-roller", "gnome-calculator"
+    ],
+    "gaming": [
+      "steam", "steam-installer",
+      "lutris", "wine", "wine64",
+      "proton-ge-custom",
+      "vulkan-tools", "vulkan-validationlayers",
+      "mesa-vulkan-drivers", "mesa-utils",
+      "libvulkan1", "libvulkan-dev"
+    ],
+    "emulators": [
+      "retroarch", "dolphin-emu", "pcsx2",
+      "ppsspp", "dosbox-x", "scummvm"
+    ],
+    "streaming": [
+      "obs-studio", "discord", "mumble"
+    ],
+    "utilities": [
+      "vim", "nano", "htop", "neofetch",
+      "wget", "curl", "git",
+      "gparted", "synaptic",
+      "corectrl", "openrgb"
+    ],
+    "multimedia": [
+      "pulseaudio", "pavucontrol",
+      "gstreamer1.0-plugins-base",
+      "gstreamer1.0-plugins-good",
+      "gstreamer1.0-plugins-bad",
+      "gstreamer1.0-plugins-ugly"
+    ]
+  },
+  "remove_packages": [
+    "snapd", "cloud-init"
+  ],
+  "services": {
+    "enable": ["lightdm", "NetworkManager", "gamemode"],
+    "disable": ["cups"]
+  },
+  "customization": {
+    "theme": "Arc-Dark",
+    "icons": "Papirus",
+    "wallpaper": "/usr/share/backgrounds/aegis-gamer.jpg",
+    "default_apps": {
+      "browser": "firefox",
+      "editor": "mousepad",
+      "terminal": "xfce4-terminal"
+    }
+  },
+  "iso": {
+    "size_mb": 4500,
+    "compression": "xz",
+    "boot_mode": ["bios", "uefi"],
+    "installer": "calamares"
+  }
+}

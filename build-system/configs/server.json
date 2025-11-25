@@ -1,0 +1,56 @@
+{
+  "edition": "server",
+  "name": "Aegis OS Server",
+  "version": "1.0.0",
+  "description": "Enterprise server edition with container orchestration",
+  "base_system": "ubuntu-22.04-server",
+  "kernel": "linux-generic-hwe-22.04",
+  "desktop_environment": "none",
+  "packages": {
+    "system": [
+      "systemd", "systemd-sysv", "systemd-timesyncd",
+      "network-manager", "openssh-server",
+      "linux-firmware", "linux-modules-extra"
+    ],
+    "server": [
+      "nginx", "apache2",
+      "postgresql", "mysql-server",
+      "redis-server", "memcached"
+    ],
+    "containers": [
+      "docker.io", "docker-compose",
+      "containerd", "runc"
+    ],
+    "monitoring": [
+      "prometheus", "grafana",
+      "htop", "iotop", "nethogs"
+    ],
+    "security": [
+      "ufw", "fail2ban",
+      "auditd", "apparmor"
+    ],
+    "utilities": [
+      "vim", "nano", "htop", "neofetch",
+      "wget", "curl", "git",
+      "tmux", "screen"
+    ]
+  },
+  "remove_packages": [
+    "snapd", "cloud-init"
+  ],
+  "services": {
+    "enable": ["ssh", "NetworkManager", "docker", "ufw"],
+    "disable": ["bluetooth", "cups"]
+  },
+  "customization": {
+    "ssh_port": 22,
+    "firewall_default": "deny",
+    "auto_updates": true
+  },
+  "iso": {
+    "size_mb": 3000,
+    "compression": "xz",
+    "boot_mode": ["bios", "uefi"],
+    "installer": "subiquity"
+  }
+}

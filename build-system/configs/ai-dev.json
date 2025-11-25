@@ -1,0 +1,76 @@
+{
+  "edition": "ai-dev",
+  "name": "Aegis OS AI Developer",
+  "version": "1.0.0",
+  "description": "AI/ML development edition with CUDA and deep learning frameworks",
+  "base_system": "ubuntu-22.04-minimal",
+  "kernel": "linux-generic-hwe-22.04",
+  "desktop_environment": "xfce4",
+  "packages": {
+    "system": [
+      "systemd", "systemd-sysv", "systemd-timesyncd",
+      "network-manager", "network-manager-gnome",
+      "linux-firmware", "linux-modules-extra"
+    ],
+    "desktop": [
+      "xfce4", "xfce4-terminal", "xfce4-panel",
+      "xfce4-session", "xfce4-settings", "xfce4-appfinder",
+      "xfce4-power-manager", "xfce4-screenshooter",
+      "thunar", "thunar-volman", "thunar-archive-plugin",
+      "lightdm", "lightdm-gtk-greeter"
+    ],
+    "applications": [
+      "firefox", "thunderbird",
+      "mousepad", "ristretto",
+      "file-roller", "gnome-calculator"
+    ],
+    "development": [
+      "build-essential", "cmake", "ninja-build",
+      "python3", "python3-pip", "python3-venv",
+      "nodejs", "npm",
+      "git", "docker.io", "docker-compose"
+    ],
+    "ai_ml": [
+      "python3-numpy", "python3-scipy",
+      "python3-pandas", "python3-matplotlib",
+      "python3-sklearn", "python3-opencv"
+    ],
+    "ides": [
+      "code", "jupyter-notebook",
+      "pycharm-community"
+    ],
+    "utilities": [
+      "vim", "nano", "htop", "neofetch",
+      "wget", "curl", "git",
+      "gparted", "synaptic"
+    ],
+    "multimedia": [
+      "pulseaudio", "pavucontrol",
+      "gstreamer1.0-plugins-base",
+      "gstreamer1.0-plugins-good"
+    ]
+  },
+  "remove_packages": [
+    "snapd", "cloud-init"
+  ],
+  "services": {
+    "enable": ["lightdm", "NetworkManager", "docker"],
+    "disable": ["bluetooth", "cups"]
+  },
+  "customization": {
+    "theme": "Arc-Dark",
+    "icons": "Papirus",
+    "wallpaper": "/usr/share/backgrounds/aegis-ai.jpg",
+    "default_apps": {
+      "browser": "firefox",
+      "editor": "code",
+      "terminal": "xfce4-terminal"
+    }
+  },
+  "iso": {
+    "size_mb": 6000,
+    "compression": "xz",
+    "boot_mode": ["bios", "uefi"],
+    "installer": "calamares"
+  }
+}
