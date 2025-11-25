@@ -1594,15 +1594,6 @@ if __name__ == "__main__":
         app.logger.error(f"Creator download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
-@app.route('/download')
-def page_download():
-    try:
-        filepath = os.path.join(BASE_DIR, 'html', 'download.html')
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
-    except Exception as e:
-        return jsonify({'error': 'Page not found'}), 404
-
 @app.route('/security-audit')
 def page_security_audit():
     try:
