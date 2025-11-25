@@ -1,33 +1,483 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Download - Aegis OS</title><style>*{margin:0;padding:0;box-sizing:border-box}:root{--primary:#6366f1;--secondary:#8b5cf6;--accent:#ec4899;--text-dark:#1f2937}html{scroll-behavior:smooth}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;color:var(--text-dark);line-height:1.6}.navbar{background:#fff;padding:0.75rem 2rem;box-shadow:0 1px 3px rgba(0,0,0,0.1);position:sticky;top:0;z-index:100}.nav-container{max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center}.logo{font-size:1.5rem;font-weight:700;background:linear-gradient(135deg,var(--primary),var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}.nav-links{display:flex;gap:1.5rem}.nav-link{text-decoration:none;color:var(--text-dark);font-weight:500;transition:color 0.3s}.nav-link:hover{color:var(--primary)}.hero{background:linear-gradient(135deg,#6366f1,#4f46e5);color:#fff;padding:4rem 2rem;text-align:center}.hero h1{font-size:2.5rem;font-weight:800}.container{max-width:1000px;margin:0 auto;padding:3rem 2rem}.download-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2rem;margin:2rem 0}.download-card{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);border:2px solid #e5e7eb;transition:all 0.3s;text-align:center}.download-card:hover{border-color:var(--primary);box-shadow:0 10px 25px rgba(99,102,241,0.15)}.download-icon{font-size:3rem;margin-bottom:1rem}.download-title{font-size:1.3rem;font-weight:700;color:var(--primary);margin-bottom:0.5rem}.download-desc{color:#666;font-size:0.9rem;margin-bottom:1.5rem}.btn{display:inline-block;padding:0.75rem 2rem;background:linear-gradient(135deg,var(--primary),var(--secondary));color:#fff;text-decoration:none;border-radius:8px;font-weight:600;cursor:pointer;transition:all 0.3s}.btn:hover{transform:translateY(-3px);box-shadow:0 6px 20px rgba(99,102,241,0.4)}.system-reqs{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-top:2rem}.system-reqs h2{color:var(--primary);margin-bottom:1.5rem}.req-item{padding:0.75rem 0;border-bottom:1px solid #e5e7eb}.req-item:last-child{border-bottom:none}.footer{background:var(--text-dark);color:#f3f4f6;padding:2rem;text-align:center;margin-top:3rem}</style></head><body><nav class="navbar"><div class="nav-container"><div class="logo" onclick="location.href='/'">🛡️ Aegis OS</div><div class="nav-links"><a href="/" class="nav-link">Home</a></div></div></nav><section class="hero"><h1>Download Aegis OS</h1><p>Choose your edition and get started today</p></section><section class="container"><h2 style="color:var(--primary);margin-bottom:2rem;text-align:center">Freemium Edition</h2><div class="download-options"><div class="download-card"><div class="download-icon">💿</div><div class="download-title">ISO Image (2.1GB)</div><div class="download-desc">Complete installation media</div><button class="btn">Download ISO</button></div><div class="download-card"><div class="download-icon">🐳</div><div class="download-title">Docker Image</div><div class="download-desc">Quick containerized deployment</div><button class="btn">Pull Docker Image</button></div><div class="download-card"><div class="download-icon">☁️</div><div class="download-title">Cloud Image (AWS)</div><div class="download-desc">Ready for EC2 deployment</div><button class="btn">Launch on AWS</button></div></div><div class="system-reqs"><h2>System Requirements</h2><div class="req-item"><strong>Minimum:</strong> 2GB RAM, 20GB Storage, 2-core CPU</div><div class="req-item"><strong>Recommended:</strong> 8GB RAM, 50GB SSD, 4-core CPU</div><div class="req-item"><strong>Supported:</strong> x86-64, ARM64 architecture</div><div class="req-item"><strong>BIOS:</strong> UEFI or Legacy BIOS</div></div><div style="background:#f0f2ff;padding:2rem;border-radius:12px;margin-top:2rem;text-align:center"><h3 style="color:var(--primary);margin-bottom:1rem">Want Premium Features?</h3><p style="margin-bottom:1.5rem">Upgrade to Basic ($49/year), Gamer ($99/year), AI Developer ($149/year), or Server ($199/year)</p><a href="/pricing-tiers-detailed" class="btn">View All Editions</a></div></section>    <!-- LEGAL DISCLAIMER FOOTER -->
-    <footer class="footer" style="background:#1f2937;color:#f3f4f6;padding:3rem 2rem 2rem;margin-top:3rem;border-top:1px solid #333">
-        <div style="max-width:1200px;margin:0 auto">
-            <p style="text-align:center;">© 2024 Aegis OS. All rights reserved.</p>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Aegis OS - Professional Linux Distribution</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #6366f1;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --bg-white: #ffffff;
+            --bg-gray: #f8fafc;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-white);
+        }
+
+        .navbar {
+            background: var(--bg-white);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .nav-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .main-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+
+        .page-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .page-header h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .page-header p {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .download-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .download-card {
+            background: var(--bg-white);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: all 0.2s ease;
+        }
+
+        .download-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .edition-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--primary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .card-price {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .card-description {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .features-list {
+            list-style: none;
+            margin-bottom: 2rem;
+        }
+
+        .features-list li {
+            padding: 0.25rem 0;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .features-list li::before {
+            content: '✓';
+            color: #10b981;
+            font-weight: 600;
+        }
+
+        .download-info {
+            background: var(--bg-gray);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+
+        .download-info strong {
+            color: var(--text-primary);
+        }
+
+        .btn {
+            display: inline-block;
+            width: 100%;
+            padding: 1rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            text-align: center;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--primary);
+            border: 2px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--primary);
+            background: var(--bg-gray);
+        }
+
+        .system-requirements {
+            background: var(--bg-gray);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .system-requirements h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .requirements-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .requirement-item {
+            background: var(--bg-white);
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 3px solid var(--primary);
+        }
+
+        .requirement-item strong {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .installation-guide {
+            background: var(--bg-white);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .installation-guide h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .steps {
+            counter-reset: step-counter;
+        }
+
+        .step {
+            counter-increment: step-counter;
+            margin-bottom: 1.5rem;
+            padding-left: 3rem;
+            position: relative;
+        }
+
+        .step::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 2rem;
+            height: 2rem;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .step h4 {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .step p {
+            color: var(--text-secondary);
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                padding: 2rem 1rem;
+            }
             
-            <div style="margin:1.5rem 0;padding:1.5rem;background:rgba(0,0,0,0.3);border-radius:8px;">
-                <p style="font-weight:bold;color:#fbbf24;margin-bottom:1rem;text-align:center;">⚠️ IMPORTANT LEGAL DISCLAIMERS</p>
-                <ul style="list-style:none;padding:0;font-size:0.85rem;line-height:1.8;max-width:800px;margin:0 auto;">
-                    <li>• <strong>Technical Preview:</strong> This software is for evaluation purposes only.</li>
-                    <li>• <strong>No Warranty:</strong> No warranty expressed or implied. Software provided "as-is".</li>
-                    <li>• <strong>Use at Your Own Risk:</strong> You assume all responsibility for use of this software.</li>
-                    <li>• <strong>Performance Claims:</strong> All performance claims are estimates and may vary based on hardware.</li>
-                    <li>• <strong>Subject to Change:</strong> All features and specifications are subject to change without notice.</li>
-                    <li>• <strong>No Support Guarantee:</strong> No support is promised or guaranteed.</li>
-                    <li>• <strong>Refund Policy:</strong> 30-day money back guarantee on all paid editions.</li>
-                </ul>
-            </div>
+            .page-header h1 {
+                font-size: 2rem;
+            }
             
-            <div style="padding:1rem;background:rgba(0,0,0,0.2);border-radius:5px;margin-bottom:1.5rem;">
-                <p style="font-size:0.85rem;text-align:center;"><strong>Trademark Notice:</strong> All trademarks are property of their respective owners. Aegis OS is not affiliated with Microsoft, Apple, Steam, Valve, NVIDIA, AMD, Intel, or any other company mentioned on this website.</p>
-            </div>
-            
-            <nav style="text-align:center;margin-bottom:1rem;">
-                <a href="/" style="color:#60a5fa;text-decoration:none;margin:0 10px;">Home</a>
-                <a href="/#tiers" style="color:#60a5fa;text-decoration:none;margin:0 10px;">Pricing</a>
-                <a href="/terms" style="color:#60a5fa;text-decoration:none;margin:0 10px;">Terms of Service</a>
-                <a href="/privacy" style="color:#60a5fa;text-decoration:none;margin:0 10px;">Privacy Policy</a>
-                <a href="mailto:riley.liang@hotmail.com" style="color:#60a5fa;text-decoration:none;margin:0 10px;">Contact</a>
-            </nav>
-            
-            <p style="text-align:center;font-size:0.8rem;opacity:0.8;">Contact: riley.liang@hotmail.com (No support promised or guaranteed)</p>
+            .download-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="logo">🛡️ Aegis OS</a>
+            <a href="/" class="nav-link">← Back to Home</a>
         </div>
-    </footer></body></html>
+    </nav>
+
+    <div class="main-content">
+        <div class="page-header">
+            <h1>Download Aegis OS</h1>
+            <p>Choose your edition and get started with professional Linux distribution designed for enterprise use.</p>
+        </div>
+
+        <div class="download-grid">
+            <div class="download-card">
+                <div class="card-header">
+                    <div class="edition-icon">🆓</div>
+                    <div>
+                        <div class="card-title">Freemium Edition</div>
+                        <div class="card-price">Free</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    Perfect for evaluation and learning. Get started with Aegis OS and explore the core features.
+                </div>
+                <ul class="features-list">
+                    <li>XFCE Desktop Environment</li>
+                    <li>Basic Security Features</li>
+                    <li>Community Support</li>
+                    <li>Open Source Drivers</li>
+                </ul>
+                <div class="download-info">
+                    <strong>Size:</strong> ~2.1 GB<br>
+                    <strong>Architecture:</strong> x86_64 (64-bit)<br>
+                    <strong>Format:</strong> ISO Image
+                </div>
+                <button class="btn btn-primary" onclick="downloadISO('freemium')">Download Free Edition</button>
+                <a href="/freemium" class="btn btn-secondary">Learn More</a>
+            </div>
+
+            <div class="download-card">
+                <div class="card-header">
+                    <div class="edition-icon">💼</div>
+                    <div>
+                        <div class="card-title">Professional Edition</div>
+                        <div class="card-price">$69 lifetime</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    Complete professional suite with 500+ applications, enhanced security, and priority support.
+                </div>
+                <ul class="features-list">
+                    <li>500+ Professional Applications</li>
+                    <li>Enhanced Security Suite</li>
+                    <li>Priority Support</li>
+                    <li>Proprietary Drivers</li>
+                </ul>
+                <div class="download-info">
+                    <strong>Size:</strong> ~3.5 GB<br>
+                    <strong>License Required:</strong> Yes<br>
+                    <strong>Format:</strong> ISO Image
+                </div>
+                <button class="btn btn-primary" onclick="checkout('basic', 'lifetime')">Purchase & Download</button>
+                <a href="/basic" class="btn btn-secondary">Learn More</a>
+            </div>
+
+            <div class="download-card">
+                <div class="card-header">
+                    <div class="edition-icon">🏢</div>
+                    <div>
+                        <div class="card-title">Enterprise Edition</div>
+                        <div class="card-price">Custom Pricing</div>
+                    </div>
+                </div>
+                <div class="card-description">
+                    For organizations requiring custom deployments, volume licensing, and enterprise support.
+                </div>
+                <ul class="features-list">
+                    <li>Custom Deployments</li>
+                    <li>24/7 Enterprise Support</li>
+                    <li>Volume Licensing</li>
+                    <li>SLA Guarantees</li>
+                </ul>
+                <div class="download-info">
+                    <strong>Deployment:</strong> Custom<br>
+                    <strong>Support:</strong> 24/7 Premium<br>
+                    <strong>License:</strong> Enterprise
+                </div>
+                <button class="btn btn-primary" onclick="window.location.href='mailto:riley.liang@hotmail.com?subject=Enterprise Edition Inquiry'">Contact Sales</button>
+                <a href="/server" class="btn btn-secondary">Learn More</a>
+            </div>
+        </div>
+
+        <div class="system-requirements">
+            <h3>System Requirements</h3>
+            <div class="requirements-grid">
+                <div class="requirement-item">
+                    <strong>Processor</strong>
+                    64-bit x86 processor (2 cores minimum, 4 cores recommended)
+                </div>
+                <div class="requirement-item">
+                    <strong>Memory</strong>
+                    4 GB RAM minimum, 8 GB recommended for professional use
+                </div>
+                <div class="requirement-item">
+                    <strong>Storage</strong>
+                    20 GB free disk space minimum, SSD recommended
+                </div>
+                <div class="requirement-item">
+                    <strong>Network</strong>
+                    Internet connection for updates and additional software
+                </div>
+            </div>
+        </div>
+
+        <div class="installation-guide">
+            <h3>Installation Guide</h3>
+            <div class="steps">
+                <div class="step">
+                    <h4>Download ISO</h4>
+                    <p>Download your chosen edition ISO file from above. Verify the checksum if provided.</p>
+                </div>
+                <div class="step">
+                    <h4>Create Bootable Media</h4>
+                    <p>Use tools like Rufus (Windows), balenaEtcher (cross-platform), or dd command (Linux/macOS) to create a bootable USB drive.</p>
+                </div>
+                <div class="step">
+                    <h4>Boot from USB</h4>
+                    <p>Restart your computer and boot from the USB drive. You may need to change boot order in BIOS/UEFI settings.</p>
+                </div>
+                <div class="step">
+                    <h4>Install Aegis OS</h4>
+                    <p>Follow the installation wizard to install Aegis OS on your system. Choose your preferred partitioning and user settings.</p>
+                </div>
+                <div class="step">
+                    <h4>Activate License</h4>
+                    <p>For paid editions, enter your license key during or after installation to unlock premium features.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function downloadISO(edition) {
+            try {
+                // For freemium, direct download
+                if (edition === 'freemium') {
+                    window.location.href = `/api/download-iso?edition=${edition}`;
+                }
+            } catch (error) {
+                alert('Download service temporarily unavailable. Please try again later.');
+            }
+        }
+
+        async function checkout(tier, type = 'lifetime') {
+            try {
+                const response = await fetch('/api/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tier, type })
+                });
+                
+                const data = await response.json();
+                if (data.url) {
+                    window.location.href = data.url;
+                } else if (data.error) {
+                    alert(data.error);
+                }
+            } catch (error) {
+                alert('Payment processing unavailable. Please contact riley.liang@hotmail.com');
+            }
+        }
+    </script>
+</body>
+</html>

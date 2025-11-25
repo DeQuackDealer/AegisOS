@@ -36,7 +36,7 @@ CSRF_TOKENS = {}
 def get_stripe_keys():
     """Get appropriate Stripe keys based on environment"""
     is_production = os.getenv('REPLIT_DEPLOYMENT') == '1'
-    
+
     if is_production:
         # Production deployment - use live keys
         return {
@@ -84,7 +84,7 @@ def tamper_protected_audit_log(action: str, details: dict, severity: str = "INFO
         "user_ip": request.remote_addr,
         "user_agent": request.headers.get('User-Agent', 'unknown')[:500]
     }
-    
+
     # Create HMAC signature for tamper detection
     event_str = json.dumps(event, sort_keys=True)
     signature = hmac.new(
@@ -92,13 +92,13 @@ def tamper_protected_audit_log(action: str, details: dict, severity: str = "INFO
         event_str.encode(),
         hashlib.sha256
     ).hexdigest()
-    
+
     event['signature'] = signature
     audit_log.append(event)
-    
+
     if severity in ["CRITICAL", "HIGH"]:
         logger.warning(f"SECURITY EVENT: {action} - {severity}")
-    
+
     return event
 
 # ============= SECURITY: HEADERS =============
@@ -108,8 +108,8 @@ def set_security_headers(response):
     """Absolute security headers - 100/100 score"""
     # HSTS with preload
     response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains; preload'
-    
-    # CSP with strict policy 
+
+    # CSP with strict policy
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -122,15 +122,15 @@ def set_security_headers(response):
         "form-action 'self'; "
         "upgrade-insecure-requests"
     )
-    
+
     # X-Frame, X-Content-Type, X-XSS
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-XSS-Protection'] = '1; mode=block'
-    
+
     # Referrer Policy
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    
+
     # Permissions Policy (Feature Policy)
     response.headers['Permissions-Policy'] = (
         'geolocation=(), '
@@ -142,17 +142,17 @@ def set_security_headers(response):
         'gyroscope=(), '
         'accelerometer=()'
     )
-    
+
     # Additional security headers
     response.headers['X-Permitted-Cross-Domain-Policies'] = 'none'
     response.headers['X-Content-Security-Policy'] = response.headers['Content-Security-Policy']
     response.headers['Expect-CT'] = 'max-age=86400, enforce'
-    
+
     # No caching for sensitive data
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, private'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
-    
+
     return response
 
 # ============= SECURITY: RATE LIMITING + BRUTE FORCE =============
@@ -165,7 +165,7 @@ def rate_limit(limit: int = 100, window: int = 3600, lockout_time: int = 900):
             client_ip = request.remote_addr
             key = f"{client_ip}:{f.__name__}"
             current_time = time.time()
-            
+
             # Check if IP is locked out
             if key in FAILED_ATTEMPTS:
                 fa = FAILED_ATTEMPTS[key]
@@ -178,14 +178,14 @@ def rate_limit(limit: int = 100, window: int = 3600, lockout_time: int = 900):
                     return jsonify({'error': 'Account locked', 'code': 'LOCKED'}), 429
                 elif current_time >= float(fa['locked_until']):
                     FAILED_ATTEMPTS[key] = {'count': 0, 'locked_until': int(0)}
-            
+
             # Rate limiting
             if key in RATE_LIMIT_STORAGE:
                 record = RATE_LIMIT_STORAGE[key]
                 if current_time - record['reset_time'] > window:
                     record['count'] = 0
                     record['reset_time'] = current_time
-                
+
                 if record['count'] >= limit:
                     tamper_protected_audit_log(
                         "RATE_LIMIT_EXCEEDED",
@@ -196,7 +196,7 @@ def rate_limit(limit: int = 100, window: int = 3600, lockout_time: int = 900):
                 record['count'] += 1
             else:
                 RATE_LIMIT_STORAGE[key] = {'count': 1, 'reset_time': current_time}
-            
+
             return f(*args, **kwargs)
         return decorated
     return decorator
@@ -224,7 +224,7 @@ def generate_jwt_token(user_id: str) -> str:
         'user_id': user_id,
         'exp': datetime.utcnow() + timedelta(hours=1),
         'iat': datetime.utcnow(),
-        'jti': secrets.token_urlsafe(16)
+        'jti': secrets.token_urlsafe(16),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 
@@ -245,11 +245,11 @@ def require_api_key(f):
     def decorated(*args, **kwargs):
         api_key = request.headers.get('X-API-Key', '').strip()
         expected_key = os.getenv('AEGIS_API_KEY', '')
-        
+
         if not expected_key:
             logger.error("AEGIS_API_KEY not configured")
             return jsonify({'error': 'Server error', 'code': 'SERVER_ERROR'}), 500
-        
+
         if not api_key or not hmac.compare_digest(api_key, expected_key):
             tamper_protected_audit_log(
                 "UNAUTHORIZED_API_ACCESS",
@@ -257,7 +257,7 @@ def require_api_key(f):
                 "CRITICAL"
             )
             return jsonify({'error': 'Unauthorized', 'code': 'INVALID_API_KEY'}), 401
-        
+
         return f(*args, **kwargs)
     return decorated
 
@@ -266,7 +266,7 @@ def require_api_key(f):
 def sanitize_input(data: Any, max_length: int = 1000) -> Any:
     """Comprehensive input sanitization"""
     dangerous_chars = ['<', '>', '"', "'", '&', ';', '{', '}', '[', ']']
-    
+
     if isinstance(data, str):
         sanitized = data.strip()[:max_length]
         for char in dangerous_chars:
@@ -398,20 +398,20 @@ def register():
         return jsonify({'error': 'Invalid request', 'code': 'INVALID_REQUEST'}), 400
     email = str(data.get('email', '')).strip()
     password = str(data.get('password', '')).strip()
-    
+
     if not validate_email(email):
         tamper_protected_audit_log("INVALID_EMAIL", {"email": email[:50]}, "INFO")
         return jsonify({'error': 'Invalid email', 'code': 'INVALID_EMAIL'}), 400
-    
+
     valid, msg = validate_password(password)
     if not valid:
         return jsonify({'error': msg, 'code': 'WEAK_PASSWORD'}), 400
-    
+
     user_id = str(uuid.uuid4())
     pwd_hash = hash_password(password)
-    
+
     tamper_protected_audit_log("USER_REGISTERED", {"user_id": user_id, "email": email[:50]})
-    
+
     return jsonify({
         'user_id': user_id,
         'email': email,
@@ -426,20 +426,20 @@ def login():
         return jsonify({'error': 'Invalid request', 'code': 'INVALID_REQUEST'}), 400
     email = str(data.get('email', '')).strip()
     password = str(data.get('password', '')).strip()
-    
+
     if not email or not password:
         client_ip = request.remote_addr
         FAILED_ATTEMPTS[client_ip]['count'] += 1
         if FAILED_ATTEMPTS[client_ip]['count'] >= 5:
             FAILED_ATTEMPTS[client_ip]['locked_until'] = int(time.time() + 900)
-        
+
         tamper_protected_audit_log("LOGIN_FAILED", {"email": email[:50]}, "HIGH")
         return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
-    
+
     # Simulated user lookup (in production: database)
     user_id = str(uuid.uuid4())
     tamper_protected_audit_log("LOGIN_SUCCESS", {"email": email[:50]})
-    
+
     return jsonify({
         'user_id': user_id,
         'token': generate_jwt_token(user_id),
@@ -650,9 +650,14 @@ def tier_full_details(tier):
     if tier not in TIERS:
         return jsonify({'error': 'Tier not found'}), 404
     tier_data = TIERS[tier]
+    # Ensure 'price' key exists or provide default if missing
+    price_data = {
+        'lifetime': tier_data.get('lifetime', 0),
+        'annual': tier_data.get('annual', 0)
+    }
     return jsonify({
         'tier': tier,
-        'price': tier_data['price'],
+        'price': price_data,
         'features': tier_data['features'],
         'users': tier_data['users'],
         'api_limit': tier_data['api_limit'],
@@ -672,13 +677,19 @@ def pricing_calculator():
     data = sanitize_input(request.json or {})
     if not isinstance(data, dict):
         return jsonify({'error': 'Invalid request'}), 400
-    
+
     users = int(str(data.get('users', 0)) or 0)
     tiers_list = []
     for tier_name, tier_info in TIERS.items():
-        if users <= int(tier_info['users'].replace('+', '').replace(',', '')):
-            tiers_list.append({'tier': tier_name, 'price': tier_info['price']})
-    
+        # Ensure 'users' key is present and comparable
+        if 'users' in tier_info:
+            try:
+                max_users = int(str(tier_info['users']).replace('+', '').replace(',', ''))
+                if users <= max_users:
+                    tiers_list.append({'tier': tier_name, 'price': tier_info.get('price', {})}) # Adjusted to get price object
+            except ValueError:
+                continue # Skip if users value is not a valid number
+
     return jsonify({'suitable_tiers': tiers_list}), 200
 
 @app.route('/api/v1/documentation')
@@ -959,10 +970,10 @@ def media_creator():
 def validate_license():
     """
     Secure server-side license validation endpoint.
-    
+
     Validates license key format, checks against demo license database,
     returns signed JWT token if valid, tracks hardware ID for binding.
-    
+
     Returns:
         - 200 + JWT token: License is valid
         - 400: Invalid key format
@@ -972,10 +983,10 @@ def validate_license():
     """
     client_ip = request.remote_addr
     current_time = time.time()
-    
+
     # Rate limiting for license validation (stricter than general rate limiting)
     attempt_record = LICENSE_VALIDATION_ATTEMPTS[client_ip]
-    
+
     # Check if locked out
     if attempt_record['locked_until'] > current_time:
         remaining = int(attempt_record['locked_until'] - current_time)
@@ -989,12 +1000,12 @@ def validate_license():
             'code': 'RATE_LIMIT_EXCEEDED',
             'retry_after': remaining
         }), 429
-    
+
     # Reset counter if window expired
     if current_time - attempt_record['reset_time'] > LICENSE_VALIDATION_WINDOW:
         attempt_record['count'] = 0
         attempt_record['reset_time'] = current_time
-    
+
     # Check if rate limit exceeded
     if attempt_record['count'] >= LICENSE_VALIDATION_LIMIT:
         attempt_record['locked_until'] = current_time + LICENSE_LOCKOUT_TIME
@@ -1008,10 +1019,10 @@ def validate_license():
             'code': 'RATE_LIMIT_EXCEEDED',
             'retry_after': LICENSE_LOCKOUT_TIME
         }), 429
-    
+
     # Increment attempt counter
     attempt_record['count'] += 1
-    
+
     try:
         data = sanitize_input(request.json or {})
         if not isinstance(data, dict):
@@ -1019,11 +1030,11 @@ def validate_license():
                 'error': 'Invalid request format',
                 'code': 'INVALID_REQUEST'
             }), 400
-        
+
         key = str(data.get('key', '')).strip().upper()
         edition = str(data.get('edition', '')).strip().lower()
         hardware_id = str(data.get('hardware_id', '') or data.get('machine_id', '')).strip()
-        
+
         # Validate key format: XXXX-XXXX-XXXX-XXXX
         if not key:
             tamper_protected_audit_log(
@@ -1036,7 +1047,7 @@ def validate_license():
                 'error': 'License key is required',
                 'code': 'MISSING_KEY'
             }), 400
-        
+
         if not re.match(r'^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$', key):
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_INVALID_FORMAT",
@@ -1048,7 +1059,7 @@ def validate_license():
                 'error': 'Invalid license key format. Expected: XXXX-XXXX-XXXX-XXXX',
                 'code': 'INVALID_FORMAT'
             }), 400
-        
+
         # Check if license exists in demo database
         if key not in DEMO_LICENSES:
             tamper_protected_audit_log(
@@ -1061,9 +1072,9 @@ def validate_license():
                 'error': 'License key not found in database',
                 'code': 'INVALID_LICENSE'
             }), 401
-        
+
         license_data = DEMO_LICENSES[key]
-        
+
         # Check if license has expired
         expires_dt = datetime.fromisoformat(license_data['expires'])
         if datetime.now() > expires_dt:
@@ -1078,11 +1089,11 @@ def validate_license():
                 'code': 'LICENSE_EXPIRED',
                 'expired_on': license_data['expires']
             }), 401
-        
+
         # Validate edition prefix matches
         key_prefix = key.split('-')[0]
         expected_prefix = EDITION_PREFIXES.get(license_data['edition'])
-        
+
         if key_prefix != expected_prefix:
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_PREFIX_MISMATCH",
@@ -1094,7 +1105,7 @@ def validate_license():
                 'error': 'License key prefix does not match edition',
                 'code': 'INVALID_PREFIX'
             }), 401
-        
+
         # Check edition match if specified
         if edition and edition not in ['', license_data['edition']]:
             # Check if edition alias matches
@@ -1111,7 +1122,7 @@ def validate_license():
                     'error': f'This license is for {license_data["edition"]} edition, not {edition}',
                     'code': 'WRONG_EDITION'
                 }), 403
-        
+
         # Hardware ID binding
         if hardware_id:
             if len(license_data['hardware_ids']) >= license_data['max_activations']:
@@ -1126,7 +1137,7 @@ def validate_license():
                         'error': 'Maximum activations reached for this license',
                         'code': 'MAX_ACTIVATIONS'
                     }), 401
-            
+
             # Bind hardware ID
             if hardware_id not in license_data['hardware_ids']:
                 license_data['hardware_ids'].append(hardware_id)
@@ -1135,13 +1146,13 @@ def validate_license():
                     {"ip": client_ip, "key_prefix": key[:4], "hardware_id_prefix": hardware_id[:8]},
                     "INFO"
                 )
-        
+
         # Generate JWT token for validated license
         token_expiry = min(
             datetime.utcnow() + timedelta(hours=24),
             expires_dt
         )
-        
+
         token_payload = {
             'license_key_hash': hashlib.sha256(key.encode()).hexdigest()[:16],
             'edition': license_data['edition'],
@@ -1152,25 +1163,25 @@ def validate_license():
             'jti': secrets.token_urlsafe(16),
             'type': 'license_validation'
         }
-        
+
         validation_token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
-        
+
         # Store token for session tracking
         VALID_LICENSE_TOKENS[token_payload['jti']] = {
             'created': datetime.now().isoformat(),
             'edition': license_data['edition'],
             'ip': client_ip
         }
-        
+
         # Reset failed attempt counter on success
         attempt_record['count'] = 0
-        
+
         tamper_protected_audit_log(
             "LICENSE_VALIDATION_SUCCESS",
             {"ip": client_ip, "edition": license_data['edition'], "tier": license_data['tier']},
             "INFO"
         )
-        
+
         return jsonify({
             'valid': True,
             'message': 'License validated successfully',
@@ -1183,7 +1194,7 @@ def validate_license():
             'activations_used': len(license_data['hardware_ids']),
             'activations_max': license_data['max_activations']
         }), 200
-        
+
     except jwt.PyJWTError as e:
         logger.error(f"JWT error during license validation: {str(e)}")
         return jsonify({
@@ -1208,14 +1219,14 @@ def validate_license():
 def download_iso_with_license():
     """
     Secure ISO download endpoint with license validation.
-    
+
     - Freemium edition: Available without license
     - Paid editions (Basic, Gamer, AI-Dev, Gamer+AI, Server): Require valid license token
-    
+
     Request body (POST) or query params (GET):
         - edition: The edition to download (freemium, basic, gamer, ai-dev, gamer-ai, server)
         - token: JWT license validation token (required for paid editions)
-    
+
     Returns:
         - 200: Download link/file info
         - 400: Invalid request
@@ -1224,7 +1235,7 @@ def download_iso_with_license():
         - 429: Rate limit exceeded
     """
     client_ip = request.remote_addr
-    
+
     # Get parameters from either POST body or GET query params
     if request.method == 'POST':
         data = sanitize_input(request.json or {})
@@ -1235,12 +1246,12 @@ def download_iso_with_license():
     else:
         edition = str(request.args.get('edition', '')).strip().lower()
         token = str(request.args.get('token', '')).strip()
-    
+
     # Also check Authorization header for token
     auth_header = request.headers.get('Authorization', '')
     if auth_header.startswith('Bearer '):
         token = auth_header[7:].strip() or token
-    
+
     # Validate edition parameter
     valid_editions = ['freemium', 'basic', 'gamer', 'ai-dev', 'ai', 'gamer-ai', 'server']
     if not edition:
@@ -1249,18 +1260,18 @@ def download_iso_with_license():
             'code': 'MISSING_EDITION',
             'valid_editions': valid_editions
         }), 400
-    
+
     # Normalize edition aliases
     if edition == 'ai':
         edition = 'ai-dev'
-    
+
     if edition not in valid_editions:
         return jsonify({
             'error': f'Invalid edition: {edition}',
             'code': 'INVALID_EDITION',
             'valid_editions': valid_editions
         }), 400
-    
+
     # Log download attempt
     download_entry = {
         'timestamp': datetime.now().isoformat(),
@@ -1270,7 +1281,7 @@ def download_iso_with_license():
         'user_agent': request.headers.get('User-Agent', 'unknown')[:200]
     }
     DOWNLOAD_LOG.append(download_entry)
-    
+
     # Freemium edition - no license required
     if edition == 'freemium':
         tamper_protected_audit_log(
@@ -1278,11 +1289,11 @@ def download_iso_with_license():
             {"ip": client_ip, "edition": edition},
             "INFO"
         )
-        
+
         # Return download info (in production, would serve actual file or signed URL)
         iso_path = os.path.join(BASE_DIR, 'demo-isos', 'aegis-os-freemium.iso')
         file_exists = os.path.exists(iso_path)
-        
+
         return jsonify({
             'success': True,
             'edition': 'freemium',
@@ -1296,7 +1307,7 @@ def download_iso_with_license():
             },
             'license_required': False
         }), 200
-    
+
     # Paid editions - require valid license token
     if not token:
         tamper_protected_audit_log(
@@ -1310,7 +1321,7 @@ def download_iso_with_license():
             'message': f'The {edition} edition requires a valid license. Please validate your license key first.',
             'validate_endpoint': '/api/validate-license'
         }), 401
-    
+
     # Verify JWT token
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
@@ -1336,7 +1347,7 @@ def download_iso_with_license():
             'code': 'TOKEN_INVALID',
             'message': 'The provided token is not valid. Please validate your license key again.'
         }), 401
-    
+
     # Verify token type
     if payload.get('type') != 'license_validation':
         tamper_protected_audit_log(
@@ -1349,11 +1360,11 @@ def download_iso_with_license():
             'code': 'WRONG_TOKEN_TYPE',
             'message': 'This token cannot be used for downloads. Use a license validation token.'
         }), 401
-    
+
     # Check if token authorizes the requested edition
     token_edition = payload.get('edition', '')
     token_tier = payload.get('tier', '')
-    
+
     # Edition access mapping - which editions can access which
     edition_access = {
         'basic': ['basic', 'freemium'],
@@ -1362,9 +1373,9 @@ def download_iso_with_license():
         'gamer-ai': ['gamer-ai', 'gamer', 'ai-dev', 'freemium'],  # Gamer+AI can access both
         'server': ['server', 'basic', 'freemium']  # Server includes basic features
     }
-    
+
     allowed_editions = edition_access.get(token_edition, [token_edition, 'freemium'])
-    
+
     if edition not in allowed_editions:
         tamper_protected_audit_log(
             "ISO_DOWNLOAD_UNAUTHORIZED_EDITION",
@@ -1378,14 +1389,14 @@ def download_iso_with_license():
             'requested_edition': edition,
             'allowed_editions': allowed_editions
         }), 403
-    
+
     # Success - authorize download
     tamper_protected_audit_log(
         "ISO_DOWNLOAD_AUTHORIZED",
         {"ip": client_ip, "edition": edition, "licensed": token_edition},
         "INFO"
     )
-    
+
     # Edition-specific ISO info
     iso_info = {
         'basic': {'filename': 'aegis-os-basic.iso', 'size_gb': 3.5},
@@ -1394,11 +1405,11 @@ def download_iso_with_license():
         'gamer-ai': {'filename': 'aegis-os-gamer-ai.iso', 'size_gb': 7.5},
         'server': {'filename': 'aegis-os-server.iso', 'size_gb': 3.0}
     }
-    
+
     info = iso_info.get(edition, {'filename': f'aegis-os-{edition}.iso', 'size_gb': 2.0})
     iso_path = os.path.join(BASE_DIR, 'demo-isos', info['filename'])
     file_exists = os.path.exists(iso_path)
-    
+
     return jsonify({
         'success': True,
         'edition': edition,
@@ -1440,27 +1451,27 @@ def get_license_status():
     token = request.headers.get('Authorization', '')
     if token.startswith('Bearer '):
         token = token[7:]
-    
+
     if not token:
         token = request.args.get('token', '')
-    
+
     if not token:
         return jsonify({
             'error': 'Token required',
             'code': 'MISSING_TOKEN'
         }), 400
-    
+
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        
+
         exp = payload.get('exp')
         if isinstance(exp, (int, float)):
             exp_dt = datetime.utcfromtimestamp(exp)
         else:
             exp_dt = exp
-        
+
         remaining = (exp_dt - datetime.utcnow()).total_seconds()
-        
+
         return jsonify({
             'valid': True,
             'edition': payload.get('edition'),
@@ -1469,7 +1480,7 @@ def get_license_status():
             'remaining_seconds': max(0, int(remaining)),
             'hardware_bound': payload.get('hardware_id_hash') is not None
         }), 200
-        
+
     except jwt.ExpiredSignatureError:
         return jsonify({
             'valid': False,
@@ -1484,34 +1495,7 @@ def get_license_status():
         }), 401
 
 
-@app.route('/download-usb-creator')
-def download_usb_creator():
-    """Download the Windows USB Creator"""
-    try:
-        # Return a Windows executable stub
-        exe_header = b'MZ\x90\x00\x03'  # PE header
-        exe_header += b'\x00' * 60  # DOS header padding
-        exe_header += b'PE\x00\x00'  # PE signature
-        
-        # Add some content
-        exe_content = b'Aegis OS USB Creator v3.0 - One-click USB installer\n'
-        exe_content += b'This will automatically create a bootable Aegis OS USB drive.\n'
-        exe_content += b'Only Freemium edition is available without a license.\n'
-        exe_content += b'\x00' * 1024  # Padding
-        
-        full_exe = exe_header + exe_content
-        
-        return Response(
-            full_exe,
-            mimetype='application/octet-stream',
-            headers={
-                'Content-Disposition': 'attachment; filename=AegisUSBCreator.exe',
-                'Content-Length': str(len(full_exe))
-            }
-        )
-    except Exception as e:
-        app.logger.error(f"USB Creator download failed: {str(e)}")
-        return jsonify({'error': 'Download failed'}), 500
+# Media creation tool routes removed - focusing on professional distribution model
 
 @app.route('/download-creator-exe')
 def download_creator_exe():
@@ -1519,9 +1503,9 @@ def download_creator_exe():
     try:
         # Check if compiled .exe exists
         exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'dist', 'AegisMediaCreator.exe')
-        
+
         if os.path.exists(exe_path):
-            return send_file(exe_path, as_attachment=True, 
+            return send_file(exe_path, as_attachment=True,
                            download_name='AegisMediaCreator.exe',
                            mimetype='application/octet-stream')
         else:
@@ -1530,7 +1514,7 @@ def download_creator_exe():
             demo_content += b'\x90' * 100  # NOP padding
             demo_content += b'This is a demonstration executable. '
             demo_content += b'The full Media Creation Tool will be available soon.'
-            
+
             return Response(
                 demo_content,
                 mimetype='application/octet-stream',
@@ -1565,7 +1549,7 @@ def build_iso(edition):
     config = EDITIONS.get(edition, EDITIONS["freemium"])
     print(f"Building Aegis OS {config['name']} Edition...")
     print(f"Size: {config['size_gb']} GB, Packages: {config['packages']}")
-    
+
     steps = [
         "Checking system requirements...",
         "Downloading base system...",
@@ -1573,11 +1557,11 @@ def build_iso(edition):
         "Configuring system...",
         "Creating ISO image..."
     ]
-    
+
     for i, step in enumerate(steps, 1):
-        print(f"[{i}/5] {step}")
+        print(f"\\n[{i}/5] {step}")
         time.sleep(2)
-    
+
     iso_path = Path.home() / f"aegis-{edition}.iso"
     iso_path.touch()
     print(f"\\nISO created: {iso_path}")
@@ -1591,12 +1575,12 @@ if __name__ == "__main__":
     print("\\nAvailable editions:")
     for key, val in EDITIONS.items():
         print(f"  {key}: {val['name']} ({val['size_gb']} GB)")
-    
+
     edition = input("\\nEnter edition: ").lower()
     if edition not in EDITIONS:
         print("Invalid edition, using freemium")
         edition = "freemium"
-    
+
     build_iso(edition)
 '''
         return Response(
@@ -1734,13 +1718,13 @@ def authenticate_admin():
     """Authenticate admin with password"""
     data = request.get_json() or {}
     password = data.get('password', '')
-    
+
     if password == ADMIN_PWD:
         token = str(uuid.uuid4())
         ADMIN_TOKENS[token] = {'created': datetime.now().isoformat()}
         tamper_protected_audit_log('admin_login_success', {'ip': request.remote_addr}, 'INFO')
         return jsonify({'authenticated': True, 'token': token}), 200
-    
+
     tamper_protected_audit_log('admin_login_failed', {'ip': request.remote_addr}, 'HIGH')
     return jsonify({'authenticated': False, 'error': 'Invalid password'}), 401
 
@@ -1752,13 +1736,13 @@ def create_license():
     if auth != ADMIN_KEY:
         tamper_protected_audit_log('unauthorized_license_create', {'ip': request.remote_addr}, 'HIGH')
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     data = request.get_json() or {}
     license_type = data.get('type', 'recurring')  # 'lifetime' or 'recurring'
     tier = data.get('tier', 'basic')
-    
+
     license_id = str(uuid.uuid4())[:12]
-    
+
     license_data = {
         'id': license_id,
         'tier': tier,
@@ -1768,16 +1752,16 @@ def create_license():
         'activated': False,
         'activated_date': None
     }
-    
+
     if license_type == 'recurring':
         days = int(data.get('days', 365))
         license_data['start_date'] = datetime.now().isoformat()
         license_data['end_date'] = (datetime.now() + timedelta(days=days)).isoformat()
         license_data['renewal_date'] = (datetime.now() + timedelta(days=days)).isoformat()
-    
+
     LICENSES[license_id] = license_data
     tamper_protected_audit_log('license_created', {'license_id': license_id, 'type': license_type, 'tier': tier}, 'INFO')
-    
+
     return jsonify({'license': license_data}), 201
 
 @app.route('/api/v1/admin/licenses', methods=['GET'])
@@ -1787,7 +1771,7 @@ def list_licenses():
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     return jsonify({'licenses': list(LICENSES.values())}), 200
 
 @app.route('/api/v1/license/verify', methods=['POST'])
@@ -1796,22 +1780,22 @@ def verify_license():
     """Verify a license is valid"""
     data = request.get_json() or {}
     license_id = data.get('license_id')
-    
+
     if not license_id or license_id not in LICENSES:
         return jsonify({'valid': False, 'error': 'Invalid license'}), 400
-    
+
     license_data = LICENSES[license_id]
-    
+
     if license_data['status'] != 'active':
         return jsonify({'valid': False, 'error': 'License inactive'}), 400
-    
+
     # Check expiration for recurring licenses
     if license_data['type'] == 'recurring':
         end_date = datetime.fromisoformat(license_data['end_date'])
         if datetime.now() > end_date:
             license_data['status'] = 'expired'
             return jsonify({'valid': False, 'error': 'License expired'}), 400
-    
+
     return jsonify({
         'valid': True,
         'license_id': license_id,
@@ -1826,14 +1810,14 @@ def activate_license():
     """Activate a license"""
     data = request.get_json() or {}
     license_id = data.get('license_id')
-    
+
     if not license_id or license_id not in LICENSES:
         return jsonify({'error': 'Invalid license'}), 400
-    
+
     license_data = LICENSES[license_id]
     license_data['activated'] = True
     license_data['activated_date'] = datetime.now().isoformat()
-    
+
     tamper_protected_audit_log('license_activated', {'license_id': license_id}, 'INFO')
     return jsonify({'message': 'License activated', 'license': license_data}), 200
 
@@ -1844,13 +1828,13 @@ def revoke_license(license_id):
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     if license_id not in LICENSES:
         return jsonify({'error': 'License not found'}), 404
-    
+
     LICENSES[license_id]['status'] = 'revoked'
     tamper_protected_audit_log('license_revoked', {'license_id': license_id}, 'HIGH')
-    
+
     return jsonify({'message': 'License revoked'}), 200
 
 @app.route('/api/v1/admin/license/<license_id>', methods=['PATCH'])
@@ -1860,13 +1844,13 @@ def update_license(license_id):
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     if license_id not in LICENSES:
         return jsonify({'error': 'License not found'}), 404
-    
+
     data = request.get_json() or {}
     license_data = LICENSES[license_id]
-    
+
     # Allow updating tier, status, and notes
     if 'tier' in data:
         license_data['tier'] = data['tier']
@@ -1874,7 +1858,7 @@ def update_license(license_id):
         license_data['status'] = data['status']
     if 'notes' in data:
         license_data['notes'] = data['notes']
-    
+
     tamper_protected_audit_log('license_updated', {'license_id': license_id}, 'INFO')
     return jsonify({'license': license_data}), 200
 
@@ -1885,26 +1869,26 @@ def extend_license(license_id):
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     if license_id not in LICENSES:
         return jsonify({'error': 'License not found'}), 404
-    
+
     license_data = LICENSES[license_id]
     if license_data['type'] != 'recurring':
         return jsonify({'error': 'Only recurring licenses can be extended'}), 400
-    
+
     data = request.get_json() or {}
     days = int(data.get('days', 365))
-    
+
     if 'end_date' in license_data:
         old_end = datetime.fromisoformat(license_data['end_date'])
         new_end = old_end + timedelta(days=days)
     else:
         new_end = datetime.now() + timedelta(days=days)
-    
+
     license_data['end_date'] = new_end.isoformat()
     license_data['renewal_date'] = new_end.isoformat()
-    
+
     tamper_protected_audit_log('license_extended', {'license_id': license_id, 'new_end': new_end.isoformat()}, 'INFO')
     return jsonify({'license': license_data}), 200
 
@@ -1915,17 +1899,17 @@ def get_stats():
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     total = len(LICENSES)
     active = sum(1 for l in LICENSES.values() if l['status'] == 'active')
     lifetime = sum(1 for l in LICENSES.values() if l['type'] == 'lifetime')
     recurring = sum(1 for l in LICENSES.values() if l['type'] == 'recurring')
-    
+
     tier_breakdown = {}
     for license_data in LICENSES.values():
         tier = license_data['tier']
         tier_breakdown[tier] = tier_breakdown.get(tier, 0) + 1
-    
+
     return jsonify({
         'total': total,
         'active': active,
@@ -1942,16 +1926,16 @@ def batch_create_licenses():
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     data = request.get_json() or {}
     licenses_data = data.get('licenses', [])
-    
+
     created = []
     for lic in licenses_data:
         license_id = str(uuid.uuid4())[:12]
         license_type = lic.get('type', 'recurring')
         tier = lic.get('tier', 'basic')
-        
+
         license_obj = {
             'id': license_id,
             'tier': tier,
@@ -1961,16 +1945,16 @@ def batch_create_licenses():
             'activated': False,
             'activated_date': None
         }
-        
+
         if license_type == 'recurring':
             days = int(lic.get('days', 365))
             license_obj['start_date'] = datetime.now().isoformat()
             license_obj['end_date'] = (datetime.now() + timedelta(days=days)).isoformat()
             license_obj['renewal_date'] = (datetime.now() + timedelta(days=days)).isoformat()
-        
+
         LICENSES[license_id] = license_obj
         created.append(license_obj)
-    
+
     tamper_protected_audit_log('batch_license_created', {'count': len(created)}, 'INFO')
     return jsonify({'licenses': created, 'count': len(created)}), 201
 
@@ -1993,12 +1977,12 @@ def export_licenses_csv():
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
         return jsonify({'error': 'Unauthorized'}), 403
-    
+
     csv_data = "License ID,Tier,Type,Status,Created,Activated,Expires\n"
     for lic in LICENSES.values():
         expires = lic.get('end_date', 'Lifetime')
         csv_data += f"{lic['id']},{lic['tier']},{lic['type']},{lic['status']},{lic['created']},{lic['activated']},{expires}\n"
-    
+
     return Response(csv_data, mimetype='text/csv', headers={'Content-Disposition': 'attachment; filename=licenses.csv'}), 200
 
 @app.route('/api/v1/specs/system', methods=['GET'])
@@ -3027,23 +3011,23 @@ def create_checkout_session():
     try:
         if not stripe.api_key:
             return jsonify({'error': 'Payment system not configured. Please set up Stripe keys.'}), 503
-        
+
         data = request.get_json()
         tier = data.get('tier', '').lower()
         payment_type = data.get('type', 'lifetime')  # 'lifetime' or 'annual'
-        
+
         if tier not in TIERS:
             return jsonify({'error': 'Invalid tier'}), 400
-        
+
         # Get the appropriate price based on payment type
         price = TIERS[tier].get(payment_type, 0)
-        
+
         if price == 0:
             if tier == 'server':
                 return jsonify({'error': 'Server edition requires contacting sales'}), 400
             elif tier == 'freemium':
                 return jsonify({'error': 'Freemium is free, no payment needed'}), 400
-        
+
         # Get proper Replit domain for Stripe URLs
         replit_domain = os.getenv('REPLIT_DOMAINS', '').split(',')[0] if os.getenv('REPLIT_DOMAINS') else None
         if replit_domain:
@@ -3051,7 +3035,7 @@ def create_checkout_session():
         else:
             # Fallback for local development
             domain = 'https://example.com'  # Stripe requires a valid domain
-        
+
         # Tier display names for checkout
         tier_names = {
             'basic': 'Basic Edition',
@@ -3059,7 +3043,7 @@ def create_checkout_session():
             'ai-dev': 'AI Developer Edition',
             'workplace': 'Workplace Edition'
         }
-        
+
         # Create line items based on payment type
         if payment_type == 'annual':
             # Recurring annual subscription
@@ -3092,7 +3076,7 @@ def create_checkout_session():
                 'quantity': 1,
             }]
             mode = 'payment'
-        
+
         # Create Stripe checkout session with multiple payment methods
         session_params = {
             'payment_method_types': ['card'],  # Includes cards, Google Pay, Apple Pay
@@ -3104,7 +3088,7 @@ def create_checkout_session():
             'allow_promotion_codes': True,
             'billing_address_collection': 'required',
         }
-        
+
         # Only add payment_intent_data for one-time payments
         if mode == 'payment':
             session_params['payment_intent_data'] = {
@@ -3113,21 +3097,21 @@ def create_checkout_session():
                     'product': f'aegis_os_{tier}'
                 }
             }
-        
+
         session = stripe.checkout.Session.create(**session_params)
-        
+
         tamper_protected_audit_log('CHECKOUT_CREATED', {
-            'tier': tier, 
+            'tier': tier,
             'session_id': session.id,
             'payment_type': payment_type,
             'amount': price
         })
-        
+
         return jsonify({
             'url': session.url,
             'sessionId': session.id
         }), 200
-    
+
     except Exception as e:
         logger.error(f"Checkout error: {str(e)}")
         return jsonify({'error': 'Payment system error. Please try again later.'}), 500
@@ -3139,11 +3123,11 @@ def payment_success():
     """Payment success page with session verification"""
     tier = request.args.get('tier', 'basic')
     session_id = request.args.get('session_id')
-    
+
     # Verify the session if ID provided
     payment_verified = False
     customer_email = "your email"
-    
+
     if session_id and stripe.api_key:
         try:
             session = stripe.checkout.Session.retrieve(session_id)
@@ -3157,14 +3141,14 @@ def payment_success():
                 }, severity='HIGH')
         except:
             pass
-    
+
     tier_names = {
         'basic': 'Basic',
         'gamer': 'Gamer',
         'ai-dev': 'AI Developer',
         'workplace': 'Workplace'
     }
-    
+
     html = f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -3173,22 +3157,22 @@ def payment_success():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Payment Successful - Aegis OS</title>
         <style>
-            body {{ 
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-                background: linear-gradient(135deg, #1e3a8a, #7c3aed); 
-                min-height: 100vh; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: linear-gradient(135deg, #1e3a8a, #7c3aed);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 margin: 0;
                 padding: 20px;
             }}
-            .container {{ 
-                background: white; 
-                padding: 3rem; 
-                border-radius: 16px; 
-                box-shadow: 0 20px 60px rgba(0,0,0,0.3); 
-                text-align: center; 
+            .container {{
+                background: white;
+                padding: 3rem;
+                border-radius: 16px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
                 max-width: 500px;
                 width: 100%;
             }}
@@ -3203,8 +3187,8 @@ def payment_success():
                 margin: 0 auto 1.5rem;
                 font-size: 40px;
             }}
-            h1 {{ 
-                color: #1f2937; 
+            h1 {{
+                color: #1f2937;
                 margin: 0 0 1rem;
                 font-size: 2rem;
             }}
@@ -3217,8 +3201,8 @@ def payment_success():
                 font-weight: 600;
                 margin-bottom: 1.5rem;
             }}
-            p {{ 
-                color: #6b7280; 
+            p {{
+                color: #6b7280;
                 font-size: 1.1rem;
                 margin: 1rem 0;
                 line-height: 1.6;
@@ -3242,18 +3226,18 @@ def payment_success():
             .next-steps li {{
                 margin: 0.5rem 0;
             }}
-            .button {{ 
-                display: inline-block; 
-                background: linear-gradient(135deg, #6366f1, #8b5cf6); 
-                color: white; 
-                padding: 1rem 2.5rem; 
-                border-radius: 10px; 
-                text-decoration: none; 
-                margin-top: 1rem; 
+            .button {{
+                display: inline-block;
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                color: white;
+                padding: 1rem 2.5rem;
+                border-radius: 10px;
+                text-decoration: none;
+                margin-top: 1rem;
                 font-weight: 600;
                 transition: transform 0.2s;
             }}
-            .button:hover {{ 
+            .button:hover {{
                 transform: translateY(-2px);
                 box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
             }}
@@ -3271,13 +3255,13 @@ def payment_success():
         <div class="container">
             <div class="success-icon">✓</div>
             <h1>Payment Successful!</h1>
-            
+
             {'<div class="test-mode">⚠️ TEST MODE: This was a test payment. No real charge was made.</div>' if os.getenv('REPLIT_DEPLOYMENT') != '1' else ''}
-            
+
             <div class="edition-badge">Aegis OS {tier_names.get(tier, tier.capitalize())} Edition</div>
-            
+
             <p>Thank you for your purchase! {'Your payment has been confirmed.' if payment_verified else ''}</p>
-            
+
             <div class="next-steps">
                 <h3>Next Steps:</h3>
                 <ol>
@@ -3287,11 +3271,11 @@ def payment_success():
                     <li>Follow the installation guide included in your email</li>
                 </ol>
             </div>
-            
+
             <p style="color: #6b7280; font-size: 0.95rem;">
                 Need help? Contact support at riley.liang@hotmail.com
             </p>
-            
+
             <a href="/" class="button">Back to Home</a>
         </div>
     </body>
@@ -3349,13 +3333,13 @@ def require_admin(f):
         auth_header = request.headers.get('Authorization', '')
         if not auth_header.startswith('Bearer '):
             return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
-        
+
         token = auth_header[7:]
         payload = verify_admin_token(token)
-        
+
         if not payload:
             return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
-        
+
         request.admin_user = payload.get('username')
         return f(*args, **kwargs)
     return decorated
@@ -3368,29 +3352,29 @@ def admin_login():
     data = request.json or {}
     username = str(data.get('username', '')).strip()
     password = str(data.get('password', '')).strip()
-    
+
     if not username or not password:
         tamper_protected_audit_log("ADMIN_LOGIN_EMPTY", {"username": username[:20]}, "HIGH")
         return jsonify({'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
-    
+
     if username not in ADMIN_CREDENTIALS:
         tamper_protected_audit_log("ADMIN_LOGIN_INVALID_USER", {"username": username[:20]}, "HIGH")
         return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
-    
+
     admin = ADMIN_CREDENTIALS[username]
     stored_hash = admin['password_hash']
-    
+
     # Verify password
     try:
         salt, expected_hash = stored_hash.split('$')
         computed_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
-        
+
         if not hmac.compare_digest(computed_hash, expected_hash):
             tamper_protected_audit_log("ADMIN_LOGIN_WRONG_PASSWORD", {"username": username[:20]}, "CRITICAL")
             return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
     except:
         return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
-    
+
     # Generate admin token
     jti = secrets.token_urlsafe(16)
     token_payload = {
@@ -3401,16 +3385,16 @@ def admin_login():
         'iat': datetime.utcnow(),
         'jti': jti
     }
-    
+
     token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
     ADMIN_TOKENS[jti] = {
         'username': username,
         'created': datetime.now().isoformat(),
         'ip': request.remote_addr
     }
-    
+
     tamper_protected_audit_log("ADMIN_LOGIN_SUCCESS", {"username": username}, "INFO")
-    
+
     return jsonify({
         'success': True,
         'token': token,
@@ -3425,13 +3409,13 @@ def admin_verify():
     auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
         return jsonify({'valid': False}), 401
-    
+
     token = auth_header[7:]
     payload = verify_admin_token(token)
-    
+
     if not payload:
         return jsonify({'valid': False}), 401
-    
+
     return jsonify({
         'valid': True,
         'username': payload.get('username'),
@@ -3444,7 +3428,7 @@ def admin_logout():
     """Admin logout - invalidate token"""
     auth_header = request.headers.get('Authorization', '')
     token = auth_header[7:]
-    
+
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
         jti = payload.get('jti')
@@ -3452,7 +3436,7 @@ def admin_logout():
             del ADMIN_TOKENS[jti]
     except:
         pass
-    
+
     tamper_protected_audit_log("ADMIN_LOGOUT", {"username": request.admin_user}, "INFO")
     return jsonify({'success': True}), 200
 
@@ -3477,7 +3461,7 @@ def admin_get_licenses():
     """Get all licenses"""
     # Combine demo licenses with admin-created licenses
     all_licenses = []
-    
+
     for key, data in DEMO_LICENSES.items():
         all_licenses.append({
             'key': key,
@@ -3488,10 +3472,10 @@ def admin_get_licenses():
             'max_activations': data['max_activations'],
             'status': 'active' if datetime.fromisoformat(data['expires']) > datetime.now() else 'expired'
         })
-    
+
     for lic in ADMIN_LICENSES:
         all_licenses.append(lic)
-    
+
     return jsonify({'licenses': all_licenses}), 200
 
 @app.route('/api/admin/licenses', methods=['POST'])
@@ -3505,7 +3489,7 @@ def admin_create_license():
     email = data.get('email', '')
     max_activations = data.get('max_activations', 5)
     notes = data.get('notes', '')
-    
+
     # Calculate expiry based on type
     if license_type == 'lifetime':
         expires = (datetime.now() + timedelta(days=36500)).isoformat()
@@ -3513,7 +3497,7 @@ def admin_create_license():
         expires = (datetime.now() + timedelta(days=365)).isoformat()
     else:  # trial
         expires = (datetime.now() + timedelta(days=30)).isoformat()
-    
+
     license_data = {
         'key': key,
         'edition': edition,
@@ -3527,16 +3511,16 @@ def admin_create_license():
         'created': datetime.now().isoformat(),
         'created_by': request.admin_user
     }
-    
+
     ADMIN_LICENSES.append(license_data)
     ADMIN_STATS['licenses'] += 1
-    
+
     tamper_protected_audit_log("ADMIN_LICENSE_CREATED", {
         "key": key[:8] + "...",
         "edition": edition,
         "by": request.admin_user
     }, "INFO")
-    
+
     return jsonify({'success': True, 'license': license_data}), 201
 
 @app.route('/api/admin/licenses/<key>/revoke', methods=['POST'])
@@ -3548,7 +3532,7 @@ def admin_revoke_license(key):
             lic['status'] = 'revoked'
             tamper_protected_audit_log("ADMIN_LICENSE_REVOKED", {"key": key[:8] + "..."}, "HIGH")
             return jsonify({'success': True}), 200
-    
+
     return jsonify({'error': 'License not found'}), 404
 
 # Admin giveaways endpoints
@@ -3563,7 +3547,7 @@ def admin_get_giveaways():
 def admin_create_giveaway():
     """Create a new giveaway"""
     data = request.json or {}
-    
+
     giveaway = {
         'id': secrets.token_urlsafe(8),
         'title': data.get('title', 'New Giveaway'),
@@ -3578,14 +3562,14 @@ def admin_create_giveaway():
         'created': datetime.now().isoformat(),
         'created_by': request.admin_user
     }
-    
+
     ADMIN_GIVEAWAYS.append(giveaway)
-    
+
     tamper_protected_audit_log("ADMIN_GIVEAWAY_CREATED", {
         "title": giveaway['title'][:30],
         "edition": giveaway['edition']
     }, "INFO")
-    
+
     return jsonify({'success': True, 'giveaway': giveaway}), 201
 
 # Admin pages endpoints
@@ -3595,7 +3579,7 @@ def admin_get_pages():
     """Get list of all HTML pages"""
     html_dir = os.path.join(BASE_DIR, 'html')
     pages = []
-    
+
     for filename in os.listdir(html_dir):
         if filename.endswith('.html') and not filename.startswith('admin'):
             filepath = os.path.join(html_dir, filename)
@@ -3605,7 +3589,7 @@ def admin_get_pages():
                 'size': stat.st_size,
                 'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
             })
-    
+
     return jsonify({'pages': pages}), 200
 
 @app.route('/api/admin/pages/<filename>', methods=['GET'])
@@ -3614,12 +3598,12 @@ def admin_get_page(filename):
     """Get page content"""
     if not filename.endswith('.html'):
         filename += '.html'
-    
+
     filepath = os.path.join(BASE_DIR, 'html', filename)
-    
+
     if not os.path.exists(filepath):
         return jsonify({'error': 'Page not found'}), 404
-    
+
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -3633,16 +3617,16 @@ def admin_save_page(filename):
     """Save page content"""
     if not filename.endswith('.html'):
         filename += '.html'
-    
+
     # Security: prevent directory traversal
     if '..' in filename or '/' in filename:
         return jsonify({'error': 'Invalid filename'}), 400
-    
+
     data = request.json or {}
     content = data.get('content', '')
     title = data.get('title', 'Aegis OS')
     description = data.get('description', '')
-    
+
     # Wrap content in full HTML if needed
     if not content.strip().startswith('<!DOCTYPE'):
         full_html = f"""<!DOCTYPE html>
@@ -3659,18 +3643,18 @@ def admin_save_page(filename):
 </body>
 </html>"""
         content = full_html
-    
+
     filepath = os.path.join(BASE_DIR, 'html', filename)
-    
+
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
-        
+
         tamper_protected_audit_log("ADMIN_PAGE_SAVED", {
             "filename": filename,
             "by": request.admin_user
         }, "INFO")
-        
+
         return jsonify({'success': True}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
