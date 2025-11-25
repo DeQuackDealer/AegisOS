@@ -65,6 +65,7 @@ TIERS = {
     "workplace": {"lifetime": 99, "annual": 12, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
     "gamer": {"lifetime": 89, "annual": 13, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
     "ai-dev": {"lifetime": 109, "annual": 15, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
+    "gamer-ai": {"lifetime": 149, "annual": 20, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "cuda_12_3", "ai_tools", "hybrid_gpu_scheduling", "ai_game_optimization", "neural_upscaling", "smart_vram_management"], "users": "1000", "api_limit": 50000},
     "server": {"lifetime": 0, "annual": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
 }
 
@@ -702,6 +703,78 @@ ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
 ADMIN_PWD = os.getenv('ADMIN_PWD', 'DefaultAdminPassword123!')
 ADMIN_TOKENS = {}  # Simple token storage for authenticated sessions
 
+# ============= DEMO LICENSE DATABASE =============
+# Demo license keys for testing - in production, this would be a database
+DEMO_LICENSES = {
+    'BSIC-DEMO-TEST-2024': {
+        'edition': 'basic',
+        'tier': 'basic',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
+    },
+    'GAME-DEMO-TEST-2024': {
+        'edition': 'gamer',
+        'tier': 'gamer',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
+    },
+    'AIDV-DEMO-TEST-2024': {
+        'edition': 'ai-dev',
+        'tier': 'ai-dev',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
+    },
+    'GMAI-DEMO-TEST-2024': {
+        'edition': 'gamer-ai',
+        'tier': 'gamer-ai',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
+    },
+    'SERV-DEMO-TEST-2024': {
+        'edition': 'server',
+        'tier': 'server',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
+    }
+}
+
+# License validation rate limiting (stricter than general rate limiting)
+LICENSE_VALIDATION_ATTEMPTS = defaultdict(lambda: {'count': 0, 'reset_time': time.time(), 'locked_until': 0})
+LICENSE_VALIDATION_LIMIT = 10  # Max attempts per hour
+LICENSE_VALIDATION_WINDOW = 3600  # 1 hour
+LICENSE_LOCKOUT_TIME = 1800  # 30 minutes lockout after too many failures
+
+# Valid license tokens (JWT based) - tracks active sessions
+VALID_LICENSE_TOKENS = {}
+
+# Edition to prefix mapping for license key validation
+EDITION_PREFIXES = {
+    'basic': 'BSIC',
+    'gamer': 'GAME',
+    'ai-dev': 'AIDV',
+    'ai': 'AIDV',  # alias
+    'gamer-ai': 'GMAI',
+    'server': 'SERV'
+}
+
+# Download logging
+DOWNLOAD_LOG = []
+
 def serve_html(filename):
     """Serve HTML files - Helper function (NOT a route)"""
     if '..' in filename or filename.startswith('/') or not filename.endswith('.html'):
@@ -765,6 +838,16 @@ def page_gamer():
 def page_ai():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'ai.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/gamer-ai')
+@app.route('/gamer-ai.html')
+def page_gamer_ai():
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'gamer-ai.html')
         with open(filepath, 'r', encoding='utf-8') as f:
             return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
     except Exception as e:
@@ -881,43 +964,532 @@ def media_creator():
 
 @app.route('/api/validate-license', methods=['POST'])
 def validate_license():
-    """License validation endpoint"""
+    """
+    Secure server-side license validation endpoint.
+    
+    Validates license key format, checks against demo license database,
+    returns signed JWT token if valid, tracks hardware ID for binding.
+    
+    Returns:
+        - 200 + JWT token: License is valid
+        - 400: Invalid key format
+        - 401: Invalid or expired license
+        - 403: Wrong edition for this license
+        - 429: Rate limit exceeded
+    """
+    client_ip = request.remote_addr
+    current_time = time.time()
+    
+    # Rate limiting for license validation (stricter than general rate limiting)
+    attempt_record = LICENSE_VALIDATION_ATTEMPTS[client_ip]
+    
+    # Check if locked out
+    if attempt_record['locked_until'] > current_time:
+        remaining = int(attempt_record['locked_until'] - current_time)
+        tamper_protected_audit_log(
+            "LICENSE_VALIDATION_LOCKOUT",
+            {"ip": client_ip, "remaining_seconds": remaining},
+            "CRITICAL"
+        )
+        return jsonify({
+            'error': 'Too many failed attempts. Try again later.',
+            'code': 'RATE_LIMIT_EXCEEDED',
+            'retry_after': remaining
+        }), 429
+    
+    # Reset counter if window expired
+    if current_time - attempt_record['reset_time'] > LICENSE_VALIDATION_WINDOW:
+        attempt_record['count'] = 0
+        attempt_record['reset_time'] = current_time
+    
+    # Check if rate limit exceeded
+    if attempt_record['count'] >= LICENSE_VALIDATION_LIMIT:
+        attempt_record['locked_until'] = current_time + LICENSE_LOCKOUT_TIME
+        tamper_protected_audit_log(
+            "LICENSE_VALIDATION_RATE_LIMIT",
+            {"ip": client_ip},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'Rate limit exceeded. Please try again later.',
+            'code': 'RATE_LIMIT_EXCEEDED',
+            'retry_after': LICENSE_LOCKOUT_TIME
+        }), 429
+    
+    # Increment attempt counter
+    attempt_record['count'] += 1
+    
     try:
-        data = request.json or {}
-        key = data.get('key', '')
-        edition = data.get('edition', '')
-        machine_id = data.get('machine_id', '')
+        data = sanitize_input(request.json or {})
+        if not isinstance(data, dict):
+            return jsonify({
+                'error': 'Invalid request format',
+                'code': 'INVALID_REQUEST'
+            }), 400
         
-        # Demo license validation logic
-        # In production, this would check against a real database
-        valid_prefixes = {
-            'basic': 'BSIC',
-            'gamer': 'GAME',
-            'ai': 'AIDV',
-            'server': 'SERV'
+        key = str(data.get('key', '')).strip().upper()
+        edition = str(data.get('edition', '')).strip().lower()
+        hardware_id = str(data.get('hardware_id', '') or data.get('machine_id', '')).strip()
+        
+        # Validate key format: XXXX-XXXX-XXXX-XXXX
+        if not key:
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_EMPTY_KEY",
+                {"ip": client_ip},
+                "INFO"
+            )
+            return jsonify({
+                'valid': False,
+                'error': 'License key is required',
+                'code': 'MISSING_KEY'
+            }), 400
+        
+        if not re.match(r'^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$', key):
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_INVALID_FORMAT",
+                {"ip": client_ip, "key_prefix": key[:4] if len(key) >= 4 else ""},
+                "INFO"
+            )
+            return jsonify({
+                'valid': False,
+                'error': 'Invalid license key format. Expected: XXXX-XXXX-XXXX-XXXX',
+                'code': 'INVALID_FORMAT'
+            }), 400
+        
+        # Check if license exists in demo database
+        if key not in DEMO_LICENSES:
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_KEY_NOT_FOUND",
+                {"ip": client_ip, "key_prefix": key[:4]},
+                "HIGH"
+            )
+            return jsonify({
+                'valid': False,
+                'error': 'License key not found in database',
+                'code': 'INVALID_LICENSE'
+            }), 401
+        
+        license_data = DEMO_LICENSES[key]
+        
+        # Check if license has expired
+        expires_dt = datetime.fromisoformat(license_data['expires'])
+        if datetime.now() > expires_dt:
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_EXPIRED",
+                {"ip": client_ip, "key_prefix": key[:4], "expired": license_data['expires']},
+                "INFO"
+            )
+            return jsonify({
+                'valid': False,
+                'error': 'This license key has expired',
+                'code': 'LICENSE_EXPIRED',
+                'expired_on': license_data['expires']
+            }), 401
+        
+        # Validate edition prefix matches
+        key_prefix = key.split('-')[0]
+        expected_prefix = EDITION_PREFIXES.get(license_data['edition'])
+        
+        if key_prefix != expected_prefix:
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_PREFIX_MISMATCH",
+                {"ip": client_ip, "key_prefix": key_prefix, "expected": expected_prefix},
+                "HIGH"
+            )
+            return jsonify({
+                'valid': False,
+                'error': 'License key prefix does not match edition',
+                'code': 'INVALID_PREFIX'
+            }), 401
+        
+        # Check edition match if specified
+        if edition and edition not in ['', license_data['edition']]:
+            # Check if edition alias matches
+            if edition == 'ai' and license_data['edition'] == 'ai-dev':
+                pass  # alias match
+            else:
+                tamper_protected_audit_log(
+                    "LICENSE_VALIDATION_EDITION_MISMATCH",
+                    {"ip": client_ip, "requested": edition, "licensed": license_data['edition']},
+                    "HIGH"
+                )
+                return jsonify({
+                    'valid': False,
+                    'error': f'This license is for {license_data["edition"]} edition, not {edition}',
+                    'code': 'WRONG_EDITION'
+                }), 403
+        
+        # Hardware ID binding
+        if hardware_id:
+            if len(license_data['hardware_ids']) >= license_data['max_activations']:
+                if hardware_id not in license_data['hardware_ids']:
+                    tamper_protected_audit_log(
+                        "LICENSE_VALIDATION_MAX_ACTIVATIONS",
+                        {"ip": client_ip, "key_prefix": key[:4], "hardware_id_prefix": hardware_id[:8]},
+                        "HIGH"
+                    )
+                    return jsonify({
+                        'valid': False,
+                        'error': 'Maximum activations reached for this license',
+                        'code': 'MAX_ACTIVATIONS'
+                    }), 401
+            
+            # Bind hardware ID
+            if hardware_id not in license_data['hardware_ids']:
+                license_data['hardware_ids'].append(hardware_id)
+                tamper_protected_audit_log(
+                    "LICENSE_HARDWARE_BOUND",
+                    {"ip": client_ip, "key_prefix": key[:4], "hardware_id_prefix": hardware_id[:8]},
+                    "INFO"
+                )
+        
+        # Generate JWT token for validated license
+        token_expiry = min(
+            datetime.utcnow() + timedelta(hours=24),
+            expires_dt
+        )
+        
+        token_payload = {
+            'license_key_hash': hashlib.sha256(key.encode()).hexdigest()[:16],
+            'edition': license_data['edition'],
+            'tier': license_data['tier'],
+            'hardware_id_hash': hashlib.sha256(hardware_id.encode()).hexdigest()[:16] if hardware_id else None,
+            'exp': token_expiry,
+            'iat': datetime.utcnow(),
+            'jti': secrets.token_urlsafe(16),
+            'type': 'license_validation'
         }
         
-        # Check key format
-        if not re.match(r'^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$', key):
-            return jsonify({'valid': False, 'message': 'Invalid key format'}), 400
+        validation_token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
         
-        # Check edition prefix
-        if edition in valid_prefixes:
-            if not key.startswith(valid_prefixes[edition]):
-                return jsonify({'valid': False, 'message': f'Invalid key for {edition} edition'}), 400
+        # Store token for session tracking
+        VALID_LICENSE_TOKENS[token_payload['jti']] = {
+            'created': datetime.now().isoformat(),
+            'edition': license_data['edition'],
+            'ip': client_ip
+        }
         
-        # Demo: Accept any properly formatted key for demonstration
-        # In production, would validate against purchased licenses
+        # Reset failed attempt counter on success
+        attempt_record['count'] = 0
+        
+        tamper_protected_audit_log(
+            "LICENSE_VALIDATION_SUCCESS",
+            {"ip": client_ip, "edition": license_data['edition'], "tier": license_data['tier']},
+            "INFO"
+        )
+        
         return jsonify({
             'valid': True,
-            'message': 'License validated (Demo)',
-            'edition': edition,
-            'expires': (datetime.now() + timedelta(days=7)).isoformat()
-        })
+            'message': 'License validated successfully',
+            'edition': license_data['edition'],
+            'tier': license_data['tier'],
+            'expires': license_data['expires'],
+            'token': validation_token,
+            'token_expires': token_expiry.isoformat(),
+            'hardware_bound': bool(hardware_id),
+            'activations_used': len(license_data['hardware_ids']),
+            'activations_max': license_data['max_activations']
+        }), 200
         
+    except jwt.PyJWTError as e:
+        logger.error(f"JWT error during license validation: {str(e)}")
+        return jsonify({
+            'error': 'Token generation failed',
+            'code': 'TOKEN_ERROR'
+        }), 500
     except Exception as e:
-        app.logger.error(f"License validation error: {str(e)}")
-        return jsonify({'error': 'Validation failed'}), 500
+        logger.error(f"License validation error: {str(e)}")
+        tamper_protected_audit_log(
+            "LICENSE_VALIDATION_ERROR",
+            {"ip": client_ip, "error": str(e)[:100]},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'License validation failed',
+            'code': 'VALIDATION_ERROR'
+        }), 500
+
+
+@app.route('/api/download-iso', methods=['GET', 'POST'])
+@rate_limit(limit=50, window=3600)
+def download_iso_with_license():
+    """
+    Secure ISO download endpoint with license validation.
+    
+    - Freemium edition: Available without license
+    - Paid editions (Basic, Gamer, AI-Dev, Gamer+AI, Server): Require valid license token
+    
+    Request body (POST) or query params (GET):
+        - edition: The edition to download (freemium, basic, gamer, ai-dev, gamer-ai, server)
+        - token: JWT license validation token (required for paid editions)
+    
+    Returns:
+        - 200: Download link/file info
+        - 400: Invalid request
+        - 401: Invalid or expired token
+        - 403: Token doesn't authorize this edition
+        - 429: Rate limit exceeded
+    """
+    client_ip = request.remote_addr
+    
+    # Get parameters from either POST body or GET query params
+    if request.method == 'POST':
+        data = sanitize_input(request.json or {})
+        if not isinstance(data, dict):
+            data = {}
+        edition = str(data.get('edition', '')).strip().lower()
+        token = str(data.get('token', '')).strip()
+    else:
+        edition = str(request.args.get('edition', '')).strip().lower()
+        token = str(request.args.get('token', '')).strip()
+    
+    # Also check Authorization header for token
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:].strip() or token
+    
+    # Validate edition parameter
+    valid_editions = ['freemium', 'basic', 'gamer', 'ai-dev', 'ai', 'gamer-ai', 'server']
+    if not edition:
+        return jsonify({
+            'error': 'Edition parameter is required',
+            'code': 'MISSING_EDITION',
+            'valid_editions': valid_editions
+        }), 400
+    
+    # Normalize edition aliases
+    if edition == 'ai':
+        edition = 'ai-dev'
+    
+    if edition not in valid_editions:
+        return jsonify({
+            'error': f'Invalid edition: {edition}',
+            'code': 'INVALID_EDITION',
+            'valid_editions': valid_editions
+        }), 400
+    
+    # Log download attempt
+    download_entry = {
+        'timestamp': datetime.now().isoformat(),
+        'ip': client_ip,
+        'edition': edition,
+        'has_token': bool(token),
+        'user_agent': request.headers.get('User-Agent', 'unknown')[:200]
+    }
+    DOWNLOAD_LOG.append(download_entry)
+    
+    # Freemium edition - no license required
+    if edition == 'freemium':
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_FREEMIUM",
+            {"ip": client_ip, "edition": edition},
+            "INFO"
+        )
+        
+        # Return download info (in production, would serve actual file or signed URL)
+        iso_path = os.path.join(BASE_DIR, 'demo-isos', 'aegis-os-freemium.iso')
+        file_exists = os.path.exists(iso_path)
+        
+        return jsonify({
+            'success': True,
+            'edition': 'freemium',
+            'message': 'Freemium edition download authorized',
+            'download_info': {
+                'filename': 'aegis-os-freemium.iso',
+                'version': 'v4.2.1 LTS',
+                'size_gb': 1.5,
+                'available': file_exists,
+                'sha256': 'a8f3e2c9b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4'
+            },
+            'license_required': False
+        }), 200
+    
+    # Paid editions - require valid license token
+    if not token:
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_NO_TOKEN",
+            {"ip": client_ip, "edition": edition},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'License token required for paid editions',
+            'code': 'TOKEN_REQUIRED',
+            'message': f'The {edition} edition requires a valid license. Please validate your license key first.',
+            'validate_endpoint': '/api/validate-license'
+        }), 401
+    
+    # Verify JWT token
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_TOKEN_EXPIRED",
+            {"ip": client_ip, "edition": edition},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'License token has expired',
+            'code': 'TOKEN_EXPIRED',
+            'message': 'Please re-validate your license key to get a new token.'
+        }), 401
+    except jwt.InvalidTokenError as e:
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_TOKEN_INVALID",
+            {"ip": client_ip, "edition": edition, "error": str(e)[:50]},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'Invalid license token',
+            'code': 'TOKEN_INVALID',
+            'message': 'The provided token is not valid. Please validate your license key again.'
+        }), 401
+    
+    # Verify token type
+    if payload.get('type') != 'license_validation':
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_WRONG_TOKEN_TYPE",
+            {"ip": client_ip, "edition": edition, "token_type": payload.get('type')},
+            "HIGH"
+        )
+        return jsonify({
+            'error': 'Invalid token type',
+            'code': 'WRONG_TOKEN_TYPE',
+            'message': 'This token cannot be used for downloads. Use a license validation token.'
+        }), 401
+    
+    # Check if token authorizes the requested edition
+    token_edition = payload.get('edition', '')
+    token_tier = payload.get('tier', '')
+    
+    # Edition access mapping - which editions can access which
+    edition_access = {
+        'basic': ['basic', 'freemium'],
+        'gamer': ['gamer', 'freemium'],
+        'ai-dev': ['ai-dev', 'freemium'],
+        'gamer-ai': ['gamer-ai', 'gamer', 'ai-dev', 'freemium'],  # Gamer+AI can access both
+        'server': ['server', 'basic', 'freemium']  # Server includes basic features
+    }
+    
+    allowed_editions = edition_access.get(token_edition, [token_edition, 'freemium'])
+    
+    if edition not in allowed_editions:
+        tamper_protected_audit_log(
+            "ISO_DOWNLOAD_UNAUTHORIZED_EDITION",
+            {"ip": client_ip, "requested": edition, "licensed": token_edition},
+            "HIGH"
+        )
+        return jsonify({
+            'error': f'Your license does not authorize access to {edition} edition',
+            'code': 'UNAUTHORIZED_EDITION',
+            'licensed_edition': token_edition,
+            'requested_edition': edition,
+            'allowed_editions': allowed_editions
+        }), 403
+    
+    # Success - authorize download
+    tamper_protected_audit_log(
+        "ISO_DOWNLOAD_AUTHORIZED",
+        {"ip": client_ip, "edition": edition, "licensed": token_edition},
+        "INFO"
+    )
+    
+    # Edition-specific ISO info
+    iso_info = {
+        'basic': {'filename': 'aegis-os-basic.iso', 'size_gb': 3.5},
+        'gamer': {'filename': 'aegis-os-gamer.iso', 'size_gb': 4.5},
+        'ai-dev': {'filename': 'aegis-os-ai-dev.iso', 'size_gb': 6.0},
+        'gamer-ai': {'filename': 'aegis-os-gamer-ai.iso', 'size_gb': 7.5},
+        'server': {'filename': 'aegis-os-server.iso', 'size_gb': 3.0}
+    }
+    
+    info = iso_info.get(edition, {'filename': f'aegis-os-{edition}.iso', 'size_gb': 2.0})
+    iso_path = os.path.join(BASE_DIR, 'demo-isos', info['filename'])
+    file_exists = os.path.exists(iso_path)
+    
+    return jsonify({
+        'success': True,
+        'edition': edition,
+        'message': f'{edition.title()} edition download authorized',
+        'download_info': {
+            'filename': info['filename'],
+            'version': 'v4.2.1 LTS',
+            'size_gb': info['size_gb'],
+            'available': file_exists,
+            'sha256': hashlib.sha256(f'{edition}-demo'.encode()).hexdigest()
+        },
+        'license_info': {
+            'edition': token_edition,
+            'tier': token_tier,
+            'token_expires': payload.get('exp')
+        }
+    }), 200
+
+
+@app.route('/api/download-log', methods=['GET'])
+@require_api_key
+@rate_limit(limit=50)
+def get_download_log():
+    """Get download attempt logs (admin only)"""
+    tamper_protected_audit_log("DOWNLOAD_LOG_ACCESSED", {})
+    return jsonify({
+        'entries': len(DOWNLOAD_LOG),
+        'last_entries': DOWNLOAD_LOG[-50:] if DOWNLOAD_LOG else []
+    }), 200
+
+
+@app.route('/api/license/status', methods=['GET'])
+@rate_limit(limit=100)
+def get_license_status():
+    """
+    Check status of a license token without full validation.
+    Useful for checking if a token is still valid.
+    """
+    token = request.headers.get('Authorization', '')
+    if token.startswith('Bearer '):
+        token = token[7:]
+    
+    if not token:
+        token = request.args.get('token', '')
+    
+    if not token:
+        return jsonify({
+            'error': 'Token required',
+            'code': 'MISSING_TOKEN'
+        }), 400
+    
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        
+        exp = payload.get('exp')
+        if isinstance(exp, (int, float)):
+            exp_dt = datetime.utcfromtimestamp(exp)
+        else:
+            exp_dt = exp
+        
+        remaining = (exp_dt - datetime.utcnow()).total_seconds()
+        
+        return jsonify({
+            'valid': True,
+            'edition': payload.get('edition'),
+            'tier': payload.get('tier'),
+            'expires': exp_dt.isoformat() if hasattr(exp_dt, 'isoformat') else str(exp_dt),
+            'remaining_seconds': max(0, int(remaining)),
+            'hardware_bound': payload.get('hardware_id_hash') is not None
+        }), 200
+        
+    except jwt.ExpiredSignatureError:
+        return jsonify({
+            'valid': False,
+            'error': 'Token expired',
+            'code': 'TOKEN_EXPIRED'
+        }), 401
+    except jwt.InvalidTokenError:
+        return jsonify({
+            'valid': False,
+            'error': 'Invalid token',
+            'code': 'TOKEN_INVALID'
+        }), 401
+
 
 @app.route('/download-usb-creator')
 def download_usb_creator():

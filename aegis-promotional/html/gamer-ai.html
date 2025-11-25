@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gamer + AI Edition - Best of Both Worlds - Aegis OS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --primary: #ec4899;
+            --secondary: #8b5cf6;
+            --accent-gaming: #f97316;
+            --accent-ai: #a855f7;
+            --dark-bg: #0f0a12;
+            --card-bg: #1a1220;
+            --text-light: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--dark-bg);
+            color: var(--text-light);
+            line-height: 1.6;
+        }
+        .navbar {
+            background: rgba(15, 10, 18, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 20px rgba(236, 72, 153, 0.2);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid rgba(236, 72, 153, 0.3);
+        }
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-gaming), var(--primary), var(--accent-ai));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            cursor: pointer;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+        }
+        .nav-link {
+            text-decoration: none;
+            color: var(--text-light);
+            font-weight: 500;
+            transition: all 0.3s;
+            font-size: 0.95rem;
+        }
+        .nav-link:hover {
+            color: var(--primary);
+            text-shadow: 0 0 20px rgba(236, 72, 153, 0.5);
+        }
+        .hero {
+            background: linear-gradient(135deg, #f97316 0%, #ec4899 35%, #8b5cf6 70%, #6d28d9 100%);
+            background-size: 300% 300%;
+            animation: gradientShift 20s ease infinite;
+            color: #fff;
+            padding: 6rem 2rem;
+            text-align: center;
+            min-height: 650px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><polygon fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" points="50,15 85,35 85,75 50,95 15,75 15,35"/></svg>');
+            background-size: 80px 80px;
+        }
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .hero-content {
+            max-width: 1000px;
+            animation: slideDown 0.8s ease-out;
+            position: relative;
+            z-index: 1;
+        }
+        .hero h1 {
+            font-size: 4rem;
+            font-weight: 900;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .hero .tagline {
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            opacity: 0.95;
+        }
+        @media(max-width: 768px) {
+            .hero h1 { font-size: 2.5rem; }
+            .hero .tagline { font-size: 1.3rem; }
+            .nav-links { display: none; }
+        }
+        .hero p {
+            font-size: 1.3rem;
+            opacity: 0.95;
+            margin-bottom: 2rem;
+        }
+        .price-section {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            align-items: center;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        .price-box {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem 2rem;
+            border-radius: 15px;
+            border: 2px solid rgba(255,255,255,0.2);
+        }
+        .price-box.featured {
+            border-color: rgba(255,255,255,0.5);
+            transform: scale(1.05);
+        }
+        .price-box h3 {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            margin-bottom: 0.5rem;
+        }
+        .price-box .price {
+            font-size: 2.5rem;
+            font-weight: 900;
+        }
+        .price-box .period {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        .badges {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+        .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(10px);
+            color: #fff;
+            padding: 0.6rem 1.2rem;
+            border-radius: 25px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .badge.gaming { background: rgba(249, 115, 22, 0.3); }
+        .badge.ai { background: rgba(139, 92, 246, 0.3); }
+        .badge.fusion { background: rgba(236, 72, 153, 0.3); }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 4rem 2rem;
+        }
+        @media(max-width: 768px) {
+            .container { padding: 2rem 1rem; }
+        }
+        .section {
+            margin: 4rem 0;
+        }
+        .section h2 {
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            color: var(--primary);
+            text-align: center;
+            text-shadow: 0 0 30px rgba(236, 72, 153, 0.5);
+        }
+        .section h2.gaming-title { color: var(--accent-gaming); text-shadow: 0 0 30px rgba(249, 115, 22, 0.5); }
+        .section h2.ai-title { color: var(--accent-ai); text-shadow: 0 0 30px rgba(168, 85, 247, 0.5); }
+        .feature-category {
+            background: var(--card-bg);
+            border: 1px solid rgba(236, 72, 153, 0.2);
+            border-radius: 15px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        .feature-category.gaming { border-color: rgba(249, 115, 22, 0.3); }
+        .feature-category.ai { border-color: rgba(139, 92, 246, 0.3); }
+        .feature-category.fusion { border-color: rgba(236, 72, 153, 0.4); background: linear-gradient(135deg, rgba(249, 115, 22, 0.05), rgba(139, 92, 246, 0.05)); }
+        .feature-category h3 {
+            color: var(--primary);
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .feature-category.gaming h3 { color: var(--accent-gaming); }
+        .feature-category.ai h3 { color: var(--accent-ai); }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        .feature-item {
+            background: rgba(236, 72, 153, 0.05);
+            border: 1px solid rgba(236, 72, 153, 0.1);
+            padding: 1rem;
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+        .feature-category.gaming .feature-item { background: rgba(249, 115, 22, 0.05); border-color: rgba(249, 115, 22, 0.1); }
+        .feature-category.ai .feature-item { background: rgba(139, 92, 246, 0.05); border-color: rgba(139, 92, 246, 0.1); }
+        .feature-item:hover {
+            background: rgba(236, 72, 153, 0.1);
+            border-color: var(--primary);
+            transform: translateX(5px);
+        }
+        .feature-category.gaming .feature-item:hover { background: rgba(249, 115, 22, 0.1); border-color: var(--accent-gaming); }
+        .feature-category.ai .feature-item:hover { background: rgba(139, 92, 246, 0.1); border-color: var(--accent-ai); }
+        .feature-item::before {
+            content: "✓";
+            color: var(--primary);
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+        .feature-category.gaming .feature-item::before { color: var(--accent-gaming); }
+        .feature-category.ai .feature-item::before { color: var(--accent-ai); }
+        .platforms-list, .frameworks-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+        }
+        .platform-item, .framework-item {
+            background: rgba(236, 72, 153, 0.1);
+            border: 1px solid rgba(236, 72, 153, 0.2);
+            padding: 0.8rem;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .platform-item:hover, .framework-item:hover {
+            background: var(--primary);
+            color: #fff;
+            transform: scale(1.05);
+        }
+        .cta-section {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(236, 72, 153, 0.15), rgba(139, 92, 246, 0.1));
+            border-radius: 20px;
+            border: 2px solid rgba(236, 72, 153, 0.3);
+            margin: 3rem 0;
+        }
+        .cta-section h2 {
+            margin-bottom: 1rem;
+        }
+        .btn-group {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+        .btn {
+            display: inline-block;
+            padding: 1rem 2.5rem;
+            background: linear-gradient(135deg, var(--accent-gaming), var(--primary), var(--secondary));
+            background-size: 200% 200%;
+            animation: btnGradient 5s ease infinite;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 700;
+            cursor: pointer;
+            border: none;
+            transition: all 0.3s;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 15px rgba(236, 72, 153, 0.4);
+        }
+        @keyframes btnGradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(236, 72, 153, 0.6);
+        }
+        .btn-secondary {
+            background: transparent;
+            border: 2px solid var(--primary);
+            color: var(--primary);
+        }
+        .btn-secondary:hover {
+            background: var(--primary);
+            color: #fff;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 2rem;
+            margin: 3rem 0;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(236, 72, 153, 0.2);
+            border-radius: 15px;
+            padding: 2rem;
+            text-align: center;
+        }
+        .stat-card.gaming { border-color: rgba(249, 115, 22, 0.3); }
+        .stat-card.ai { border-color: rgba(139, 92, 246, 0.3); }
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: var(--primary);
+            text-shadow: 0 0 20px rgba(236, 72, 153, 0.5);
+        }
+        .stat-card.gaming .stat-number { color: var(--accent-gaming); text-shadow: 0 0 20px rgba(249, 115, 22, 0.5); }
+        .stat-card.ai .stat-number { color: var(--accent-ai); text-shadow: 0 0 20px rgba(168, 85, 247, 0.5); }
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2rem 0;
+        }
+        .comparison-table th, .comparison-table td {
+            padding: 1rem;
+            text-align: center;
+            border: 1px solid rgba(236, 72, 153, 0.2);
+        }
+        .comparison-table th {
+            background: rgba(236, 72, 153, 0.1);
+            color: var(--primary);
+            font-weight: 700;
+        }
+        .comparison-table td { background: var(--card-bg); }
+        .comparison-table tr:hover td { background: rgba(236, 72, 153, 0.05); }
+        .check { color: #22c55e; font-size: 1.3rem; }
+        .cross { color: #ef4444; font-size: 1.3rem; }
+        .partial { color: #eab308; }
+        .desklink-card {
+            background: linear-gradient(135deg, rgba(249, 115, 22, 0.1), rgba(236, 72, 153, 0.15), rgba(139, 92, 246, 0.1));
+            border: 2px solid rgba(236, 72, 153, 0.4);
+            border-radius: 20px;
+            padding: 3rem;
+            margin: 2rem 0;
+        }
+        .desklink-card h3 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent-gaming), var(--primary), var(--accent-ai));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .desklink-card .description {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+        .hybrid-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+        .hybrid-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(236, 72, 153, 0.3);
+            border-radius: 15px;
+            padding: 2rem;
+        }
+        .hybrid-card h4 {
+            color: var(--primary);
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+        .hybrid-card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+        .footer {
+            background: #080510;
+            color: var(--text-light);
+            padding: 3rem 2rem 2rem;
+            margin-top: 4rem;
+            text-align: center;
+            border-top: 1px solid rgba(236, 72, 153, 0.3);
+        }
+        .footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        .disclaimer {
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(236, 72, 153, 0.2);
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 2rem auto;
+            max-width: 900px;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            text-align: left;
+        }
+        .disclaimer h4 {
+            color: var(--text-light);
+            margin-bottom: 0.5rem;
+        }
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo" onclick="location.href='/'">🎮🤖 Aegis OS Gamer + AI</div>
+            <div class="nav-links">
+                <a href="/" class="nav-link">Home</a>
+                <a href="/#tiers" class="nav-link">All Editions</a>
+                <a href="/freemium.html" class="nav-link">Free Edition</a>
+                <a href="/gamer.html" class="nav-link">Gamer</a>
+                <a href="/ai.html" class="nav-link">AI Dev</a>
+                <a href="/server.html" class="nav-link">Server</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <h1>🎮🤖 GAMER + AI EDITION</h1>
+            <p class="tagline">Best of Both Worlds</p>
+            <p>Ultimate gaming performance meets professional AI development. Play games at peak performance, train ML models in the background, and create AI-enhanced content.</p>
+            <div class="price-section">
+                <div class="price-box">
+                    <h3>Annual License</h3>
+                    <div class="price">$20</div>
+                    <div class="period">per year</div>
+                    <button class="btn" style="margin-top: 1rem;" onclick="parent.checkout('gamer-ai', 'annual')">Subscribe</button>
+                </div>
+                <div class="price-box featured">
+                    <h3>Lifetime License</h3>
+                    <div class="price">$149</div>
+                    <div class="period">one-time payment</div>
+                    <button class="btn" style="margin-top: 1rem;" onclick="parent.checkout('gamer-ai', 'lifetime')">Buy Now</button>
+                </div>
+            </div>
+            <div class="badges">
+                <span class="badge gaming">🎮 52+ Gaming Platforms</span>
+                <span class="badge ai">🤖 56+ ML Frameworks</span>
+                <span class="badge fusion">⚡ Hybrid GPU Scheduling</span>
+                <span class="badge gaming">🚀 DLSS 3.5 + FSR 3.0</span>
+                <span class="badge ai">🔥 CUDA 12.3</span>
+                <span class="badge fusion">🧠 AI Game Optimization</span>
+            </div>
+            <p style="margin-top: 2rem; font-size: 0.9rem; opacity: 0.8;">The premium tier for creators who game and AI enthusiasts who need maximum performance</p>
+        </div>
+    </section>
+
+    <section class="container">
+        <div class="stats">
+            <div class="stat-card gaming">
+                <div class="stat-number">52+</div>
+                <div class="stat-label">Gaming Platforms</div>
+            </div>
+            <div class="stat-card ai">
+                <div class="stat-number">56+</div>
+                <div class="stat-label">ML/AI Frameworks</div>
+            </div>
+            <div class="stat-card gaming">
+                <div class="stat-number"><3ms</div>
+                <div class="stat-label">Gaming Latency</div>
+            </div>
+            <div class="stat-card ai">
+                <div class="stat-number">GPU</div>
+                <div class="stat-label">Accelerated Training</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number"><500ms</div>
+                <div class="stat-label">Mode Switching</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="gaming-title">🎮 Complete Gaming Performance</h2>
+            <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem; font-size: 1.1rem;">
+                All the gaming power from our Gamer Edition - better than SteamOS
+            </p>
+            
+            <div class="feature-category gaming">
+                <h3>🚀 Gaming Technologies</h3>
+                <div class="features-grid">
+                    <div class="feature-item">Steam + Proton 9.0+ Experimental</div>
+                    <div class="feature-item">NVIDIA DLSS 3.5 with Frame Generation</div>
+                    <div class="feature-item">AMD FSR 3.0 + Frame Generation</div>
+                    <div class="feature-item">Intel XeSS AI Upscaling</div>
+                    <div class="feature-item">Ray Tracing + Path Tracing</div>
+                    <div class="feature-item">Vulkan 1.3 + OpenGL 4.6</div>
+                    <div class="feature-item">DXVK 2.3 (DirectX 9/10/11)</div>
+                    <div class="feature-item">VKD3D-Proton (DirectX 12)</div>
+                    <div class="feature-item">HDR10 Gaming Support</div>
+                    <div class="feature-item">Variable Rate Shading</div>
+                    <div class="feature-item">Adaptive Sync/G-Sync/FreeSync</div>
+                    <div class="feature-item">Resizable BAR Support</div>
+                </div>
+            </div>
+
+            <div class="feature-category gaming">
+                <h3>🎯 Gaming Optimizations</h3>
+                <div class="features-grid">
+                    <div class="feature-item"><3ms input latency guarantee</div>
+                    <div class="feature-item">1000Hz polling rate support</div>
+                    <div class="feature-item">GameMode auto-activation</div>
+                    <div class="feature-item">Low-latency gaming kernel</div>
+                    <div class="feature-item">MangoHud performance overlay</div>
+                    <div class="feature-item">GOverlay configuration GUI</div>
+                    <div class="feature-item">CoreCtrl (GPU/CPU control)</div>
+                    <div class="feature-item">Gamescope compositor</div>
+                    <div class="feature-item">vkBasalt post-processing</div>
+                    <div class="feature-item">OpenRGB RGB control</div>
+                    <div class="feature-item">Piper gaming mouse config</div>
+                    <div class="feature-item">AntiMicroX controller mapping</div>
+                </div>
+            </div>
+
+            <div class="feature-category gaming">
+                <h3>🕹️ Launchers & Platforms</h3>
+                <div class="platforms-list">
+                    <div class="platform-item">Steam</div>
+                    <div class="platform-item">Lutris</div>
+                    <div class="platform-item">Heroic Launcher</div>
+                    <div class="platform-item">Bottles</div>
+                    <div class="platform-item">GameHub</div>
+                    <div class="platform-item">PlayOnLinux</div>
+                    <div class="platform-item">RetroArch</div>
+                    <div class="platform-item">itch.io</div>
+                    <div class="platform-item">MiniGalaxy</div>
+                    <div class="platform-item">Legendary</div>
+                    <div class="platform-item">PCSX2</div>
+                    <div class="platform-item">RPCS3</div>
+                    <div class="platform-item">Yuzu/Ryujinx</div>
+                    <div class="platform-item">Dolphin</div>
+                    <div class="platform-item">Cemu</div>
+                    <div class="platform-item">And 37+ more...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2 class="ai-title">🤖 Full AI/ML Development Stack</h2>
+            <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem; font-size: 1.1rem;">
+                Complete AI Developer Edition capabilities for serious machine learning work
+            </p>
+
+            <div class="feature-category ai">
+                <h3>🧠 Deep Learning Frameworks</h3>
+                <div class="frameworks-list">
+                    <div class="framework-item">PyTorch 2.1</div>
+                    <div class="framework-item">TensorFlow 2.14</div>
+                    <div class="framework-item">Keras 3.0</div>
+                    <div class="framework-item">JAX + Flax</div>
+                    <div class="framework-item">ONNX Runtime</div>
+                    <div class="framework-item">TensorRT 8.6</div>
+                    <div class="framework-item">PaddlePaddle</div>
+                    <div class="framework-item">MXNet</div>
+                    <div class="framework-item">Caffe2</div>
+                    <div class="framework-item">FastAI</div>
+                    <div class="framework-item">DGL</div>
+                    <div class="framework-item">Theano</div>
+                </div>
+            </div>
+
+            <div class="feature-category ai">
+                <h3>⚡ GPU Acceleration</h3>
+                <div class="features-grid">
+                    <div class="feature-item">CUDA 12.3 Toolkit</div>
+                    <div class="feature-item">cuDNN 8.9</div>
+                    <div class="feature-item">TensorRT 8.6 for inference</div>
+                    <div class="feature-item">NCCL for Multi-GPU</div>
+                    <div class="feature-item">cuBLAS & cuSPARSE</div>
+                    <div class="feature-item">RAPIDS Suite (GPU analytics)</div>
+                    <div class="feature-item">OpenCV 4.8 CUDA-accelerated</div>
+                    <div class="feature-item">ROCm for AMD GPUs</div>
+                </div>
+            </div>
+
+            <div class="feature-category ai">
+                <h3>🔬 ML Tools & Platforms</h3>
+                <div class="features-grid">
+                    <div class="feature-item">Hugging Face Transformers</div>
+                    <div class="feature-item">LangChain + LlamaIndex</div>
+                    <div class="feature-item">Stable Diffusion (game assets)</div>
+                    <div class="feature-item">ControlNet (art tools)</div>
+                    <div class="feature-item">Whisper (voice transcription)</div>
+                    <div class="feature-item">Bark (voice synthesis)</div>
+                    <div class="feature-item">GFPGAN (face restoration)</div>
+                    <div class="feature-item">YOLOv8/v9 object detection</div>
+                    <div class="feature-item">MLflow experiment tracking</div>
+                    <div class="feature-item">Weights & Biases</div>
+                    <div class="feature-item">Jupyter Lab notebooks</div>
+                    <div class="feature-item">Streamlit + Gradio</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🔥 AI + Gaming Fusion</h2>
+            <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem; font-size: 1.1rem;">
+                Exclusive features that combine AI power with gaming - only in Gamer + AI Edition
+            </p>
+
+            <div class="feature-category fusion">
+                <h3>🎯 AI-Powered Game Enhancement</h3>
+                <div class="features-grid">
+                    <div class="feature-item">AI-assisted game optimization (auto-tune settings)</div>
+                    <div class="feature-item">Neural upscaling for older games (ESRGAN, Real-ESRGAN)</div>
+                    <div class="feature-item">AI-powered game texture upscaling</div>
+                    <div class="feature-item">AI mods and enhancement support</div>
+                    <div class="feature-item">Smart game capture for training datasets</div>
+                    <div class="feature-item">Game replay analysis with ML</div>
+                    <div class="feature-item">Automated highlight detection</div>
+                    <div class="feature-item">AI-powered game testing tools</div>
+                    <div class="feature-item">AI NPC behavior modeling tools</div>
+                    <div class="feature-item">ML-powered performance prediction</div>
+                </div>
+            </div>
+
+            <div class="feature-category fusion">
+                <h3>📺 AI-Enhanced Streaming</h3>
+                <div class="features-grid">
+                    <div class="feature-item">Real-time background removal</div>
+                    <div class="feature-item">AI-powered camera effects</div>
+                    <div class="feature-item">Voice cloning for content creation</div>
+                    <div class="feature-item">Voice enhancement and noise removal</div>
+                    <div class="feature-item">Smart scene switching</div>
+                    <div class="feature-item">Automated highlight clipping</div>
+                    <div class="feature-item">AI chat interaction bots</div>
+                    <div class="feature-item">Deepfake avatar streaming</div>
+                    <div class="feature-item">Style transfer for webcam</div>
+                    <div class="feature-item">AI-generated overlays</div>
+                    <div class="feature-item">Smart donation alerts</div>
+                    <div class="feature-item">Real-time AI filters</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>⚡ Hybrid Performance System</h2>
+            <p style="text-align: center; color: var(--text-muted); margin-bottom: 2rem; font-size: 1.1rem;">
+                Smart GPU scheduling that lets you game and train ML models on the same machine
+            </p>
+
+            <div class="hybrid-grid">
+                <div class="hybrid-card">
+                    <h4>🎮 Smart Scheduler</h4>
+                    <p>AI workloads automatically pause when games launch. Training resumes seamlessly when you exit games. Zero configuration required.</p>
+                </div>
+                <div class="hybrid-card">
+                    <h4>💾 VRAM Management</h4>
+                    <p>Intelligent VRAM allocation between gaming and AI workloads. Smart memory swapping ensures both get optimal resources.</p>
+                </div>
+                <div class="hybrid-card">
+                    <h4>🔄 GPU Context Switching</h4>
+                    <p>Seamless GPU context switching with less than 500ms transition time. GPU context is preserved for quick resumption.</p>
+                </div>
+                <div class="hybrid-card">
+                    <h4>⚡ Priority System</h4>
+                    <p>Games always get absolute priority when running. No stuttering, no frame drops - gaming performance is never compromised.</p>
+                </div>
+                <div class="hybrid-card">
+                    <h4>🔥 Background Training</h4>
+                    <p>ML training automatically resumes when games close. Wake up to finished models after a gaming session.</p>
+                </div>
+                <div class="hybrid-card">
+                    <h4>🌡️ Thermal Management</h4>
+                    <p>Optimized cooling profiles for dual workloads. Different fan curves for gaming vs training to maximize hardware longevity.</p>
+                </div>
+            </div>
+
+            <div class="feature-category">
+                <h3>📊 Performance Specifications</h3>
+                <div class="features-grid">
+                    <div class="feature-item">Boot time: 28 seconds</div>
+                    <div class="feature-item">Idle memory: 1.4GB</div>
+                    <div class="feature-item">Installed size: 18GB</div>
+                    <div class="feature-item">Gaming FPS: 100-300+ (AI paused)</div>
+                    <div class="feature-item">Training speed: GPU-accelerated</div>
+                    <div class="feature-item">Input latency: <5ms gaming mode</div>
+                    <div class="feature-item">VRAM efficiency: Smart dual allocation</div>
+                    <div class="feature-item">Context switch: <500ms between modes</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🖥️ Aegis DeskLink Ultimate</h2>
+            <div class="desklink-card">
+                <h3>The Best of Gaming + Development</h3>
+                <p class="description">Ultra-low latency mouse and keyboard sharing meets cloud-ready development workflows. Control your gaming PC, dev machine, and cloud VMs with one setup.</p>
+                <div class="features-grid">
+                    <div class="feature-item">All Gamer features (ultra-low latency, RGB sync)</div>
+                    <div class="feature-item">All Developer features (SSH tunnels, remote dev)</div>
+                    <div class="feature-item">Ultra-low latency mode (<1ms)</div>
+                    <div class="feature-item">Gaming mouse support (up to 8000 DPI)</div>
+                    <div class="feature-item">Game controller sharing</div>
+                    <div class="feature-item">SSH tunnel support</div>
+                    <div class="feature-item">Remote development integration</div>
+                    <div class="feature-item">Gaming + AI workload switching</div>
+                    <div class="feature-item">GPU context preservation</div>
+                    <div class="feature-item">Smart VRAM management</div>
+                    <div class="feature-item">Dual-purpose profile switching</div>
+                    <div class="feature-item">Stream-to-train pipeline support</div>
+                    <div class="feature-item">Discord PTT key sync</div>
+                    <div class="feature-item">Jupyter notebook sharing</div>
+                    <div class="feature-item">Docker container access</div>
+                    <div class="feature-item">Works with gaming PCs, dev machines, cloud VMs</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📊 Why Gamer + AI Beats the Competition</h2>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>Aegis Gamer + AI</th>
+                        <th>SteamOS</th>
+                        <th>Ubuntu + Gaming</th>
+                        <th>Windows 11</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Gaming Performance</td>
+                        <td><span class="check">✓</span> <3ms latency</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="partial">~</span> Varies</td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                    <tr>
+                        <td>DLSS 3.5 + FSR 3.0</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="partial">~</span> Manual setup</td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                    <tr>
+                        <td>52+ Gaming Platforms</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="partial">~</span> Limited</td>
+                        <td><span class="partial">~</span> Manual setup</td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                    <tr>
+                        <td>Full AI/ML Stack</td>
+                        <td><span class="check">✓</span> 56+ frameworks</td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="partial">~</span> Manual setup</td>
+                        <td><span class="partial">~</span> WSL2 workaround</td>
+                    </tr>
+                    <tr>
+                        <td>CUDA 12.3 Native</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="check">✓</span></td>
+                    </tr>
+                    <tr>
+                        <td>Hybrid GPU Scheduling</td>
+                        <td><span class="check">✓</span> Smart auto-switch</td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="cross">✗</span></td>
+                    </tr>
+                    <tr>
+                        <td>AI Game Optimization</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="cross">✗</span></td>
+                    </tr>
+                    <tr>
+                        <td>Neural Upscaling (ESRGAN)</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="cross">✗</span></td>
+                        <td><span class="partial">~</span> Manual</td>
+                        <td><span class="partial">~</span> Manual</td>
+                    </tr>
+                    <tr>
+                        <td>Privacy Respecting</td>
+                        <td><span class="check">✓</span> No telemetry</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="partial">~</span></td>
+                        <td><span class="cross">✗</span></td>
+                    </tr>
+                    <tr>
+                        <td>Bloatware Free</td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="check">✓</span></td>
+                        <td><span class="partial">~</span></td>
+                        <td><span class="cross">✗</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>✅ Everything Included</h2>
+            <div class="feature-category">
+                <h3>From Basic Edition</h3>
+                <div class="features-grid">
+                    <div class="feature-item">500+ professional applications</div>
+                    <div class="feature-item">Complete creative suite (DaVinci, Blender, GIMP)</div>
+                    <div class="feature-item">Full development environment</div>
+                    <div class="feature-item">Security tools (ClamAV, firewalls, VPNs)</div>
+                    <div class="feature-item">12 desktop layouts</div>
+                    <div class="feature-item">Wine/Proton for Windows apps</div>
+                </div>
+            </div>
+            <div class="feature-category gaming">
+                <h3>From Gamer Edition</h3>
+                <div class="features-grid">
+                    <div class="feature-item">All 52+ gaming platforms</div>
+                    <div class="feature-item">Low-latency gaming kernel</div>
+                    <div class="feature-item">All emulators (RetroArch, Yuzu, RPCS3...)</div>
+                    <div class="feature-item">Streaming tools (OBS, Streamlabs)</div>
+                    <div class="feature-item">RGB and peripheral control</div>
+                    <div class="feature-item">Voice chat (Discord, TeamSpeak, Mumble)</div>
+                </div>
+            </div>
+            <div class="feature-category ai">
+                <h3>From AI Developer Edition</h3>
+                <div class="features-grid">
+                    <div class="feature-item">All 56+ ML frameworks</div>
+                    <div class="feature-item">Docker + container tools</div>
+                    <div class="feature-item">Jupyter Lab notebooks</div>
+                    <div class="feature-item">Full CUDA stack</div>
+                    <div class="feature-item">Big data tools (Spark, Dask)</div>
+                    <div class="feature-item">MLOps platforms (MLflow, W&B)</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="cta-section">
+            <h2>🎮🤖 Ready for the Ultimate Experience?</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 2rem; color: var(--text-muted);">
+                Join creators who demand both peak gaming and serious AI capabilities
+            </p>
+            <div class="btn-group">
+                <button class="btn" onclick="parent.checkout('gamer-ai', 'lifetime')">
+                    Get Lifetime License - $149
+                </button>
+                <button class="btn btn-secondary" onclick="parent.checkout('gamer-ai', 'annual')">
+                    Try Annual - $20/year
+                </button>
+            </div>
+            <p style="margin-top: 1.5rem; font-size: 0.9rem; color: var(--text-muted);">
+                30-day money back guarantee • Priority 24/7 support • Dedicated Discord channel
+            </p>
+        </div>
+
+        <div class="disclaimer">
+            <h4>Legal Disclaimer</h4>
+            <p>
+                Performance metrics are based on internal testing with representative hardware configurations. Actual performance may vary based on your specific hardware, game configurations, and ML workload requirements. 
+                "Better than SteamOS" claims refer to the combination of gaming performance AND AI development capabilities in a single operating system. 
+                Frame rates, latency measurements, and training speeds depend on GPU model, VRAM capacity, and workload complexity.
+                All trademarks mentioned (Steam, NVIDIA DLSS, AMD FSR, CUDA, PyTorch, TensorFlow, etc.) are property of their respective owners.
+                Aegis OS is an independent Linux distribution and is not affiliated with Valve, NVIDIA, AMD, or other mentioned companies.
+                The hybrid GPU scheduling feature requires compatible NVIDIA or AMD GPU with sufficient VRAM (8GB+ recommended for dual workloads).
+            </p>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <p>&copy; 2024 Aegis OS. All rights reserved.</p>
+        <p style="margin-top: 1rem; font-size: 0.85rem; opacity: 0.8;">
+            <a href="/">Home</a> • 
+            <a href="/gamer.html">Gamer Edition</a> • 
+            <a href="/ai.html">AI Developer Edition</a> • 
+            <a href="/server.html">Server Edition</a>
+        </p>
+        <p style="margin-top: 1rem; font-size: 0.8rem; opacity: 0.6;">
+            Performance claims based on internal testing. Results may vary based on hardware configuration and workload.
+        </p>
+    </footer>
+</body>
+</html>
