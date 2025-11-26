@@ -139,3 +139,67 @@ class AdminUser(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
+
+
+class Giveaway(db.Model):
+    """Giveaways with riddles for free licenses"""
+    __tablename__ = 'giveaways'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    riddle = db.Column(db.Text, nullable=False)
+    answer = db.Column(db.String(200), nullable=False)
+    prize_edition = db.Column(db.String(50), nullable=False)
+    prize_type = db.Column(db.String(20), default='lifetime')
+    max_winners = db.Column(db.Integer, default=1)
+    status = db.Column(db.String(20), default='active')
+    created_by = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    ends_at = db.Column(db.DateTime)
+    
+    entries = db.relationship('GiveawayEntry', backref='giveaway', lazy='dynamic', cascade='all, delete-orphan')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'riddle': self.riddle,
+            'prize_edition': self.prize_edition,
+            'prize_type': self.prize_type,
+            'max_winners': self.max_winners,
+            'status': self.status,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'ends_at': self.ends_at.isoformat() if self.ends_at else None,
+            'entry_count': self.entries.count(),
+            'winner_count': self.entries.filter_by(is_winner=True).count()
+        }
+
+
+class GiveawayEntry(db.Model):
+    """Entries for giveaways - can be email-based or account-based"""
+    __tablename__ = 'giveaway_entries'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    giveaway_id = db.Column(db.Integer, db.ForeignKey('giveaways.id'), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(100))
+    answer_submitted = db.Column(db.String(200))
+    is_correct = db.Column(db.Boolean, default=False)
+    is_winner = db.Column(db.Boolean, default=False)
+    license_key = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    notified_at = db.Column(db.DateTime)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'giveaway_id': self.giveaway_id,
+            'email': self.email,
+            'name': self.name,
+            'is_correct': self.is_correct,
+            'is_winner': self.is_winner,
+            'license_key': self.license_key,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'notified_at': self.notified_at.isoformat() if self.notified_at else None
+        }

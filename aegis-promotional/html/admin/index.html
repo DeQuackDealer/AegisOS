@@ -385,34 +385,30 @@
                 <div class="stat-card">
                     <div class="stat-header">
                         <div class="stat-icon users">👤</div>
-                        <span class="stat-change positive">+12%</span>
                     </div>
-                    <div class="stat-value" id="totalUsers">1,542</div>
-                    <div class="stat-label">Total Users</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon downloads">⬇️</div>
-                        <span class="stat-change positive">+8%</span>
-                    </div>
-                    <div class="stat-value" id="totalDownloads">3,847</div>
-                    <div class="stat-label">Total Downloads</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon revenue">💰</div>
-                        <span class="stat-change positive">+23%</span>
-                    </div>
-                    <div class="stat-value" id="totalRevenue">$12,459</div>
-                    <div class="stat-label">Monthly Revenue</div>
+                    <div class="stat-value" id="totalUsers">0</div>
+                    <div class="stat-label">Registered Users</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <div class="stat-icon licenses">🔑</div>
-                        <span class="stat-change positive">+5%</span>
                     </div>
-                    <div class="stat-value" id="activeLicenses">342</div>
-                    <div class="stat-label">Active Licenses</div>
+                    <div class="stat-value" id="activeLicenses">0</div>
+                    <div class="stat-label">Licenses Issued</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #ec4899, #8b5cf6);">🎁</div>
+                    </div>
+                    <div class="stat-value" id="activeGiveaways">0</div>
+                    <div class="stat-label">Active Giveaways</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon downloads">⬇️</div>
+                    </div>
+                    <div class="stat-value" id="totalDownloads">0</div>
+                    <div class="stat-label">Downloads</div>
                 </div>
             </div>
 
@@ -557,13 +553,14 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    document.getElementById('totalUsers').textContent = data.users?.toLocaleString() || '1,542';
-                    document.getElementById('totalDownloads').textContent = data.downloads?.toLocaleString() || '3,847';
-                    document.getElementById('totalRevenue').textContent = `$${(data.revenue || 12459).toLocaleString()}`;
-                    document.getElementById('activeLicenses').textContent = data.licenses?.toLocaleString() || '342';
+                    document.getElementById('totalUsers').textContent = (data.users || 0).toLocaleString();
+                    document.getElementById('totalDownloads').textContent = (data.downloads || 0).toLocaleString();
+                    document.getElementById('totalRevenue').textContent = '$' + (data.revenue || 0).toLocaleString();
+                    document.getElementById('activeLicenses').textContent = (data.licenses || 0).toLocaleString();
+                    document.getElementById('activeGiveaways').textContent = (data.active_giveaways || 0).toLocaleString();
                 }
             } catch (err) {
-                console.log('Using default stats');
+                console.log('Error loading stats:', err);
             }
         }
 

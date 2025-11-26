@@ -67,7 +67,7 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
 
-from models import db, User, License, StripeEvent, EmailLog, AdminUser
+from models import db, User, License, StripeEvent, EmailLog, AdminUser, Giveaway, GiveawayEntry
 db.init_app(app)
 
 with app.app_context():
@@ -3733,20 +3733,6 @@ def payment_success():
 ADMIN_TOKENS = {}
 ADMIN_SESSION_DURATION = timedelta(hours=8)
 
-# Admin stats storage
-ADMIN_STATS = {
-    'users': 1542,
-    'downloads': 3847,
-    'revenue': 12459,
-    'licenses': 342
-}
-
-# Admin licenses storage
-ADMIN_LICENSES = []
-
-# Giveaways storage
-ADMIN_GIVEAWAYS = []
-
 # Admin authentication
 def verify_admin_token(token: str) -> dict | None:
     """Verify admin JWT token"""
@@ -4007,133 +3993,242 @@ def admin_logout():
 @app.route('/api/admin/stats', methods=['GET'])
 @require_admin
 def admin_dashboard_stats():
-    """Get admin dashboard statistics"""
-    return jsonify({
-        'users': ADMIN_STATS['users'],
-        'downloads': ADMIN_STATS['downloads'],
-        'revenue': ADMIN_STATS['revenue'],
-        'licenses': ADMIN_STATS['licenses'],
-        'active_giveaways': len([g for g in ADMIN_GIVEAWAYS if g.get('active')]),
-        'pending_winners': 0
-    }), 200
+    """Get admin dashboard statistics from database"""
+    try:
+        users_count = User.query.count()
+        licenses_count = License.query.count()
+        active_giveaways_count = Giveaway.query.filter_by(status='active').count()
+        downloads_count = EmailLog.query.filter(EmailLog.email_type.ilike('%download%')).count()
+        
+        return jsonify({
+            'users': users_count,
+            'downloads': downloads_count,
+            'revenue': 0,
+            'licenses': licenses_count,
+            'active_giveaways': active_giveaways_count,
+            'pending_winners': 0
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching admin stats: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Admin licenses endpoints
 @app.route('/api/admin/licenses', methods=['GET'])
 @require_admin
 def admin_get_licenses():
-    """Get all licenses"""
-    # Combine demo licenses with admin-created licenses
-    all_licenses = []
+    """Get all licenses from database and demo licenses"""
+    try:
+        all_licenses = []
 
-    for key, data in DEMO_LICENSES.items():
-        all_licenses.append({
-            'key': key,
-            'edition': data['edition'],
-            'tier': data['tier'],
-            'expires': data['expires'],
-            'activations': len(data['hardware_ids']),
-            'max_activations': data['max_activations'],
-            'status': 'active' if datetime.fromisoformat(data['expires']) > datetime.now() else 'expired'
-        })
+        for key, data in DEMO_LICENSES.items():
+            all_licenses.append({
+                'key': key,
+                'edition': data['edition'],
+                'tier': data['tier'],
+                'expires': data['expires'],
+                'activations': len(data['hardware_ids']),
+                'max_activations': data['max_activations'],
+                'status': 'active' if datetime.fromisoformat(data['expires']) > datetime.now() else 'expired'
+            })
 
-    for lic in ADMIN_LICENSES:
-        all_licenses.append(lic)
+        db_licenses = License.query.all()
+        for lic in db_licenses:
+            all_licenses.append(lic.to_dict())
 
-    return jsonify({'licenses': all_licenses}), 200
+        return jsonify({'licenses': all_licenses}), 200
+    except Exception as e:
+        logger.error(f"Error fetching licenses: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/licenses', methods=['POST'])
 @require_admin
 def admin_create_license():
-    """Create a new license"""
-    data = request.json or {}
-    key = data.get('key', '')
-    edition = data.get('edition', 'basic')
-    license_type = data.get('type', 'lifetime')
-    email = data.get('email', '')
-    max_activations = data.get('max_activations', 5)
-    notes = data.get('notes', '')
+    """Create a new license in database"""
+    try:
+        data = request.json or {}
+        key = data.get('key', '') or generate_license_key(data.get('edition', 'basic'))
+        edition = data.get('edition', 'basic')
+        license_type = data.get('type', 'lifetime')
+        email = data.get('email', '')
 
-    # Calculate expiry based on type
-    if license_type == 'lifetime':
-        expires = (datetime.now() + timedelta(days=36500)).isoformat()
-    elif license_type == 'annual':
-        expires = (datetime.now() + timedelta(days=365)).isoformat()
-    else:  # trial
-        expires = (datetime.now() + timedelta(days=30)).isoformat()
+        if license_type == 'lifetime':
+            expires = datetime.now() + timedelta(days=36500)
+        elif license_type == 'annual':
+            expires = datetime.now() + timedelta(days=365)
+        else:
+            expires = datetime.now() + timedelta(days=30)
 
-    license_data = {
-        'key': key,
-        'edition': edition,
-        'tier': license_type,
-        'expires': expires,
-        'email': email,
-        'max_activations': max_activations,
-        'activations': 0,
-        'notes': notes,
-        'status': 'active',
-        'created': datetime.now().isoformat(),
-        'created_by': request.admin_user
-    }
+        new_license = License(
+            license_key=key,
+            edition=edition,
+            license_type=license_type,
+            customer_email=email,
+            status='active',
+            expires_at=expires
+        )
+        db.session.add(new_license)
+        db.session.commit()
 
-    ADMIN_LICENSES.append(license_data)
-    ADMIN_STATS['licenses'] += 1
+        tamper_protected_audit_log("ADMIN_LICENSE_CREATED", {
+            "key": key[:8] + "...",
+            "edition": edition,
+            "by": request.admin_user
+        }, "INFO")
 
-    tamper_protected_audit_log("ADMIN_LICENSE_CREATED", {
-        "key": key[:8] + "...",
-        "edition": edition,
-        "by": request.admin_user
-    }, "INFO")
-
-    return jsonify({'success': True, 'license': license_data}), 201
+        return jsonify({'success': True, 'license': new_license.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating license: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/licenses/<key>/revoke', methods=['POST'])
 @require_admin
 def admin_revoke_license(key):
-    """Revoke a license"""
-    for lic in ADMIN_LICENSES:
-        if lic['key'] == key:
-            lic['status'] = 'revoked'
+    """Revoke a license in database"""
+    try:
+        license_record = License.query.filter_by(license_key=key).first()
+        if license_record:
+            license_record.status = 'revoked'
+            db.session.commit()
             tamper_protected_audit_log("ADMIN_LICENSE_REVOKED", {"key": key[:8] + "..."}, "HIGH")
             return jsonify({'success': True}), 200
 
-    return jsonify({'error': 'License not found'}), 404
+        return jsonify({'error': 'License not found'}), 404
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error revoking license: {e}")
+        return jsonify({'error': str(e)}), 500
 
 # Admin giveaways endpoints
 @app.route('/api/admin/giveaways', methods=['GET'])
 @require_admin
-def admin_get_giveaways():
-    """Get all giveaways"""
-    return jsonify({'giveaways': ADMIN_GIVEAWAYS}), 200
+def admin_list_giveaways():
+    """List all giveaways"""
+    try:
+        giveaways = Giveaway.query.order_by(Giveaway.created_at.desc()).all()
+        return jsonify({'giveaways': [g.to_dict() for g in giveaways]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/admin/giveaways', methods=['POST'])
 @require_admin
 def admin_create_giveaway():
-    """Create a new giveaway"""
+    """Create a new giveaway with riddle"""
     data = request.json or {}
+    title = str(data.get('title', '')).strip()
+    riddle = str(data.get('riddle', '')).strip()
+    answer = str(data.get('answer', '')).strip().lower()
+    prize_edition = str(data.get('prize_edition', 'Basic')).strip()
+    prize_type = str(data.get('prize_type', 'lifetime')).strip()
+    max_winners = int(data.get('max_winners', 1))
+    
+    if not title or not riddle or not answer:
+        return jsonify({'error': 'Title, riddle, and answer are required'}), 400
+    
+    try:
+        giveaway = Giveaway(
+            title=title,
+            riddle=riddle,
+            answer=answer,
+            prize_edition=prize_edition,
+            prize_type=prize_type,
+            max_winners=max_winners,
+            created_by=request.admin_user,
+            status='active'
+        )
+        db.session.add(giveaway)
+        db.session.commit()
+        return jsonify({'message': 'Giveaway created', 'giveaway': giveaway.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
-    giveaway = {
-        'id': secrets.token_urlsafe(8),
-        'title': data.get('title', 'New Giveaway'),
-        'description': data.get('description', ''),
-        'edition': data.get('edition', 'basic'),
-        'winners_count': data.get('winners', 5),
-        'start_date': data.get('start', datetime.now().isoformat()),
-        'end_date': data.get('end', (datetime.now() + timedelta(days=7)).isoformat()),
-        'entries': [],
-        'winners': [],
-        'active': True,
-        'created': datetime.now().isoformat(),
-        'created_by': request.admin_user
-    }
+@app.route('/api/admin/giveaways/<int:giveaway_id>', methods=['DELETE'])
+@require_admin
+def admin_delete_giveaway(giveaway_id):
+    """Delete a giveaway"""
+    try:
+        giveaway = Giveaway.query.get(giveaway_id)
+        if not giveaway:
+            return jsonify({'error': 'Giveaway not found'}), 404
+        db.session.delete(giveaway)
+        db.session.commit()
+        return jsonify({'message': 'Giveaway deleted'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
-    ADMIN_GIVEAWAYS.append(giveaway)
+@app.route('/api/admin/giveaways/<int:giveaway_id>/entries', methods=['GET'])
+@require_admin
+def admin_list_giveaway_entries(giveaway_id):
+    """List entries for a giveaway"""
+    try:
+        giveaway = Giveaway.query.get(giveaway_id)
+        if not giveaway:
+            return jsonify({'error': 'Giveaway not found'}), 404
+        entries = giveaway.entries.order_by(GiveawayEntry.created_at.desc()).all()
+        return jsonify({
+            'giveaway': giveaway.to_dict(),
+            'entries': [e.to_dict() for e in entries]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    tamper_protected_audit_log("ADMIN_GIVEAWAY_CREATED", {
-        "title": giveaway['title'][:30],
-        "edition": giveaway['edition']
-    }, "INFO")
+@app.route('/api/admin/giveaways/<int:giveaway_id>/add-winner', methods=['POST'])
+@require_admin  
+def admin_add_giveaway_winner(giveaway_id):
+    """Manually add a winner by email"""
+    data = request.json or {}
+    email = str(data.get('email', '')).strip().lower()
+    name = str(data.get('name', '')).strip()
+    
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+    
+    try:
+        giveaway = Giveaway.query.get(giveaway_id)
+        if not giveaway:
+            return jsonify({'error': 'Giveaway not found'}), 404
+        
+        existing = GiveawayEntry.query.filter_by(giveaway_id=giveaway_id, email=email).first()
+        if existing:
+            if existing.is_winner:
+                return jsonify({'error': 'This email is already a winner'}), 400
+            existing.is_winner = True
+            existing.is_correct = True
+            existing.license_key = generate_license_key(giveaway.prize_edition)
+            db.session.commit()
+            return jsonify({'message': 'Existing entry marked as winner', 'entry': existing.to_dict()})
+        
+        entry = GiveawayEntry(
+            giveaway_id=giveaway_id,
+            email=email,
+            name=name,
+            is_correct=True,
+            is_winner=True,
+            license_key=generate_license_key(giveaway.prize_edition)
+        )
+        db.session.add(entry)
+        db.session.commit()
+        return jsonify({'message': 'Winner added', 'entry': entry.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
-    return jsonify({'success': True, 'giveaway': giveaway}), 201
+@app.route('/api/admin/giveaways/<int:giveaway_id>/close', methods=['POST'])
+@require_admin
+def admin_close_giveaway(giveaway_id):
+    """Close a giveaway"""
+    try:
+        giveaway = Giveaway.query.get(giveaway_id)
+        if not giveaway:
+            return jsonify({'error': 'Giveaway not found'}), 404
+        giveaway.status = 'closed'
+        db.session.commit()
+        return jsonify({'message': 'Giveaway closed', 'giveaway': giveaway.to_dict()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 # Admin pages endpoints
 @app.route('/api/admin/pages', methods=['GET'])
