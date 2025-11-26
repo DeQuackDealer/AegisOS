@@ -196,71 +196,138 @@ body {
 </style>
 
 <script language="VBScript">
-Dim wmi, shell, selectedDrive, selectedDriveName
+Option Explicit
+
+Dim wmi, shell
+Dim driveCount, selectedIndex
+Dim driveIds(20), driveNames(20), driveSizes(20)
 
 Sub Window_OnLoad()
+    On Error Resume Next
     window.resizeTo 500, 480
-    CenterWindow()
+    CenterWindow
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
     Set shell = CreateObject("WScript.Shell")
-    selectedDrive = ""
-    RefreshDrives()
+    driveCount = 0
+    selectedIndex = -1
+    RefreshDrives
 End Sub
 
 Sub CenterWindow()
     Dim sw, sh
+    On Error Resume Next
     sw = window.screen.availWidth
     sh = window.screen.availHeight
     window.moveTo (sw - 500) / 2, (sh - 480) / 2
 End Sub
 
 Sub RefreshDrives()
-    Dim driveList, drives, drive, sizeGB, html
+    Dim driveList, drives, drive, sizeGB, html, i
+    On Error Resume Next
+    
     Set driveList = document.getElementById("driveList")
     html = ""
+    driveCount = 0
+    selectedIndex = -1
+    document.getElementById("btnNext").disabled = True
+    
+    If wmi Is Nothing Then
+        Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    End If
+    
+    If Err.Number <> 0 Then
+        html = "<div class='no-drives'>Error accessing system.<br>Please run as Administrator.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
+        driveList.innerHTML = html
+        Err.Clear
+        Exit Sub
+    End If
     
     Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media'")
     
+    If Err.Number <> 0 Then
+        html = "<div class='no-drives'>Error scanning drives.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
+        driveList.innerHTML = html
+        Err.Clear
+        Exit Sub
+    End If
+    
+    i = 0
     For Each drive In drives
-        sizeGB = FormatNumber(drive.Size / 1073741824, 1)
-        html = html & "<div class='drive-item' onclick='SelectDrive """ & drive.DeviceID & """, """ & drive.Caption & " (" & sizeGB & " GB)" & """'>"
-        html = html & "<div class='drive-icon'>&#128190;</div>"
-        html = html & "<div class='drive-info'>"
-        html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
-        html = html & "<div class='drive-size'>" & sizeGB & " GB</div>"
-        html = html & "</div></div>"
+        If i <= 20 Then
+            sizeGB = FormatNumber(drive.Size / 1073741824, 1)
+            driveIds(i) = drive.DeviceID
+            driveNames(i) = drive.Caption
+            driveSizes(i) = sizeGB
+            
+            html = html & "<div class='drive-item' id='drv_" & i & "'>"
+            html = html & "<div class='drive-icon'>&#128190;</div>"
+            html = html & "<div class='drive-info'>"
+            html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
+            html = html & "<div class='drive-size'>" & sizeGB & " GB</div>"
+            html = html & "</div></div>"
+            
+            i = i + 1
+        End If
     Next
     
-    If drives.Count = 0 Then
+    driveCount = i
+    
+    If driveCount = 0 Then
         html = "<div class='no-drives'>No USB drives found.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
     End If
     
     driveList.innerHTML = html
 End Sub
 
-Sub SelectDrive(driveId, driveName)
-    Dim items, i
-    selectedDrive = driveId
-    selectedDriveName = driveName
+Sub SelectDriveByIndex(idx)
+    Dim i, elem
+    On Error Resume Next
     
-    Set items = document.getElementsByClassName("drive-item")
-    For i = 0 To items.length - 1
-        items(i).className = "drive-item"
+    If idx < 0 Or idx >= driveCount Then Exit Sub
+    
+    For i = 0 To driveCount - 1
+        Set elem = document.getElementById("drv_" & i)
+        If Not elem Is Nothing Then
+            elem.className = "drive-item"
+        End If
     Next
     
-    event.srcElement.className = "drive-item selected"
-    If event.srcElement.parentElement.className = "drive-info" Then
-        event.srcElement.parentElement.parentElement.className = "drive-item selected"
+    Set elem = document.getElementById("drv_" & idx)
+    If Not elem Is Nothing Then
+        elem.className = "drive-item selected"
     End If
     
+    selectedIndex = idx
     document.getElementById("btnNext").disabled = False
 End Sub
 
-Sub StartCreation()
-    If selectedDrive = "" Then Exit Sub
+Sub DriveListClick()
+    Dim src, id, idx
+    On Error Resume Next
     
-    Dim msg
-    msg = "All data on " & selectedDriveName & " will be erased." & vbCrLf & vbCrLf & "Continue?"
+    Set src = window.event.srcElement
+    
+    Do While Not src Is Nothing
+        id = src.id
+        If Len(id) > 4 Then
+            If Left(id, 4) = "drv_" Then
+                idx = CInt(Mid(id, 5))
+                SelectDriveByIndex idx
+                Exit Do
+            End If
+        End If
+        Set src = src.parentElement
+    Loop
+End Sub
+
+Sub StartCreation()
+    Dim msg, driveName
+    On Error Resume Next
+    
+    If selectedIndex < 0 Then Exit Sub
+    
+    driveName = driveNames(selectedIndex) & " (" & driveSizes(selectedIndex) & " GB)"
+    msg = "All data on " & driveName & " will be erased." & vbCrLf & vbCrLf & "Continue?"
     If MsgBox(msg, vbYesNo + vbExclamation, "Aegis OS") = vbNo Then Exit Sub
     
     document.getElementById("step1").className = "hidden"
@@ -268,19 +335,21 @@ Sub StartCreation()
     document.getElementById("btnNext").className = "hidden"
     UpdateDots 2
     
-    RunProgress()
+    window.setTimeout "RunProgressStep(0)", 50
 End Sub
 
-Sub RunProgress()
-    Dim i
-    For i = 0 To 100
-        UpdateProgress i
-        Pause 80
-    Next
-    ShowComplete()
+Sub RunProgressStep(pct)
+    On Error Resume Next
+    UpdateProgress pct
+    If pct < 100 Then
+        window.setTimeout "RunProgressStep(" & (pct + 1) & ")", 80
+    Else
+        ShowComplete
+    End If
 End Sub
 
 Sub UpdateProgress(pct)
+    On Error Resume Next
     document.getElementById("progressBar").style.width = pct & "%"
     document.getElementById("progressPercent").innerText = pct & "%"
     
@@ -296,6 +365,7 @@ Sub UpdateProgress(pct)
 End Sub
 
 Sub ShowComplete()
+    On Error Resume Next
     document.getElementById("step2").className = "hidden"
     document.getElementById("step3").className = "progress-section active"
     document.getElementById("btnFinish").className = "btn btn-primary"
@@ -304,6 +374,7 @@ End Sub
 
 Sub UpdateDots(step)
     Dim dots, i
+    On Error Resume Next
     Set dots = document.getElementsByClassName("dot")
     For i = 0 To dots.length - 1
         If i < step - 1 Then
@@ -316,20 +387,8 @@ Sub UpdateDots(step)
     Next
 End Sub
 
-Sub Pause(ms)
-    Dim start
-    start = Timer
-    Do While Timer < start + (ms / 1000)
-        DoEvents
-    Loop
-End Sub
-
-Sub DoEvents()
-    On Error Resume Next
-    CreateObject("WScript.Shell").Run "cmd /c exit", 0, True
-End Sub
-
 Sub CloseApp()
+    On Error Resume Next
     window.close
 End Sub
 </script>
@@ -363,7 +422,7 @@ End Sub
                 Make sure to back up any important files before continuing.
             </div>
             
-            <div id="driveList" class="drive-list">
+            <div id="driveList" class="drive-list" onclick="DriveListClick()">
                 <div class="no-drives">Scanning for USB drives...</div>
             </div>
             
