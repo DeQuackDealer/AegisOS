@@ -3403,123 +3403,189 @@ def payment_success():
             }}
             .container {{
                 background: white;
-                padding: 3rem;
+                padding: 2.5rem;
                 border-radius: 16px;
                 box-shadow: 0 20px 60px rgba(0,0,0,0.3);
                 text-align: center;
-                max-width: 500px;
+                max-width: 550px;
                 width: 100%;
             }}
+            .success-header {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 12px;
+                margin-bottom: 1rem;
+            }}
             .success-icon {{
-                width: 80px;
-                height: 80px;
+                width: 50px;
+                height: 50px;
                 background: #10b981;
                 border-radius: 50%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                margin: 0 auto 1.5rem;
-                font-size: 40px;
+                font-size: 28px;
+                color: white;
             }}
             h1 {{
                 color: #1f2937;
-                margin: 0 0 1rem;
-                font-size: 2rem;
+                margin: 0;
+                font-size: 1.8rem;
             }}
             .edition-badge {{
                 display: inline-block;
                 background: linear-gradient(135deg, #6366f1, #8b5cf6);
                 color: white;
-                padding: 0.5rem 1.5rem;
+                padding: 0.4rem 1.2rem;
                 border-radius: 20px;
                 font-weight: 600;
+                font-size: 0.9rem;
                 margin-bottom: 1.5rem;
             }}
-            p {{
-                color: #6b7280;
-                font-size: 1.1rem;
-                margin: 1rem 0;
-                line-height: 1.6;
+            .license-box {{
+                background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+                border: 3px solid #10b981;
+                border-radius: 16px;
+                padding: 25px;
+                margin: 20px 0;
             }}
-            .next-steps {{
-                background: #f3f4f6;
+            .license-label {{
+                color: #065f46;
+                font-weight: 700;
+                font-size: 1.1rem;
+                margin: 0 0 12px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }}
+            .license-key {{
+                font-size: 1.8rem;
+                font-weight: bold;
+                color: #1f2937;
+                letter-spacing: 3px;
+                margin: 0;
+                font-family: 'Courier New', monospace;
+                background: white;
+                padding: 15px 20px;
+                border-radius: 10px;
+                border: 2px dashed #10b981;
+                user-select: all;
+                cursor: pointer;
+            }}
+            .license-hint {{
+                color: #059669;
+                font-size: 0.85rem;
+                margin-top: 12px;
+            }}
+            .download-section {{
+                background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                border-radius: 16px;
+                padding: 25px;
+                margin: 20px 0;
+            }}
+            .download-btn {{
+                display: inline-block;
+                background: white;
+                color: #6366f1;
+                padding: 16px 40px;
                 border-radius: 12px;
-                padding: 1.5rem;
-                margin: 2rem 0;
+                text-decoration: none;
+                font-weight: 700;
+                font-size: 1.1rem;
+                transition: all 0.3s;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            }}
+            .download-btn:hover {{
+                transform: translateY(-3px);
+                box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+            }}
+            .download-info {{
+                color: rgba(255,255,255,0.9);
+                font-size: 0.85rem;
+                margin-top: 12px;
+            }}
+            .steps {{
+                background: #f9fafb;
+                border-radius: 12px;
+                padding: 20px;
+                margin: 20px 0;
                 text-align: left;
             }}
-            .next-steps h3 {{
-                margin-top: 0;
+            .steps h3 {{
+                margin: 0 0 12px;
                 color: #1f2937;
+                font-size: 1rem;
             }}
-            .next-steps ol {{
-                margin: 0.5rem 0;
+            .steps ol {{
+                margin: 0;
                 padding-left: 1.5rem;
                 color: #4b5563;
+                font-size: 0.95rem;
             }}
-            .next-steps li {{
-                margin: 0.5rem 0;
-            }}
-            .button {{
-                display: inline-block;
-                background: linear-gradient(135deg, #6366f1, #8b5cf6);
-                color: white;
-                padding: 1rem 2.5rem;
-                border-radius: 10px;
-                text-decoration: none;
-                margin-top: 1rem;
-                font-weight: 600;
-                transition: transform 0.2s;
-            }}
-            .button:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);
+            .steps li {{
+                margin: 8px 0;
             }}
             .test-mode {{
                 background: #fef3c7;
                 color: #92400e;
-                padding: 0.75rem;
+                padding: 10px;
                 border-radius: 8px;
                 margin-bottom: 1rem;
-                font-size: 0.9rem;
+                font-size: 0.85rem;
+            }}
+            .footer-link {{
+                display: inline-block;
+                color: #6366f1;
+                text-decoration: none;
+                font-weight: 500;
+                margin-top: 15px;
+            }}
+            .disclaimer {{
+                margin-top: 25px;
+                padding: 15px;
+                border-top: 1px solid #e5e7eb;
+                color: #9ca3af;
+                font-size: 11px;
             }}
         </style>
     </head>
     <body>
         <div class="container">
-            <div class="success-icon">✓</div>
-            <h1>Payment Successful!</h1>
+            <div class="success-header">
+                <div class="success-icon">✓</div>
+                <h1>Payment Successful!</h1>
+            </div>
 
-            {'<div class="test-mode">⚠️ TEST MODE: This was a test payment. No real charge was made.</div>' if os.getenv('REPLIT_DEPLOYMENT') != '1' else ''}
+            {'<div class="test-mode">TEST MODE - No real charge was made</div>' if os.getenv('REPLIT_DEPLOYMENT') != '1' else ''}
 
             <div class="edition-badge">Aegis OS {tier_names.get(tier, tier.capitalize())} Edition</div>
 
-            <p>Thank you for your purchase! {'Your payment has been confirmed.' if payment_verified else ''}</p>
-
-            {f'''<div style="background: #ecfdf5; border: 2px solid #10b981; border-radius: 12px; padding: 20px; margin: 20px 0;">
-                <p style="color: #065f46; margin: 0 0 10px; font-weight: 600;">Your License Key:</p>
-                <p style="font-size: 1.5rem; font-weight: bold; color: #1f2937; letter-spacing: 2px; margin: 0; font-family: monospace;">{license_key}</p>
-                <p style="color: #6b7280; font-size: 0.85rem; margin-top: 10px;">Save this key! It has also been sent to your email.</p>
+            {f'''<div class="license-box">
+                <p class="license-label">Your License Key</p>
+                <p class="license-key" onclick="navigator.clipboard.writeText('{license_key}'); this.style.background='#d1fae5'; setTimeout(() => this.style.background='white', 500);">{license_key}</p>
+                <p class="license-hint">Click to copy - Also sent to {customer_email}</p>
             </div>''' if license_key else ''}
 
-            <div class="next-steps">
-                <h3>Next Steps:</h3>
+            <div class="download-section">
+                <a href="/download-installer" class="download-btn">Download Installer</a>
+                <p class="download-info">Cross-platform Python installer for Windows, Mac, and Linux</p>
+            </div>
+
+            <div class="steps">
+                <h3>Quick Start:</h3>
                 <ol>
-                    <li>{'Your license key is shown above and has been emailed to ' + customer_email if license_key else 'Check ' + customer_email + ' for your license key'}</li>
-                    <li>Download the Aegis OS Installer</li>
-                    <li>Run the installer and enter your license key</li>
-                    <li>Create a bootable USB drive</li>
+                    <li>Run the installer (requires Python 3.6+)</li>
+                    <li>Enter your license key when prompted</li>
+                    <li>Select a USB drive (8GB+ recommended)</li>
+                    <li>Boot from USB to install Aegis OS</li>
                 </ol>
             </div>
 
-            <a href="/download-installer" class="button" style="margin-right: 10px;">Download Installer</a>
-            <a href="/" class="button" style="background: #6b7280;">Back to Home</a>
+            <a href="/" class="footer-link">Back to Home</a>
 
-            <div style="margin-top: 30px; padding: 15px; border-top: 1px solid #e5e7eb;">
-                <p style="color: #9ca3af; font-size: 12px; text-align: center;">
-                    TECHNICAL PREVIEW - This software is provided "as is" without warranty of any kind. No support guaranteed.<br>
-                    Anything represented may not be true. Use at your own risk. Contact: riley.liang@hotmail.com
-                </p>
+            <div class="disclaimer">
+                TECHNICAL PREVIEW - This software is provided "as is" without warranty of any kind. No support guaranteed.<br>
+                Anything represented may not be true. Use at your own risk. Contact: riley.liang@hotmail.com
             </div>
         </div>
     </body>
