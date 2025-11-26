@@ -983,15 +983,6 @@ def page_developers():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
-@app.route('/media-creator')
-def media_creator():
-    """Aegis Media Creation Tool page"""
-    try:
-        filepath = os.path.join(BASE_DIR, 'html', 'media-creator.html')
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
-    except Exception as e:
-        return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/api/validate-license', methods=['POST'])
 def validate_license():
