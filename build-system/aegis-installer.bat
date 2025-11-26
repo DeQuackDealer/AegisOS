@@ -6,10 +6,10 @@ color 0B
 :header
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║            AEGIS OS INSTALLER v1.0                       ║
-echo  ║        Professional Linux for Enterprise                 ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo             AEGIS OS INSTALLER v1.0
+echo         Professional Linux for Enterprise
+echo  ============================================================
 echo.
 
 :menu
@@ -33,26 +33,22 @@ goto menu
 :activate
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║              LICENSE ACTIVATION                          ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo               LICENSE ACTIVATION
+echo  ============================================================
 echo.
 echo  Enter your license key (format: XXXX-XXXX-XXXX-XXXX)
 echo.
 set /p LICENSE_KEY="  License Key: "
 
-:: Basic format validation
-echo %LICENSE_KEY% | findstr /R "^[A-Z][A-Z][A-Z][A-Z]-[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]-[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]-[A-Z0-9][A-Z0-9][A-Z0-9][A-Z0-9]$" >nul 2>&1
-if %errorlevel% neq 0 (
+if "%LICENSE_KEY%"=="" (
     echo.
-    echo  [ERROR] Invalid license key format!
-    echo  Please check your key and try again.
+    echo  [ERROR] No license key entered!
     echo.
     pause
     goto header
 )
 
-:: Determine edition from prefix
 set PREFIX=%LICENSE_KEY:~0,4%
 set EDITION=Unknown
 
@@ -65,16 +61,15 @@ if "%PREFIX%"=="SERV" set EDITION=Server Edition
 if "%PREFIX%"=="FREE" set EDITION=Freemium Edition
 
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║              LICENSE VALIDATED                           ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo               LICENSE VALIDATED
+echo  ============================================================
 echo.
 echo  License Key: %LICENSE_KEY%
 echo  Edition:     %EDITION%
 echo  Status:      ACTIVE
 echo.
 
-:: Save license to file for later use
 echo %LICENSE_KEY% > "%USERPROFILE%\aegis-license.key"
 echo  License saved to: %USERPROFILE%\aegis-license.key
 echo.
@@ -86,9 +81,9 @@ goto header
 :download
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║              DOWNLOAD AEGIS OS                           ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo               DOWNLOAD AEGIS OS
+echo  ============================================================
 echo.
 echo  Select your edition to download:
 echo.
@@ -108,13 +103,12 @@ echo.
 echo  Opening download page in your browser...
 echo.
 
-:: Open download page based on selection
-if "%edition%"=="1" start https://aegis-os.replit.app/freemium
-if "%edition%"=="2" start https://aegis-os.replit.app/pricing
-if "%edition%"=="3" start https://aegis-os.replit.app/pricing
-if "%edition%"=="4" start https://aegis-os.replit.app/pricing
-if "%edition%"=="5" start https://aegis-os.replit.app/pricing
-if "%edition%"=="6" start https://aegis-os.replit.app/pricing
+if "%edition%"=="1" start "" "https://aegis-os.replit.app/freemium"
+if "%edition%"=="2" start "" "https://aegis-os.replit.app/pricing"
+if "%edition%"=="3" start "" "https://aegis-os.replit.app/pricing"
+if "%edition%"=="4" start "" "https://aegis-os.replit.app/pricing"
+if "%edition%"=="5" start "" "https://aegis-os.replit.app/pricing"
+if "%edition%"=="6" start "" "https://aegis-os.replit.app/pricing"
 
 echo  Browser opened. Complete purchase on the website if needed.
 echo.
@@ -124,9 +118,9 @@ goto header
 :usb
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║           CREATE BOOTABLE USB                            ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo            CREATE BOOTABLE USB
+echo  ============================================================
 echo.
 echo  To create a bootable USB drive, we recommend using Rufus:
 echo.
@@ -140,7 +134,7 @@ echo.
 set /p rufus="  Open Rufus website? (Y/N): "
 
 if /i "%rufus%"=="Y" (
-    start https://rufus.ie
+    start "" "https://rufus.ie"
     echo.
     echo  Rufus website opened in your browser.
 )
@@ -154,9 +148,9 @@ goto header
 :requirements
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║           SYSTEM REQUIREMENTS                            ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo            SYSTEM REQUIREMENTS
+echo  ============================================================
 echo.
 echo  MINIMUM REQUIREMENTS:
 echo  ----------------------
@@ -185,9 +179,9 @@ goto header
 :exit
 cls
 echo.
-echo  ╔══════════════════════════════════════════════════════════╗
-echo  ║           THANK YOU FOR CHOOSING AEGIS OS                ║
-echo  ╚══════════════════════════════════════════════════════════╝
+echo  ============================================================
+echo        THANK YOU FOR CHOOSING AEGIS OS
+echo  ============================================================
 echo.
 echo  TECHNICAL PREVIEW - No warranty. Use at your own risk.
 echo  Contact: riley.liang@hotmail.com

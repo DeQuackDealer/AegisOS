@@ -1630,10 +1630,9 @@ if __name__ == "__main__":
         return jsonify({'error': 'Download failed'}), 500
 
 @app.route('/download-installer')
-@app.route('/download-installer.exe')
 @app.route('/download-installer.bat')
 def download_windows_installer():
-    """Download the Windows installer (.bat file that acts like .exe)"""
+    """Download the Windows installer (.bat file - double-click to run on Windows)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.bat')
         
@@ -1643,10 +1642,10 @@ def download_windows_installer():
             
             return Response(
                 script_content,
-                mimetype='application/x-msdos-program',
+                mimetype='application/x-bat',
                 headers={
-                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.exe',
-                    'Content-Type': 'application/octet-stream'
+                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.bat',
+                    'Content-Type': 'application/x-bat; charset=utf-8'
                 }
             )
         else:
@@ -3594,8 +3593,8 @@ def payment_success():
             </div>''' if license_key else ''}
 
             <div class="download-section">
-                <a href="/download-installer.exe" class="download-btn">Download Installer (.exe)</a>
-                <p class="download-info">Windows installer - Just double-click to run</p>
+                <a href="/download-installer.bat" class="download-btn">Download Installer</a>
+                <p class="download-info">Windows installer - Double-click to run</p>
             </div>
 
             <div class="steps">
