@@ -11,8 +11,16 @@ import os, json, hashlib, uuid, time, logging, hmac, secrets, re
 import jwt
 from typing import Dict, Tuple, Any
 import stripe
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To, Content
 
 app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_recycle': 300,
+    'pool_pre_ping': True,
+}
+app.secret_key = os.environ.get('SESSION_SECRET') or secrets.token_urlsafe(32)
 app.config['JSON_SORT_KEYS'] = False
 app.config['PROPAGATE_EXCEPTIONS'] = True
 app.config['SESSION_COOKIE_SECURE'] = True
@@ -58,6 +66,15 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 # Log which mode we're in
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
+
+from models import db, User, License, StripeEvent, EmailLog
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
+
+SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
+SENDGRID_FROM_EMAIL = os.environ.get('SENDGRID_FROM_EMAIL', 'riley.liang@hotmail.com')
 
 TIERS = {
     "freemium": {"lifetime": 0, "annual": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
@@ -3180,15 +3197,127 @@ def create_checkout_session():
 
 # License validation route removed - now using the updated one at line 882
 
+def generate_license_key(edition):
+    """Generate a valid license key for an edition"""
+    prefix_map = {
+        'basic': 'BSIC',
+        'workplace': 'WORK', 
+        'gamer': 'GAME',
+        'ai-dev': 'AIDV',
+        'gamer-ai': 'GMAI',
+        'server': 'SERV'
+    }
+    prefix = prefix_map.get(edition, 'AEGS')
+    
+    while True:
+        part2 = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
+        part3 = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
+        part4 = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
+        key = f"{prefix}-{part2}-{part3}-{part4}"
+        checksum = sum(ord(c) for c in key.replace('-', ''))
+        if checksum % 7 == 0:
+            return key
+
+def send_purchase_email(to_email, license_key, edition, amount, license_type):
+    """Send thank you email with license key via SendGrid"""
+    if not SENDGRID_API_KEY:
+        logger.warning("SendGrid API key not configured - skipping email")
+        return False
+    
+    try:
+        edition_names = {
+            'basic': 'Basic Edition',
+            'workplace': 'Workplace Edition',
+            'gamer': 'Gamer Edition',
+            'ai-dev': 'AI Developer Edition',
+            'gamer-ai': 'Gamer + AI Edition',
+            'server': 'Server Edition'
+        }
+        edition_name = edition_names.get(edition, edition.title())
+        
+        html_content = f"""
+        <html>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 20px;">
+                <h1 style="color: white; margin: 0;">Thank You for Your Purchase!</h1>
+            </div>
+            
+            <div style="background: #f9fafb; padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+                <h2 style="color: #1f2937; margin-top: 0;">Your Aegis OS {edition_name} License</h2>
+                
+                <div style="background: white; border: 2px solid #6366f1; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+                    <p style="color: #6b7280; margin: 0 0 10px;">Your License Key:</p>
+                    <p style="font-size: 24px; font-weight: bold; color: #1f2937; letter-spacing: 2px; margin: 0; font-family: monospace;">{license_key}</p>
+                </div>
+                
+                <p style="color: #4b5563;"><strong>Edition:</strong> {edition_name}</p>
+                <p style="color: #4b5563;"><strong>License Type:</strong> {'Annual Subscription' if license_type == 'annual' else 'Lifetime License'}</p>
+                <p style="color: #4b5563;"><strong>Amount Paid:</strong> ${amount:.2f} USD</p>
+            </div>
+            
+            <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <p style="color: #92400e; margin: 0;"><strong>Important:</strong> Save this license key! You will need it to activate your Aegis OS installation.</p>
+            </div>
+            
+            <div style="background: #f9fafb; padding: 20px; border-radius: 12px;">
+                <h3 style="color: #1f2937; margin-top: 0;">Next Steps:</h3>
+                <ol style="color: #4b5563;">
+                    <li>Download the Aegis OS Installer from our website</li>
+                    <li>Run the installer and select your edition</li>
+                    <li>Enter your license key when prompted</li>
+                    <li>Follow the installation wizard to create your bootable USB</li>
+                </ol>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
+                <p style="color: #9ca3af; font-size: 12px; text-align: center;">
+                    This is a technical preview. No warranty expressed or implied. Use at your own risk.<br>
+                    Contact: riley.liang@hotmail.com (No support guaranteed)
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        message = Mail(
+            from_email=Email(SENDGRID_FROM_EMAIL, "Aegis OS"),
+            to_emails=To(to_email),
+            subject=f"Your Aegis OS {edition_name} License - Thank You!",
+            html_content=Content("text/html", html_content)
+        )
+        
+        sg = SendGridAPIClient(SENDGRID_API_KEY)
+        response = sg.send(message)
+        
+        with app.app_context():
+            email_log = EmailLog(
+                email_to=to_email,
+                email_type='purchase_confirmation',
+                subject=f"Your Aegis OS {edition_name} License - Thank You!",
+                status='sent' if response.status_code in [200, 202] else 'failed',
+                sendgrid_message_id=response.headers.get('X-Message-Id'),
+                sent_at=datetime.utcnow()
+            )
+            db.session.add(email_log)
+            db.session.commit()
+        
+        logger.info(f"Purchase email sent to {to_email} - Status: {response.status_code}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"SendGrid error: {str(e)}")
+        return False
+
 @app.route('/success')
 def payment_success():
     """Payment success page with session verification"""
     tier = request.args.get('tier', 'basic')
     session_id = request.args.get('session_id')
 
-    # Verify the session if ID provided
     payment_verified = False
     customer_email = "your email"
+    license_key = None
+    amount_paid = 0
 
     if session_id and stripe.api_key:
         try:
@@ -3196,13 +3325,56 @@ def payment_success():
             if session.payment_status == 'paid':
                 payment_verified = True
                 customer_email = session.customer_details.email if session.customer_details else "your email"
+                amount_paid = session.amount_total / 100 if session.amount_total else 0
+                
+                with app.app_context():
+                    existing_license = License.query.filter_by(stripe_session_id=session_id).first()
+                    
+                    if existing_license:
+                        license_key = existing_license.license_key
+                    else:
+                        license_key = generate_license_key(tier)
+                        
+                        user = User.query.filter_by(email=customer_email).first()
+                        if not user and customer_email != "your email":
+                            user = User(
+                                email=customer_email,
+                                name=session.customer_details.name if session.customer_details else None
+                            )
+                            user.set_password(secrets.token_urlsafe(16))
+                            db.session.add(user)
+                            db.session.flush()
+                        
+                        new_license = License(
+                            user_id=user.id if user else None,
+                            license_key=license_key,
+                            edition=tier,
+                            license_type='annual' if session.mode == 'subscription' else 'lifetime',
+                            status='active',
+                            stripe_session_id=session_id,
+                            amount_paid=int(amount_paid * 100),
+                            customer_email=customer_email
+                        )
+                        db.session.add(new_license)
+                        db.session.commit()
+                        
+                        if customer_email and customer_email != "your email":
+                            send_purchase_email(
+                                customer_email, 
+                                license_key, 
+                                tier, 
+                                amount_paid,
+                                'annual' if session.mode == 'subscription' else 'lifetime'
+                            )
+                
                 tamper_protected_audit_log('PAYMENT_COMPLETED', {
                     'tier': tier,
                     'session_id': session_id,
-                    'amount': session.amount_total / 100 if session.amount_total else 0
+                    'amount': amount_paid,
+                    'license_key': license_key[:8] + '...' if license_key else None
                 }, severity='HIGH')
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Payment verification error: {str(e)}")
 
     tier_names = {
         'basic': 'Basic',
@@ -3324,13 +3496,19 @@ def payment_success():
 
             <p>Thank you for your purchase! {'Your payment has been confirmed.' if payment_verified else ''}</p>
 
+            {f'''<div style="background: #ecfdf5; border: 2px solid #10b981; border-radius: 12px; padding: 20px; margin: 20px 0;">
+                <p style="color: #065f46; margin: 0 0 10px; font-weight: 600;">Your License Key:</p>
+                <p style="font-size: 1.5rem; font-weight: bold; color: #1f2937; letter-spacing: 2px; margin: 0; font-family: monospace;">{license_key}</p>
+                <p style="color: #6b7280; font-size: 0.85rem; margin-top: 10px;">Save this key! It has also been sent to your email.</p>
+            </div>''' if license_key else ''}
+
             <div class="next-steps">
                 <h3>Next Steps:</h3>
                 <ol>
-                    <li>Check {customer_email} for your download link and license key</li>
-                    <li>Download the ISO file (approximately 3-4GB)</li>
-                    <li>Create a bootable USB or VM</li>
-                    <li>Follow the installation guide included in your email</li>
+                    <li>{'Your license key is shown above and has been emailed to ' + customer_email if license_key else 'Check ' + customer_email + ' for your license key'}</li>
+                    <li>Download the Aegis OS Installer</li>
+                    <li>Run the installer and enter your license key</li>
+                    <li>Create a bootable USB drive</li>
                 </ol>
             </div>
 
