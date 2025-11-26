@@ -1612,6 +1612,55 @@ if __name__ == "__main__":
         app.logger.error(f"Creator download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
+@app.route('/download-installer')
+@app.route('/download-installer.py')
+def download_cross_platform_installer():
+    """Download the cross-platform Python installer script (works on Windows, macOS, Linux)"""
+    try:
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.py')
+        
+        if os.path.exists(installer_path):
+            with open(installer_path, 'r', encoding='utf-8') as f:
+                script_content = f.read()
+            
+            return Response(
+                script_content,
+                mimetype='application/x-python',
+                headers={
+                    'Content-Disposition': 'attachment; filename=aegis-installer.py',
+                    'Content-Type': 'text/x-python; charset=utf-8'
+                }
+            )
+        else:
+            app.logger.error(f"Installer not found at: {installer_path}")
+            return jsonify({'error': 'Installer file not found'}), 404
+            
+    except Exception as e:
+        app.logger.error(f"Installer download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
+@app.route('/api/installer-info')
+@rate_limit(limit=500)
+def get_installer_info():
+    """Get information about the cross-platform installer"""
+    return jsonify({
+        'name': 'Aegis OS Cross-Platform Installer',
+        'version': '1.0.0',
+        'platforms': ['Windows', 'macOS', 'Linux'],
+        'requirements': 'Python 3.6+',
+        'download_url': '/download-installer',
+        'features': [
+            'Auto-detect operating system',
+            'USB drive detection (Windows: WMI/diskpart, macOS: diskutil, Linux: lsblk)',
+            'License key validation for paid editions',
+            'ISO download with progress',
+            'USB write functionality',
+            'Checksum verification'
+        ],
+        'editions': ['freemium', 'basic', 'workplace', 'gamer', 'ai-dev', 'gamer-ai', 'server'],
+        'usage': 'python aegis-installer.py'
+    }), 200
+
 @app.route('/security-audit')
 def page_security_audit():
     try:
