@@ -1684,6 +1684,62 @@ def download_licensed_installer():
         app.logger.error(f"Licensed installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
+@app.route('/download-installer-freemium.sh')
+@app.route('/download-installer-mac')
+@app.route('/download-installer-linux')
+def download_freemium_shell_installer():
+    """Download the Freemium macOS/Linux installer (.sh file)"""
+    try:
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.sh')
+        
+        if os.path.exists(installer_path):
+            with open(installer_path, 'r', encoding='utf-8') as f:
+                script_content = f.read()
+            
+            return Response(
+                script_content,
+                mimetype='application/x-sh',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.sh',
+                    'Content-Type': 'application/x-sh; charset=utf-8'
+                }
+            )
+        else:
+            app.logger.error(f"Shell installer not found at: {installer_path}")
+            return jsonify({'error': 'Installer file not found'}), 404
+            
+    except Exception as e:
+        app.logger.error(f"Shell installer download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
+@app.route('/download-installer-licensed.sh')
+@app.route('/download-installer-licensed-mac')
+@app.route('/download-installer-licensed-linux')
+def download_licensed_shell_installer():
+    """Download the Licensed macOS/Linux installer (.sh file)"""
+    try:
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.sh')
+        
+        if os.path.exists(installer_path):
+            with open(installer_path, 'r', encoding='utf-8') as f:
+                script_content = f.read()
+            
+            return Response(
+                script_content,
+                mimetype='application/x-sh',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.sh',
+                    'Content-Type': 'application/x-sh; charset=utf-8'
+                }
+            )
+        else:
+            app.logger.error(f"Licensed shell installer not found at: {installer_path}")
+            return jsonify({'error': 'Installer file not found'}), 404
+            
+    except Exception as e:
+        app.logger.error(f"Licensed shell installer download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
 @app.route('/download-installer.py')
 def download_python_installer():
     """Download the cross-platform Python installer script (for Mac/Linux)"""
