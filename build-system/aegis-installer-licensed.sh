@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Aegis OS Licensed Installer for macOS/Linux
-# Professional Linux Distribution - Premium Edition Installer
+# Aegis OS Media Creation Tool - Licensed Editions
+# Creates a REAL bootable USB drive with Aegis OS
 
 set -e
 
@@ -18,9 +18,11 @@ NC='\033[0m'
 # Configuration
 LICENSE_KEY=""
 EDITION_NAME=""
-EDITION_PREFIX=""
-ISO_SIZE=""
+BASE_ISO_URL="https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
+BASE_ISO_NAME="Linux Lite 7.2"
+BASE_ISO_SIZE="2.1 GB"
 DOWNLOAD_DIR="$HOME/Downloads"
+ISO_FILE="aegis-base-system.iso"
 
 clear_screen() {
     clear
@@ -38,8 +40,8 @@ print_header() {
     echo -e "${GOLD}║${NC}    ${BOLD}${GOLD}██║  ██║███████╗╚██████╔╝██║███████║${NC}                       ${GOLD}║${NC}"
     echo -e "${GOLD}║${NC}    ${BOLD}${GOLD}╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝${NC}                       ${GOLD}║${NC}"
     echo -e "${GOLD}║${NC}                                                                ${GOLD}║${NC}"
-    echo -e "${GOLD}║${NC}          ${GOLD}Professional Linux Distribution${NC}                       ${GOLD}║${NC}"
-    echo -e "${GOLD}║${NC}               ${BOLD}${GOLD}★ PREMIUM LICENSED EDITION ★${NC}                    ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}          ${GOLD}Media Creation Tool${NC}                                   ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}               ${BOLD}${GOLD}PREMIUM LICENSED EDITION${NC}                        ${GOLD}║${NC}"
     echo -e "${GOLD}║${NC}                                                                ${GOLD}║${NC}"
     echo -e "${GOLD}╚════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
@@ -54,18 +56,6 @@ print_step() {
     echo ""
 }
 
-print_progress() {
-    local percent=$1
-    local width=50
-    local filled=$((percent * width / 100))
-    local empty=$((width - filled))
-    
-    printf "  ["
-    printf "${GOLD}%${filled}s${NC}" | tr ' ' '█'
-    printf "%${empty}s" | tr ' ' '░'
-    printf "] %3d%%\r" "$percent"
-}
-
 detect_os() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "macos"
@@ -76,343 +66,331 @@ detect_os() {
     fi
 }
 
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}This installer requires administrator privileges.${NC}"
+        echo ""
+        echo "Please run with sudo:"
+        echo -e "  ${GOLD}sudo $0${NC}"
+        echo ""
+        exit 1
+    fi
+}
+
 validate_license() {
+    local key="$1"
+    key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
+    
+    local prefix="${key:0:4}"
+    
+    case "$prefix" in
+        "BSIC") EDITION_NAME="Basic"; return 0 ;;
+        "WORK") EDITION_NAME="Workplace"; return 0 ;;
+        "GAME") EDITION_NAME="Gamer"; return 0 ;;
+        "AIDV") EDITION_NAME="AI Developer"; return 0 ;;
+        "GMAI") EDITION_NAME="Gamer + AI"; return 0 ;;
+        "SERV") EDITION_NAME="Server"; return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+list_drives_macos() {
+    echo -e "${BOLD}Available USB Drives:${NC}"
+    echo ""
+    
+    local count=0
+    declare -g -a DRIVES=()
+    
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^/dev/disk([0-9]+) ]]; then
+            local disk=$(echo "$line" | awk '{print $1}')
+            local info=$(diskutil info "$disk" 2>/dev/null)
+            
+            if echo "$info" | grep -q "Removable Media:.*Yes\|Protocol:.*USB"; then
+                local name=$(echo "$info" | grep "Media Name:" | cut -d: -f2 | xargs)
+                local size=$(echo "$info" | grep "Disk Size:" | cut -d: -f2 | cut -d'(' -f1 | xargs)
+                
+                if [[ -n "$name" && -n "$size" ]]; then
+                    count=$((count + 1))
+                    DRIVES+=("$disk")
+                    echo -e "  ${GOLD}[$count]${NC} $disk"
+                    echo -e "      ${DIM}$name${NC}"
+                    echo -e "      ${DIM}$size${NC}"
+                    echo ""
+                fi
+            fi
+        fi
+    done < <(diskutil list | grep "^/dev/disk")
+    
+    if [[ $count -eq 0 ]]; then
+        echo -e "  ${YELLOW}No USB drives detected.${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
+list_drives_linux() {
+    echo -e "${BOLD}Available USB Drives:${NC}"
+    echo ""
+    
+    local count=0
+    declare -g -a DRIVES=()
+    
+    while IFS= read -r line; do
+        local disk="/dev/$line"
+        local model=$(cat "/sys/block/$line/device/model" 2>/dev/null | xargs)
+        local size_bytes=$(cat "/sys/block/$line/size" 2>/dev/null)
+        local size_gb=$((size_bytes * 512 / 1024 / 1024 / 1024))
+        
+        if [[ $size_gb -ge 4 ]]; then
+            count=$((count + 1))
+            DRIVES+=("$disk")
+            echo -e "  ${GOLD}[$count]${NC} $disk"
+            echo -e "      ${DIM}${model:-Unknown Device}${NC}"
+            echo -e "      ${DIM}${size_gb} GB${NC}"
+            echo ""
+        fi
+    done < <(lsblk -d -n -o NAME,TRAN | grep usb | awk '{print $1}')
+    
+    if [[ $count -eq 0 ]]; then
+        echo -e "  ${YELLOW}No USB drives detected.${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
+select_drive() {
+    local os_type=$(detect_os)
+    
+    if [[ "$os_type" == "macos" ]]; then
+        list_drives_macos || return 1
+    else
+        list_drives_linux || return 1
+    fi
+    
+    echo ""
+    echo -e "${RED}WARNING: All data on the selected drive will be erased!${NC}"
+    echo ""
+    
+    read -p "Enter drive number [1-${#DRIVES[@]}]: " selection
+    
+    if [[ ! "$selection" =~ ^[0-9]+$ ]] || [[ $selection -lt 1 ]] || [[ $selection -gt ${#DRIVES[@]} ]]; then
+        echo -e "${RED}Invalid selection.${NC}"
+        return 1
+    fi
+    
+    SELECTED_DRIVE="${DRIVES[$((selection - 1))]}"
+    echo ""
+    echo -e "Selected: ${GOLD}$SELECTED_DRIVE${NC}"
+    echo ""
+    
+    read -p "Are you sure you want to erase this drive? (yes/no): " confirm
+    if [[ "$confirm" != "yes" ]]; then
+        echo -e "${YELLOW}Operation cancelled.${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
+download_iso() {
+    local iso_path="$DOWNLOAD_DIR/$ISO_FILE"
+    
+    echo -e "${BOLD}Downloading base system...${NC}"
+    echo -e "${DIM}Source: $BASE_ISO_NAME ($BASE_ISO_SIZE)${NC}"
+    echo ""
+    
+    if [[ -f "$iso_path" ]]; then
+        local size=$(stat -f%z "$iso_path" 2>/dev/null || stat -c%s "$iso_path" 2>/dev/null)
+        if [[ $size -gt 100000000 ]]; then
+            echo -e "${GREEN}Using cached download.${NC}"
+            ISO_PATH="$iso_path"
+            return 0
+        fi
+    fi
+    
+    mkdir -p "$DOWNLOAD_DIR"
+    
+    echo "This will take 5-20 minutes depending on your connection..."
+    echo ""
+    
+    if command -v curl &> /dev/null; then
+        curl -L -# -o "$iso_path" "$BASE_ISO_URL"
+    elif command -v wget &> /dev/null; then
+        wget --progress=bar:force -O "$iso_path" "$BASE_ISO_URL"
+    else
+        echo -e "${RED}Error: curl or wget required.${NC}"
+        return 1
+    fi
+    
+    if [[ ! -f "$iso_path" ]]; then
+        echo -e "${RED}Download failed.${NC}"
+        return 1
+    fi
+    
+    ISO_PATH="$iso_path"
+    echo ""
+    echo -e "${GREEN}Download complete.${NC}"
+    return 0
+}
+
+write_usb_macos() {
+    local disk="$1"
+    local iso="$2"
+    local raw_disk="${disk/disk/rdisk}"
+    
+    echo -e "${BOLD}Preparing USB drive...${NC}"
+    
+    echo -e "${DIM}Unmounting disk...${NC}"
+    diskutil unmountDisk "$disk" 2>/dev/null || true
+    
+    echo -e "${BOLD}Writing system to USB (this may take 10-20 minutes)...${NC}"
+    echo -e "${RED}Do not remove the USB drive!${NC}"
+    echo ""
+    
+    dd if="$iso" of="$raw_disk" bs=4m status=progress 2>&1
+    
+    sync
+    
+    echo ""
+    echo -e "${DIM}Ejecting...${NC}"
+    diskutil eject "$disk" 2>/dev/null || true
+    
+    return 0
+}
+
+write_usb_linux() {
+    local disk="$1"
+    local iso="$2"
+    
+    echo -e "${BOLD}Preparing USB drive...${NC}"
+    
+    echo -e "${DIM}Unmounting partitions...${NC}"
+    umount "${disk}"* 2>/dev/null || true
+    
+    echo -e "${BOLD}Writing system to USB (this may take 10-20 minutes)...${NC}"
+    echo -e "${RED}Do not remove the USB drive!${NC}"
+    echo ""
+    
+    dd if="$iso" of="$disk" bs=4M status=progress conv=fsync 2>&1
+    
+    sync
+    
+    return 0
+}
+
+main() {
+    local os_type=$(detect_os)
+    
+    if [[ "$os_type" == "unknown" ]]; then
+        echo -e "${RED}Unsupported operating system.${NC}"
+        exit 1
+    fi
+    
+    check_root
+    
+    # Step 1: Enter License Key
     print_header
     print_step 1
     
-    echo -e "  ${BOLD}Enter Your License Key${NC}"
+    echo -e "${BOLD}Enter Your License Key${NC}"
     echo ""
-    echo -e "  ${DIM}Your license key was sent to your email after purchase.${NC}"
-    echo -e "  ${DIM}Format: XXXX-XXXX-XXXX-XXXX${NC}"
+    echo "Enter the license key from your Aegis OS purchase."
     echo ""
-    echo -e "  ${DIM}Valid prefixes: BSIC, WORK, GAME, AIDV, GMAI, SERV${NC}"
+    echo -e "${DIM}License prefixes:${NC}"
+    echo -e "${DIM}  BSIC = Basic    | WORK = Workplace${NC}"
+    echo -e "${DIM}  GAME = Gamer    | AIDV = AI Developer${NC}"
+    echo -e "${DIM}  GMAI = Gamer+AI | SERV = Server${NC}"
     echo ""
     
-    read -p "  License Key: " LICENSE_KEY
-    
-    if [[ -z "$LICENSE_KEY" ]]; then
-        echo ""
-        echo -e "  ${RED}✗ License key is required!${NC}"
-        sleep 2
-        validate_license
-        return
-    fi
-    
-    EDITION_PREFIX=$(echo "${LICENSE_KEY:0:4}" | tr '[:lower:]' '[:upper:]')
-    
-    case $EDITION_PREFIX in
-        "BSIC")
-            EDITION_NAME="Basic Edition"
-            ISO_SIZE="2.8 GB"
-            ;;
-        "WORK")
-            EDITION_NAME="Workplace Edition"
-            ISO_SIZE="3.2 GB"
-            ;;
-        "GAME")
-            EDITION_NAME="Gamer Edition"
-            ISO_SIZE="4.5 GB"
-            ;;
-        "AIDV")
-            EDITION_NAME="AI Developer Edition"
-            ISO_SIZE="5.2 GB"
-            ;;
-        "GMAI")
-            EDITION_NAME="Gamer + AI Edition"
-            ISO_SIZE="6.8 GB"
-            ;;
-        "SERV")
-            EDITION_NAME="Server Edition"
-            ISO_SIZE="3.5 GB"
-            ;;
-        *)
+    while true; do
+        read -p "License Key: " LICENSE_KEY
+        
+        if validate_license "$LICENSE_KEY"; then
             echo ""
-            echo -e "  ${RED}✗ Invalid license key prefix!${NC}"
-            echo -e "  ${DIM}Please check your key and try again.${NC}"
-            sleep 2
-            validate_license
-            return
-            ;;
-    esac
-    
-    echo ""
-    echo -e "  ${GREEN}✓ License Validated!${NC}"
-    echo -e "    ${BOLD}Edition:${NC} ${GOLD}$EDITION_NAME${NC}"
-    echo -e "    ${BOLD}Size:${NC}    ${GOLD}$ISO_SIZE${NC}"
-    echo ""
-    sleep 2
-    
-    main_menu
-}
-
-list_usb_drives() {
-    local os_type=$(detect_os)
-    
-    echo -e "  ${BOLD}Available USB Drives:${NC}"
-    echo ""
-    
-    if [[ "$os_type" == "macos" ]]; then
-        diskutil list external | grep -E "^\s*/dev/disk" | while read -r line; do
-            local disk=$(echo "$line" | awk '{print $1}')
-            local info=$(diskutil info "$disk" 2>/dev/null | grep -E "Device / Media Name|Total Size" | head -2)
-            if [[ -n "$info" ]]; then
-                local name=$(echo "$info" | grep "Device / Media Name" | cut -d: -f2 | xargs)
-                local size=$(echo "$info" | grep "Total Size" | cut -d: -f2 | cut -d'(' -f1 | xargs)
-                echo -e "    ${GOLD}●${NC} $disk - $name ($size)"
-            fi
-        done
-    elif [[ "$os_type" == "linux" ]]; then
-        for dev in /sys/block/sd*; do
-            if [[ -f "$dev/removable" ]] && [[ $(cat "$dev/removable") == "1" ]]; then
-                local name=$(basename "$dev")
-                local size=$(lsblk -dn -o SIZE "/dev/$name" 2>/dev/null)
-                local model=$(cat "$dev/device/model" 2>/dev/null | xargs)
-                echo -e "    ${GOLD}●${NC} /dev/$name - $model ($size)"
-            fi
-        done
-    fi
-    
-    echo ""
-}
-
-show_features() {
-    echo -e "  ${BOLD}$EDITION_NAME Features:${NC}"
-    echo ""
-    
-    case $EDITION_PREFIX in
-        "BSIC")
-            echo -e "    ${GREEN}✓${NC} Full Desktop Environment"
-            echo -e "    ${GREEN}✓${NC} Enhanced Security Suite"
-            echo -e "    ${GREEN}✓${NC} Premium Software Bundle"
-            echo -e "    ${GREEN}✓${NC} Priority Updates"
-            ;;
-        "WORK")
-            echo -e "    ${GREEN}✓${NC} Business Productivity Suite"
-            echo -e "    ${GREEN}✓${NC} VPN & Remote Access"
-            echo -e "    ${GREEN}✓${NC} Enterprise Security"
-            echo -e "    ${GREEN}✓${NC} AD/LDAP Integration"
-            ;;
-        "GAME")
-            echo -e "    ${GREEN}✓${NC} NVIDIA/AMD Proprietary Drivers"
-            echo -e "    ${GREEN}✓${NC} Wine/Proton Gaming Layer"
-            echo -e "    ${GREEN}✓${NC} Steam & Lutris Pre-configured"
-            echo -e "    ${GREEN}✓${NC} RGB Ecosystem Support"
-            ;;
-        "AIDV")
-            echo -e "    ${GREEN}✓${NC} CUDA 12.3 / ROCm Support"
-            echo -e "    ${GREEN}✓${NC} PyTorch, TensorFlow Pre-installed"
-            echo -e "    ${GREEN}✓${NC} 100+ ML Libraries"
-            echo -e "    ${GREEN}✓${NC} Triton Inference Server"
-            ;;
-        "GMAI")
-            echo -e "    ${GREEN}✓${NC} Full Gaming Suite"
-            echo -e "    ${GREEN}✓${NC} Complete AI/ML Toolkit"
-            echo -e "    ${GREEN}✓${NC} Hybrid GPU Scheduling"
-            echo -e "    ${GREEN}✓${NC} Neural Upscaling"
-            ;;
-        "SERV")
-            echo -e "    ${GREEN}✓${NC} Headless Server Mode"
-            echo -e "    ${GREEN}✓${NC} Container Orchestration"
-            echo -e "    ${GREEN}✓${NC} High Availability"
-            echo -e "    ${GREEN}✓${NC} Enterprise Monitoring"
-            ;;
-    esac
-    echo ""
-}
-
-simulate_download() {
-    echo -e "  ${BOLD}Downloading $EDITION_NAME...${NC}"
-    echo -e "  ${DIM}Size: $ISO_SIZE${NC}"
-    echo ""
-    
-    for i in {0..100..4}; do
-        print_progress $i
-        sleep 0.12
+            echo -e "${GREEN}Valid license: $EDITION_NAME Edition${NC}"
+            break
+        else
+            echo -e "${RED}Invalid license format. Try again.${NC}"
+        fi
     done
-    echo ""
-    echo ""
-    echo -e "  ${GREEN}✓${NC} Download complete!"
-    echo ""
-}
-
-simulate_flash() {
-    echo -e "  ${BOLD}Writing to USB drive...${NC}"
-    echo ""
     
-    for i in {0..100..2}; do
-        print_progress $i
-        sleep 0.08
-    done
-    echo ""
-    echo ""
-    echo -e "  ${GREEN}✓${NC} USB drive created successfully!"
-    echo ""
-}
-
-show_completion() {
-    clear_screen
-    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║${NC}                                                                ${GREEN}║${NC}"
-    echo -e "${GREEN}║${NC}                    ${BOLD}${GREEN}✓ INSTALLATION COMPLETE!${NC}                    ${GREEN}║${NC}"
-    echo -e "${GREEN}║${NC}                                                                ${GREEN}║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "  ${BOLD}Edition:${NC}  ${GOLD}$EDITION_NAME${NC}"
-    echo -e "  ${BOLD}License:${NC}  ${DIM}${LICENSE_KEY:0:9}...${NC}"
-    echo ""
-    echo -e "  ${BOLD}Next Steps:${NC}"
-    echo ""
-    echo -e "    ${CYAN}1.${NC} Restart your computer"
-    echo -e "    ${CYAN}2.${NC} Press F12/F2/DEL to access boot menu"
-    echo -e "    ${CYAN}3.${NC} Select your USB drive"
-    echo -e "    ${CYAN}4.${NC} Enter license key when prompted"
-    echo ""
-    echo -e "  ${DIM}Thank you for your purchase!${NC}"
-    echo ""
-    show_disclaimer
-}
-
-show_disclaimer() {
-    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
-    echo -e "  ${YELLOW}IMPORTANT LEGAL NOTICE${NC}"
-    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
-    echo -e "  ${DIM}TECHNICAL PREVIEW - This software is provided AS-IS with NO${NC}"
-    echo -e "  ${DIM}WARRANTY of any kind. No support is provided or implied.${NC}"
-    echo -e "  ${DIM}Anything represented may not be true. Use at your own risk.${NC}"
-    echo -e "  ${DIM}By using this software you accept all responsibility.${NC}"
-    echo ""
-    echo -e "  ${DIM}Contact: riley.liang@hotmail.com${NC}"
-    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
-    echo ""
-}
-
-main_menu() {
+    read -p "Press Enter to continue..."
+    
+    # Step 2: Welcome
     print_header
     print_step 2
     
-    echo -e "  ${GREEN}✓${NC} ${BOLD}License Verified:${NC} ${GOLD}$EDITION_NAME${NC}"
-    echo -e "    ${DIM}Key: ${LICENSE_KEY:0:9}...${NC}"
+    echo -e "${BOLD}Welcome - Installing $EDITION_NAME Edition${NC}"
+    echo ""
+    echo "This tool will create a bootable USB drive with Aegis OS."
+    echo ""
+    echo -e "${BOLD}What this does:${NC}"
+    echo "  - Downloads Aegis OS base system ($BASE_ISO_SIZE)"
+    echo "  - Writes it to your USB drive"
+    echo "  - Creates bootable installation media"
+    echo ""
+    echo -e "${YELLOW}Requirements:${NC}"
+    echo "  - USB drive with at least 4GB capacity"
+    echo "  - Active internet connection"
+    echo ""
+    echo -e "${RED}WARNING: All data on the USB drive will be ERASED!${NC}"
     echo ""
     
-    show_features
+    read -p "Press Enter to continue or Ctrl+C to cancel..."
     
-    echo -e "  ${BOLD}Select an option:${NC}"
-    echo ""
-    echo -e "    ${GOLD}1.${NC} Install to USB Drive"
-    echo -e "    ${GOLD}2.${NC} Download ISO Only"
-    echo -e "    ${GOLD}3.${NC} View System Requirements"
-    echo -e "    ${GOLD}4.${NC} Exit"
-    echo ""
-    read -p "  Enter choice (1-4): " choice
-    
-    case $choice in
-        1) install_to_usb ;;
-        2) download_only ;;
-        3) view_requirements ;;
-        4) exit 0 ;;
-        *) main_menu ;;
-    esac
-}
-
-install_to_usb() {
+    # Step 3: Select USB Drive
     print_header
     print_step 3
     
-    list_usb_drives
-    
-    echo -e "  ${YELLOW}⚠  WARNING: All data on the selected drive will be erased!${NC}"
-    echo ""
-    
-    local os_type=$(detect_os)
-    if [[ "$os_type" == "macos" ]]; then
-        read -p "  Enter disk path (e.g., /dev/disk2): " target_disk
-    else
-        read -p "  Enter device path (e.g., /dev/sdb): " target_disk
+    if ! select_drive; then
+        exit 1
     fi
     
-    if [[ -z "$target_disk" ]]; then
-        echo -e "  ${RED}No drive selected. Returning to menu...${NC}"
-        sleep 2
-        main_menu
-        return
-    fi
-    
-    echo ""
-    read -p "  Confirm: Erase $target_disk and install $EDITION_NAME? (yes/no): " confirm
-    
-    if [[ "$confirm" != "yes" ]]; then
-        echo -e "  ${YELLOW}Cancelled.${NC}"
-        sleep 2
-        main_menu
-        return
-    fi
-    
-    # Download step
+    # Step 4: Download
     print_header
     print_step 4
-    simulate_download
-    sleep 1
     
-    # Flash step
+    if ! download_iso; then
+        exit 1
+    fi
+    
+    # Step 5: Write to USB
     print_header
     print_step 5
-    simulate_flash
-    sleep 1
     
-    show_completion
+    if [[ "$os_type" == "macos" ]]; then
+        write_usb_macos "$SELECTED_DRIVE" "$ISO_PATH"
+    else
+        write_usb_linux "$SELECTED_DRIVE" "$ISO_PATH"
+    fi
     
-    read -p "  Press Enter to exit..."
-}
-
-download_only() {
+    # Complete
     print_header
-    print_step 3
-    
-    local iso_file="aegis-os-$(echo $EDITION_PREFIX | tr '[:upper:]' '[:lower:]').iso"
-    echo -e "  ${BOLD}Download Location:${NC} $DOWNLOAD_DIR/$iso_file"
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                                                                ║${NC}"
+    echo -e "${GREEN}║                     USB CREATION COMPLETE!                     ║${NC}"
+    echo -e "${GREEN}║                                                                ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    
-    simulate_download
-    
-    echo -e "  ${GREEN}✓${NC} ISO saved to: ${GOLD}$DOWNLOAD_DIR/$iso_file${NC}"
+    echo -e "${BOLD}Your Aegis OS ${EDITION_NAME} bootable USB is ready!${NC}"
+    echo -e "${DIM}License: $LICENSE_KEY${NC}"
     echo ""
-    echo -e "  ${DIM}Use a tool like Rufus, Etcher, or dd to write to USB.${NC}"
+    echo "Next steps:"
+    echo "  1. Safely remove the USB drive"
+    echo "  2. Insert it into the target computer"
+    echo "  3. Restart and press F12/F2/DEL/ESC for boot menu"
+    echo "  4. Select the USB drive to boot"
     echo ""
-    
-    read -p "  Press Enter to return to menu..."
-    main_menu
+    echo -e "${YELLOW}LEGAL NOTICE:${NC}"
+    echo -e "${DIM}TECHNICAL PREVIEW - This software is provided AS-IS without warranty.${NC}"
+    echo -e "${DIM}No support is provided or implied. Use at your own risk.${NC}"
+    echo ""
+    echo -e "${DIM}Contact: riley.liang@hotmail.com${NC}"
+    echo -e "${DIM}Website: https://aegis-os.replit.app${NC}"
+    echo ""
 }
 
-view_requirements() {
-    print_header
-    print_step 2
-    
-    echo -e "  ${BOLD}System Requirements for $EDITION_NAME:${NC}"
-    echo ""
-    echo -e "    ${DIM}CPU:${NC}      64-bit processor (x86_64)"
-    
-    case $EDITION_PREFIX in
-        "GAME"|"AIDV"|"GMAI")
-            echo -e "    ${DIM}RAM:${NC}      16-32 GB recommended"
-            echo -e "    ${DIM}GPU:${NC}      NVIDIA RTX 2060+ / AMD RX 5700+"
-            echo -e "    ${DIM}Storage:${NC}  100-250 GB SSD"
-            ;;
-        "SERV")
-            echo -e "    ${DIM}RAM:${NC}      8 GB minimum (16 GB recommended)"
-            echo -e "    ${DIM}Storage:${NC}  50 GB minimum"
-            ;;
-        *)
-            echo -e "    ${DIM}RAM:${NC}      4 GB minimum (8 GB recommended)"
-            echo -e "    ${DIM}Storage:${NC}  30 GB free space"
-            ;;
-    esac
-    
-    echo -e "    ${DIM}USB:${NC}      8 GB minimum (16 GB for AI editions)"
-    echo ""
-    
-    read -p "  Press Enter to return to menu..."
-    main_menu
-}
-
-# Start the installer
-validate_license
+main "$@"
