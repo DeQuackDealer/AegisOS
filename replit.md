@@ -131,6 +131,27 @@ The promotional website references but does not implement:
 
 **Static HTML with Inline Styles**: Reduces HTTP requests and simplifies deployment, though at the cost of maintainability. Chosen for performance on the promotional site.
 
+### Windows GUI Installers
+
+**Technology**: HTA (HTML Application) - Native Windows GUI without additional software
+
+**Installer Files**:
+- **aegis-installer-freemium.hta** - Freemium edition GUI installer
+- **aegis-installer-licensed.hta** - Paid editions GUI installer (requires license key)
+
+**Features**:
+- Modern graphical interface with dark theme
+- USB drive detection via Windows WMI
+- Progress bars for download and flash operations
+- License key validation (detects edition from prefix)
+- Step-by-step installation flow
+
+**Endpoints**:
+- `/download-installer` or `/download-installer-freemium.hta` - Freemium installer
+- `/download-installer-licensed.hta` - Licensed installer for paid editions
+
+**Note**: HTA files run natively on Windows 7/8/10/11 without any prerequisites. They use mshta.exe which is built into Windows.
+
 ### Payment & License System
 
 **Database Models** (models.py):

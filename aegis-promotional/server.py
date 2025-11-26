@@ -1630,13 +1630,12 @@ if __name__ == "__main__":
         return jsonify({'error': 'Download failed'}), 500
 
 @app.route('/download-installer')
-@app.route('/download-installer.bat')
 @app.route('/download-installer-freemium')
-@app.route('/download-installer-freemium.bat')
+@app.route('/download-installer-freemium.hta')
 def download_freemium_installer():
-    """Download the Freemium Windows installer (.bat file)"""
+    """Download the Freemium Windows GUI installer (.hta file)"""
     try:
-        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.bat')
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.hta')
         
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
@@ -1644,10 +1643,10 @@ def download_freemium_installer():
             
             return Response(
                 script_content,
-                mimetype='application/x-bat',
+                mimetype='application/hta',
                 headers={
-                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.bat',
-                    'Content-Type': 'application/x-bat; charset=utf-8'
+                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.hta',
+                    'Content-Type': 'application/hta; charset=utf-8'
                 }
             )
         else:
@@ -1659,11 +1658,11 @@ def download_freemium_installer():
         return jsonify({'error': 'Download failed'}), 500
 
 @app.route('/download-installer-licensed')
-@app.route('/download-installer-licensed.bat')
+@app.route('/download-installer-licensed.hta')
 def download_licensed_installer():
-    """Download the Licensed Windows installer (.bat file) for paid editions"""
+    """Download the Licensed Windows GUI installer (.hta file) for paid editions"""
     try:
-        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.bat')
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.hta')
         
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
@@ -1671,10 +1670,10 @@ def download_licensed_installer():
             
             return Response(
                 script_content,
-                mimetype='application/x-bat',
+                mimetype='application/hta',
                 headers={
-                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.bat',
-                    'Content-Type': 'application/x-bat; charset=utf-8'
+                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.hta',
+                    'Content-Type': 'application/hta; charset=utf-8'
                 }
             )
         else:
@@ -3622,8 +3621,8 @@ def payment_success():
             </div>''' if license_key else ''}
 
             <div class="download-section">
-                <a href="/download-installer-licensed.bat" class="download-btn">Download Installer</a>
-                <p class="download-info">Windows installer - Double-click to run</p>
+                <a href="/download-installer-licensed.hta" class="download-btn">Download Installer</a>
+                <p class="download-info">Windows GUI Installer - Double-click to run</p>
             </div>
 
             <div class="steps">

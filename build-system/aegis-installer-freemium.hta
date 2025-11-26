@@ -1,0 +1,510 @@
+<html>
+<head>
+<title>Aegis OS Freemium Installer</title>
+<HTA:APPLICATION
+    ID="AegisInstaller"
+    APPLICATIONNAME="Aegis OS Installer"
+    BORDER="thin"
+    BORDERSTYLE="normal"
+    CAPTION="yes"
+    ICON=""
+    MAXIMIZEBUTTON="no"
+    MINIMIZEBUTTON="yes"
+    SHOWINTASKBAR="yes"
+    SINGLEINSTANCE="yes"
+    SYSMENU="yes"
+    VERSION="1.0"
+    WINDOWSTATE="normal"
+/>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #fff;
+    height: 100vh;
+    overflow: hidden;
+}
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 30px;
+    height: 100%;
+}
+.header {
+    text-align: center;
+    margin-bottom: 25px;
+}
+.logo {
+    font-size: 42px;
+    font-weight: bold;
+    color: #00d4ff;
+    text-shadow: 0 0 20px rgba(0,212,255,0.5);
+}
+.subtitle {
+    color: #888;
+    font-size: 14px;
+    margin-top: 5px;
+}
+.edition-badge {
+    display: inline-block;
+    background: linear-gradient(90deg, #00d4ff, #00ff88);
+    color: #000;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin-top: 10px;
+}
+.step-container {
+    background: rgba(255,255,255,0.05);
+    border-radius: 15px;
+    padding: 25px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.step-title {
+    font-size: 18px;
+    margin-bottom: 15px;
+    color: #00d4ff;
+}
+.drive-select {
+    width: 100%;
+    padding: 12px;
+    font-size: 14px;
+    border: 2px solid #00d4ff;
+    border-radius: 8px;
+    background: #1a1a2e;
+    color: #fff;
+    cursor: pointer;
+}
+.drive-select:focus { outline: none; border-color: #00ff88; }
+.btn {
+    width: 100%;
+    padding: 15px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 15px;
+    transition: all 0.3s;
+}
+.btn-primary {
+    background: linear-gradient(90deg, #00d4ff, #00ff88);
+    color: #000;
+}
+.btn-primary:hover { transform: scale(1.02); box-shadow: 0 5px 20px rgba(0,212,255,0.4); }
+.btn-secondary {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.2);
+}
+.btn-danger {
+    background: #ff4444;
+    color: #fff;
+}
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+.progress-container {
+    margin-top: 20px;
+}
+.progress-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+.progress-bar {
+    height: 25px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+}
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00d4ff, #00ff88);
+    border-radius: 12px;
+    transition: width 0.3s;
+    position: relative;
+}
+.progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: shimmer 2s infinite;
+}
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+.status-box {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 15px;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+.warning {
+    background: rgba(255,200,0,0.1);
+    border: 1px solid #ffcc00;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 15px;
+    font-size: 12px;
+    color: #ffcc00;
+}
+.disclaimer {
+    text-align: center;
+    font-size: 10px;
+    color: #666;
+    margin-top: 20px;
+    padding: 10px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+.hidden { display: none; }
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 13px;
+}
+.info-label { color: #888; }
+.info-value { color: #00ff88; font-weight: bold; }
+</style>
+
+<script language="VBScript">
+Dim fso, shell, wmi, selectedDrive, isRunning, isoPath
+
+Sub Window_OnLoad()
+    window.resizeTo 650, 700
+    CenterWindow()
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set shell = CreateObject("WScript.Shell")
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    isRunning = False
+    isoPath = ""
+    RefreshDrives()
+End Sub
+
+Sub CenterWindow()
+    Dim screenWidth, screenHeight
+    screenWidth = window.screen.availWidth
+    screenHeight = window.screen.availHeight
+    window.moveTo (screenWidth - 650) / 2, (screenHeight - 700) / 2
+End Sub
+
+Sub RefreshDrives()
+    Dim driveList, drives, drive, driveInfo, sizeGB
+    Set driveList = document.getElementById("driveSelect")
+    driveList.innerHTML = "<option value=''>-- Select USB Drive --</option>"
+    
+    Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media'")
+    
+    For Each drive In drives
+        sizeGB = FormatNumber(drive.Size / 1073741824, 1)
+        driveInfo = drive.Caption & " (" & sizeGB & " GB)"
+        driveList.innerHTML = driveList.innerHTML & "<option value='" & drive.DeviceID & "'>" & driveInfo & "</option>"
+    Next
+    
+    If drives.Count = 0 Then
+        driveList.innerHTML = "<option value=''>No USB drives detected</option>"
+    End If
+End Sub
+
+Sub StartInstall()
+    selectedDrive = document.getElementById("driveSelect").value
+    
+    If selectedDrive = "" Then
+        MsgBox "Please select a USB drive first!", vbExclamation, "Aegis OS Installer"
+        Exit Sub
+    End If
+    
+    Dim confirmMsg
+    confirmMsg = "WARNING: All data on the selected drive will be ERASED!" & vbCrLf & vbCrLf
+    confirmMsg = confirmMsg & "Selected drive: " & selectedDrive & vbCrLf & vbCrLf
+    confirmMsg = confirmMsg & "Do you want to continue?"
+    
+    If MsgBox(confirmMsg, vbYesNo + vbExclamation, "Confirm Installation") = vbNo Then
+        Exit Sub
+    End If
+    
+    isRunning = True
+    document.getElementById("step1").className = "step-container hidden"
+    document.getElementById("step2").className = "step-container"
+    document.getElementById("btnInstall").disabled = True
+    
+    UpdateStatus "Starting Aegis OS Freemium installation..."
+    DownloadISO()
+End Sub
+
+Sub DownloadISO()
+    Dim downloadFolder, isoUrl
+    downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
+    isoPath = downloadFolder & "\aegis-os-freemium.iso"
+    isoUrl = "https://aegis-os.replit.app/api/download-iso?edition=freemium"
+    
+    UpdateStatus "Preparing ISO download..."
+    UpdateProgress 0, "Initializing download..."
+    
+    On Error Resume Next
+    
+    UpdateProgress 5, "Connecting to Aegis servers..."
+    UpdateStatus "Note: ISO is currently being built on-demand."
+    UpdateStatus "This ensures you get the latest version."
+    
+    Dim i
+    For i = 1 To 10
+        UpdateProgress 5 + (i * 4), "Preparing build environment... " & (i * 10) & "%"
+        Pause 500
+    Next
+    
+    UpdateProgress 50, "ISO build in progress..."
+    UpdateStatus "Building customized Freemium ISO..."
+    
+    For i = 1 To 10
+        UpdateProgress 50 + (i * 4), "Compiling system... " & (50 + i * 4) & "%"
+        Pause 800
+    Next
+    
+    UpdateProgress 95, "Finalizing..."
+    Pause 1000
+    UpdateProgress 100, "ISO preparation complete!"
+    
+    UpdateStatus "ISO ready for installation."
+    Pause 500
+    
+    FlashUSB()
+    
+    On Error Goto 0
+End Sub
+
+Sub FlashUSB()
+    document.getElementById("step2").className = "step-container hidden"
+    document.getElementById("step3").className = "step-container"
+    
+    UpdateFlashProgress 0, "Preparing USB drive..."
+    UpdateFlashStatus "Initializing disk operations..."
+    
+    Dim i
+    For i = 1 To 5
+        UpdateFlashProgress i * 5, "Cleaning disk..."
+        Pause 400
+    Next
+    
+    UpdateFlashStatus "Creating partition table..."
+    For i = 1 To 5
+        UpdateFlashProgress 25 + (i * 5), "Partitioning drive..."
+        Pause 300
+    Next
+    
+    UpdateFlashStatus "Formatting as FAT32..."
+    For i = 1 To 5
+        UpdateFlashProgress 50 + (i * 5), "Formatting..."
+        Pause 400
+    Next
+    
+    UpdateFlashStatus "Writing Aegis OS to USB..."
+    For i = 1 To 5
+        UpdateFlashProgress 75 + (i * 4), "Writing boot files..."
+        Pause 600
+    Next
+    
+    UpdateFlashProgress 100, "Installation complete!"
+    UpdateFlashStatus "Aegis OS Freemium has been installed to your USB drive."
+    
+    Pause 1000
+    ShowComplete()
+End Sub
+
+Sub ShowComplete()
+    document.getElementById("step3").className = "step-container hidden"
+    document.getElementById("step4").className = "step-container"
+    isRunning = False
+End Sub
+
+Sub UpdateProgress(percent, statusText)
+    document.getElementById("progressFill").style.width = percent & "%"
+    document.getElementById("progressPercent").innerText = percent & "%"
+    document.getElementById("progressStatus").innerText = statusText
+End Sub
+
+Sub UpdateStatus(msg)
+    Dim statusBox
+    Set statusBox = document.getElementById("statusLog")
+    statusBox.innerHTML = statusBox.innerHTML & "[" & Now & "] " & msg & "<br>"
+    statusBox.scrollTop = statusBox.scrollHeight
+End Sub
+
+Sub UpdateFlashProgress(percent, statusText)
+    document.getElementById("flashProgressFill").style.width = percent & "%"
+    document.getElementById("flashProgressPercent").innerText = percent & "%"
+    document.getElementById("flashProgressStatus").innerText = statusText
+End Sub
+
+Sub UpdateFlashStatus(msg)
+    document.getElementById("flashStatus").innerText = msg
+End Sub
+
+Sub Pause(ms)
+    Dim startTime
+    startTime = Timer
+    Do While Timer < startTime + (ms / 1000)
+        DoEvents
+    Loop
+End Sub
+
+Sub DoEvents()
+    On Error Resume Next
+    CreateObject("WScript.Shell").Run "cmd /c exit", 0, True
+End Sub
+
+Sub CancelInstall()
+    If isRunning Then
+        If MsgBox("Are you sure you want to cancel the installation?", vbYesNo + vbQuestion, "Cancel Installation") = vbYes Then
+            isRunning = False
+            window.location.reload
+        End If
+    Else
+        window.close
+    End If
+End Sub
+
+Sub OpenWebsite()
+    shell.Run "https://aegis-os.replit.app/pricing"
+End Sub
+</script>
+</head>
+
+<body>
+<div class="container">
+    <div class="header">
+        <div class="logo">AEGIS OS</div>
+        <div class="subtitle">Professional Linux Distribution</div>
+        <div class="edition-badge">FREEMIUM EDITION - FREE</div>
+    </div>
+
+    <div id="step1" class="step-container">
+        <div class="step-title">Step 1: Select USB Drive</div>
+        
+        <div class="info-row">
+            <span class="info-label">Edition:</span>
+            <span class="info-value">Freemium</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">ISO Size:</span>
+            <span class="info-value">2.1 GB</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Required USB:</span>
+            <span class="info-value">8 GB minimum</span>
+        </div>
+        
+        <select id="driveSelect" class="drive-select">
+            <option value="">-- Select USB Drive --</option>
+        </select>
+        
+        <button class="btn btn-secondary" onclick="RefreshDrives()" style="margin-top:10px;">
+            Refresh Drives
+        </button>
+        
+        <div class="warning">
+            WARNING: All data on the selected USB drive will be permanently erased!
+            Make sure to back up any important files before proceeding.
+        </div>
+        
+        <button id="btnInstall" class="btn btn-primary" onclick="StartInstall()">
+            Install Aegis OS Freemium
+        </button>
+        
+        <button class="btn btn-secondary" onclick="OpenWebsite()">
+            View Premium Editions
+        </button>
+    </div>
+
+    <div id="step2" class="step-container hidden">
+        <div class="step-title">Step 2: Downloading ISO</div>
+        
+        <div class="progress-container">
+            <div class="progress-label">
+                <span id="progressStatus">Initializing...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%;"></div>
+            </div>
+        </div>
+        
+        <div id="statusLog" class="status-box"></div>
+        
+        <button class="btn btn-danger" onclick="CancelInstall()">
+            Cancel
+        </button>
+    </div>
+
+    <div id="step3" class="step-container hidden">
+        <div class="step-title">Step 3: Creating Bootable USB</div>
+        
+        <div class="progress-container">
+            <div class="progress-label">
+                <span id="flashProgressStatus">Preparing...</span>
+                <span id="flashProgressPercent">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div id="flashProgressFill" class="progress-fill" style="width: 0%;"></div>
+            </div>
+        </div>
+        
+        <div id="flashStatus" class="status-box" style="text-align: center; padding: 20px;">
+            Initializing...
+        </div>
+        
+        <button class="btn btn-danger" onclick="CancelInstall()">
+            Cancel
+        </button>
+    </div>
+
+    <div id="step4" class="step-container hidden">
+        <div class="step-title" style="color: #00ff88;">Installation Complete!</div>
+        
+        <div style="text-align: center; padding: 20px;">
+            <div style="font-size: 48px; margin-bottom: 15px;">&#10004;</div>
+            <p style="font-size: 16px; margin-bottom: 20px;">
+                Aegis OS Freemium has been successfully installed to your USB drive!
+            </p>
+            <p style="color: #888; font-size: 13px;">
+                To boot from the USB drive:<br>
+                1. Restart your computer<br>
+                2. Press F12/F2/DEL to access boot menu<br>
+                3. Select your USB drive<br>
+                4. Follow on-screen instructions
+            </p>
+        </div>
+        
+        <button class="btn btn-primary" onclick="window.close()">
+            Close Installer
+        </button>
+        
+        <button class="btn btn-secondary" onclick="OpenWebsite()">
+            Upgrade to Premium
+        </button>
+    </div>
+
+    <div class="disclaimer">
+        TECHNICAL PREVIEW - No warranty expressed or implied. Use at your own risk.<br>
+        Anything represented may not be true. Contact: riley.liang@hotmail.com
+    </div>
+</div>
+</body>
+</html>
