@@ -1630,9 +1630,36 @@ if __name__ == "__main__":
         return jsonify({'error': 'Download failed'}), 500
 
 @app.route('/download-installer')
+@app.route('/download-installer.exe')
+@app.route('/download-installer.bat')
+def download_windows_installer():
+    """Download the Windows installer (.bat file that acts like .exe)"""
+    try:
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.bat')
+        
+        if os.path.exists(installer_path):
+            with open(installer_path, 'r', encoding='utf-8') as f:
+                script_content = f.read()
+            
+            return Response(
+                script_content,
+                mimetype='application/x-msdos-program',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.exe',
+                    'Content-Type': 'application/octet-stream'
+                }
+            )
+        else:
+            app.logger.error(f"Installer not found at: {installer_path}")
+            return jsonify({'error': 'Installer file not found'}), 404
+            
+    except Exception as e:
+        app.logger.error(f"Installer download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
 @app.route('/download-installer.py')
-def download_cross_platform_installer():
-    """Download the cross-platform Python installer script (works on Windows, macOS, Linux)"""
+def download_python_installer():
+    """Download the cross-platform Python installer script (for Mac/Linux)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.py')
         
@@ -3567,16 +3594,16 @@ def payment_success():
             </div>''' if license_key else ''}
 
             <div class="download-section">
-                <a href="/download-installer" class="download-btn">Download Installer</a>
-                <p class="download-info">Cross-platform Python installer for Windows, Mac, and Linux</p>
+                <a href="/download-installer.exe" class="download-btn">Download Installer (.exe)</a>
+                <p class="download-info">Windows installer - Just double-click to run</p>
             </div>
 
             <div class="steps">
                 <h3>Quick Start:</h3>
                 <ol>
-                    <li>Run the installer (requires Python 3.6+)</li>
+                    <li>Download and run the .exe installer</li>
                     <li>Enter your license key when prompted</li>
-                    <li>Select a USB drive (8GB+ recommended)</li>
+                    <li>Follow the on-screen instructions</li>
                     <li>Boot from USB to install Aegis OS</li>
                 </ol>
             </div>
