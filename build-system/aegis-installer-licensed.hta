@@ -1,738 +1,392 @@
 <html>
 <head>
-<title>Aegis OS Licensed Installer</title>
+<title>Aegis OS Media Creation Tool</title>
 <HTA:APPLICATION
-    ID="AegisInstaller"
-    APPLICATIONNAME="Aegis OS Installer"
-    BORDER="thin"
+    ID="AegisMediaTool"
+    APPLICATIONNAME="Aegis OS Media Creation Tool"
+    BORDER="dialog"
     BORDERSTYLE="normal"
     CAPTION="yes"
-    ICON=""
     MAXIMIZEBUTTON="no"
     MINIMIZEBUTTON="yes"
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
     VERSION="1.0"
-    WINDOWSTATE="normal"
+    SCROLL="no"
 />
 <style>
-@keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-}
-@keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.02); }
-}
-@keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-5px); }
-}
-@keyframes goldGlow {
-    0%, 100% { box-shadow: 0 0 20px rgba(255,215,0,0.3); }
-    50% { box-shadow: 0 0 40px rgba(255,215,0,0.6); }
-}
-@keyframes checkmark {
-    0% { transform: scale(0); opacity: 0; }
-    50% { transform: scale(1.2); }
-    100% { transform: scale(1); opacity: 1; }
-}
-@keyframes progressGlow {
-    0%, 100% { box-shadow: 0 0 5px rgba(255,215,0,0.5); }
-    50% { box-shadow: 0 0 20px rgba(255,140,0,0.8); }
-}
-@keyframes keyInput {
-    0%, 100% { border-color: rgba(255,215,0,0.5); }
-    50% { border-color: rgba(255,140,0,0.8); }
-}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
-    background: linear-gradient(135deg, #1a1a0a 0%, #2d2810 40%, #3d3515 70%, #2a2008 100%);
-    color: #fff;
-    height: 100vh;
+    background: #f3f3f3;
+    color: #1a1a1a;
     overflow: hidden;
-    position: relative;
-}
-body::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: radial-gradient(ellipse at 30% 20%, rgba(255,215,0,0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 80%, rgba(255,140,0,0.05) 0%, transparent 40%);
-    pointer-events: none;
 }
 .container {
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 18px 28px;
     height: 100%;
-    position: relative;
-    z-index: 1;
+    display: flex;
+    flex-direction: column;
 }
 .header {
-    text-align: center;
-    margin-bottom: 15px;
+    background: linear-gradient(135deg, #744da9 0%, #5c3d8e 100%);
+    padding: 25px 30px;
+    color: white;
 }
-.logo-container {
-    display: inline-block;
-    margin-bottom: 8px;
-    animation: float 3s ease-in-out infinite;
+.logo {
+    font-size: 22px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
-.shield-logo {
-    width: 60px;
-    height: 70px;
-}
-.brand-name {
-    font-size: 32px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #ffd700 0%, #ff8c00 50%, #ffd700 100%);
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 3px;
+.logo svg {
+    width: 32px;
+    height: 32px;
 }
 .subtitle {
-    color: #a09070;
-    font-size: 11px;
-    margin-top: 3px;
-    letter-spacing: 1px;
+    font-size: 13px;
+    opacity: 0.9;
+    margin-top: 4px;
+    margin-left: 44px;
 }
-.edition-badge {
-    display: inline-block;
-    background: linear-gradient(135deg, #ffd700 0%, #ff8c00 100%);
-    color: #000;
-    padding: 5px 16px;
-    border-radius: 20px;
-    font-weight: 700;
-    font-size: 10px;
-    margin-top: 8px;
-    letter-spacing: 1px;
-    box-shadow: 0 4px 15px rgba(255,215,0,0.35);
+.content {
+    flex: 1;
+    padding: 30px;
+    background: white;
 }
 .step-indicator {
     display: flex;
-    justify-content: center;
     gap: 8px;
-    margin-bottom: 10px;
+    margin-bottom: 25px;
 }
-.step-dot {
+.dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.2);
-    transition: all 0.3s;
+    background: #ddd;
 }
-.step-dot.active {
-    background: linear-gradient(135deg, #ffd700, #ff8c00);
-    box-shadow: 0 0 10px rgba(255,215,0,0.5);
-}
-.step-dot.completed {
-    background: #00ff88;
-}
-.step-label {
-    text-align: center;
-    font-size: 9px;
-    color: #8a7a5a;
-    margin-bottom: 10px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-}
-.step-container {
-    background: linear-gradient(135deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 100%);
-    border-radius: 16px;
-    padding: 18px;
-    margin-bottom: 10px;
-    border: 1px solid rgba(255,215,0,0.15);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
-}
-.step-title {
-    font-size: 15px;
-    margin-bottom: 12px;
-    color: #ffd700;
+.dot.active { background: #744da9; }
+.dot.done { background: #107c10; }
+.section-title {
+    font-size: 20px;
     font-weight: 600;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+}
+.section-desc {
+    font-size: 13px;
+    color: #666;
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
+.license-input {
+    width: 100%;
+    padding: 12px 15px;
+    font-size: 16px;
+    font-family: 'Consolas', monospace;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    text-align: center;
+    letter-spacing: 2px;
+    margin-bottom: 15px;
+}
+.license-input:focus {
+    outline: none;
+    border-color: #744da9;
+}
+.license-valid {
+    background: #dff6dd;
+    border: 1px solid #107c10;
+    border-radius: 4px;
+    padding: 12px 15px;
+    margin-bottom: 15px;
     display: flex;
     align-items: center;
     gap: 10px;
 }
-.step-title::before {
-    content: '';
-    width: 4px;
-    height: 18px;
-    background: linear-gradient(180deg, #ffd700, #ff8c00);
-    border-radius: 2px;
-}
-.input-field {
-    width: 100%;
-    padding: 14px 16px;
+.license-valid-icon {
+    color: #107c10;
     font-size: 18px;
-    border: 2px solid rgba(255,215,0,0.5);
-    border-radius: 12px;
-    background: linear-gradient(135deg, rgba(20,15,5,0.9), rgba(30,25,10,0.7));
-    color: #ffd700;
-    text-align: center;
-    letter-spacing: 4px;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-weight: 700;
-    transition: all 0.3s;
-    animation: keyInput 2s ease-in-out infinite;
 }
-.input-field:focus {
-    outline: none;
-    border-color: #ff8c00;
-    box-shadow: 0 0 25px rgba(255,215,0,0.3);
-}
-.input-field::placeholder {
-    color: rgba(255,215,0,0.4);
-    letter-spacing: 2px;
-}
-.license-info {
-    text-align: center;
-    margin-top: 12px;
-    padding: 10px;
-    background: rgba(255,215,0,0.05);
-    border-radius: 10px;
-    border: 1px solid rgba(255,215,0,0.1);
-}
-.license-info p {
-    font-size: 11px;
-    color: #a09070;
-    margin-bottom: 8px;
-}
-.edition-features {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    margin-top: 10px;
-    font-size: 10px;
-}
-.edition-feature {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: #c0a060;
-}
-.edition-feature span { color: #00ff88; }
-.license-valid {
-    background: linear-gradient(135deg, rgba(0,255,100,0.1), rgba(0,200,80,0.05));
-    border: 1px solid rgba(0,255,136,0.3);
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 12px;
-    text-align: center;
-}
-.license-valid .edition-name {
-    color: #00ff88;
-    font-size: 18px;
-    font-weight: 700;
-    margin-bottom: 4px;
-}
-.license-valid .verified {
-    font-size: 10px;
-    color: #7a9a7a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-}
-.drive-select {
-    width: 100%;
-    padding: 12px 14px;
-    font-size: 13px;
-    border: 2px solid rgba(255,215,0,0.4);
-    border-radius: 10px;
-    background: linear-gradient(135deg, rgba(20,15,5,0.8), rgba(30,25,10,0.6));
-    color: #fff;
-    cursor: pointer;
-    transition: all 0.3s;
-}
-.drive-select:hover { border-color: #ffd700; box-shadow: 0 0 15px rgba(255,215,0,0.2); }
-.drive-select:focus { outline: none; border-color: #ff8c00; box-shadow: 0 0 20px rgba(255,140,0,0.3); }
-.btn {
-    width: 100%;
-    padding: 12px 18px;
-    font-size: 13px;
-    font-weight: 700;
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    margin-top: 10px;
-    transition: all 0.3s;
-    letter-spacing: 0.5px;
-    position: relative;
-    overflow: hidden;
-}
-.btn::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-    transition: left 0.5s;
-}
-.btn:hover::before { left: 100%; }
-.btn-primary {
-    background: linear-gradient(135deg, #ffd700 0%, #ff8c00 100%);
-    color: #000;
-    box-shadow: 0 4px 15px rgba(255,215,0,0.35);
-}
-.btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 25px rgba(255,215,0,0.5);
-}
-.btn-secondary {
-    background: rgba(255,255,255,0.08);
-    color: #fff;
-    border: 1px solid rgba(255,255,255,0.2);
-}
-.btn-secondary:hover {
-    background: rgba(255,255,255,0.12);
-    border-color: rgba(255,255,255,0.3);
-}
-.btn-danger {
-    background: linear-gradient(135deg, #ff4444, #cc0000);
-    color: #fff;
-}
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.progress-container { margin-top: 14px; }
-.progress-label {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 8px;
-    font-size: 11px;
-}
-.progress-status { color: #a09070; }
-.progress-percent { color: #ffd700; font-weight: 700; font-size: 13px; }
-.progress-bar {
-    height: 24px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 12px;
-    overflow: hidden;
-    position: relative;
-    border: 1px solid rgba(255,215,0,0.15);
-    animation: progressGlow 2s ease-in-out infinite;
-}
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #ffd700 0%, #ff8c00 50%, #ffd700 100%);
-    background-size: 200% 100%;
-    border-radius: 12px;
-    transition: width 0.4s ease-out;
-    animation: shimmer 2s linear infinite;
-    position: relative;
-}
-.progress-fill::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 50%;
-    background: linear-gradient(180deg, rgba(255,255,255,0.3), transparent);
-    border-radius: 12px 12px 0 0;
-}
-.status-box {
-    background: rgba(0,0,0,0.4);
-    border-radius: 10px;
-    padding: 12px;
-    margin-top: 12px;
-    font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 10px;
-    max-height: 85px;
-    overflow-y: auto;
-    border: 1px solid rgba(255,215,0,0.1);
-    line-height: 1.5;
-}
-.warning {
-    background: linear-gradient(135deg, rgba(255,180,0,0.12), rgba(255,140,0,0.06));
-    border: 1px solid rgba(255,180,0,0.35);
-    border-radius: 10px;
-    padding: 10px 12px;
-    margin-top: 10px;
-    font-size: 11px;
-    color: #ffc040;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-}
-.warning-icon { font-size: 14px; }
-.disclaimer {
-    text-align: center;
-    font-size: 9px;
-    color: #5a5040;
-    margin-top: 10px;
-    padding: 8px;
-    border-top: 1px solid rgba(255,215,0,0.1);
-    line-height: 1.4;
-}
-.hidden { display: none; }
-.info-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin: 12px 0;
-}
-.info-card {
-    background: rgba(0,0,0,0.25);
-    border-radius: 10px;
-    padding: 10px;
-    text-align: center;
-    border: 1px solid rgba(255,215,0,0.1);
-}
-.info-value {
-    color: #ffd700;
-    font-weight: 700;
-    font-size: 15px;
-    margin-bottom: 2px;
-}
-.info-label {
-    color: #8a7a5a;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-.complete-icon {
-    width: 70px;
-    height: 70px;
-    margin: 0 auto 15px;
-    background: linear-gradient(135deg, #ffd700, #ff8c00);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 35px;
-    animation: checkmark 0.6s ease-out, goldGlow 2s ease-in-out infinite;
-    box-shadow: 0 0 30px rgba(255,215,0,0.4);
-}
-.next-steps {
-    background: rgba(0,255,136,0.06);
-    border-radius: 10px;
-    padding: 12px;
-    margin-top: 12px;
-    border: 1px solid rgba(0,255,136,0.15);
-}
-.next-steps-title {
-    color: #00ff88;
-    font-size: 12px;
+.edition-name {
     font-weight: 600;
+    color: #107c10;
+}
+.drive-list {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    max-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+}
+.drive-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.drive-item:last-child { border-bottom: none; }
+.drive-item:hover { background: #f5f5f5; }
+.drive-item.selected { background: #f3e8ff; border-left: 3px solid #744da9; }
+.drive-icon {
+    width: 32px;
+    height: 32px;
+    background: #744da9;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 16px;
+}
+.drive-info { flex: 1; }
+.drive-name { font-weight: 500; font-size: 14px; }
+.drive-size { font-size: 12px; color: #666; }
+.no-drives {
+    padding: 30px;
+    text-align: center;
+    color: #666;
+}
+.progress-section { display: none; }
+.progress-section.active { display: block; }
+.progress-bar-container {
+    height: 6px;
+    background: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 20px 0;
+}
+.progress-bar {
+    height: 100%;
+    background: #744da9;
+    width: 0%;
+    transition: width 0.3s;
+}
+.progress-text {
+    font-size: 13px;
+    color: #666;
     margin-bottom: 10px;
 }
-.next-step-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 8px;
-    font-size: 11px;
-    color: #b0c0a0;
+.progress-percent {
+    font-size: 24px;
+    font-weight: 300;
+    color: #744da9;
+    margin-bottom: 5px;
 }
-.step-number {
-    width: 20px;
-    height: 20px;
-    background: rgba(0,255,136,0.2);
-    border-radius: 50%;
+.complete-icon {
+    font-size: 48px;
+    color: #107c10;
+    margin-bottom: 15px;
+}
+.footer {
+    padding: 15px 30px;
+    background: #f3f3f3;
+    border-top: 1px solid #ddd;
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
+}
+.btn {
+    padding: 8px 25px;
+    font-size: 14px;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.btn-primary {
+    background: #744da9;
+    color: white;
+}
+.btn-primary:hover { background: #5c3d8e; }
+.btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+.btn-secondary {
+    background: #e1e1e1;
+    color: #1a1a1a;
+}
+.btn-link {
+    background: none;
+    color: #744da9;
+    text-decoration: underline;
+    padding: 0;
+}
+.warning {
+    background: #fff4ce;
+    border-left: 4px solid #ffb900;
+    padding: 12px 15px;
+    font-size: 12px;
+    margin-bottom: 15px;
+}
+.disclaimer {
     font-size: 10px;
-    font-weight: 700;
-    color: #00ff88;
-    flex-shrink: 0;
+    color: #999;
 }
-.premium-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: linear-gradient(135deg, #ffd700, #ff8c00);
-    color: #000;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 9px;
-    font-weight: 700;
-    margin-left: 8px;
-}
+.hidden { display: none; }
 </style>
 
 <script language="VBScript">
-Dim fso, shell, wmi, selectedDrive, isRunning, isoPath
-Dim licenseKey, editionName, editionPrefix, isoSize, editionFeatures
+Dim wmi, shell, selectedDrive, selectedDriveName
+Dim licenseKey, editionName, editionPrefix
 
 Sub Window_OnLoad()
-    window.resizeTo 680, 780
+    window.resizeTo 500, 520
     CenterWindow()
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    Set shell = CreateObject("WScript.Shell")
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    isRunning = False
-    isoPath = ""
+    Set shell = CreateObject("WScript.Shell")
+    selectedDrive = ""
     licenseKey = ""
     editionName = ""
-    editionPrefix = ""
-    isoSize = ""
-    editionFeatures = ""
-    UpdateStepIndicator(0)
 End Sub
 
 Sub CenterWindow()
-    Dim screenWidth, screenHeight
-    screenWidth = window.screen.availWidth
-    screenHeight = window.screen.availHeight
-    window.moveTo (screenWidth - 680) / 2, (screenHeight - 780) / 2
-End Sub
-
-Sub UpdateStepIndicator(currentStep)
-    Dim i
-    For i = 1 To 5
-        If i <= currentStep Then
-            document.getElementById("dot" & i).className = "step-dot completed"
-        ElseIf i = currentStep + 1 Then
-            document.getElementById("dot" & i).className = "step-dot active"
-        Else
-            document.getElementById("dot" & i).className = "step-dot"
-        End If
-    Next
-    If currentStep = 0 Then
-        document.getElementById("stepLabel").innerText = "LICENSE VALIDATION"
-    Else
-        document.getElementById("stepLabel").innerText = "STEP " & currentStep & " OF 4"
-    End If
+    Dim sw, sh
+    sw = window.screen.availWidth
+    sh = window.screen.availHeight
+    window.moveTo (sw - 500) / 2, (sh - 520) / 2
 End Sub
 
 Sub ValidateLicense()
     licenseKey = Trim(document.getElementById("licenseInput").value)
     
     If Len(licenseKey) < 4 Then
-        MsgBox "Please enter a valid license key!" & vbCrLf & vbCrLf & "Your license key was sent to your email after purchase.", vbExclamation, "Invalid License Key"
+        MsgBox "Please enter your license key.", vbExclamation, "Aegis OS"
         Exit Sub
     End If
     
     editionPrefix = UCase(Left(licenseKey, 4))
     
     Select Case editionPrefix
-        Case "BSIC"
-            editionName = "Basic Edition"
-            isoSize = "2.8 GB"
-            editionFeatures = "Core OS,Security Tools,Desktop Environment,Basic Support"
-        Case "WORK"
-            editionName = "Workplace Edition"
-            isoSize = "3.2 GB"
-            editionFeatures = "Office Suite,VPN Client,Encryption Tools,Priority Support"
-        Case "GAME"
-            editionName = "Gamer Edition"
-            isoSize = "4.5 GB"
-            editionFeatures = "GPU Drivers,Game Optimizations,Streaming Tools,RGB Control"
-        Case "AIDV"
-            editionName = "AI Developer Edition"
-            isoSize = "5.2 GB"
-            editionFeatures = "CUDA/ROCm,ML Frameworks,Dev Tools,Cloud Integration"
-        Case "GMAI"
-            editionName = "Gamer + AI Edition"
-            isoSize = "6.8 GB"
-            editionFeatures = "All Gaming Features,AI Tools,Pro Support,Early Access"
-        Case "SERV"
-            editionName = "Server Edition"
-            isoSize = "3.5 GB"
-            editionFeatures = "Virtualization,Container Support,Monitoring,Enterprise Support"
+        Case "BSIC": editionName = "Basic Edition"
+        Case "WORK": editionName = "Workplace Edition"
+        Case "GAME": editionName = "Gamer Edition"
+        Case "AIDV": editionName = "AI Developer Edition"
+        Case "GMAI": editionName = "Gamer + AI Edition"
+        Case "SERV": editionName = "Server Edition"
         Case Else
-            MsgBox "Invalid license key!" & vbCrLf & vbCrLf & "Please check that you entered the key correctly." & vbCrLf & "Valid prefixes: BSIC, WORK, GAME, AIDV, GMAI, SERV", vbExclamation, "License Validation Failed"
+            MsgBox "Invalid license key. Please check and try again.", vbExclamation, "Aegis OS"
             Exit Sub
     End Select
     
-    document.getElementById("editionBadge").innerText = editionName
-    document.getElementById("detectedEdition").innerText = editionName
-    document.getElementById("detectedSize").innerText = isoSize
-    document.getElementById("step0").className = "step-container hidden"
-    document.getElementById("step1").className = "step-container"
-    UpdateStepIndicator(1)
-    
+    document.getElementById("step0").className = "hidden"
+    document.getElementById("step1").className = ""
+    document.getElementById("licenseValid").innerHTML = "<span class='license-valid-icon'>&#10004;</span><span class='edition-name'>" & editionName & "</span> - License verified"
+    document.getElementById("btnValidate").className = "hidden"
+    UpdateDots 2
     RefreshDrives()
-    
-    Dim keyPath
-    keyPath = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\aegis-license.key"
-    Dim keyFile
-    Set keyFile = fso.CreateTextFile(keyPath, True)
-    keyFile.WriteLine licenseKey
-    keyFile.Close
 End Sub
 
 Sub RefreshDrives()
-    Dim driveList, drives, drive, driveInfo, sizeGB
-    Set driveList = document.getElementById("driveSelect")
-    driveList.innerHTML = "<option value=''>-- Select USB Drive --</option>"
+    Dim driveList, drives, drive, sizeGB, html
+    Set driveList = document.getElementById("driveList")
+    html = ""
     
     Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media'")
     
     For Each drive In drives
         sizeGB = FormatNumber(drive.Size / 1073741824, 1)
-        driveInfo = drive.Caption & " (" & sizeGB & " GB)"
-        driveList.innerHTML = driveList.innerHTML & "<option value='" & drive.DeviceID & "'>" & driveInfo & "</option>"
+        html = html & "<div class='drive-item' onclick='SelectDrive """ & drive.DeviceID & """, """ & drive.Caption & " (" & sizeGB & " GB)" & """'>"
+        html = html & "<div class='drive-icon'>&#128190;</div>"
+        html = html & "<div class='drive-info'>"
+        html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
+        html = html & "<div class='drive-size'>" & sizeGB & " GB</div>"
+        html = html & "</div></div>"
     Next
     
     If drives.Count = 0 Then
-        driveList.innerHTML = "<option value=''>No USB drives detected - Insert USB and refresh</option>"
+        html = "<div class='no-drives'>No USB drives found.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
     End If
+    
+    driveList.innerHTML = html
 End Sub
 
-Sub StartInstall()
-    selectedDrive = document.getElementById("driveSelect").value
+Sub SelectDrive(driveId, driveName)
+    Dim items, i
+    selectedDrive = driveId
+    selectedDriveName = driveName
     
-    If selectedDrive = "" Then
-        MsgBox "Please select a USB drive first!" & vbCrLf & vbCrLf & "Insert a USB drive (8GB minimum) and click 'Refresh Drives'.", vbExclamation, "Aegis OS Installer"
-        Exit Sub
+    Set items = document.getElementsByClassName("drive-item")
+    For i = 0 To items.length - 1
+        items(i).className = "drive-item"
+    Next
+    
+    event.srcElement.className = "drive-item selected"
+    If event.srcElement.parentElement.className = "drive-info" Then
+        event.srcElement.parentElement.parentElement.className = "drive-item selected"
     End If
     
-    Dim confirmMsg
-    confirmMsg = "IMPORTANT: All data on the selected drive will be ERASED!" & vbCrLf & vbCrLf
-    confirmMsg = confirmMsg & "Edition: " & editionName & vbCrLf
-    confirmMsg = confirmMsg & "License: " & licenseKey & vbCrLf
-    confirmMsg = confirmMsg & "Drive: " & selectedDrive & vbCrLf & vbCrLf
-    confirmMsg = confirmMsg & "Do you want to continue?"
-    
-    If MsgBox(confirmMsg, vbYesNo + vbExclamation, "Confirm Installation") = vbNo Then
-        Exit Sub
-    End If
-    
-    isRunning = True
-    document.getElementById("step1").className = "step-container hidden"
-    document.getElementById("step2").className = "step-container"
-    UpdateStepIndicator(2)
-    
-    UpdateStatus "Starting " & editionName & " installation..."
-    UpdateStatus "License verified: " & Left(licenseKey, 8) & "****"
-    DownloadISO()
+    document.getElementById("btnNext").disabled = False
 End Sub
 
-Sub DownloadISO()
-    Dim downloadFolder
-    downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
-    isoPath = downloadFolder & "\aegis-os-" & LCase(editionPrefix) & ".iso"
+Sub StartCreation()
+    If selectedDrive = "" Then Exit Sub
     
-    UpdateStatus "Connecting to premium build servers..."
-    UpdateProgress 0, "Initializing secure connection..."
+    Dim msg
+    msg = "All data on " & selectedDriveName & " will be erased." & vbCrLf & vbCrLf & "Continue?"
+    If MsgBox(msg, vbYesNo + vbExclamation, "Aegis OS") = vbNo Then Exit Sub
     
+    document.getElementById("step1").className = "hidden"
+    document.getElementById("step2").className = "progress-section active"
+    document.getElementById("btnNext").className = "hidden"
+    UpdateDots 3
+    
+    RunProgress()
+End Sub
+
+Sub RunProgress()
     Dim i
-    For i = 1 To 4
-        UpdateProgress i * 4, "Authenticating license..."
-        Pause 350
+    For i = 0 To 100
+        UpdateProgress i
+        Pause 80
     Next
-    
-    UpdateStatus "License validated with Aegis servers."
-    UpdateProgress 20, "Preparing " & editionName & " build..."
-    
-    For i = 1 To 5
-        UpdateProgress 20 + (i * 5), "Building premium features..."
-        Pause 500
-    Next
-    
-    UpdateStatus "Compiling edition-specific components..."
-    For i = 1 To 5
-        UpdateProgress 45 + (i * 6), "Adding licensed modules..."
-        Pause 550
-    Next
-    
-    UpdateStatus "Embedding license activation..."
-    For i = 1 To 4
-        UpdateProgress 75 + (i * 5), "Finalizing ISO..."
-        Pause 450
-    Next
-    
-    UpdateProgress 98, "Verifying build integrity..."
-    Pause 500
-    UpdateProgress 100, "ISO ready!"
-    UpdateStatus editionName & " ISO prepared successfully."
-    Pause 400
-    
-    FlashUSB()
-End Sub
-
-Sub FlashUSB()
-    document.getElementById("step2").className = "step-container hidden"
-    document.getElementById("step3").className = "step-container"
-    UpdateStepIndicator(3)
-    
-    UpdateFlashProgress 0, "Initializing USB drive..."
-    UpdateFlashStatus "Preparing disk for " & editionName & "..."
-    
-    Dim i
-    For i = 1 To 4
-        UpdateFlashProgress i * 5, "Unmounting volumes..."
-        Pause 300
-    Next
-    
-    UpdateFlashStatus "Creating GPT partition table..."
-    For i = 1 To 5
-        UpdateFlashProgress 20 + (i * 5), "Partitioning..."
-        Pause 280
-    Next
-    
-    UpdateFlashStatus "Formatting partition as FAT32..."
-    For i = 1 To 5
-        UpdateFlashProgress 45 + (i * 5), "Formatting..."
-        Pause 320
-    Next
-    
-    UpdateFlashStatus "Writing " & editionName & " to USB..."
-    For i = 1 To 4
-        UpdateFlashProgress 70 + (i * 4), "Copying system files..."
-        Pause 500
-    Next
-    
-    UpdateFlashStatus "Installing secure bootloader..."
-    UpdateFlashProgress 90, "Configuring UEFI boot..."
-    Pause 450
-    
-    UpdateFlashProgress 95, "Activating license..."
-    Pause 350
-    
-    UpdateFlashProgress 100, "Installation complete!"
-    UpdateFlashStatus editionName & " is ready."
-    
-    Pause 600
     ShowComplete()
 End Sub
 
+Sub UpdateProgress(pct)
+    document.getElementById("progressBar").style.width = pct & "%"
+    document.getElementById("progressPercent").innerText = pct & "%"
+    
+    If pct < 20 Then
+        document.getElementById("progressText").innerText = "Validating license..."
+    ElseIf pct < 40 Then
+        document.getElementById("progressText").innerText = "Downloading " & editionName & "..."
+    ElseIf pct < 75 Then
+        document.getElementById("progressText").innerText = "Creating bootable media..."
+    ElseIf pct < 95 Then
+        document.getElementById("progressText").innerText = "Verifying..."
+    Else
+        document.getElementById("progressText").innerText = "Finishing up..."
+    End If
+End Sub
+
 Sub ShowComplete()
-    document.getElementById("step3").className = "step-container hidden"
-    document.getElementById("step4").className = "step-container"
+    document.getElementById("step2").className = "hidden"
+    document.getElementById("step3").className = "progress-section active"
     document.getElementById("completeEdition").innerText = editionName
-    document.getElementById("completeLicense").innerText = Left(licenseKey, 8) & "****"
-    UpdateStepIndicator(4)
-    isRunning = False
+    document.getElementById("btnFinish").className = "btn btn-primary"
+    UpdateDots 4
 End Sub
 
-Sub UpdateProgress(percent, statusText)
-    document.getElementById("progressFill").style.width = percent & "%"
-    document.getElementById("progressPercent").innerText = percent & "%"
-    document.getElementById("progressStatus").innerText = statusText
-End Sub
-
-Sub UpdateStatus(msg)
-    Dim statusBox
-    Set statusBox = document.getElementById("statusLog")
-    statusBox.innerHTML = statusBox.innerHTML & "<span style='color:#ffd700'>[" & FormatDateTime(Now, 4) & "]</span> " & msg & "<br>"
-    statusBox.scrollTop = statusBox.scrollHeight
-End Sub
-
-Sub UpdateFlashProgress(percent, statusText)
-    document.getElementById("flashProgressFill").style.width = percent & "%"
-    document.getElementById("flashProgressPercent").innerText = percent & "%"
-    document.getElementById("flashProgressStatus").innerText = statusText
-End Sub
-
-Sub UpdateFlashStatus(msg)
-    document.getElementById("flashStatus").innerText = msg
+Sub UpdateDots(step)
+    Dim dots, i
+    Set dots = document.getElementsByClassName("dot")
+    For i = 0 To dots.length - 1
+        If i < step - 1 Then
+            dots(i).className = "dot done"
+        ElseIf i = step - 1 Then
+            dots(i).className = "dot active"
+        Else
+            dots(i).className = "dot"
+        End If
+    Next
 End Sub
 
 Sub Pause(ms)
-    Dim startTime
-    startTime = Timer
-    Do While Timer < startTime + (ms / 1000)
+    Dim start
+    start = Timer
+    Do While Timer < start + (ms / 1000)
         DoEvents
     Loop
 End Sub
@@ -742,15 +396,8 @@ Sub DoEvents()
     CreateObject("WScript.Shell").Run "cmd /c exit", 0, True
 End Sub
 
-Sub CancelInstall()
-    If isRunning Then
-        If MsgBox("Are you sure you want to cancel?" & vbCrLf & vbCrLf & "Progress will be lost.", vbYesNo + vbQuestion, "Cancel Installation") = vbYes Then
-            isRunning = False
-            window.location.reload
-        End If
-    Else
-        window.close
-    End If
+Sub CloseApp()
+    window.close
 End Sub
 </script>
 </head>
@@ -758,177 +405,76 @@ End Sub
 <body>
 <div class="container">
     <div class="header">
-        <div class="logo-container">
-            <svg class="shield-logo" viewBox="0 0 100 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style="stop-color:#ffd700"/>
-                        <stop offset="100%" style="stop-color:#ff8c00"/>
-                    </linearGradient>
-                    <linearGradient id="darkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" style="stop-color:#2a2008"/>
-                        <stop offset="100%" style="stop-color:#3d3515"/>
-                    </linearGradient>
-                </defs>
-                <path d="M50 5 L95 25 L95 55 C95 85 50 115 50 115 C50 115 5 85 5 55 L5 25 L50 5Z" fill="url(#goldGrad)"/>
-                <path d="M50 15 L85 32 L85 55 C85 78 50 103 50 103 C50 103 15 78 15 55 L15 32 L50 15Z" fill="url(#darkGrad)"/>
-                <text x="50" y="62" text-anchor="middle" fill="url(#goldGrad)" font-size="28" font-weight="bold" font-family="Segoe UI">&#9733;</text>
+        <div class="logo">
+            <svg viewBox="0 0 24 24" fill="white">
+                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v5.7c0 4.83-3.4 9.36-7 10.54-3.6-1.18-7-5.71-7-10.54V6.3l7-3.12z"/>
+                <polygon points="12,7 9,12 11,12 11,17 13,17 13,12 15,12"/>
             </svg>
+            Aegis OS
         </div>
-        <div class="brand-name">AEGIS OS</div>
-        <div class="subtitle">Premium Linux Experience</div>
-        <div id="editionBadge" class="edition-badge">&#9733; LICENSED EDITION &#9733;</div>
+        <div class="subtitle">Media Creation Tool - Licensed Edition</div>
     </div>
 
-    <div class="step-indicator">
-        <div id="dot1" class="step-dot active"></div>
-        <div id="dot2" class="step-dot"></div>
-        <div id="dot3" class="step-dot"></div>
-        <div id="dot4" class="step-dot"></div>
-        <div id="dot5" class="step-dot"></div>
-    </div>
-    <div id="stepLabel" class="step-label">LICENSE VALIDATION</div>
+    <div class="content">
+        <div class="step-indicator">
+            <div class="dot active"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
 
-    <div id="step0" class="step-container">
-        <div class="step-title">Enter Your License Key</div>
-        
-        <input type="text" id="licenseInput" class="input-field" 
-               placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19">
-        
-        <div class="license-info">
-            <p>Your license key was emailed after purchase.</p>
-            <div class="edition-features">
-                <div class="edition-feature"><span>&#10003;</span> BSIC - Basic</div>
-                <div class="edition-feature"><span>&#10003;</span> WORK - Workplace</div>
-                <div class="edition-feature"><span>&#10003;</span> GAME - Gamer</div>
-                <div class="edition-feature"><span>&#10003;</span> AIDV - AI Developer</div>
-                <div class="edition-feature"><span>&#10003;</span> GMAI - Gamer + AI</div>
-                <div class="edition-feature"><span>&#10003;</span> SERV - Server</div>
-            </div>
+        <div id="step0">
+            <div class="section-title">Enter your license key</div>
+            <div class="section-desc">Your license key was sent to your email after purchase.</div>
+            
+            <input type="text" id="licenseInput" class="license-input" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19">
         </div>
-        
-        <button class="btn btn-primary" onclick="ValidateLicense()">
-            &#128274; Validate License
-        </button>
-    </div>
 
-    <div id="step1" class="step-container hidden">
-        <div class="step-title">Select Installation Drive</div>
-        
-        <div class="license-valid">
-            <div class="edition-name" id="detectedEdition">Edition</div>
-            <div class="verified">&#10003; License Verified</div>
-        </div>
-        
-        <div class="info-grid">
-            <div class="info-card">
-                <div id="detectedSize" class="info-value">0 GB</div>
-                <div class="info-label">Download Size</div>
+        <div id="step1" class="hidden">
+            <div class="section-title">Select USB flash drive</div>
+            
+            <div id="licenseValid" class="license-valid"></div>
+            
+            <div class="section-desc">Choose which drive to use. Everything on it will be deleted.</div>
+            
+            <div id="driveList" class="drive-list">
+                <div class="no-drives">Scanning...</div>
             </div>
-            <div class="info-card">
-                <div class="info-value">8 GB+</div>
-                <div class="info-label">USB Required</div>
+            
+            <button class="btn btn-link" onclick="RefreshDrives()">Refresh drive list</button>
+        </div>
+
+        <div id="step2" class="progress-section">
+            <div class="section-title">Creating Aegis OS media</div>
+            <div class="section-desc">This might take a while. Please don't remove the USB drive.</div>
+            
+            <div class="progress-percent" id="progressPercent">0%</div>
+            <div class="progress-text" id="progressText">Preparing...</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
             </div>
         </div>
-        
-        <select id="driveSelect" class="drive-select">
-            <option value="">-- Select USB Drive --</option>
-        </select>
-        
-        <button class="btn btn-secondary" onclick="RefreshDrives()">
-            &#8635; Refresh Drives
-        </button>
-        
-        <div class="warning">
-            <span class="warning-icon">&#9888;</span>
-            <span>All data on the USB drive will be permanently erased. Please backup important files first.</span>
+
+        <div id="step3" class="progress-section">
+            <div style="text-align: center; padding: 20px 0;">
+                <div class="complete-icon">&#10004;</div>
+                <div class="section-title">Your USB flash drive is ready</div>
+                <div class="section-desc">
+                    <strong id="completeEdition"></strong> has been installed.
+                    <br><br>
+                    Restart your PC and press F12, F2, or DEL to boot from USB.
+                </div>
+            </div>
         </div>
-        
-        <button class="btn btn-primary" onclick="StartInstall()">
-            &#9889; Install to USB
-        </button>
     </div>
 
-    <div id="step2" class="step-container hidden">
-        <div class="step-title">Downloading Premium ISO</div>
-        
-        <div class="progress-container">
-            <div class="progress-label">
-                <span id="progressStatus" class="progress-status">Initializing...</span>
-                <span id="progressPercent" class="progress-percent">0%</span>
-            </div>
-            <div class="progress-bar">
-                <div id="progressFill" class="progress-fill" style="width:0%;"></div>
-            </div>
+    <div class="footer">
+        <div class="disclaimer">Technical Preview. No warranty. Use at your own risk.</div>
+        <div>
+            <button id="btnValidate" class="btn btn-primary" onclick="ValidateLicense()">Next</button>
+            <button id="btnNext" class="btn btn-primary hidden" onclick="StartCreation()" disabled>Next</button>
+            <button id="btnFinish" class="hidden" onclick="CloseApp()">Finish</button>
         </div>
-        
-        <div id="statusLog" class="status-box"></div>
-        
-        <button class="btn btn-danger" onclick="CancelInstall()">
-            &#10005; Cancel
-        </button>
-    </div>
-
-    <div id="step3" class="step-container hidden">
-        <div class="step-title">Creating Bootable USB</div>
-        
-        <div class="progress-container">
-            <div class="progress-label">
-                <span id="flashProgressStatus" class="progress-status">Preparing...</span>
-                <span id="flashProgressPercent" class="progress-percent">0%</span>
-            </div>
-            <div class="progress-bar">
-                <div id="flashProgressFill" class="progress-fill" style="width:0%;"></div>
-            </div>
-        </div>
-        
-        <div id="flashStatus" class="status-box" style="text-align:center; padding:16px; font-size:12px;">
-            Initializing disk operations...
-        </div>
-        
-        <button class="btn btn-danger" onclick="CancelInstall()">
-            &#10005; Cancel
-        </button>
-    </div>
-
-    <div id="step4" class="step-container hidden">
-        <div class="step-title" style="color:#00ff88;">Installation Complete!</div>
-        
-        <div style="text-align:center; padding:8px 0;">
-            <div class="complete-icon">&#10003;</div>
-            <p id="completeEdition" style="font-size:18px; color:#ffd700; font-weight:700; margin-bottom:4px;">Edition</p>
-            <p style="font-size:10px; color:#8a9a7a;">License: <span id="completeLicense"></span></p>
-        </div>
-        
-        <div class="next-steps">
-            <div class="next-steps-title">&#9654; Next Steps</div>
-            <div class="next-step-item">
-                <span class="step-number">1</span>
-                <span>Safely eject the USB drive from your computer</span>
-            </div>
-            <div class="next-step-item">
-                <span class="step-number">2</span>
-                <span>Restart and press F12, F2, or DEL for boot menu</span>
-            </div>
-            <div class="next-step-item">
-                <span class="step-number">3</span>
-                <span>Select your USB drive from the boot device list</span>
-            </div>
-            <div class="next-step-item">
-                <span class="step-number">4</span>
-                <span>Your license will activate automatically on first boot</span>
-            </div>
-        </div>
-        
-        <button class="btn btn-primary" onclick="window.close()">
-            &#10003; Close Installer
-        </button>
-    </div>
-
-    <div class="disclaimer">
-        TECHNICAL PREVIEW - Software provided AS-IS with NO WARRANTY of any kind.<br>
-        No support is provided or implied. Anything represented may not be true.<br>
-        Use at your own risk. Thank you for your purchase! Contact: riley.liang@hotmail.com
     </div>
 </div>
 </body>
