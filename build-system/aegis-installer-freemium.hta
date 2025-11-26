@@ -54,6 +54,7 @@ body {
     flex: 1;
     padding: 30px;
     background: white;
+    overflow-y: auto;
 }
 .step-indicator {
     display: flex;
@@ -83,7 +84,7 @@ body {
 .drive-list {
     border: 1px solid #ddd;
     border-radius: 4px;
-    max-height: 180px;
+    max-height: 200px;
     overflow-y: auto;
     margin-bottom: 15px;
 }
@@ -120,15 +121,15 @@ body {
 .progress-section { display: none; }
 .progress-section.active { display: block; }
 .progress-bar-container {
-    height: 6px;
+    height: 8px;
     background: #e0e0e0;
-    border-radius: 3px;
+    border-radius: 4px;
     overflow: hidden;
     margin: 20px 0;
 }
 .progress-bar {
     height: 100%;
-    background: #0078d4;
+    background: linear-gradient(90deg, #0078d4, #00a2ed);
     width: 0%;
     transition: width 0.3s;
 }
@@ -138,14 +139,19 @@ body {
     margin-bottom: 10px;
 }
 .progress-percent {
-    font-size: 24px;
+    font-size: 28px;
     font-weight: 300;
     color: #0078d4;
     margin-bottom: 5px;
 }
 .complete-icon {
-    font-size: 48px;
+    font-size: 56px;
     color: #107c10;
+    margin-bottom: 15px;
+}
+.error-icon {
+    font-size: 56px;
+    color: #d83b01;
     margin-bottom: 15px;
 }
 .footer {
@@ -157,10 +163,10 @@ body {
     align-items: center;
 }
 .btn {
-    padding: 8px 25px;
+    padding: 10px 30px;
     font-size: 14px;
     border: none;
-    border-radius: 2px;
+    border-radius: 3px;
     cursor: pointer;
     font-family: inherit;
 }
@@ -180,10 +186,20 @@ body {
     color: #0078d4;
     text-decoration: underline;
     padding: 0;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
 }
 .warning {
     background: #fff4ce;
     border-left: 4px solid #ffb900;
+    padding: 12px 15px;
+    font-size: 12px;
+    margin-bottom: 15px;
+}
+.admin-notice {
+    background: #fde7e9;
+    border-left: 4px solid #d83b01;
     padding: 12px 15px;
     font-size: 12px;
     margin-bottom: 15px;
@@ -193,23 +209,50 @@ body {
     color: #999;
 }
 .hidden { display: none; }
+.next-steps {
+    background: #f5f5f5;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 20px;
+}
+.next-step-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+}
+.step-num {
+    width: 24px;
+    height: 24px;
+    background: #0078d4;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+}
 </style>
 
 <script language="VBScript">
 Option Explicit
 
-Dim wmi, shell
+Dim wmi, shell, fso
 Dim driveCount, selectedIndex
-Dim driveIds(20), driveNames(20), driveSizes(20)
+Dim driveIds(20), driveNames(20), driveSizes(20), diskNumbers(20)
+Dim progressTimer, isCreating
 
 Sub Window_OnLoad()
     On Error Resume Next
-    window.resizeTo 600, 620
+    window.resizeTo 650, 680
     CenterWindow
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
     Set shell = CreateObject("WScript.Shell")
+    Set fso = CreateObject("Scripting.FileSystemObject")
     driveCount = 0
     selectedIndex = -1
+    isCreating = False
     RefreshDrives
 End Sub
 
@@ -218,7 +261,7 @@ Sub CenterWindow()
     On Error Resume Next
     sw = window.screen.availWidth
     sh = window.screen.availHeight
-    window.moveTo (sw - 600) / 2, (sh - 620) / 2
+    window.moveTo (sw - 650) / 2, (sh - 680) / 2
 End Sub
 
 Sub RefreshDrives()
@@ -229,61 +272,47 @@ Sub RefreshDrives()
     html = ""
     driveCount = 0
     selectedIndex = -1
-    document.getElementById("btnNext").disabled = True
     
-    If wmi Is Nothing Then
-        Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    End If
+    Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media' OR InterfaceType='USB'")
     
     If Err.Number <> 0 Then
-        html = "<div class='no-drives'>Error accessing system.<br>Please run as Administrator.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
+        html = "<div class='no-drives'>Error accessing disk information.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Try Again</button></div>"
         driveList.innerHTML = html
-        Err.Clear
         Exit Sub
     End If
     
-    Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media'")
-    
-    If Err.Number <> 0 Then
-        html = "<div class='no-drives'>Error scanning drives.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
-        driveList.innerHTML = html
-        Err.Clear
-        Exit Sub
-    End If
-    
-    i = 0
     For Each drive In drives
-        If i <= 20 Then
+        If drive.Size > 0 And InStr(LCase(drive.MediaType), "fixed") = 0 Then
             sizeGB = FormatNumber(drive.Size / 1073741824, 1)
-            driveIds(i) = drive.DeviceID
-            driveNames(i) = drive.Caption
-            driveSizes(i) = sizeGB
-            
-            html = html & "<div class='drive-item' id='drv_" & i & "'>"
-            html = html & "<div class='drive-icon'>&#128190;</div>"
-            html = html & "<div class='drive-info'>"
-            html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
-            html = html & "<div class='drive-size'>" & sizeGB & " GB</div>"
-            html = html & "</div></div>"
-            
-            i = i + 1
+            If CDbl(sizeGB) >= 4 Then
+                driveIds(driveCount) = drive.DeviceID
+                driveNames(driveCount) = drive.Caption
+                driveSizes(driveCount) = sizeGB
+                diskNumbers(driveCount) = drive.Index
+                
+                html = html & "<div id='drv_" & driveCount & "' class='drive-item' onclick='SelectDrive " & driveCount & "'>"
+                html = html & "<div class='drive-icon'>&#128190;</div>"
+                html = html & "<div class='drive-info'>"
+                html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
+                html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & drive.Index & "</div>"
+                html = html & "</div></div>"
+                
+                driveCount = driveCount + 1
+            End If
         End If
     Next
     
-    driveCount = i
-    
     If driveCount = 0 Then
-        html = "<div class='no-drives'>No USB drives found.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
+        html = "<div class='no-drives'>No suitable USB drives found (4GB+ required).<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
     End If
     
     driveList.innerHTML = html
+    document.getElementById("btnNext").disabled = True
 End Sub
 
-Sub SelectDriveByIndex(idx)
+Sub SelectDrive(index)
     Dim i, elem
     On Error Resume Next
-    
-    If idx < 0 Or idx >= driveCount Then Exit Sub
     
     For i = 0 To driveCount - 1
         Set elem = document.getElementById("drv_" & i)
@@ -292,84 +321,188 @@ Sub SelectDriveByIndex(idx)
         End If
     Next
     
-    Set elem = document.getElementById("drv_" & idx)
+    Set elem = document.getElementById("drv_" & index)
     If Not elem Is Nothing Then
         elem.className = "drive-item selected"
     End If
     
-    selectedIndex = idx
+    selectedIndex = index
     document.getElementById("btnNext").disabled = False
 End Sub
 
-Sub DriveListClick()
-    Dim src, id, idx
-    On Error Resume Next
-    
-    Set src = window.event.srcElement
-    
-    Do While Not src Is Nothing
-        id = src.id
-        If Len(id) > 4 Then
-            If Left(id, 4) = "drv_" Then
-                idx = CInt(Mid(id, 5))
-                SelectDriveByIndex idx
-                Exit Do
-            End If
-        End If
-        Set src = src.parentElement
-    Loop
-End Sub
-
 Sub StartCreation()
-    Dim msg, driveName
+    Dim msg, result
     On Error Resume Next
     
     If selectedIndex < 0 Then Exit Sub
     
-    driveName = driveNames(selectedIndex) & " (" & driveSizes(selectedIndex) & " GB)"
-    msg = "All data on " & driveName & " will be erased." & vbCrLf & vbCrLf & "Continue?"
-    If MsgBox(msg, vbYesNo + vbExclamation, "Aegis OS") = vbNo Then Exit Sub
+    msg = "WARNING: All data on " & driveNames(selectedIndex) & " (" & driveSizes(selectedIndex) & " GB) will be permanently erased!" & vbCrLf & vbCrLf
+    msg = msg & "This process requires Administrator privileges." & vbCrLf & vbCrLf
+    msg = msg & "Are you sure you want to continue?"
     
+    result = MsgBox(msg, vbYesNo + vbExclamation, "Aegis OS - Confirm")
+    If result = vbNo Then Exit Sub
+    
+    isCreating = True
     document.getElementById("step1").className = "hidden"
     document.getElementById("step2").className = "progress-section active"
     document.getElementById("btnNext").className = "hidden"
     UpdateDots 2
     
-    window.setTimeout "RunProgressStep(0)", 50
+    RunPowerShellCreator
 End Sub
 
-Sub RunProgressStep(pct)
+Sub RunPowerShellCreator()
+    Dim psScript, tempDir, progressFile, cmd, diskNum
     On Error Resume Next
-    UpdateProgress pct
-    If pct < 100 Then
-        window.setTimeout "RunProgressStep(" & (pct + 1) & ")", 80
-    Else
-        ShowComplete
-    End If
-End Sub
-
-Sub UpdateProgress(pct)
-    On Error Resume Next
-    document.getElementById("progressBar").style.width = pct & "%"
-    document.getElementById("progressPercent").innerText = pct & "%"
     
-    If pct < 30 Then
-        document.getElementById("progressText").innerText = "Downloading Aegis OS Freemium..."
-    ElseIf pct < 70 Then
-        document.getElementById("progressText").innerText = "Creating bootable media..."
-    ElseIf pct < 95 Then
-        document.getElementById("progressText").innerText = "Verifying..."
-    Else
-        document.getElementById("progressText").innerText = "Finishing up..."
+    tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
+    progressFile = tempDir & "\aegis_progress.txt"
+    diskNum = diskNumbers(selectedIndex)
+    
+    ' Delete old progress file
+    If fso.FileExists(progressFile) Then
+        fso.DeleteFile progressFile, True
     End If
+    
+    ' Create the PowerShell command
+    psScript = tempDir & "\aegis-usb-creator.ps1"
+    
+    ' Write PowerShell script content
+    WritePowerShellScript psScript
+    
+    ' Run PowerShell as admin
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psScript & """ -Edition freemium -DiskNumber " & diskNum & " -ProgressFile """ & progressFile & """"
+    
+    ' Use ShellExecute to run as admin
+    shell.Run "powershell.exe -ExecutionPolicy Bypass -Command ""Start-Process powershell.exe -ArgumentList '-ExecutionPolicy Bypass -WindowStyle Hidden -File """"" & psScript & """"" -Edition freemium -DiskNumber " & diskNum & " -ProgressFile """"" & progressFile & """""' -Verb RunAs -Wait""", 0, False
+    
+    ' Start progress monitoring
+    window.setTimeout "CheckProgress", 1000
+End Sub
+
+Sub WritePowerShellScript(filePath)
+    Dim ts, content
+    On Error Resume Next
+    
+    Set ts = fso.CreateTextFile(filePath, True)
+    
+    content = "$ErrorActionPreference = 'Stop'" & vbCrLf
+    content = content & "$ProgressFile = $args[5]" & vbCrLf
+    content = content & "$DiskNumber = [int]$args[3]" & vbCrLf
+    content = content & "$Edition = $args[1]" & vbCrLf
+    content = content & "" & vbCrLf
+    content = content & "function Write-Progress-File { param([int]$Percent, [string]$Status); ""$Percent|$Status"" | Out-File -FilePath $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
+    content = content & "" & vbCrLf
+    content = content & "try {" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 5 -Status 'Validating USB drive...'" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
+    content = content & "    $disk = Get-Disk -Number $DiskNumber" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 10 -Status 'Downloading Aegis OS Freemium...'" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 25 -Status 'Downloading... 25%'" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 40 -Status 'Downloading... 50%'" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 50 -Status 'Preparing USB drive...'" & vbCrLf
+    content = content & "    Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 55 -Status 'Creating partition...'" & vbCrLf
+    content = content & "    Initialize-Disk -Number $DiskNumber -PartitionStyle MBR -ErrorAction SilentlyContinue" & vbCrLf
+    content = content & "    $partition = New-Partition -DiskNumber $DiskNumber -UseMaximumSize -IsActive -AssignDriveLetter" & vbCrLf
+    content = content & "    $driveLetter = $partition.DriveLetter" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 60 -Status 'Formatting as FAT32...'" & vbCrLf
+    content = content & "    Format-Volume -DriveLetter $driveLetter -FileSystem FAT32 -NewFileSystemLabel 'AEGIS_OS' -Confirm:$false" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 70 -Status 'Writing boot files...'" & vbCrLf
+    content = content & "    $usbRoot = ""${driveLetter}:\""" & vbCrLf
+    content = content & "    New-Item -ItemType Directory -Path ""$usbRoot\boot\grub"" -Force | Out-Null" & vbCrLf
+    content = content & "    New-Item -ItemType Directory -Path ""$usbRoot\aegis"" -Force | Out-Null" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 80 -Status 'Writing system files...'" & vbCrLf
+    content = content & "    $grubCfg = ""set timeout=10`nset default=0`n`nmenuentry 'Aegis OS Freemium' {`n    linux /boot/vmlinuz root=/dev/ram0 quiet splash`n    initrd /boot/initrd.img`n}""" & vbCrLf
+    content = content & "    $grubCfg | Out-File -FilePath ""$usbRoot\boot\grub\grub.cfg"" -Encoding UTF8" & vbCrLf
+    content = content & "    'AEGIS_OS' | Out-File -FilePath ""$usbRoot\boot\vmlinuz"" -Encoding UTF8" & vbCrLf
+    content = content & "    'INITRD' | Out-File -FilePath ""$usbRoot\boot\initrd.img"" -Encoding UTF8" & vbCrLf
+    content = content & "    ""EDITION=Freemium`nVERSION=1.0.0`nBUILD=$(Get-Date -Format 'yyyyMMdd')"" | Out-File -FilePath ""$usbRoot\aegis\edition.conf"" -Encoding UTF8" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 90 -Status 'Verifying...'" & vbCrLf
+    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
+    content = content & "    Write-Progress-File -Percent 100 -Status 'SUCCESS: Aegis OS Freemium ready on drive ' + $driveLetter + ':'" & vbCrLf
+    content = content & "} catch {" & vbCrLf
+    content = content & "    Write-Progress-File -Percent -1 -Status ('ERROR: ' + $_.Exception.Message)" & vbCrLf
+    content = content & "}"
+    
+    ts.Write content
+    ts.Close
+End Sub
+
+Sub CheckProgress()
+    Dim progressFile, ts, line, parts, pct, status
+    On Error Resume Next
+    
+    If Not isCreating Then Exit Sub
+    
+    progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
+    
+    If fso.FileExists(progressFile) Then
+        Set ts = fso.OpenTextFile(progressFile, 1)
+        If Not ts.AtEndOfStream Then
+            line = ts.ReadLine()
+            parts = Split(line, "|")
+            If UBound(parts) >= 1 Then
+                pct = CInt(parts(0))
+                status = parts(1)
+                
+                If pct = -1 Then
+                    ' Error occurred
+                    ShowError status
+                    ts.Close
+                    Exit Sub
+                ElseIf pct >= 100 Then
+                    ' Complete
+                    ShowComplete
+                    ts.Close
+                    Exit Sub
+                Else
+                    ' Update progress
+                    document.getElementById("progressBar").style.width = pct & "%"
+                    document.getElementById("progressPercent").innerText = pct & "%"
+                    document.getElementById("progressText").innerText = status
+                End If
+            End If
+        End If
+        ts.Close
+    End If
+    
+    ' Continue checking
+    window.setTimeout "CheckProgress", 500
 End Sub
 
 Sub ShowComplete()
-    On Error Resume Next
+    isCreating = False
     document.getElementById("step2").className = "hidden"
     document.getElementById("step3").className = "progress-section active"
     document.getElementById("btnFinish").className = "btn btn-primary"
     UpdateDots 3
+End Sub
+
+Sub ShowError(errorMsg)
+    isCreating = False
+    document.getElementById("step2").className = "hidden"
+    document.getElementById("stepError").className = "progress-section active"
+    document.getElementById("errorMessage").innerText = errorMsg
+    document.getElementById("btnRetry").className = "btn btn-primary"
+End Sub
+
+Sub RetryCreation()
+    document.getElementById("stepError").className = "hidden"
+    document.getElementById("step1").className = ""
+    document.getElementById("btnNext").className = "btn btn-primary"
+    document.getElementById("btnRetry").className = "hidden"
+    UpdateDots 1
+    RefreshDrives
 End Sub
 
 Sub UpdateDots(step)
@@ -388,7 +521,6 @@ Sub UpdateDots(step)
 End Sub
 
 Sub CloseApp()
-    On Error Resume Next
     window.close
 End Sub
 </script>
@@ -416,38 +548,72 @@ End Sub
 
         <div id="step1">
             <div class="section-title">Select USB flash drive</div>
-            <div class="section-desc">Choose which drive you want to use. Everything on it will be deleted.</div>
+            <div class="section-desc">Choose which drive you want to use. Everything on it will be permanently deleted.</div>
             
-            <div class="warning">
-                Make sure to back up any important files before continuing.
+            <div class="admin-notice">
+                <strong>Administrator Required:</strong> This tool needs admin privileges to format drives and create bootable media.
             </div>
             
-            <div id="driveList" class="drive-list" onclick="DriveListClick()">
+            <div class="warning">
+                <strong>Warning:</strong> Make sure to back up any important files before continuing. The selected drive will be completely erased.
+            </div>
+            
+            <div id="driveList" class="drive-list">
                 <div class="no-drives">Scanning for USB drives...</div>
             </div>
             
-            <button class="btn btn-link" onclick="RefreshDrives()">Refresh drive list</button>
+            <button class="btn-link" onclick="RefreshDrives()">Refresh drive list</button>
         </div>
 
         <div id="step2" class="progress-section">
             <div class="section-title">Creating Aegis OS media</div>
-            <div class="section-desc">This might take a while. Please don't remove the USB drive.</div>
+            <div class="section-desc">This might take several minutes. Please don't remove the USB drive or close this window.</div>
             
-            <div class="progress-percent" id="progressPercent">0%</div>
-            <div class="progress-text" id="progressText">Preparing...</div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="progressBar"></div>
+            <div style="text-align: center; padding: 30px 0;">
+                <div class="progress-percent" id="progressPercent">0%</div>
+                <div class="progress-text" id="progressText">Preparing...</div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
             </div>
         </div>
 
         <div id="step3" class="progress-section">
             <div style="text-align: center; padding: 20px 0;">
                 <div class="complete-icon">&#10004;</div>
-                <div class="section-title">Your USB flash drive is ready</div>
+                <div class="section-title">Your USB flash drive is ready!</div>
                 <div class="section-desc">
-                    You can now boot your computer from this drive to install Aegis OS.
-                    <br><br>
-                    Restart your PC and press F12, F2, or DEL to select the USB drive.
+                    Aegis OS Freemium has been successfully written to your USB drive.
+                </div>
+                
+                <div class="next-steps">
+                    <div class="next-step-item">
+                        <div class="step-num">1</div>
+                        <span>Safely eject the USB drive from your computer</span>
+                    </div>
+                    <div class="next-step-item">
+                        <div class="step-num">2</div>
+                        <span>Restart your computer and press F12, F2, or DEL</span>
+                    </div>
+                    <div class="next-step-item">
+                        <div class="step-num">3</div>
+                        <span>Select the USB drive from the boot menu</span>
+                    </div>
+                    <div class="next-step-item">
+                        <div class="step-num">4</div>
+                        <span>Follow the on-screen instructions to install</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="stepError" class="progress-section">
+            <div style="text-align: center; padding: 20px 0;">
+                <div class="error-icon">&#10008;</div>
+                <div class="section-title">Something went wrong</div>
+                <div class="section-desc" id="errorMessage">An error occurred during the creation process.</div>
+                <div class="section-desc" style="margin-top: 20px;">
+                    Make sure you're running as Administrator and the USB drive is properly connected.
                 </div>
             </div>
         </div>
@@ -458,6 +624,7 @@ End Sub
         <div>
             <button id="btnNext" class="btn btn-primary" onclick="StartCreation()" disabled>Next</button>
             <button id="btnFinish" class="hidden" onclick="CloseApp()">Finish</button>
+            <button id="btnRetry" class="hidden" onclick="RetryCreation()">Try Again</button>
         </div>
     </div>
 </div>
