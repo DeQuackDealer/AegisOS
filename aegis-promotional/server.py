@@ -67,11 +67,35 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
 
-from models import db, User, License, StripeEvent, EmailLog
+from models import db, User, License, StripeEvent, EmailLog, AdminUser
 db.init_app(app)
 
 with app.app_context():
     db.create_all()
+    
+    # Ensure DeQuackDealer superadmin exists in database
+    try:
+        existing_admin = AdminUser.query.filter_by(username='DeQuackDealer').first()
+        if not existing_admin:
+            dequack_pwd = os.getenv('DeQuackDealerPWD', 'fallback_password_123!')
+            new_admin = AdminUser(
+                username='DeQuackDealer',
+                display_name='Riley Liang',
+                email='riley.liang@hotmail.com',
+                role='superadmin',
+                can_create_admins=True,
+                is_active=True,
+                created_by='system'
+            )
+            new_admin.set_password(dequack_pwd)
+            db.session.add(new_admin)
+            db.session.commit()
+            logger.info("Created DeQuackDealer superadmin account in database")
+        else:
+            logger.info("DeQuackDealer superadmin already exists in database")
+    except Exception as e:
+        logger.error(f"Error ensuring DeQuackDealer exists: {e}")
+        db.session.rollback()
 
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
 SENDGRID_FROM_EMAIL = os.environ.get('SENDGRID_FROM_EMAIL', 'riley.liang@hotmail.com')
@@ -3705,26 +3729,7 @@ def payment_success():
 
 # ============= ADMIN PANEL =============
 
-# Admin credentials - DeQuackDealer is the superadmin (displays as Riley Liang on other devices)
-# Password loaded from DeQuackDealerPWD secret
-def get_admin_password_hash(password: str, salt: str = 'aegis_admin_salt') -> str:
-    """Generate password hash for admin credentials"""
-    return salt + '$' + hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
-
-# Get DeQuackDealer password from secret
-DEQUACKDEALER_PWD = os.getenv('DeQuackDealerPWD', 'fallback_password_123!')
-
-# Admin accounts storage - can be extended at runtime
-ADMIN_CREDENTIALS = {
-    'DeQuackDealer': {
-        'password_hash': get_admin_password_hash(DEQUACKDEALER_PWD),
-        'role': 'superadmin',
-        'display_name': 'Riley Liang',
-        'email': 'riley.liang@hotmail.com',
-        'can_create_admins': True
-    }
-}
-
+# Admin session tokens (kept in memory - sessions are temporary)
 ADMIN_TOKENS = {}
 ADMIN_SESSION_DURATION = timedelta(hours=8)
 
@@ -3779,7 +3784,7 @@ def require_admin(f):
 @app.route('/api/admin/login', methods=['POST'])
 @rate_limit(limit=10, window=300)
 def admin_login():
-    """Admin login endpoint"""
+    """Admin login endpoint - uses database for authentication"""
     data = request.json or {}
     username = str(data.get('username', '')).strip()
     password = str(data.get('password', '')).strip()
@@ -3788,56 +3793,58 @@ def admin_login():
         tamper_protected_audit_log("ADMIN_LOGIN_EMPTY", {"username": username[:20]}, "HIGH")
         return jsonify({'error': 'Username and password required', 'code': 'MISSING_CREDENTIALS'}), 400
 
-    if username not in ADMIN_CREDENTIALS:
-        tamper_protected_audit_log("ADMIN_LOGIN_INVALID_USER", {"username": username[:20]}, "HIGH")
-        return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
-
-    admin = ADMIN_CREDENTIALS[username]
-    stored_hash = admin['password_hash']
-
-    # Verify password
     try:
-        salt, expected_hash = stored_hash.split('$')
-        computed_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 100000).hex()
+        admin = AdminUser.query.filter_by(username=username, is_active=True).first()
+        
+        if not admin:
+            tamper_protected_audit_log("ADMIN_LOGIN_INVALID_USER", {"username": username[:20]}, "HIGH")
+            return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
 
-        if not hmac.compare_digest(computed_hash, expected_hash):
+        if not admin.check_password(password):
             tamper_protected_audit_log("ADMIN_LOGIN_WRONG_PASSWORD", {"username": username[:20]}, "CRITICAL")
             return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
-    except:
-        return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
 
-    # Generate admin token
-    jti = secrets.token_urlsafe(16)
-    token_payload = {
-        'username': username,
-        'display_name': admin.get('display_name', username),
-        'role': admin['role'],
-        'can_create_admins': admin.get('can_create_admins', False),
-        'type': 'admin',
-        'exp': datetime.utcnow() + ADMIN_SESSION_DURATION,
-        'iat': datetime.utcnow(),
-        'jti': jti
-    }
+        # Update last_login timestamp
+        admin.last_login = datetime.utcnow()
+        db.session.commit()
 
-    token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
-    ADMIN_TOKENS[jti] = {
-        'username': username,
-        'display_name': admin.get('display_name', username),
-        'created': datetime.now().isoformat(),
-        'ip': request.remote_addr
-    }
+        # Generate admin token
+        jti = secrets.token_urlsafe(16)
+        token_payload = {
+            'username': admin.username,
+            'display_name': admin.display_name or admin.username,
+            'role': admin.role,
+            'can_create_admins': admin.can_create_admins,
+            'type': 'admin',
+            'exp': datetime.utcnow() + ADMIN_SESSION_DURATION,
+            'iat': datetime.utcnow(),
+            'jti': jti
+        }
 
-    tamper_protected_audit_log("ADMIN_LOGIN_SUCCESS", {"username": username}, "INFO")
+        token = jwt.encode(token_payload, JWT_SECRET, algorithm='HS256')
+        ADMIN_TOKENS[jti] = {
+            'username': admin.username,
+            'display_name': admin.display_name or admin.username,
+            'created': datetime.now().isoformat(),
+            'ip': request.remote_addr
+        }
 
-    return jsonify({
-        'success': True,
-        'token': token,
-        'username': username,
-        'display_name': admin.get('display_name', username),
-        'role': admin['role'],
-        'can_create_admins': admin.get('can_create_admins', False),
-        'expires': (datetime.utcnow() + ADMIN_SESSION_DURATION).isoformat()
-    }), 200
+        tamper_protected_audit_log("ADMIN_LOGIN_SUCCESS", {"username": admin.username}, "INFO")
+
+        return jsonify({
+            'success': True,
+            'token': token,
+            'username': admin.username,
+            'display_name': admin.display_name or admin.username,
+            'role': admin.role,
+            'can_create_admins': admin.can_create_admins,
+            'expires': (datetime.utcnow() + ADMIN_SESSION_DURATION).isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Admin login error: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Server error during login', 'code': 'SERVER_ERROR'}), 500
 
 @app.route('/api/admin/verify', methods=['GET'])
 def admin_verify():
@@ -3863,27 +3870,23 @@ def admin_verify():
 @app.route('/api/admin/admins', methods=['GET'])
 @require_admin
 def admin_list_admins():
-    """List all admin accounts (superadmin only)"""
+    """List all admin accounts (superadmin only) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or payload.get('role') != 'superadmin':
         return jsonify({'error': 'Superadmin access required', 'code': 'FORBIDDEN'}), 403
     
-    admins = []
-    for username, data in ADMIN_CREDENTIALS.items():
-        admins.append({
-            'username': username,
-            'display_name': data.get('display_name', username),
-            'role': data.get('role', 'admin'),
-            'email': data.get('email', ''),
-            'can_create_admins': data.get('can_create_admins', False)
-        })
-    
-    return jsonify({'admins': admins}), 200
+    try:
+        admin_users = AdminUser.query.filter_by(is_active=True).all()
+        admins = [admin.to_dict() for admin in admin_users]
+        return jsonify({'admins': admins}), 200
+    except Exception as e:
+        logger.error(f"Error listing admins: {e}")
+        return jsonify({'error': 'Failed to list admins', 'code': 'SERVER_ERROR'}), 500
 
 @app.route('/api/admin/admins', methods=['POST'])
 @require_admin
 def admin_create_admin():
-    """Create a new admin account (requires can_create_admins permission)"""
+    """Create a new admin account (requires can_create_admins permission) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or not payload.get('can_create_admins'):
         return jsonify({'error': 'Permission denied - cannot create admin accounts', 'code': 'FORBIDDEN'}), 403
@@ -3905,40 +3908,54 @@ def admin_create_admin():
     if len(new_password) < 8:
         return jsonify({'error': 'Password must be at least 8 characters', 'code': 'WEAK_PASSWORD'}), 400
     
-    if new_username in ADMIN_CREDENTIALS:
-        return jsonify({'error': 'Username already exists', 'code': 'DUPLICATE_USERNAME'}), 409
-    
-    # Only superadmin can grant can_create_admins permission
-    if can_create_admins and payload.get('role') != 'superadmin':
-        can_create_admins = False
-    
-    # Create the new admin
-    ADMIN_CREDENTIALS[new_username] = {
-        'password_hash': get_admin_password_hash(new_password),
-        'role': role if role in ['admin', 'superadmin'] else 'admin',
-        'display_name': display_name,
-        'email': email,
-        'can_create_admins': can_create_admins
-    }
-    
-    tamper_protected_audit_log("ADMIN_CREATED", {
-        "created_by": payload.get('username'),
-        "new_admin": new_username,
-        "role": role
-    }, "INFO")
-    
-    return jsonify({
-        'success': True,
-        'username': new_username,
-        'display_name': display_name,
-        'role': role,
-        'can_create_admins': can_create_admins
-    }), 201
+    try:
+        # Check if username already exists in database
+        existing_admin = AdminUser.query.filter_by(username=new_username).first()
+        if existing_admin:
+            return jsonify({'error': 'Username already exists', 'code': 'DUPLICATE_USERNAME'}), 409
+        
+        # Only superadmin can grant can_create_admins permission
+        if can_create_admins and payload.get('role') != 'superadmin':
+            can_create_admins = False
+        
+        # Create the new admin in database
+        new_admin = AdminUser(
+            username=new_username,
+            display_name=display_name,
+            email=email if email else None,
+            role=role if role in ['admin', 'superadmin'] else 'admin',
+            can_create_admins=can_create_admins,
+            is_active=True,
+            created_by=payload.get('username')
+        )
+        new_admin.set_password(new_password)
+        
+        db.session.add(new_admin)
+        db.session.commit()
+        
+        tamper_protected_audit_log("ADMIN_CREATED", {
+            "created_by": payload.get('username'),
+            "new_admin": new_username,
+            "role": role
+        }, "INFO")
+        
+        return jsonify({
+            'success': True,
+            'username': new_admin.username,
+            'display_name': new_admin.display_name,
+            'role': new_admin.role,
+            'can_create_admins': new_admin.can_create_admins
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating admin: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create admin', 'code': 'SERVER_ERROR'}), 500
 
 @app.route('/api/admin/admins/<username>', methods=['DELETE'])
 @require_admin
 def admin_delete_admin(username):
-    """Delete an admin account (superadmin only, cannot delete self)"""
+    """Delete an admin account (superadmin only, cannot delete self) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or payload.get('role') != 'superadmin':
         return jsonify({'error': 'Superadmin access required', 'code': 'FORBIDDEN'}), 403
@@ -3948,17 +3965,25 @@ def admin_delete_admin(username):
     if username == payload.get('username'):
         return jsonify({'error': 'Cannot delete your own account', 'code': 'CANNOT_DELETE_SELF'}), 400
     
-    if username not in ADMIN_CREDENTIALS:
-        return jsonify({'error': 'Admin not found', 'code': 'NOT_FOUND'}), 404
-    
-    del ADMIN_CREDENTIALS[username]
-    
-    tamper_protected_audit_log("ADMIN_DELETED", {
-        "deleted_by": payload.get('username'),
-        "deleted_admin": username
-    }, "HIGH")
-    
-    return jsonify({'success': True}), 200
+    try:
+        admin = AdminUser.query.filter_by(username=username).first()
+        if not admin:
+            return jsonify({'error': 'Admin not found', 'code': 'NOT_FOUND'}), 404
+        
+        db.session.delete(admin)
+        db.session.commit()
+        
+        tamper_protected_audit_log("ADMIN_DELETED", {
+            "deleted_by": payload.get('username'),
+            "deleted_admin": username
+        }, "HIGH")
+        
+        return jsonify({'success': True}), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting admin: {e}")
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete admin', 'code': 'SERVER_ERROR'}), 500
 
 @app.route('/api/admin/logout', methods=['POST'])
 @require_admin
