@@ -12,15 +12,15 @@
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="1.0"
+    VERSION="2.0"
     SCROLL="no"
 />
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
-    background: #f3f3f3;
-    color: #1a1a1a;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    color: #fff;
     overflow: hidden;
 }
 .container {
@@ -29,603 +29,594 @@ body {
     flex-direction: column;
 }
 .header {
-    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
-    padding: 25px 30px;
-    color: white;
-}
-.logo {
-    font-size: 22px;
-    font-weight: 600;
+    background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+    padding: 20px 25px;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 15px;
 }
-.logo svg {
-    width: 32px;
-    height: 32px;
+.logo-icon {
+    width: 48px;
+    height: 48px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
 }
-.subtitle {
-    font-size: 13px;
+.header-text h1 {
+    font-size: 18px;
+    font-weight: 600;
+}
+.header-text p {
+    font-size: 12px;
     opacity: 0.9;
-    margin-top: 4px;
-    margin-left: 44px;
 }
 .content {
     flex: 1;
-    padding: 30px;
-    background: white;
+    padding: 25px;
     overflow-y: auto;
 }
-.step-indicator {
+.step-nav {
     display: flex;
-    gap: 8px;
+    justify-content: center;
+    gap: 30px;
     margin-bottom: 25px;
 }
-.dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: #ddd;
+.step-item {
+    text-align: center;
 }
-.dot.active { background: #0078d4; }
-.dot.done { background: #107c10; }
+.step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #2a2a4a;
+    border: 2px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 5px;
+    font-weight: 600;
+    font-size: 14px;
+}
+.step-item.active .step-num {
+    background: #0891b2;
+    border-color: #0891b2;
+}
+.step-item.done .step-num {
+    background: #10b981;
+    border-color: #10b981;
+}
+.step-label {
+    font-size: 11px;
+    color: #888;
+}
+.step-item.active .step-label { color: #0891b2; }
+.step-item.done .step-label { color: #10b981; }
+
+.panel { display: none; }
+.panel.active { display: block; }
+
 .section-title {
     font-size: 20px;
     font-weight: 600;
-    color: #1a1a1a;
     margin-bottom: 8px;
 }
 .section-desc {
     font-size: 13px;
-    color: #666;
+    color: #aaa;
     margin-bottom: 20px;
     line-height: 1.5;
 }
+.info-box {
+    background: rgba(8, 145, 178, 0.15);
+    border: 1px solid rgba(8, 145, 178, 0.3);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+.info-box h3 {
+    font-size: 14px;
+    margin-bottom: 8px;
+    color: #22d3ee;
+}
+.info-box ul {
+    font-size: 12px;
+    color: #aaa;
+    padding-left: 20px;
+}
+.info-box li { margin-bottom: 4px; }
+
 .drive-list {
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    max-height: 200px;
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    max-height: 180px;
     overflow-y: auto;
     margin-bottom: 15px;
 }
 .drive-item {
     padding: 12px 15px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid #333;
     cursor: pointer;
     display: flex;
     align-items: center;
     gap: 12px;
 }
 .drive-item:last-child { border-bottom: none; }
-.drive-item:hover { background: #f5f5f5; }
-.drive-item.selected { background: #e5f1fb; border-left: 3px solid #0078d4; }
+.drive-item:hover { background: #2a2a4a; }
+.drive-item.selected { background: rgba(8, 145, 178, 0.3); border-left: 3px solid #0891b2; }
 .drive-icon {
-    width: 32px;
-    height: 32px;
-    background: #0078d4;
-    border-radius: 4px;
+    width: 36px;
+    height: 36px;
+    background: #0891b2;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    font-size: 16px;
+    font-size: 18px;
 }
 .drive-info { flex: 1; }
 .drive-name { font-weight: 500; font-size: 14px; }
-.drive-size { font-size: 12px; color: #666; }
+.drive-size { font-size: 12px; color: #888; }
 .no-drives {
     padding: 30px;
     text-align: center;
-    color: #666;
+    color: #888;
 }
-.progress-section { display: none; }
-.progress-section.active { display: block; }
-.progress-bar-container {
-    height: 8px;
-    background: #e0e0e0;
-    border-radius: 4px;
+
+.btn {
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+.btn-primary {
+    background: linear-gradient(135deg, #0891b2, #0e7490);
+    color: white;
+}
+.btn-primary:hover { transform: translateY(-2px); }
+.btn-primary:disabled {
+    background: #444;
+    cursor: not-allowed;
+    transform: none;
+}
+.btn-secondary {
+    background: #2a2a4a;
+    color: #aaa;
+    border: 1px solid #444;
+}
+.btn-refresh {
+    background: #1e1e3a;
+    color: #0891b2;
+    padding: 8px 16px;
+    font-size: 12px;
+}
+
+.btn-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.progress-container {
+    background: #1e1e3a;
+    border-radius: 8px;
+    padding: 25px;
+    text-align: center;
+}
+.progress-bar-bg {
+    height: 12px;
+    background: #2a2a4a;
+    border-radius: 6px;
     overflow: hidden;
     margin: 20px 0;
 }
-.progress-bar {
+.progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #0078d4, #00a2ed);
+    background: linear-gradient(90deg, #0891b2, #22d3ee);
     width: 0%;
     transition: width 0.3s;
-}
-.progress-text {
-    font-size: 13px;
-    color: #666;
-    margin-bottom: 10px;
+    border-radius: 6px;
 }
 .progress-percent {
-    font-size: 28px;
-    font-weight: 300;
-    color: #0078d4;
-    margin-bottom: 5px;
+    font-size: 36px;
+    font-weight: 700;
+    color: #22d3ee;
 }
-.complete-icon {
-    font-size: 56px;
-    color: #107c10;
-    margin-bottom: 15px;
-}
-.error-icon {
-    font-size: 56px;
-    color: #d83b01;
-    margin-bottom: 15px;
-}
-.footer {
-    padding: 15px 30px;
-    background: #f3f3f3;
-    border-top: 1px solid #ddd;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.btn {
-    padding: 10px 30px;
+.progress-status {
     font-size: 14px;
-    border: none;
-    border-radius: 3px;
-    cursor: pointer;
-    font-family: inherit;
+    color: #aaa;
+    margin-top: 10px;
 }
-.btn-primary {
-    background: #0078d4;
-    color: white;
-}
-.btn-primary:hover { background: #106ebe; }
-.btn-primary:disabled { background: #ccc; cursor: not-allowed; }
-.btn-secondary {
-    background: #e1e1e1;
-    color: #1a1a1a;
-}
-.btn-secondary:hover { background: #d1d1d1; }
-.btn-link {
-    background: none;
-    color: #0078d4;
-    text-decoration: underline;
-    padding: 0;
-    border: none;
-    cursor: pointer;
-    font-size: 13px;
-}
-.warning {
-    background: #fff4ce;
-    border-left: 4px solid #ffb900;
-    padding: 12px 15px;
+.progress-detail {
     font-size: 12px;
-    margin-bottom: 15px;
+    color: #666;
+    margin-top: 5px;
 }
-.admin-notice {
-    background: #fde7e9;
-    border-left: 4px solid #d83b01;
-    padding: 12px 15px;
-    font-size: 12px;
-    margin-bottom: 15px;
+
+.success-container {
+    text-align: center;
+    padding: 30px;
 }
-.disclaimer {
-    font-size: 10px;
-    color: #999;
+.success-icon {
+    font-size: 64px;
+    margin-bottom: 20px;
 }
-.hidden { display: none; }
-.next-steps {
-    background: #f5f5f5;
+.success-title {
+    font-size: 24px;
+    color: #10b981;
+    margin-bottom: 10px;
+}
+.success-desc {
+    font-size: 14px;
+    color: #aaa;
+    line-height: 1.6;
+}
+.success-steps {
+    background: #1e1e3a;
     border-radius: 8px;
     padding: 20px;
     margin-top: 20px;
+    text-align: left;
 }
-.next-step-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 0;
+.success-steps h3 {
+    font-size: 14px;
+    margin-bottom: 12px;
 }
-.step-num {
-    width: 24px;
-    height: 24px;
-    background: #0078d4;
-    color: white;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    font-weight: 600;
+.success-steps ol {
+    padding-left: 20px;
+    font-size: 13px;
+    color: #aaa;
+}
+.success-steps li { margin-bottom: 8px; }
+
+.error-box {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 15px;
+    color: #f87171;
+    margin-top: 15px;
+}
+
+.warning-box {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+}
+.warning-box strong { color: #fbbf24; }
+
+.footer {
+    padding: 12px 25px;
+    background: #12122a;
+    border-top: 1px solid #333;
+    font-size: 11px;
+    color: #666;
+    text-align: center;
 }
 </style>
-
 <script language="VBScript">
-Option Explicit
-
-Dim wmi, shell, fso
-Dim driveCount, selectedIndex
-Dim driveIds(20), driveNames(20), driveSizes(20), diskNumbers(20)
-Dim progressTimer, isCreating
+Dim selectedDrive, selectedDriveNumber, drives(), driveCount
+Dim progressTimer, currentStep
+Dim fso, shell
 
 Sub Window_OnLoad()
-    On Error Resume Next
-    window.resizeTo 650, 680
-    CenterWindow
-    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    Set shell = CreateObject("WScript.Shell")
+    window.resizeTo 550, 620
     Set fso = CreateObject("Scripting.FileSystemObject")
-    driveCount = 0
-    selectedIndex = -1
-    isCreating = False
-    RefreshDrives
-End Sub
-
-Sub CenterWindow()
-    Dim sw, sh
-    On Error Resume Next
-    sw = window.screen.availWidth
-    sh = window.screen.availHeight
-    window.moveTo (sw - 650) / 2, (sh - 680) / 2
+    Set shell = CreateObject("WScript.Shell")
+    currentStep = 1
+    RefreshDrives()
 End Sub
 
 Sub RefreshDrives()
-    Dim driveList, drives, drive, sizeGB, html, i
-    On Error Resume Next
+    Dim wmi, diskDrives, disk, driveList, html, i
     
-    Set driveList = document.getElementById("driveList")
-    html = ""
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
+    
+    ReDim drives(0)
     driveCount = 0
-    selectedIndex = -1
+    html = ""
     
-    Set drives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType='Removable Media' OR InterfaceType='USB'")
-    
-    If Err.Number <> 0 Then
-        html = "<div class='no-drives'>Error accessing disk information.<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Try Again</button></div>"
-        driveList.innerHTML = html
-        Exit Sub
-    End If
-    
-    For Each drive In drives
-        If drive.Size > 0 And InStr(LCase(drive.MediaType), "fixed") = 0 Then
-            sizeGB = FormatNumber(drive.Size / 1073741824, 1)
-            If CDbl(sizeGB) >= 4 Then
-                driveIds(driveCount) = drive.DeviceID
-                driveNames(driveCount) = drive.Caption
-                driveSizes(driveCount) = sizeGB
-                diskNumbers(driveCount) = drive.Index
-                
-                html = html & "<div id='drv_" & driveCount & "' class='drive-item' onclick='SelectDrive " & driveCount & "'>"
-                html = html & "<div class='drive-icon'>&#128190;</div>"
-                html = html & "<div class='drive-info'>"
-                html = html & "<div class='drive-name'>" & drive.Caption & "</div>"
-                html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & drive.Index & "</div>"
-                html = html & "</div></div>"
-                
-                driveCount = driveCount + 1
-            End If
+    For Each disk In diskDrives
+        If disk.Size > 0 And Not InStr(LCase(disk.PNPDeviceID), "virtual") > 0 Then
+            Dim sizeGB
+            sizeGB = FormatNumber(disk.Size / 1073741824, 1)
+            
+            ReDim Preserve drives(driveCount)
+            drives(driveCount) = disk.Index
+            
+            html = html & "<div class='drive-item' onclick='SelectDrive(" & driveCount & ")'>"
+            html = html & "<div class='drive-icon'>USB</div>"
+            html = html & "<div class='drive-info'>"
+            html = html & "<div class='drive-name'>" & disk.Model & "</div>"
+            html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
+            html = html & "</div></div>"
+            
+            driveCount = driveCount + 1
         End If
     Next
     
     If driveCount = 0 Then
-        html = "<div class='no-drives'>No suitable USB drives found (4GB+ required).<br><br><button class='btn btn-secondary' onclick='RefreshDrives()'>Refresh</button></div>"
+        html = "<div class='no-drives'>No USB drives detected. Insert a USB drive and click Refresh.</div>"
     End If
     
-    driveList.innerHTML = html
-    document.getElementById("btnNext").disabled = True
+    document.getElementById("driveList").innerHTML = html
+    selectedDrive = ""
+    selectedDriveNumber = -1
+    document.getElementById("btnNext1").disabled = True
 End Sub
 
 Sub SelectDrive(index)
-    Dim i, elem
-    On Error Resume Next
+    Dim items, i
+    Set items = document.getElementsByClassName("drive-item")
+    For i = 0 To items.length - 1
+        items(i).className = "drive-item"
+    Next
+    items(index).className = "drive-item selected"
     
-    For i = 0 To driveCount - 1
-        Set elem = document.getElementById("drv_" & i)
-        If Not elem Is Nothing Then
-            elem.className = "drive-item"
+    selectedDriveNumber = drives(index)
+    selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
+    document.getElementById("btnNext1").disabled = False
+End Sub
+
+Sub GoToStep(stepNum)
+    Dim panels, steps, i
+    
+    Set panels = document.getElementsByClassName("panel")
+    For i = 0 To panels.length - 1
+        panels(i).className = "panel"
+    Next
+    document.getElementById("step" & stepNum).className = "panel active"
+    
+    Set steps = document.getElementsByClassName("step-item")
+    For i = 0 To steps.length - 1
+        If i + 1 < stepNum Then
+            steps(i).className = "step-item done"
+        ElseIf i + 1 = stepNum Then
+            steps(i).className = "step-item active"
+        Else
+            steps(i).className = "step-item"
         End If
     Next
     
-    Set elem = document.getElementById("drv_" & index)
-    If Not elem Is Nothing Then
-        elem.className = "drive-item selected"
-    End If
+    currentStep = stepNum
     
-    selectedIndex = index
-    document.getElementById("btnNext").disabled = False
+    If stepNum = 2 Then
+        document.getElementById("selectedDriveInfo").innerText = selectedDrive & " (Disk " & selectedDriveNumber & ")"
+    End If
 End Sub
 
 Sub StartCreation()
-    Dim msg, result
-    On Error Resume Next
+    GoToStep(3)
     
-    If selectedIndex < 0 Then Exit Sub
-    
-    msg = "WARNING: All data on " & driveNames(selectedIndex) & " (" & driveSizes(selectedIndex) & " GB) will be permanently erased!" & vbCrLf & vbCrLf
-    msg = msg & "This process requires Administrator privileges." & vbCrLf & vbCrLf
-    msg = msg & "Are you sure you want to continue?"
-    
-    result = MsgBox(msg, vbYesNo + vbExclamation, "Aegis OS - Confirm")
-    If result = vbNo Then Exit Sub
-    
-    isCreating = True
-    document.getElementById("step1").className = "hidden"
-    document.getElementById("step2").className = "progress-section active"
-    document.getElementById("btnNext").className = "hidden"
-    UpdateDots 2
-    
-    RunPowerShellCreator
-End Sub
-
-Sub RunPowerShellCreator()
-    Dim psScript, tempDir, progressFile, cmd, diskNum
-    On Error Resume Next
+    Dim tempDir, psScript, progressFile, cmd
     
     tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
+    psScript = fso.GetParentFolderName(document.location.pathname) & "\aegis-usb-creator.ps1"
     progressFile = tempDir & "\aegis_progress.txt"
-    diskNum = diskNumbers(selectedIndex)
     
-    ' Delete old progress file
     If fso.FileExists(progressFile) Then
-        fso.DeleteFile progressFile, True
+        fso.DeleteFile progressFile
     End If
     
-    ' Create the PowerShell command
-    psScript = tempDir & "\aegis-usb-creator.ps1"
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psScript & """ -Edition ""Freemium"" -DiskNumber " & selectedDriveNumber & " -ProgressFile """ & progressFile & """"
     
-    ' Write PowerShell script content
-    WritePowerShellScript psScript
+    shell.Run cmd, 0, False
     
-    ' Run PowerShell as admin
-    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psScript & """ -Edition freemium -DiskNumber " & diskNum & " -ProgressFile """ & progressFile & """"
-    
-    ' Use ShellExecute to run as admin
-    shell.Run "powershell.exe -ExecutionPolicy Bypass -Command ""Start-Process powershell.exe -ArgumentList '-ExecutionPolicy Bypass -WindowStyle Hidden -File """"" & psScript & """"" -Edition freemium -DiskNumber " & diskNum & " -ProgressFile """"" & progressFile & """""' -Verb RunAs -Wait""", 0, False
-    
-    ' Start progress monitoring
-    window.setTimeout "CheckProgress", 1000
-End Sub
-
-Sub WritePowerShellScript(filePath)
-    Dim ts, content
-    On Error Resume Next
-    
-    Set ts = fso.CreateTextFile(filePath, True)
-    
-    content = "$ErrorActionPreference = 'Stop'" & vbCrLf
-    content = content & "$ProgressFile = $args[5]" & vbCrLf
-    content = content & "$DiskNumber = [int]$args[3]" & vbCrLf
-    content = content & "$Edition = $args[1]" & vbCrLf
-    content = content & "" & vbCrLf
-    content = content & "function Write-Progress-File { param([int]$Percent, [string]$Status); ""$Percent|$Status"" | Out-File -FilePath $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
-    content = content & "" & vbCrLf
-    content = content & "try {" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 5 -Status 'Validating USB drive...'" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
-    content = content & "    $disk = Get-Disk -Number $DiskNumber" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 10 -Status 'Downloading Aegis OS Freemium...'" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 25 -Status 'Downloading... 25%'" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 40 -Status 'Downloading... 50%'" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 50 -Status 'Preparing USB drive...'" & vbCrLf
-    content = content & "    Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 55 -Status 'Creating partition...'" & vbCrLf
-    content = content & "    Initialize-Disk -Number $DiskNumber -PartitionStyle MBR -ErrorAction SilentlyContinue" & vbCrLf
-    content = content & "    $partition = New-Partition -DiskNumber $DiskNumber -UseMaximumSize -IsActive -AssignDriveLetter" & vbCrLf
-    content = content & "    $driveLetter = $partition.DriveLetter" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 60 -Status 'Formatting as FAT32...'" & vbCrLf
-    content = content & "    Format-Volume -DriveLetter $driveLetter -FileSystem FAT32 -NewFileSystemLabel 'AEGIS_OS' -Confirm:$false" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 70 -Status 'Writing boot files...'" & vbCrLf
-    content = content & "    $usbRoot = ""${driveLetter}:\""" & vbCrLf
-    content = content & "    New-Item -ItemType Directory -Path ""$usbRoot\boot\grub"" -Force | Out-Null" & vbCrLf
-    content = content & "    New-Item -ItemType Directory -Path ""$usbRoot\aegis"" -Force | Out-Null" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 80 -Status 'Writing system files...'" & vbCrLf
-    content = content & "    $grubCfg = ""set timeout=10`nset default=0`n`nmenuentry 'Aegis OS Freemium' {`n    linux /boot/vmlinuz root=/dev/ram0 quiet splash`n    initrd /boot/initrd.img`n}""" & vbCrLf
-    content = content & "    $grubCfg | Out-File -FilePath ""$usbRoot\boot\grub\grub.cfg"" -Encoding UTF8" & vbCrLf
-    content = content & "    'AEGIS_OS' | Out-File -FilePath ""$usbRoot\boot\vmlinuz"" -Encoding UTF8" & vbCrLf
-    content = content & "    'INITRD' | Out-File -FilePath ""$usbRoot\boot\initrd.img"" -Encoding UTF8" & vbCrLf
-    content = content & "    ""EDITION=Freemium`nVERSION=1.0.0`nBUILD=$(Get-Date -Format 'yyyyMMdd')"" | Out-File -FilePath ""$usbRoot\aegis\edition.conf"" -Encoding UTF8" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 1" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 90 -Status 'Verifying...'" & vbCrLf
-    content = content & "    Start-Sleep -Seconds 2" & vbCrLf
-    content = content & "    Write-Progress-File -Percent 100 -Status 'SUCCESS: Aegis OS Freemium ready on drive ' + $driveLetter + ':'" & vbCrLf
-    content = content & "} catch {" & vbCrLf
-    content = content & "    Write-Progress-File -Percent -1 -Status ('ERROR: ' + $_.Exception.Message)" & vbCrLf
-    content = content & "}"
-    
-    ts.Write content
-    ts.Close
+    progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
 End Sub
 
 Sub CheckProgress()
     Dim progressFile, ts, line, parts, pct, status
-    On Error Resume Next
-    
-    If Not isCreating Then Exit Sub
     
     progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
     
     If fso.FileExists(progressFile) Then
+        On Error Resume Next
         Set ts = fso.OpenTextFile(progressFile, 1)
-        If Not ts.AtEndOfStream Then
+        If Err.Number = 0 Then
             line = ts.ReadLine()
+            ts.Close
+            
             parts = Split(line, "|")
             If UBound(parts) >= 1 Then
                 pct = CInt(parts(0))
                 status = parts(1)
                 
                 If pct = -1 Then
-                    ' Error occurred
-                    ShowError status
-                    ts.Close
-                    Exit Sub
-                ElseIf pct >= 100 Then
-                    ' Complete
-                    ShowComplete
-                    ts.Close
-                    Exit Sub
+                    window.clearInterval(progressTimer)
+                    ShowError(status)
+                ElseIf pct = 100 Then
+                    window.clearInterval(progressTimer)
+                    ShowSuccess()
                 Else
-                    ' Update progress
-                    document.getElementById("progressBar").style.width = pct & "%"
-                    document.getElementById("progressPercent").innerText = pct & "%"
-                    document.getElementById("progressText").innerText = status
+                    UpdateProgress(pct, status)
                 End If
             End If
         End If
-        ts.Close
+        On Error Goto 0
     End If
+End Sub
+
+Sub UpdateProgress(pct, status)
+    document.getElementById("progressBar").style.width = pct & "%"
+    document.getElementById("progressPercent").innerText = pct & "%"
+    document.getElementById("progressStatus").innerText = status
     
-    ' Continue checking
-    window.setTimeout "CheckProgress", 500
+    If pct < 50 Then
+        document.getElementById("progressDetail").innerText = "Downloading base system..."
+    ElseIf pct < 70 Then
+        document.getElementById("progressDetail").innerText = "Preparing USB drive..."
+    ElseIf pct < 90 Then
+        document.getElementById("progressDetail").innerText = "Copying files..."
+    Else
+        document.getElementById("progressDetail").innerText = "Finalizing..."
+    End If
 End Sub
 
-Sub ShowComplete()
-    isCreating = False
-    document.getElementById("step2").className = "hidden"
-    document.getElementById("step3").className = "progress-section active"
-    document.getElementById("btnFinish").className = "btn btn-primary"
-    UpdateDots 3
+Sub ShowError(msg)
+    document.getElementById("progressContainer").innerHTML = _
+        "<div class='success-icon'>X</div>" & _
+        "<div class='success-title' style='color:#ef4444'>Creation Failed</div>" & _
+        "<div class='error-box'>" & msg & "</div>" & _
+        "<div class='btn-row' style='justify-content:center;margin-top:20px'>" & _
+        "<button class='btn btn-secondary' onclick='GoToStep(1)'>Try Again</button>" & _
+        "</div>"
 End Sub
 
-Sub ShowError(errorMsg)
-    isCreating = False
-    document.getElementById("step2").className = "hidden"
-    document.getElementById("stepError").className = "progress-section active"
-    document.getElementById("errorMessage").innerText = errorMsg
-    document.getElementById("btnRetry").className = "btn btn-primary"
-End Sub
-
-Sub RetryCreation()
-    document.getElementById("stepError").className = "hidden"
-    document.getElementById("step1").className = ""
-    document.getElementById("btnNext").className = "btn btn-primary"
-    document.getElementById("btnRetry").className = "hidden"
-    UpdateDots 1
-    RefreshDrives
-End Sub
-
-Sub UpdateDots(step)
-    Dim dots, i
-    On Error Resume Next
-    Set dots = document.getElementsByClassName("dot")
-    For i = 0 To dots.length - 1
-        If i < step - 1 Then
-            dots(i).className = "dot done"
-        ElseIf i = step - 1 Then
-            dots(i).className = "dot active"
-        Else
-            dots(i).className = "dot"
-        End If
-    Next
+Sub ShowSuccess()
+    GoToStep(4)
 End Sub
 
 Sub CloseApp()
-    window.close
+    window.close()
 End Sub
 </script>
 </head>
-
 <body>
 <div class="container">
     <div class="header">
-        <div class="logo">
-            <svg viewBox="0 0 24 24" fill="white">
-                <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 2.18l7 3.12v5.7c0 4.83-3.4 9.36-7 10.54-3.6-1.18-7-5.71-7-10.54V6.3l7-3.12z"/>
-                <path d="M12 6l-4 4h3v4h2v-4h3l-4-4z"/>
-            </svg>
-            Aegis OS
+        <div class="logo-icon">S</div>
+        <div class="header-text">
+            <h1>Aegis OS Media Creation Tool</h1>
+            <p>Create a bootable USB drive - Freemium Edition</p>
         </div>
-        <div class="subtitle">Media Creation Tool - Freemium Edition</div>
     </div>
 
     <div class="content">
-        <div class="step-indicator">
-            <div class="dot active"></div>
-            <div class="dot"></div>
-            <div class="dot"></div>
+        <div class="step-nav">
+            <div class="step-item active">
+                <div class="step-num">1</div>
+                <div class="step-label">Select USB</div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">2</div>
+                <div class="step-label">Confirm</div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">3</div>
+                <div class="step-label">Create</div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">4</div>
+                <div class="step-label">Done</div>
+            </div>
         </div>
 
-        <div id="step1">
-            <div class="section-title">Select USB flash drive</div>
-            <div class="section-desc">Choose which drive you want to use. Everything on it will be permanently deleted.</div>
-            
-            <div class="admin-notice">
-                <strong>Administrator Required:</strong> This tool needs admin privileges to format drives and create bootable media.
+        <div id="step1" class="panel active">
+            <div class="section-title">Select USB Drive</div>
+            <div class="section-desc">
+                Choose a USB drive with at least 4GB of space. All data on the drive will be erased.
             </div>
-            
-            <div class="warning">
-                <strong>Warning:</strong> Make sure to back up any important files before continuing. The selected drive will be completely erased.
+
+            <div class="info-box">
+                <h3>What This Tool Does</h3>
+                <ul>
+                    <li>Downloads a real bootable Linux base system (~2GB)</li>
+                    <li>Formats your USB drive and makes it bootable</li>
+                    <li>Creates a complete Aegis OS installation media</li>
+                </ul>
             </div>
-            
+
             <div id="driveList" class="drive-list">
                 <div class="no-drives">Scanning for USB drives...</div>
             </div>
-            
-            <button class="btn-link" onclick="RefreshDrives()">Refresh drive list</button>
+
+            <div class="btn-row">
+                <button class="btn btn-refresh" onclick="RefreshDrives()">Refresh</button>
+                <div style="flex:1"></div>
+                <button id="btnNext1" class="btn btn-primary" disabled onclick="GoToStep(2)">Next</button>
+            </div>
         </div>
 
-        <div id="step2" class="progress-section">
-            <div class="section-title">Creating Aegis OS media</div>
-            <div class="section-desc">This might take several minutes. Please don't remove the USB drive or close this window.</div>
-            
-            <div style="text-align: center; padding: 30px 0;">
+        <div id="step2" class="panel">
+            <div class="section-title">Confirm Your Selection</div>
+            <div class="section-desc">
+                Please review the details below before proceeding.
+            </div>
+
+            <div class="warning-box">
+                <strong>Warning:</strong> All data on the selected USB drive will be permanently deleted. Make sure you have backed up any important files.
+            </div>
+
+            <div class="info-box">
+                <h3>Selected Drive</h3>
+                <p id="selectedDriveInfo" style="font-size:16px;margin-top:8px;color:#fff">-</p>
+            </div>
+
+            <div class="info-box">
+                <h3>What Will Be Created</h3>
+                <ul>
+                    <li>Edition: <strong style="color:#22d3ee">Aegis OS Freemium</strong></li>
+                    <li>Base System: Linux Lite 7.2 (lightweight, Ubuntu-based)</li>
+                    <li>Download Size: ~2.1 GB</li>
+                    <li>Boot Mode: UEFI and Legacy BIOS compatible</li>
+                </ul>
+            </div>
+
+            <div class="btn-row">
+                <button class="btn btn-secondary" onclick="GoToStep(1)">Back</button>
+                <div style="flex:1"></div>
+                <button class="btn btn-primary" onclick="StartCreation()">Create Bootable USB</button>
+            </div>
+        </div>
+
+        <div id="step3" class="panel">
+            <div class="section-title">Creating Bootable USB</div>
+            <div class="section-desc">
+                Please wait while we create your Aegis OS installation media. This may take 10-30 minutes depending on your internet speed.
+            </div>
+
+            <div id="progressContainer" class="progress-container">
                 <div class="progress-percent" id="progressPercent">0%</div>
-                <div class="progress-text" id="progressText">Preparing...</div>
-                <div class="progress-bar-container">
-                    <div class="progress-bar" id="progressBar"></div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="progressBar"></div>
                 </div>
+                <div class="progress-status" id="progressStatus">Starting...</div>
+                <div class="progress-detail" id="progressDetail">Initializing...</div>
+            </div>
+
+            <div class="warning-box" style="margin-top:20px">
+                <strong>Do not remove the USB drive</strong> until the process is complete.
             </div>
         </div>
 
-        <div id="step3" class="progress-section">
-            <div style="text-align: center; padding: 20px 0;">
-                <div class="complete-icon">&#10004;</div>
-                <div class="section-title">Your USB flash drive is ready!</div>
-                <div class="section-desc">
-                    Aegis OS Freemium has been successfully written to your USB drive.
+        <div id="step4" class="panel">
+            <div class="success-container">
+                <div class="success-icon">OK</div>
+                <div class="success-title">USB Creation Complete!</div>
+                <div class="success-desc">
+                    Your Aegis OS bootable USB drive is ready to use.
                 </div>
-                
-                <div class="next-steps">
-                    <div class="next-step-item">
-                        <div class="step-num">1</div>
-                        <span>Safely eject the USB drive from your computer</span>
-                    </div>
-                    <div class="next-step-item">
-                        <div class="step-num">2</div>
-                        <span>Restart your computer and press F12, F2, or DEL</span>
-                    </div>
-                    <div class="next-step-item">
-                        <div class="step-num">3</div>
-                        <span>Select the USB drive from the boot menu</span>
-                    </div>
-                    <div class="next-step-item">
-                        <div class="step-num">4</div>
-                        <span>Follow the on-screen instructions to install</span>
-                    </div>
-                </div>
-            </div>
-        </div>
 
-        <div id="stepError" class="progress-section">
-            <div style="text-align: center; padding: 20px 0;">
-                <div class="error-icon">&#10008;</div>
-                <div class="section-title">Something went wrong</div>
-                <div class="section-desc" id="errorMessage">An error occurred during the creation process.</div>
-                <div class="section-desc" style="margin-top: 20px;">
-                    Make sure you're running as Administrator and the USB drive is properly connected.
+                <div class="success-steps">
+                    <h3>Next Steps:</h3>
+                    <ol>
+                        <li>Safely eject the USB drive from your computer</li>
+                        <li>Insert it into the computer where you want to run Aegis OS</li>
+                        <li>Restart the computer and press F12, F2, DEL, or ESC to access the boot menu</li>
+                        <li>Select the USB drive from the boot device list</li>
+                        <li>Choose "Start Aegis OS" or "Try without installing"</li>
+                    </ol>
+                </div>
+
+                <div class="btn-row" style="justify-content:center;margin-top:25px">
+                    <button class="btn btn-primary" onclick="CloseApp()">Finish</button>
                 </div>
             </div>
         </div>
     </div>
 
     <div class="footer">
-        <div class="disclaimer">Technical Preview. No warranty. Use at your own risk.</div>
-        <div>
-            <button id="btnNext" class="btn btn-primary" onclick="StartCreation()" disabled>Next</button>
-            <button id="btnFinish" class="hidden" onclick="CloseApp()">Finish</button>
-            <button id="btnRetry" class="hidden" onclick="RetryCreation()">Try Again</button>
-        </div>
+        Technical Preview - Provided AS-IS without warranty. No support guaranteed.
     </div>
 </div>
 </body>
