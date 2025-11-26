@@ -920,6 +920,33 @@ def page_testimonials():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
+@app.route('/pricing')
+def page_pricing_main():
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'pricing.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/ai-docker')
+def page_ai_docker():
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'ai-docker.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
+
+@app.route('/server-enterprise')
+def page_server_enterprise():
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'server-enterprise.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return jsonify({'error': 'Page not found'}), 404
+
 @app.route('/pricing-tiers-detailed')
 def page_pricing():
     try:
