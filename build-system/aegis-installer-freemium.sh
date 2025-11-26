@@ -359,8 +359,13 @@ main() {
     echo "  3. Restart and press F12/F2/DEL/ESC for boot menu"
     echo "  4. Select the USB drive to boot"
     echo ""
-    echo -e "${DIM}Technical Preview - Provided AS-IS without warranty.${NC}"
+    echo -e "${YELLOW}LEGAL NOTICE:${NC}"
+    echo -e "${DIM}TECHNICAL PREVIEW - This software is provided AS-IS without warranty.${NC}"
+    echo -e "${DIM}No support is provided or implied. Use at your own risk.${NC}"
+    echo -e "${DIM}Base system: $BASE_ISO_NAME - used under their respective license.${NC}"
+    echo ""
     echo -e "${DIM}Contact: riley.liang@hotmail.com${NC}"
+    echo -e "${DIM}Website: https://aegis-os.replit.app${NC}"
     echo ""
 }
 

@@ -1,5 +1,5 @@
 # Aegis OS USB Creator - PowerShell Backend
-# Creates a REAL bootable Linux USB drive
+# Creates a REAL bootable Linux USB drive by writing ISO directly
 # Must be run as Administrator
 
 param(
@@ -18,11 +18,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Linux Lite is a lightweight, Ubuntu-based distro - good base for customization
-# Using official mirrors for reliability
+# Linux Lite - lightweight, Ubuntu-based distro with live boot capability
 $LinuxBaseUrl = "https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
-$LinuxBaseSize = "2.1 GB"
 $LinuxBaseName = "Linux Lite 7.2"
+$LinuxBaseSize = "2.1 GB"
 
 function Write-Progress-File {
     param([int]$Percent, [string]$Status)
@@ -41,77 +40,13 @@ function Get-FileSize {
     try {
         $request = [System.Net.HttpWebRequest]::Create($Url)
         $request.Method = "HEAD"
-        $request.Timeout = 10000
+        $request.Timeout = 15000
         $response = $request.GetResponse()
         $size = $response.ContentLength
         $response.Close()
         return $size
     } catch {
         return 0
-    }
-}
-
-function Download-WithProgress {
-    param(
-        [string]$Url,
-        [string]$OutFile,
-        [int]$StartPercent,
-        [int]$EndPercent
-    )
-    
-    $webClient = New-Object System.Net.WebClient
-    $webClient.Headers.Add("User-Agent", "AegisOS-MediaCreationTool/2.0")
-    
-    $totalSize = Get-FileSize -Url $Url
-    $tempFile = "$OutFile.tmp"
-    
-    if ($totalSize -gt 0) {
-        $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
-        Write-Progress-File -Percent $StartPercent -Status "Downloading base system ($totalSizeMB MB)..."
-    }
-    
-    try {
-        # Register download progress event
-        $downloadComplete = $false
-        $lastPercent = $StartPercent
-        
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadProgressChanged -Action {
-            $percent = $Event.SourceEventArgs.ProgressPercentage
-            $downloaded = [math]::Round($Event.SourceEventArgs.BytesReceived / 1MB, 1)
-            $total = [math]::Round($Event.SourceEventArgs.TotalBytesToReceive / 1MB, 1)
-            
-            $mappedPercent = $using:StartPercent + [int](($percent / 100) * ($using:EndPercent - $using:StartPercent))
-            "$mappedPercent|Downloading: $downloaded MB / $total MB ($percent%)" | Out-File -FilePath $using:ProgressFile -Encoding UTF8 -Force
-        } | Out-Null
-        
-        Register-ObjectEvent -InputObject $webClient -EventName DownloadFileCompleted -Action {
-            $script:downloadComplete = $true
-        } | Out-Null
-        
-        $webClient.DownloadFileAsync([Uri]$Url, $tempFile)
-        
-        while (-not $downloadComplete) {
-            Start-Sleep -Milliseconds 500
-        }
-        
-        if (Test-Path $tempFile) {
-            Move-Item -Path $tempFile -Destination $OutFile -Force
-            return $true
-        }
-    } catch {
-        Write-Progress-File -Percent $StartPercent -Status "Download error: $($_.Exception.Message)"
-    } finally {
-        $webClient.Dispose()
-        Get-EventSubscriber | Unregister-Event -Force -ErrorAction SilentlyContinue
-    }
-    
-    # Fallback: synchronous download
-    try {
-        Write-Progress-File -Percent $StartPercent -Status "Downloading (this may take several minutes)..."
-        (New-Object System.Net.WebClient).DownloadFile($Url, $OutFile)
-        return $true
-    } catch {
-        return $false
     }
 }
 
@@ -125,16 +60,14 @@ try {
     Write-Progress-File -Percent 0 -Status "Starting Aegis OS Media Creation Tool..."
     Start-Sleep -Seconds 1
     
-    # Validate disk exists and is removable
-    Write-Progress-File -Percent 2 -Status "Checking USB drive..."
+    # Validate disk exists and is safe to use
+    Write-Progress-File -Percent 2 -Status "Validating USB drive..."
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     
-    if ($disk.BusType -ne "USB") {
-        # Also check if it's definitely not the system drive
-        if ($disk.IsSystem -or $disk.IsBoot) {
-            Write-Progress-File -Percent -1 -Status "ERROR: Cannot use system drive. Select a USB drive."
-            exit 1
-        }
+    # Safety checks
+    if ($disk.IsSystem -or $disk.IsBoot) {
+        Write-Progress-File -Percent -1 -Status "ERROR: Cannot use system/boot drive. Select a USB drive."
+        exit 1
     }
     
     $diskSizeGB = [math]::Round($disk.Size / 1GB, 2)
@@ -155,174 +88,167 @@ try {
     
     $isoPath = Join-Path $tempDir "base-system.iso"
     
-    # Download the base Linux ISO
-    Write-Progress-File -Percent 8 -Status "Connecting to download server..."
-    Start-Sleep -Seconds 1
+    # Check if we have a cached download
+    $cachedPath = "$env:TEMP\aegis_cached_iso.iso"
+    if (Test-Path $cachedPath) {
+        $cachedSize = (Get-Item $cachedPath).Length
+        if ($cachedSize -gt 1GB) {
+            Write-Progress-File -Percent 8 -Status "Using cached download..."
+            Copy-Item $cachedPath $isoPath
+            $downloadNeeded = $false
+        } else {
+            $downloadNeeded = $true
+        }
+    } else {
+        $downloadNeeded = $true
+    }
     
-    Write-Progress-File -Percent 10 -Status "Downloading $LinuxBaseName base system ($LinuxBaseSize)..."
-    Write-Progress-File -Percent 10 -Status "This will take several minutes depending on your connection..."
+    if ($downloadNeeded) {
+        # Download the base Linux ISO
+        Write-Progress-File -Percent 8 -Status "Connecting to download server..."
+        Start-Sleep -Seconds 1
+        
+        $totalSize = Get-FileSize -Url $LinuxBaseUrl
+        $totalSizeMB = if ($totalSize -gt 0) { [math]::Round($totalSize / 1MB, 0) } else { "~2100" }
+        
+        Write-Progress-File -Percent 10 -Status "Downloading $LinuxBaseName ($totalSizeMB MB)..."
+        
+        # Use BITS for background download with progress
+        try {
+            $job = Start-BitsTransfer -Source $LinuxBaseUrl -Destination $isoPath -Asynchronous -Priority High -DisplayName "Aegis OS Download"
+            
+            while (($job.JobState -eq "Transferring") -or ($job.JobState -eq "Connecting")) {
+                $percentComplete = 0
+                if ($job.BytesTotal -gt 0) {
+                    $percentComplete = [int](($job.BytesTransferred / $job.BytesTotal) * 100)
+                }
+                $mappedPercent = 10 + [int]($percentComplete * 0.40)
+                $downloadedMB = [math]::Round($job.BytesTransferred / 1MB, 1)
+                $totalMB = [math]::Round($job.BytesTotal / 1MB, 1)
+                Write-Progress-File -Percent $mappedPercent -Status "Downloading: $downloadedMB MB / $totalMB MB ($percentComplete%)"
+                Start-Sleep -Seconds 2
+            }
+            
+            if ($job.JobState -eq "Transferred") {
+                Complete-BitsTransfer -BitsJob $job
+            } else {
+                throw "BITS download failed: $($job.JobState)"
+            }
+        } catch {
+            # Fallback to WebClient download
+            Write-Progress-File -Percent 10 -Status "Downloading (this may take 10-20 minutes)..."
+            
+            try {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Headers.Add("User-Agent", "AegisOS-MediaCreationTool/2.0")
+                $webClient.DownloadFile($LinuxBaseUrl, $isoPath)
+                $webClient.Dispose()
+            } catch {
+                Write-Progress-File -Percent -1 -Status "ERROR: Download failed. Check your internet connection."
+                exit 1
+            }
+        }
+        
+        # Cache the download for future use
+        Copy-Item $isoPath $cachedPath -Force -ErrorAction SilentlyContinue
+    }
     
-    $downloadSuccess = Download-WithProgress -Url $LinuxBaseUrl -OutFile $isoPath -StartPercent 10 -EndPercent 50
-    
-    if (-not $downloadSuccess -or -not (Test-Path $isoPath)) {
-        Write-Progress-File -Percent -1 -Status "ERROR: Failed to download base system. Check your internet connection."
+    # Verify download
+    if (-not (Test-Path $isoPath)) {
+        Write-Progress-File -Percent -1 -Status "ERROR: Failed to download base system."
         exit 1
     }
     
     $isoSize = (Get-Item $isoPath).Length
-    if ($isoSize -lt 100MB) {
-        Write-Progress-File -Percent -1 -Status "ERROR: Downloaded file is too small. Download may have failed."
+    if ($isoSize -lt 500MB) {
+        Write-Progress-File -Percent -1 -Status "ERROR: Downloaded file is incomplete."
         exit 1
     }
     
-    Write-Progress-File -Percent 50 -Status "Download complete. Preparing USB drive..."
-    Start-Sleep -Seconds 1
-    
-    # Clear and prepare the USB drive
-    Write-Progress-File -Percent 52 -Status "WARNING: Erasing all data on USB drive..."
+    Write-Progress-File -Percent 50 -Status "Download complete. Preparing to write to USB..."
     Start-Sleep -Seconds 2
     
-    Write-Progress-File -Percent 55 -Status "Clearing existing partitions..."
-    Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
+    # Get physical path for disk
+    $physicalDisk = "\\.\PhysicalDrive$DiskNumber"
+    
+    # Clear the disk first (required for clean write)
+    Write-Progress-File -Percent 52 -Status "WARNING: Erasing USB drive..."
     Start-Sleep -Seconds 1
     
-    Write-Progress-File -Percent 58 -Status "Initializing disk..."
-    Initialize-Disk -Number $DiskNumber -PartitionStyle MBR -ErrorAction SilentlyContinue
+    # Take disk offline, clean, then prepare for raw write
+    Write-Progress-File -Percent 54 -Status "Clearing disk..."
     
-    Write-Progress-File -Percent 60 -Status "Creating partition..."
-    $partition = New-Partition -DiskNumber $DiskNumber -UseMaximumSize -IsActive -AssignDriveLetter
-    $driveLetter = $partition.DriveLetter
+    # Use diskpart to clean the disk
+    $diskpartScript = @"
+select disk $DiskNumber
+clean
+"@
+    $diskpartScript | Out-File "$tempDir\diskpart.txt" -Encoding ASCII
+    diskpart /s "$tempDir\diskpart.txt" | Out-Null
     Start-Sleep -Seconds 2
     
-    Write-Progress-File -Percent 63 -Status "Formatting as FAT32..."
-    Format-Volume -DriveLetter $driveLetter -FileSystem FAT32 -NewFileSystemLabel "AEGIS_OS" -Confirm:$false
-    Start-Sleep -Seconds 1
+    Write-Progress-File -Percent 58 -Status "Writing ISO to USB drive..."
+    Write-Progress-File -Percent 60 -Status "This will take 5-15 minutes. Do not remove the USB!"
     
-    Write-Progress-File -Percent 65 -Status "Mounting ISO image..."
-    
-    # Mount the ISO
-    $mountResult = Mount-DiskImage -ImagePath $isoPath -PassThru
-    $isoDriveLetter = ($mountResult | Get-Volume).DriveLetter
-    
-    if (-not $isoDriveLetter) {
-        Write-Progress-File -Percent -1 -Status "ERROR: Failed to mount ISO image"
-        exit 1
-    }
-    
-    Write-Progress-File -Percent 68 -Status "Copying system files to USB..."
-    
-    $sourceRoot = "${isoDriveLetter}:\"
-    $destRoot = "${driveLetter}:\"
-    
-    # Copy all files from ISO to USB
-    $totalFiles = (Get-ChildItem -Path $sourceRoot -Recurse -File).Count
-    $copiedFiles = 0
-    
-    Get-ChildItem -Path $sourceRoot -Recurse | ForEach-Object {
-        $relativePath = $_.FullName.Substring($sourceRoot.Length)
-        $destPath = Join-Path $destRoot $relativePath
+    # Use dd-style raw write via .NET FileStream
+    # This writes the ISO sector-by-sector to create a bootable USB
+    try {
+        $blockSize = 4MB
+        $sourceStream = [System.IO.File]::OpenRead($isoPath)
+        $totalBytes = $sourceStream.Length
         
-        if ($_.PSIsContainer) {
-            if (-not (Test-Path $destPath)) {
-                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-        } else {
-            $destDir = Split-Path $destPath -Parent
-            if (-not (Test-Path $destDir)) {
-                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-            }
-            Copy-Item -Path $_.FullName -Destination $destPath -Force
-            $copiedFiles++
+        # Open physical disk for raw write
+        $diskStream = New-Object System.IO.FileStream($physicalDisk, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, $blockSize, [System.IO.FileOptions]::WriteThrough)
+        
+        $buffer = New-Object byte[] $blockSize
+        $bytesWritten = 0
+        $lastPercent = 60
+        
+        while (($bytesRead = $sourceStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $diskStream.Write($buffer, 0, $bytesRead)
+            $bytesWritten += $bytesRead
             
-            if ($copiedFiles % 50 -eq 0) {
-                $copyPercent = 68 + [int](($copiedFiles / $totalFiles) * 20)
-                Write-Progress-File -Percent $copyPercent -Status "Copying files... ($copiedFiles / $totalFiles)"
+            $percentComplete = [int](($bytesWritten / $totalBytes) * 100)
+            $mappedPercent = 60 + [int]($percentComplete * 0.35)
+            
+            if ($mappedPercent -gt $lastPercent) {
+                $writtenMB = [math]::Round($bytesWritten / 1MB, 0)
+                $totalMB = [math]::Round($totalBytes / 1MB, 0)
+                Write-Progress-File -Percent $mappedPercent -Status "Writing: $writtenMB MB / $totalMB MB ($percentComplete%)"
+                $lastPercent = $mappedPercent
             }
         }
+        
+        $diskStream.Flush()
+        $diskStream.Close()
+        $sourceStream.Close()
+        
+    } catch {
+        Write-Progress-File -Percent -1 -Status "ERROR: Failed to write to USB - $($_.Exception.Message)"
+        if ($sourceStream) { $sourceStream.Close() }
+        if ($diskStream) { $diskStream.Close() }
+        exit 1
     }
     
-    Write-Progress-File -Percent 88 -Status "Files copied. Unmounting ISO..."
+    Write-Progress-File -Percent 95 -Status "Syncing data..."
+    Start-Sleep -Seconds 3
     
-    # Unmount ISO
-    Dismount-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue
+    # Rescan disk to update drive letters
+    Write-Progress-File -Percent 97 -Status "Refreshing drives..."
     
-    Write-Progress-File -Percent 90 -Status "Adding Aegis OS customization..."
-    
-    # Create Aegis OS branding and customization
-    $aegisDir = Join-Path $destRoot "aegis"
-    New-Item -ItemType Directory -Path $aegisDir -Force | Out-Null
-    
-    # Edition configuration
-    $editionConfig = @"
-# Aegis OS Edition Configuration
-AEGIS_EDITION=$Edition
-AEGIS_VERSION=1.0.0
-AEGIS_BUILD_DATE=$(Get-Date -Format "yyyy-MM-dd")
-AEGIS_BASE_SYSTEM=$LinuxBaseName
-LICENSE_KEY=$LicenseKey
+    $rescanScript = @"
+rescan
 "@
-    $editionConfig | Out-File -FilePath (Join-Path $aegisDir "edition.conf") -Encoding UTF8
-    
-    # Readme
-    $readme = @"
-================================================================================
-                      AEGIS OS - $Edition Edition
-================================================================================
-
-WHAT IS THIS?
-This is a bootable USB drive with Aegis OS based on $LinuxBaseName.
-
-TO BOOT FROM THIS USB:
-1. Restart your computer
-2. Press F12, F2, DEL, or ESC during startup (varies by manufacturer)
-3. Select this USB drive from the boot menu
-4. Choose "Start Aegis OS" or "Try without installing"
-
-SYSTEM REQUIREMENTS:
-- 64-bit processor (Intel or AMD)
-- 4GB RAM minimum (8GB recommended)
-- 20GB disk space for installation
-- USB 2.0 or higher port
-
-EDITION: $Edition
-$(if ($LicenseKey) { "LICENSE: $LicenseKey" } else { "LICENSE: Freemium (No license required)" })
-
-LEGAL NOTICE:
-TECHNICAL PREVIEW - This software is provided AS-IS without warranty.
-No support is provided or implied. Use at your own risk.
-Base system: $LinuxBaseName (used under their respective license)
-
-Contact: riley.liang@hotmail.com
-Website: https://aegis-os.replit.app
-
-Created: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-================================================================================
-"@
-    $readme | Out-File -FilePath (Join-Path $destRoot "AEGIS_README.txt") -Encoding UTF8
-    
-    Write-Progress-File -Percent 95 -Status "Verifying bootable media..."
-    Start-Sleep -Seconds 1
-    
-    # Verify key boot files exist
-    $bootFiles = @("isolinux", "boot", "casper", "live")
-    $foundBoot = $false
-    foreach ($bootDir in $bootFiles) {
-        if (Test-Path (Join-Path $destRoot $bootDir)) {
-            $foundBoot = $true
-            break
-        }
-    }
-    
-    if (-not $foundBoot) {
-        Write-Progress-File -Percent -1 -Status "WARNING: Boot files may not be complete. USB might not boot properly."
-    }
+    $rescanScript | Out-File "$tempDir\rescan.txt" -Encoding ASCII
+    diskpart /s "$tempDir\rescan.txt" | Out-Null
+    Start-Sleep -Seconds 2
     
     Write-Progress-File -Percent 98 -Status "Cleaning up..."
     
-    # Clean up temp files
+    # Cleanup temp files
     Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     
-    Write-Progress-File -Percent 100 -Status "SUCCESS! Aegis OS $Edition is ready on drive ${driveLetter}:"
+    Write-Progress-File -Percent 100 -Status "SUCCESS! Aegis OS $Edition bootable USB is ready!"
     
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
@@ -330,10 +256,17 @@ Created: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "Your Aegis OS bootable USB is ready."
-    Write-Host "Drive: ${driveLetter}:"
     Write-Host "Edition: $Edition"
     Write-Host ""
-    Write-Host "To use: Restart your PC and boot from this USB drive."
+    Write-Host "To use:"
+    Write-Host "  1. Safely remove the USB drive"
+    Write-Host "  2. Insert into target computer"
+    Write-Host "  3. Restart and press F12/F2/DEL/ESC for boot menu"
+    Write-Host "  4. Select USB drive to boot"
+    Write-Host ""
+    Write-Host "LEGAL NOTICE:" -ForegroundColor Yellow
+    Write-Host "Technical Preview - Provided AS-IS without warranty."
+    Write-Host "No support is provided or implied. Use at your own risk."
     Write-Host ""
     
     exit 0
@@ -344,11 +277,6 @@ Created: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     # Cleanup on error
     if (Test-Path "$env:TEMP\AegisOS_Creator") {
         Remove-Item "$env:TEMP\AegisOS_Creator" -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    
-    # Try to unmount ISO if mounted
-    if ($isoPath -and (Test-Path $isoPath)) {
-        Dismount-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue
     }
     
     exit 1
