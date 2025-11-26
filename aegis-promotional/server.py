@@ -3512,11 +3512,15 @@ def payment_success():
                 </ol>
             </div>
 
-            <p style="color: #6b7280; font-size: 0.95rem;">
-                Need help? Contact support at riley.liang@hotmail.com
-            </p>
+            <a href="/download-installer" class="button" style="margin-right: 10px;">Download Installer</a>
+            <a href="/" class="button" style="background: #6b7280;">Back to Home</a>
 
-            <a href="/" class="button">Back to Home</a>
+            <div style="margin-top: 30px; padding: 15px; border-top: 1px solid #e5e7eb;">
+                <p style="color: #9ca3af; font-size: 12px; text-align: center;">
+                    TECHNICAL PREVIEW - This software is provided "as is" without warranty of any kind. No support guaranteed.<br>
+                    Anything represented may not be true. Use at your own risk. Contact: riley.liang@hotmail.com
+                </p>
+            </div>
         </div>
     </body>
     </html>

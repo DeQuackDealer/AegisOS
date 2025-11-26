@@ -130,3 +130,26 @@ The promotional website references but does not implement:
 **Tier-Based Architecture**: JSON configuration file (TIER_FEATURES.json) separates business logic from code, making it easy to modify pricing and features without changing the application.
 
 **Static HTML with Inline Styles**: Reduces HTTP requests and simplifies deployment, though at the cost of maintainability. Chosen for performance on the promotional site.
+
+### Payment & License System
+
+**Database Models** (models.py):
+- User: accounts with email, password hash, Stripe customer ID
+- License: license keys with edition, type (annual/lifetime), status, Stripe session ID
+- StripeEvent: webhook event tracking for idempotency
+- EmailLog: transactional email tracking
+
+**License Key Generation**:
+- Edition-specific prefixes: BSIC (Basic), WORK (Workplace), GAME (Gamer), AIDV (AI Developer), GMAI (Gamer+AI), SERV (Server)
+- Format: PREFIX-XXXX-XXXX-XXXX with checksum validation (sum % 7 == 0)
+
+**Payment Flow**:
+1. Stripe checkout creates session with tier metadata
+2. On success page: verify payment, generate license key
+3. Create/find user in database, save license
+4. Send confirmation email via SendGrid (if API key configured)
+
+**SendGrid Integration**: 
+- Requires SENDGRID_API_KEY secret to enable email functionality
+- SENDGRID_FROM_EMAIL defaults to riley.liang@hotmail.com
+- Sends purchase confirmation with license key, invoice details, next steps
