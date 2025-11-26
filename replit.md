@@ -131,26 +131,38 @@ The promotional website references but does not implement:
 
 **Static HTML with Inline Styles**: Reduces HTTP requests and simplifies deployment, though at the cost of maintainability. Chosen for performance on the promotional site.
 
-### Windows GUI Installers
+### Cross-Platform GUI Installers
 
-**Technology**: HTA (HTML Application) - Native Windows GUI without additional software
+**Windows Installers** (HTA - HTML Application):
+- **aegis-installer-freemium.hta** - Freemium edition with cyan/green theme
+- **aegis-installer-licensed.hta** - Premium editions with gold theme (requires license key)
 
-**Installer Files**:
-- **aegis-installer-freemium.hta** - Freemium edition GUI installer
-- **aegis-installer-licensed.hta** - Paid editions GUI installer (requires license key)
+**macOS/Linux Installers** (Shell scripts with TUI):
+- **aegis-installer-freemium.sh** - Terminal-based GUI for free edition
+- **aegis-installer-licensed.sh** - Premium installer with license validation
 
-**Features**:
-- Modern graphical interface with dark theme
+**Windows Features**:
+- Modern glassmorphism UI with animated SVG shield logo
+- Step indicators (Step 1 of 4) with visual progress dots
 - USB drive detection via Windows WMI
-- Progress bars for download and flash operations
-- License key validation (detects edition from prefix)
-- Step-by-step installation flow
+- Animated progress bars with shimmer effects
+- "What's Included" feature cards
+- License key validation with edition detection
+
+**macOS/Linux Features**:
+- ASCII art branding with color theming
+- USB drive detection via diskutil (macOS) or lsblk (Linux)
+- Progress bars with Unicode block characters
+- Same step-by-step flow as Windows version
+- Edition-specific feature lists
 
 **Endpoints**:
-- `/download-installer` or `/download-installer-freemium.hta` - Freemium installer
-- `/download-installer-licensed.hta` - Licensed installer for paid editions
+- `/download-installer` or `/download-installer-freemium.hta` - Windows Freemium
+- `/download-installer-licensed.hta` - Windows Licensed
+- `/download-installer-freemium.sh` or `/download-installer-mac` - macOS/Linux Freemium
+- `/download-installer-licensed.sh` - macOS/Linux Licensed
 
-**Note**: HTA files run natively on Windows 7/8/10/11 without any prerequisites. They use mshta.exe which is built into Windows.
+**Note**: HTA files run natively on Windows 7/8/10/11. Shell scripts require `chmod +x` before running on macOS/Linux.
 
 ### Payment & License System
 

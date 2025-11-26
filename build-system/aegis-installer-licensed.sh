@@ -135,9 +135,6 @@ validate_license() {
             ;;
     esac
     
-    # Save license key
-    echo "$LICENSE_KEY" > "$HOME/.aegis-license"
-    
     echo ""
     echo -e "  ${GREEN}✓ License Validated!${NC}"
     echo -e "    ${BOLD}Edition:${NC} ${GOLD}$EDITION_NAME${NC}"
@@ -270,11 +267,22 @@ show_completion() {
     echo -e "    ${CYAN}3.${NC} Select your USB drive"
     echo -e "    ${CYAN}4.${NC} Enter license key when prompted"
     echo ""
-    echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
-    echo -e "  ${DIM}TECHNICAL PREVIEW - No warranty. Use at your own risk.${NC}"
     echo -e "  ${DIM}Thank you for your purchase!${NC}"
+    echo ""
+    show_disclaimer
+}
+
+show_disclaimer() {
+    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${YELLOW}IMPORTANT LEGAL NOTICE${NC}"
+    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${DIM}TECHNICAL PREVIEW - This software is provided AS-IS with NO${NC}"
+    echo -e "  ${DIM}WARRANTY of any kind. No support is provided or implied.${NC}"
+    echo -e "  ${DIM}Anything represented may not be true. Use at your own risk.${NC}"
+    echo -e "  ${DIM}By using this software you accept all responsibility.${NC}"
+    echo ""
     echo -e "  ${DIM}Contact: riley.liang@hotmail.com${NC}"
-    echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${DIM}════════════════════════════════════════════════════════════════${NC}"
     echo ""
 }
 
