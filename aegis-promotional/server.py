@@ -1631,10 +1631,39 @@ if __name__ == "__main__":
 
 @app.route('/download-installer')
 @app.route('/download-installer.bat')
-def download_windows_installer():
-    """Download the Windows installer (.bat file - double-click to run on Windows)"""
+@app.route('/download-installer-freemium')
+@app.route('/download-installer-freemium.bat')
+def download_freemium_installer():
+    """Download the Freemium Windows installer (.bat file)"""
     try:
-        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.bat')
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.bat')
+        
+        if os.path.exists(installer_path):
+            with open(installer_path, 'r', encoding='utf-8') as f:
+                script_content = f.read()
+            
+            return Response(
+                script_content,
+                mimetype='application/x-bat',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.bat',
+                    'Content-Type': 'application/x-bat; charset=utf-8'
+                }
+            )
+        else:
+            app.logger.error(f"Installer not found at: {installer_path}")
+            return jsonify({'error': 'Installer file not found'}), 404
+            
+    except Exception as e:
+        app.logger.error(f"Installer download failed: {str(e)}")
+        return jsonify({'error': 'Download failed'}), 500
+
+@app.route('/download-installer-licensed')
+@app.route('/download-installer-licensed.bat')
+def download_licensed_installer():
+    """Download the Licensed Windows installer (.bat file) for paid editions"""
+    try:
+        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.bat')
         
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
@@ -1649,11 +1678,11 @@ def download_windows_installer():
                 }
             )
         else:
-            app.logger.error(f"Installer not found at: {installer_path}")
+            app.logger.error(f"Licensed installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
             
     except Exception as e:
-        app.logger.error(f"Installer download failed: {str(e)}")
+        app.logger.error(f"Licensed installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
 @app.route('/download-installer.py')
@@ -3593,7 +3622,7 @@ def payment_success():
             </div>''' if license_key else ''}
 
             <div class="download-section">
-                <a href="/download-installer.bat" class="download-btn">Download Installer</a>
+                <a href="/download-installer-licensed.bat" class="download-btn">Download Installer</a>
                 <p class="download-info">Windows installer - Double-click to run</p>
             </div>
 
