@@ -3034,6 +3034,9 @@ def create_checkout_session():
         tier = data.get('tier', '').lower()
         payment_type = data.get('type', 'lifetime')  # 'lifetime' or 'annual'
 
+        if tier == 'ai':
+            tier = 'ai-dev'
+
         if tier not in TIERS:
             return jsonify({'error': 'Invalid tier'}), 400
 
@@ -3059,6 +3062,7 @@ def create_checkout_session():
             'basic': 'Basic Edition',
             'gamer': 'Gamer Edition',
             'ai-dev': 'AI Developer Edition',
+            'gamer-ai': 'Gamer + AI Edition',
             'workplace': 'Workplace Edition'
         }
 
