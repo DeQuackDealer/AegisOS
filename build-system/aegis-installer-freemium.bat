@@ -160,7 +160,7 @@ echo  ============================================================
 echo        THANK YOU FOR CHOOSING AEGIS OS FREEMIUM
 echo  ============================================================
 echo.
-echo  TECHNICAL PREVIEW - No warranty. Use at your own risk.
+echo  Commercial Software. Sold as-is. Support available separately.
 echo  Contact: riley.liang@hotmail.com
 echo.
 echo  Upgrade to premium: https://aegis-os.replit.app/pricing

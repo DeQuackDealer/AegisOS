@@ -265,8 +265,8 @@ rescan
     Write-Host "  4. Select USB drive to boot"
     Write-Host ""
     Write-Host "LEGAL NOTICE:" -ForegroundColor Yellow
-    Write-Host "Technical Preview - Provided AS-IS without warranty."
-    Write-Host "No support is provided or implied. Use at your own risk."
+    Write-Host "Aegis OS - Commercial Software. Sold as-is."
+    Write-Host "Liability limited to purchase price. Support available separately."
     Write-Host ""
     
     exit 0

@@ -3718,8 +3718,8 @@ def payment_success():
             <a href="/" class="footer-link">Back to Home</a>
 
             <div class="disclaimer">
-                TECHNICAL PREVIEW - This software is provided "as is" without warranty of any kind. No support guaranteed.<br>
-                Anything represented may not be true. Use at your own risk. Contact: riley.liang@hotmail.com
+                Aegis OS - Commercial Software. Sold as-is. Liability limited to purchase price.<br>
+                Support available separately. Contact: riley.liang@hotmail.com
             </div>
         </div>
     </body>

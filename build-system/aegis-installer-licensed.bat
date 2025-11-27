@@ -263,7 +263,7 @@ echo.
 echo  Your license: %LICENSE_KEY%
 echo  Edition: %EDITION%
 echo.
-echo  TECHNICAL PREVIEW - No warranty. Use at your own risk.
+echo  Commercial Software. Sold as-is. Support available separately.
 echo  Contact: riley.liang@hotmail.com
 echo.
 echo  Goodbye!
