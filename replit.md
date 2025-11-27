@@ -54,8 +54,13 @@ The build system uses Python scripts to orchestrate the creation of bootable ISO
 - CSRF token protection
 - Audit logging with cryptographic signatures
 - Failed login attempt tracking
-- Legal disclaimers on all pages ("Anything represented may not be true. Use at your own risk.")
-- Removed all support promises to avoid legal liability
+
+**Commercial Terms (Legal Protection)**:
+- "Sold as-is without implied warranties" - standard commercial software terms
+- "Liability limited to purchase price" - caps legal exposure
+- "Support available separately" - no bundled support promises, optional paid support
+- "Based on Linux Lite 7.2 (GPL)" - proper third-party attribution
+- 30-day money-back guarantee on paid editions
 
 **API Design**: RESTful endpoints for:
 - License management
@@ -117,7 +122,7 @@ The promotional website references but does not implement:
 - Cloud backup services
 - Analytics platforms
 
-**Note**: This is a demonstration/promotional project. The referenced features, pricing, and integrations are conceptual and not connected to actual services.
+**Note**: Aegis OS is a commercial Linux distribution based on Linux Lite 7.2. The installers download the real Linux Lite ISO (~2.1GB) and create actual bootable USB drives using raw disk writes (dd-style). Stripe integration handles real payments.
 
 ### Design Decisions
 
