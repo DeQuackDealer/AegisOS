@@ -191,3 +191,45 @@ The promotional website references but does not implement:
 - Requires SENDGRID_API_KEY secret to enable email functionality
 - SENDGRID_FROM_EMAIL defaults to riley.liang@hotmail.com
 - Sends purchase confirmation with license key, invoice details, next steps
+
+### Aegis Exclusive Tools (16 Total per Edition)
+
+All editions include 16 custom Aegis-branded Python utilities located in `/usr/local/bin/`:
+
+**System Utilities**:
+- `aegis-system-monitor` - Real-time system resource monitoring (CPU, RAM, disk, network)
+- `aegis-system-info` - Hardware detection and system information display
+- `aegis-vm-optimizer` - Virtual machine performance tuning
+- `aegis-kernel-interface` - Kernel parameter configuration
+
+**Desktop Customization**:
+- `aegis-desktop-effects` - Window compositing and transparency effects
+- `aegis-wallpaper-engine` - Animated wallpaper support
+- `aegis-taskbar-manager` - Taskbar layout and behavior customization
+
+**Security & Backup** (NEW):
+- `aegis-security-center` - All-in-one security dashboard with ClamAV/UFW integration
+- `aegis-backup-pro` - Scheduled rsync-based backup system with incremental snapshots
+
+**App Management** (NEW):
+- `aegis-app-store` - Curated marketplace with 62 apps, apt/flatpak installation
+- `aegis-game-library` - Unified game launcher (Steam, Lutris, Heroic, native)
+
+**Device Integration** (NEW):
+- `aegis-mobile-link` - Phone integration with notifications, file transfer, KDE Connect
+- `aegis-desklink` - Multi-computer mouse/keyboard sharing (Barrier/Synergy compatible)
+
+**Graphics & Gaming**:
+- `aegis-gaming-optimizer` - Game performance tuning (GameMode integration)
+- `aegis-nvidia-info` - NVIDIA GPU monitoring and fan control
+- `aegis-nouveau-optimizer` - Open-source driver optimization
+
+**Core**:
+- `aegis-welcome` - First-run experience and quick settings
+- `aegis-license-manager` - License activation and validation
+
+All tools support:
+- Both GUI (tkinter) and CLI modes
+- Configuration in `/etc/aegis/`
+- Logging to `/var/log/aegis/`
+- Graceful degradation when dependencies missing
