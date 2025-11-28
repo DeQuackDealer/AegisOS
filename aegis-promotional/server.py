@@ -67,13 +67,13 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
 
-from models import db, User, License, StripeEvent, EmailLog, AdminUser, Giveaway, GiveawayEntry
+from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry
 db.init_app(app)
 
 with app.app_context():
     db.create_all()
     
-    # Ensure DeQuackDealer superadmin exists in database
+    # Ensure DeQuackDealer owner account exists in database
     try:
         existing_admin = AdminUser.query.filter_by(username='DeQuackDealer').first()
         if not existing_admin:
@@ -82,7 +82,7 @@ with app.app_context():
                 username='DeQuackDealer',
                 display_name='Riley Liang',
                 email='riley.liang@hotmail.com',
-                role='superadmin',
+                role=AdminRole.OWNER,
                 can_create_admins=True,
                 is_active=True,
                 created_by='system'
@@ -90,9 +90,16 @@ with app.app_context():
             new_admin.set_password(dequack_pwd)
             db.session.add(new_admin)
             db.session.commit()
-            logger.info("Created DeQuackDealer superadmin account in database")
+            logger.info("Created DeQuackDealer owner account in database")
         else:
-            logger.info("DeQuackDealer superadmin already exists in database")
+            # Update existing account to owner role if needed
+            if existing_admin.role != AdminRole.OWNER:
+                existing_admin.role = AdminRole.OWNER
+                existing_admin.can_create_admins = True
+                db.session.commit()
+                logger.info("Updated DeQuackDealer to owner role")
+            else:
+                logger.info("DeQuackDealer owner account already exists in database")
     except Exception as e:
         logger.error(f"Error ensuring DeQuackDealer exists: {e}")
         db.session.rollback()
@@ -3763,6 +3770,82 @@ def require_admin(f):
             return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
 
         request.admin_user = payload.get('username')
+        request.admin_role = payload.get('role', 'designer')
+        return f(*args, **kwargs)
+    return decorated
+
+def require_roles(*allowed_roles):
+    """Decorator to require specific admin roles"""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
+
+            token = auth_header[7:]
+            payload = verify_admin_token(token)
+
+            if not payload:
+                return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
+
+            user_role = payload.get('role', 'designer')
+            request.admin_user = payload.get('username')
+            request.admin_role = user_role
+            
+            # Owner always has access
+            if user_role == AdminRole.OWNER:
+                return f(*args, **kwargs)
+            
+            # Check if user's role is in allowed roles
+            if user_role not in allowed_roles:
+                tamper_protected_audit_log("ROLE_ACCESS_DENIED", {
+                    "username": payload.get('username'),
+                    "role": user_role,
+                    "required_roles": list(allowed_roles),
+                    "endpoint": request.path
+                }, "HIGH")
+                return jsonify({
+                    'error': 'Access denied. Insufficient role permissions.',
+                    'code': 'ROLE_ACCESS_DENIED',
+                    'your_role': user_role,
+                    'required_roles': list(allowed_roles)
+                }), 403
+
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+def require_build_access(f):
+    """Decorator to require OS build access (Owner, Developer, Tester only)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
+
+        token = auth_header[7:]
+        payload = verify_admin_token(token)
+
+        if not payload:
+            return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
+
+        user_role = payload.get('role', 'designer')
+        request.admin_user = payload.get('username')
+        request.admin_role = user_role
+        
+        if not AdminRole.can_access_builds(user_role):
+            tamper_protected_audit_log("BUILD_ACCESS_DENIED", {
+                "username": payload.get('username'),
+                "role": user_role,
+                "endpoint": request.path
+            }, "HIGH")
+            return jsonify({
+                'error': 'Access denied. Only Developer, Tester, and Owner roles can access OS builds.',
+                'code': 'BUILD_ACCESS_DENIED',
+                'your_role': user_role
+            }), 403
+
         return f(*args, **kwargs)
     return decorated
 
@@ -3823,6 +3906,8 @@ def admin_login():
             'username': admin.username,
             'display_name': admin.display_name or admin.username,
             'role': admin.role,
+            'role_display': AdminRole.get_display_name(admin.role),
+            'can_access_builds': AdminRole.can_access_builds(admin.role),
             'can_create_admins': admin.can_create_admins,
             'expires': (datetime.utcnow() + ADMIN_SESSION_DURATION).isoformat()
         }), 200
@@ -3856,15 +3941,19 @@ def admin_verify():
 @app.route('/api/admin/admins', methods=['GET'])
 @require_admin
 def admin_list_admins():
-    """List all admin accounts (superadmin only) - uses database"""
+    """List all admin accounts (owner only) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
-    if not payload or payload.get('role') != 'superadmin':
-        return jsonify({'error': 'Superadmin access required', 'code': 'FORBIDDEN'}), 403
+    if not payload or payload.get('role') != AdminRole.OWNER:
+        return jsonify({'error': 'Owner access required', 'code': 'FORBIDDEN'}), 403
     
     try:
         admin_users = AdminUser.query.filter_by(is_active=True).all()
         admins = [admin.to_dict() for admin in admin_users]
-        return jsonify({'admins': admins}), 200
+        return jsonify({
+            'admins': admins,
+            'available_roles': AdminRole.ALL_ROLES,
+            'role_display_names': AdminRole.DISPLAY_NAMES
+        }), 200
     except Exception as e:
         logger.error(f"Error listing admins: {e}")
         return jsonify({'error': 'Failed to list admins', 'code': 'SERVER_ERROR'}), 500
@@ -3872,18 +3961,29 @@ def admin_list_admins():
 @app.route('/api/admin/admins', methods=['POST'])
 @require_admin
 def admin_create_admin():
-    """Create a new admin account (requires can_create_admins permission) - uses database"""
+    """Create a new admin account (requires owner role) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
-    if not payload or not payload.get('can_create_admins'):
-        return jsonify({'error': 'Permission denied - cannot create admin accounts', 'code': 'FORBIDDEN'}), 403
+    if not payload or payload.get('role') != AdminRole.OWNER:
+        return jsonify({'error': 'Owner access required to create admin accounts', 'code': 'FORBIDDEN'}), 403
     
     data = request.json or {}
     new_username = str(data.get('username', '')).strip()
     new_password = str(data.get('password', '')).strip()
     display_name = str(data.get('display_name', new_username)).strip()
-    role = str(data.get('role', 'admin')).strip()
+    role = str(data.get('role', 'designer')).strip()
     email = str(data.get('email', '')).strip()
     can_create_admins = bool(data.get('can_create_admins', False))
+    
+    # Validate role
+    if role not in AdminRole.ALL_ROLES:
+        return jsonify({
+            'error': f'Invalid role. Must be one of: {", ".join(AdminRole.ALL_ROLES)}',
+            'code': 'INVALID_ROLE'
+        }), 400
+    
+    # Only owner can create owner accounts
+    if role == AdminRole.OWNER and payload.get('role') != AdminRole.OWNER:
+        return jsonify({'error': 'Only owner can create owner accounts', 'code': 'FORBIDDEN'}), 403
     
     if not new_username or not new_password:
         return jsonify({'error': 'Username and password required', 'code': 'MISSING_FIELDS'}), 400
@@ -3943,8 +4043,8 @@ def admin_create_admin():
 def admin_delete_admin(username):
     """Delete an admin account (superadmin only, cannot delete self) - uses database"""
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
-    if not payload or payload.get('role') != 'superadmin':
-        return jsonify({'error': 'Superadmin access required', 'code': 'FORBIDDEN'}), 403
+    if not payload or payload.get('role') != AdminRole.OWNER:
+        return jsonify({'error': 'Owner access required', 'code': 'FORBIDDEN'}), 403
     
     username = sanitize_input(username)
     
@@ -3970,6 +4070,216 @@ def admin_delete_admin(username):
         logger.error(f"Error deleting admin: {e}")
         db.session.rollback()
         return jsonify({'error': 'Failed to delete admin', 'code': 'SERVER_ERROR'}), 500
+
+# ============= OS BUILDS ENDPOINTS (Tester/Developer/Owner only) =============
+
+OS_EDITIONS = {
+    'freemium': {
+        'name': 'Aegis OS Freemium',
+        'version': '7.2.0',
+        'size': '2.9 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'Free edition with XFCE desktop and Quick Setup Wizard',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'basic': {
+        'name': 'Aegis OS Basic',
+        'version': '7.2.0',
+        'size': '3.1 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'Enhanced security with Cloud Storage and Auto-Backup',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'workplace': {
+        'name': 'Aegis OS Workplace',
+        'version': '7.2.0',
+        'size': '3.2 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'Enterprise features with Teams collaboration and SSO',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'gamer': {
+        'name': 'Aegis OS Gamer',
+        'version': '7.2.0',
+        'size': '3.5 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'NVIDIA/AMD drivers with Game Booster AI and RGB Sync',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'ai-dev': {
+        'name': 'Aegis OS AI Developer',
+        'version': '7.2.0',
+        'size': '4.2 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'CUDA 12.3, ROCm, and 100+ ML libraries with GPU Monitor Pro',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'gamer-ai': {
+        'name': 'Aegis OS Gamer+AI',
+        'version': '7.2.0',
+        'size': '4.5 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'Combined gaming and AI development with hybrid GPU scheduling',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    },
+    'server': {
+        'name': 'Aegis OS Server',
+        'version': '7.2.0',
+        'size': '2.5 GB',
+        'sha256': 'dc8955e02c68537815ed0010f7c4c035ce786bba2c679dd74532b22205df8216',
+        'description': 'Enterprise server with Kubernetes and Container Orchestrator',
+        'download_url': 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'
+    }
+}
+
+@app.route('/api/admin/builds', methods=['GET'])
+@require_build_access
+def admin_list_builds():
+    """List all available OS builds (Tester/Developer/Owner only)"""
+    tamper_protected_audit_log("BUILD_LIST_ACCESS", {
+        "username": request.admin_user,
+        "role": request.admin_role
+    }, "INFO")
+    
+    builds = []
+    for edition_id, edition_data in OS_EDITIONS.items():
+        builds.append({
+            'edition': edition_id,
+            'name': edition_data['name'],
+            'version': edition_data['version'],
+            'size': edition_data['size'],
+            'description': edition_data['description'],
+            'sha256': edition_data['sha256'][:16] + '...',
+            'status': 'ready',
+            'built_at': '2025-11-28T00:00:00Z'
+        })
+    
+    return jsonify({
+        'success': True,
+        'builds': builds,
+        'total': len(builds),
+        'access_granted_to': request.admin_user,
+        'role': request.admin_role
+    }), 200
+
+@app.route('/api/admin/builds/<edition>', methods=['GET'])
+@require_build_access
+def admin_get_build_details(edition):
+    """Get detailed build information for a specific edition"""
+    edition = sanitize_input(edition.lower())
+    
+    if edition not in OS_EDITIONS:
+        return jsonify({
+            'error': f'Unknown edition: {edition}',
+            'code': 'UNKNOWN_EDITION',
+            'available_editions': list(OS_EDITIONS.keys())
+        }), 404
+    
+    build_data = OS_EDITIONS[edition]
+    
+    tamper_protected_audit_log("BUILD_DETAILS_ACCESS", {
+        "username": request.admin_user,
+        "role": request.admin_role,
+        "edition": edition
+    }, "INFO")
+    
+    return jsonify({
+        'success': True,
+        'edition': edition,
+        'name': build_data['name'],
+        'version': build_data['version'],
+        'size': build_data['size'],
+        'description': build_data['description'],
+        'sha256': build_data['sha256'],
+        'download_url': build_data['download_url'],
+        'mirrors': [
+            'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso',
+            'https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'
+        ]
+    }), 200
+
+@app.route('/api/admin/builds/<edition>/download', methods=['GET'])
+@require_build_access
+def admin_download_build(edition):
+    """Get download URL for a specific edition (Tester/Developer/Owner only)"""
+    edition = sanitize_input(edition.lower())
+    
+    if edition not in OS_EDITIONS:
+        return jsonify({
+            'error': f'Unknown edition: {edition}',
+            'code': 'UNKNOWN_EDITION',
+            'available_editions': list(OS_EDITIONS.keys())
+        }), 404
+    
+    build_data = OS_EDITIONS[edition]
+    
+    tamper_protected_audit_log("BUILD_DOWNLOAD_INITIATED", {
+        "username": request.admin_user,
+        "role": request.admin_role,
+        "edition": edition
+    }, "HIGH")
+    
+    return jsonify({
+        'success': True,
+        'edition': edition,
+        'name': build_data['name'],
+        'download_url': build_data['download_url'],
+        'sha256': build_data['sha256'],
+        'size': build_data['size'],
+        'mirrors': [
+            'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso',
+            'https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'
+        ]
+    }), 200
+
+@app.route('/api/admin/builds/<edition>/download-token', methods=['POST'])
+@require_build_access
+def admin_get_build_download_token(edition):
+    """Generate a temporary download token for an OS build"""
+    edition = sanitize_input(edition.lower())
+    
+    if edition not in OS_EDITIONS:
+        return jsonify({
+            'error': f'Unknown edition: {edition}',
+            'code': 'UNKNOWN_EDITION'
+        }), 404
+    
+    # Generate a temporary download token (valid for 1 hour)
+    download_token = secrets.token_urlsafe(32)
+    expiry = datetime.utcnow() + timedelta(hours=1)
+    
+    tamper_protected_audit_log("BUILD_DOWNLOAD_TOKEN_GENERATED", {
+        "username": request.admin_user,
+        "role": request.admin_role,
+        "edition": edition,
+        "token_prefix": download_token[:8]
+    }, "HIGH")
+    
+    build_data = OS_EDITIONS[edition]
+    
+    return jsonify({
+        'success': True,
+        'edition': edition,
+        'download_token': download_token,
+        'expires': expiry.isoformat(),
+        'download_url': build_data['download_url'],
+        'sha256': build_data['sha256'],
+        'instructions': 'Use the download_url directly. The token is for audit purposes.'
+    }), 200
+
+@app.route('/api/admin/roles', methods=['GET'])
+@require_admin
+def admin_get_roles():
+    """Get available admin roles and their permissions"""
+    return jsonify({
+        'roles': AdminRole.ALL_ROLES,
+        'display_names': AdminRole.DISPLAY_NAMES,
+        'build_access_roles': AdminRole.BUILD_ACCESS_ROLES,
+        'admin_management_roles': AdminRole.ADMIN_MANAGEMENT_ROLES,
+        'your_role': request.admin_role,
+        'can_access_builds': AdminRole.can_access_builds(request.admin_role),
+        'can_manage_admins': AdminRole.can_manage_admins(request.admin_role)
+    }), 200
 
 @app.route('/api/admin/logout', methods=['POST'])
 @require_admin

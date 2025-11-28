@@ -388,6 +388,17 @@
                         <span class="nav-text">Reports</span>
                     </a>
                 </div>
+                <div id="buildsSection" class="nav-section" style="display:none;">
+                    <div class="nav-section-title">OS Builds</div>
+                    <a href="#" class="nav-item" onclick="showOSBuilds()">
+                        <span class="nav-icon">💿</span>
+                        <span class="nav-text">All Builds</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showBuildDownload()">
+                        <span class="nav-icon">⬇️</span>
+                        <span class="nav-text">Download ISO</span>
+                    </a>
+                </div>
                 <div class="nav-section">
                     <div class="nav-section-title">System</div>
                     <a href="#" class="nav-item" onclick="showSystemHealth()">
@@ -397,6 +408,10 @@
                     <a href="#" class="nav-item" onclick="showSystemLogs()">
                         <span class="nav-icon">📜</span>
                         <span class="nav-text">Audit Logs</span>
+                    </a>
+                    <a id="adminManagementLink" href="#" class="nav-item" style="display:none;" onclick="showAdminManagement()">
+                        <span class="nav-icon">👔</span>
+                        <span class="nav-text">Admin Users</span>
                     </a>
                     <a href="/admin/settings" class="nav-item">
                         <span class="nav-icon">⚙️</span>
@@ -408,6 +423,11 @@
                     </a>
                 </div>
             </nav>
+            <div id="roleInfo" class="role-badge" style="margin-top:auto;padding:1rem;background:var(--bg-hover);border-radius:8px;text-align:center;">
+                <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.25rem;">Logged in as</div>
+                <div id="adminDisplayName" style="font-weight:600;"></div>
+                <div id="adminRoleBadge" style="font-size:0.75rem;padding:0.25rem 0.5rem;border-radius:4px;margin-top:0.5rem;display:inline-block;"></div>
+            </div>
         </aside>
 
         <main class="main-content">
@@ -547,8 +567,12 @@
                 
                 if (res.ok && data.token) {
                     localStorage.setItem('adminToken', data.token);
+                    localStorage.setItem('adminRole', data.role);
+                    localStorage.setItem('adminDisplayName', data.display_name);
+                    localStorage.setItem('canAccessBuilds', data.can_access_builds);
                     authToken = data.token;
                     showAdminPanel();
+                    initializeRoleBasedUI(data);
                     loadDashboardData();
                 } else {
                     errorMsg.textContent = data.error || 'Invalid credentials';
@@ -565,8 +589,40 @@
             document.getElementById('adminPanel').classList.remove('hidden');
         }
 
+        function initializeRoleBasedUI(data) {
+            const role = data.role || localStorage.getItem('adminRole') || 'designer';
+            const displayName = data.display_name || localStorage.getItem('adminDisplayName') || 'Admin';
+            const canAccessBuilds = data.can_access_builds || localStorage.getItem('canAccessBuilds') === 'true';
+            
+            document.getElementById('adminDisplayName').textContent = displayName;
+            
+            const roleBadge = document.getElementById('adminRoleBadge');
+            const roleColors = {
+                'owner': { bg: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff' },
+                'developer': { bg: 'linear-gradient(135deg, #3b82f6, #2563eb)', color: '#fff' },
+                'tester': { bg: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff' },
+                'designer': { bg: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: '#fff' },
+                'youtuber': { bg: 'linear-gradient(135deg, #ef4444, #dc2626)', color: '#fff' }
+            };
+            const roleStyle = roleColors[role] || roleColors['designer'];
+            roleBadge.style.background = roleStyle.bg;
+            roleBadge.style.color = roleStyle.color;
+            roleBadge.textContent = role.charAt(0).toUpperCase() + role.slice(1);
+            
+            if (canAccessBuilds) {
+                document.getElementById('buildsSection').style.display = 'block';
+            }
+            
+            if (role === 'owner') {
+                document.getElementById('adminManagementLink').style.display = 'flex';
+            }
+        }
+
         function logout() {
             localStorage.removeItem('adminToken');
+            localStorage.removeItem('adminRole');
+            localStorage.removeItem('adminDisplayName');
+            localStorage.removeItem('canAccessBuilds');
             authToken = null;
             document.getElementById('loginOverlay').classList.remove('hidden');
             document.getElementById('adminPanel').classList.add('hidden');
@@ -1024,9 +1080,171 @@
             }
         }
 
+        async function showOSBuilds() {
+            try {
+                const res = await fetch(`${API_BASE}/builds`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const editions = ['freemium', 'basic', 'workplace', 'gamer', 'ai', 'gamer-ai', 'server'];
+                    const editionColors = {
+                        'freemium': '#10b981',
+                        'basic': '#6366f1',
+                        'workplace': '#8b5cf6',
+                        'gamer': '#ef4444',
+                        'ai': '#f59e0b',
+                        'gamer-ai': '#ec4899',
+                        'server': '#3b82f6'
+                    };
+                    
+                    const content = `
+                        <div style="margin-bottom:1.5rem;">
+                            <p style="color:var(--text-secondary);">Available OS builds for testing and development. Only Owner, Developer, and Tester roles can access this section.</p>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem;">
+                            ${(data.builds || []).map(build => `
+                                <div style="background:var(--bg-hover);padding:1.25rem;border-radius:10px;border-left:4px solid ${editionColors[build.edition] || '#6366f1'};">
+                                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.75rem;">
+                                        <div>
+                                            <div style="font-weight:700;font-size:1.1rem;text-transform:capitalize;">${build.edition}</div>
+                                            <div style="font-size:0.75rem;color:var(--text-secondary);">v${build.version || '1.0.0'}</div>
+                                        </div>
+                                        <span style="background:${build.status === 'ready' ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'};color:${build.status === 'ready' ? 'var(--success)' : 'var(--warning)'};padding:0.25rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:600;">${build.status || 'pending'}</span>
+                                    </div>
+                                    <div style="font-size:0.875rem;color:var(--text-secondary);margin-bottom:1rem;">
+                                        <div>Size: ${build.size || 'Unknown'}</div>
+                                        <div>Built: ${build.built_at ? new Date(build.built_at).toLocaleDateString() : 'Not yet built'}</div>
+                                    </div>
+                                    ${build.status === 'ready' ? `
+                                        <button onclick="downloadBuild('${build.edition}')" class="btn btn-primary" style="width:100%;justify-content:center;">
+                                            <span>⬇️</span> Download ISO
+                                        </button>
+                                    ` : `
+                                        <button class="btn btn-secondary" style="width:100%;justify-content:center;" disabled>
+                                            <span>🔄</span> Build Pending
+                                        </button>
+                                    `}
+                                </div>
+                            `).join('') || '<p style="color:var(--text-secondary);text-align:center;padding:2rem;">No builds available yet. Builds are created on request.</p>'}
+                        </div>
+                    `;
+                    showModal('OS Builds', content);
+                } else {
+                    const errData = await res.json();
+                    showModal('Access Denied', `<p style="color:var(--error);">${errData.error || 'You do not have permission to access OS builds.'}</p>`);
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showBuildDownload() {
+            const content = `
+                <div style="margin-bottom:1.5rem;">
+                    <p style="color:var(--text-secondary);">Select an edition to download. ISO files are based on Linux Lite 7.2 with Aegis customizations.</p>
+                </div>
+                <div style="display:grid;gap:1rem;">
+                    ${['freemium', 'basic', 'workplace', 'gamer', 'ai', 'gamer-ai', 'server'].map(edition => `
+                        <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+                            <div>
+                                <div style="font-weight:600;text-transform:capitalize;">${edition === 'gamer-ai' ? 'Gamer + AI' : edition}</div>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);">aegis-os-${edition}-x86_64.iso</div>
+                            </div>
+                            <button onclick="downloadBuild('${edition}')" class="btn btn-primary">
+                                <span>⬇️</span> Download
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            showModal('Download OS Build', content);
+        }
+
+        async function downloadBuild(edition) {
+            try {
+                const res = await fetch(`${API_BASE}/builds/${edition}/download`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.download_url) {
+                        window.open(data.download_url, '_blank');
+                        showModal('Download Started', `<div style="text-align:center;"><div style="font-size:3rem;margin-bottom:1rem;">✅</div><p>Downloading <strong>${edition}</strong> edition...</p></div>`);
+                    } else {
+                        showModal('Build Not Ready', `<p style="color:var(--warning);">The ${edition} build is not yet available. Please try again later.</p>`);
+                    }
+                } else {
+                    const errData = await res.json();
+                    showModal('Download Error', `<p style="color:var(--error);">${errData.error || 'Failed to start download.'}</p>`);
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showAdminManagement() {
+            try {
+                const res = await fetch(`${API_BASE}/admins`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const roleColors = {
+                        'owner': '#f59e0b',
+                        'developer': '#3b82f6',
+                        'tester': '#10b981',
+                        'designer': '#8b5cf6',
+                        'youtuber': '#ef4444'
+                    };
+                    
+                    const content = `
+                        <div style="margin-bottom:1.5rem;">
+                            <p style="color:var(--text-secondary);">Manage admin user accounts and their roles. Only the Owner can access this section.</p>
+                        </div>
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:var(--bg-dark);">
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Username</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Display Name</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Role</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(data.admins || []).map(admin => `
+                                    <tr style="border-bottom:1px solid var(--border);">
+                                        <td style="padding:0.75rem;">${admin.username}</td>
+                                        <td style="padding:0.75rem;">${admin.display_name || '-'}</td>
+                                        <td style="padding:0.75rem;">
+                                            <span style="background:${roleColors[admin.role] || '#6366f1'};color:#fff;padding:0.25rem 0.5rem;border-radius:4px;font-size:0.75rem;font-weight:600;">${admin.role || 'unknown'}</span>
+                                        </td>
+                                        <td style="padding:0.75rem;">${admin.created_at ? new Date(admin.created_at).toLocaleDateString() : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                    showModal('Admin User Management', content);
+                } else {
+                    const errData = await res.json();
+                    showModal('Access Denied', `<p style="color:var(--error);">${errData.error || 'You do not have permission to manage admins.'}</p>`);
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
         (async () => {
             if (await checkAuth()) {
                 showAdminPanel();
+                const role = localStorage.getItem('adminRole');
+                const displayName = localStorage.getItem('adminDisplayName');
+                const canAccessBuilds = localStorage.getItem('canAccessBuilds') === 'true';
+                initializeRoleBasedUI({ role, display_name: displayName, can_access_builds: canAccessBuilds });
                 loadDashboardData();
             }
         })();

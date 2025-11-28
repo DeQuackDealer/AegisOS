@@ -105,6 +105,44 @@ class EmailLog(db.Model):
     error_message = db.Column(db.Text)
 
 
+class AdminRole:
+    """Admin role constants - defines what each role can do"""
+    OWNER = 'owner'
+    DEVELOPER = 'developer'
+    TESTER = 'tester'
+    DESIGNER = 'designer'
+    YOUTUBER = 'youtuber'
+    
+    ALL_ROLES = [OWNER, DEVELOPER, TESTER, DESIGNER, YOUTUBER]
+    
+    # Roles that can access OS builds
+    BUILD_ACCESS_ROLES = [OWNER, DEVELOPER, TESTER]
+    
+    # Roles that can manage other admins
+    ADMIN_MANAGEMENT_ROLES = [OWNER]
+    
+    # Role display names
+    DISPLAY_NAMES = {
+        OWNER: 'Owner',
+        DEVELOPER: 'Developer',
+        TESTER: 'Tester',
+        DESIGNER: 'Designer',
+        YOUTUBER: 'YouTuber'
+    }
+    
+    @classmethod
+    def can_access_builds(cls, role: str) -> bool:
+        return role in cls.BUILD_ACCESS_ROLES
+    
+    @classmethod
+    def can_manage_admins(cls, role: str) -> bool:
+        return role in cls.ADMIN_MANAGEMENT_ROLES
+    
+    @classmethod
+    def get_display_name(cls, role: str) -> str:
+        return cls.DISPLAY_NAMES.get(role, role.title())
+
+
 class AdminUser(db.Model):
     """Admin users for the dashboard - stored in database for persistence"""
     __tablename__ = 'admin_users'
@@ -114,7 +152,7 @@ class AdminUser(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     display_name = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(255))
-    role = db.Column(db.String(20), default='admin')
+    role = db.Column(db.String(20), default='designer')
     can_create_admins = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -127,6 +165,14 @@ class AdminUser(db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
     
+    def can_access_builds(self) -> bool:
+        """Check if this admin can access OS builds"""
+        return AdminRole.can_access_builds(self.role)
+    
+    def can_manage_admins(self) -> bool:
+        """Check if this admin can manage other admins"""
+        return AdminRole.can_manage_admins(self.role)
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -134,6 +180,8 @@ class AdminUser(db.Model):
             'display_name': self.display_name,
             'email': self.email,
             'role': self.role,
+            'role_display': AdminRole.get_display_name(self.role),
+            'can_access_builds': self.can_access_builds(),
             'can_create_admins': self.can_create_admins,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
