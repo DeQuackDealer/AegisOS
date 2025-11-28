@@ -1,0 +1,60 @@
+
+#!/bin/bash
+
+# Aegis OS - Nouveau NVIDIA Driver Optimizer
+# Optimizes nouveau driver performance for gaming and desktop use
+
+set -e
+
+LOG_FILE="/var/log/aegis-nouveau.log"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log "Starting Aegis Nouveau Optimization..."
+
+# Check if NVIDIA GPU is present
+if lspci | grep -i nvidia > /dev/null 2>&1; then
+    log "NVIDIA GPU detected, applying nouveau optimizations..."
+    
+    # Set optimal power management
+    if [ -f /sys/class/drm/card0/device/power_dpm_state ]; then
+        echo "performance" > /sys/class/drm/card0/device/power_dpm_state 2>/dev/null || true
+    fi
+    
+    # Enable GPU scaling if available
+    for output in /sys/class/drm/card*/card*/status; do
+        if [ -f "$output" ] && grep -q "connected" "$output" 2>/dev/null; then
+            scaling_file="${output%/status}/scaling_mode"
+            if [ -f "$scaling_file" ]; then
+                echo "Full" > "$scaling_file" 2>/dev/null || true
+            fi
+        fi
+    done
+    
+    # Optimize memory management
+    echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true
+    
+    # Set CPU governor to performance when gaming
+    if command -v cpufreq-set >/dev/null 2>&1; then
+        for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+            if [ -f "$cpu" ]; then
+                echo "performance" > "$cpu" 2>/dev/null || true
+            fi
+        done
+    fi
+    
+    log "Nouveau optimizations applied successfully"
+    
+    # Display GPU information
+    if command -v nouveau-info >/dev/null 2>&1; then
+        log "GPU Information:"
+        nouveau-info 2>/dev/null | head -10 | tee -a "$LOG_FILE" || true
+    fi
+    
+else
+    log "No NVIDIA GPU detected, skipping optimizations"
+fi
+
+log "Nouveau optimization complete"

@@ -1,0 +1,1174 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Update Manager - System Update Management
+Checks for updates, shows changelogs, and manages system updates
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+SUBPROCESS_TIMEOUT_SHORT = 30
+SUBPROCESS_TIMEOUT_MEDIUM = 120
+SUBPROCESS_TIMEOUT_LONG = 600
+
+
+def is_root() -> bool:
+    """Check if the current user is root"""
+    return os.geteuid() == 0
+
+
+def check_pkexec_available() -> bool:
+    """Check if pkexec is available for privilege escalation"""
+    try:
+        result = subprocess.run(["which", "pkexec"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def check_sudo_available() -> bool:
+    """Check if sudo is available"""
+    try:
+        result = subprocess.run(["which", "sudo"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def get_privilege_command() -> List[str]:
+    """Get the appropriate privilege escalation command prefix."""
+    if is_root():
+        return []
+    if check_pkexec_available():
+        return ["pkexec"]
+    if check_sudo_available():
+        return ["sudo"]
+    return []
+
+
+def get_privilege_escalation_info() -> str:
+    """Get information about available privilege escalation methods"""
+    if is_root():
+        return "Running as root"
+    if check_pkexec_available():
+        return "Using pkexec for privilege escalation"
+    if check_sudo_available():
+        return "Using sudo for privilege escalation"
+    return "No privilege escalation method available (pkexec or sudo required)"
+
+
+class AegisUpdateManager:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/updates")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "update-config.json"
+        self.history_file = self.data_dir / "update-history.json"
+        self.cache_file = self.data_dir / "update-cache.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        
+    def ensure_directories(self):
+        """Create required directories with proper error handling"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+            except OSError as e:
+                print(f"Warning: Could not create directory {directory}: {e}", file=sys.stderr)
+    
+    def setup_logging(self):
+        """Configure logging with fallback to console-only if file logging fails"""
+        log_file = self.log_dir / "aegis-update-manager.log"
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if self.log_dir.exists() and os.access(str(self.log_dir), os.W_OK):
+                handlers.insert(0, logging.FileHandler(log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisUpdateManager")
+    
+    def load_config(self):
+        """Load configuration with fallback defaults"""
+        default_config = {
+            "auto_check_enabled": True,
+            "auto_check_interval_hours": 24,
+            "auto_download": False,
+            "auto_install": False,
+            "auto_install_security": True,
+            "show_notifications": True,
+            "last_check": None,
+            "last_update": None,
+            "scheduled_time": "03:00",
+            "include_third_party": True
+        }
+        
+        self.config = default_config.copy()
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded_config = json.load(f)
+                    self.config.update(loaded_config)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, PermissionError) as e:
+            self.logger.debug(f"Could not load config: {e}")
+    
+    def save_config(self):
+        """Save configuration with error handling"""
+        try:
+            if self.config_dir.exists() and os.access(str(self.config_dir), os.W_OK):
+                with open(self.config_file, 'w') as f:
+                    json.dump(self.config, f, indent=2)
+        except (OSError, PermissionError, IOError) as e:
+            self.logger.debug(f"Could not save config: {e}")
+    
+    def add_history(self, action: str, packages: List[str], success: bool, details: str = ""):
+        """Add entry to update history"""
+        try:
+            history = []
+            if self.history_file.exists():
+                with open(self.history_file, 'r') as f:
+                    history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+        
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "packages": packages,
+            "package_count": len(packages),
+            "success": success,
+            "details": details
+        }
+        history.append(entry)
+        history = history[-500:]
+        
+        try:
+            if self.data_dir.exists() and os.access(str(self.data_dir), os.W_OK):
+                with open(self.history_file, 'w') as f:
+                    json.dump(history, f, indent=2)
+        except (OSError, PermissionError, IOError):
+            pass
+    
+    def get_history(self) -> List[Dict]:
+        """Get update history"""
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, 'r') as f:
+                    return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        return []
+    
+    def refresh_package_lists(self, callback=None) -> Dict:
+        """Run apt update to refresh package lists"""
+        result = {"success": False, "error": "", "output": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Refreshing package lists...")
+        if callback:
+            callback("Refreshing package lists...")
+        
+        try:
+            cmd = priv_cmd + ["apt", "update"]
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.strip())
+                if callback:
+                    callback(f"  {line.strip()}")
+            
+            process.wait()
+            result["output"] = "\n".join(output_lines)
+            result["success"] = process.returncode == 0
+            
+            if result["success"]:
+                self.config["last_check"] = datetime.now().isoformat()
+                self.save_config()
+            else:
+                result["error"] = f"apt update failed with exit code {process.returncode}"
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Package list refresh error: {e}")
+        
+        return result
+    
+    def check_updates(self, callback=None) -> Dict:
+        """Check for available updates"""
+        result = {
+            "success": False,
+            "error": "",
+            "updates": [],
+            "security_updates": [],
+            "total_count": 0,
+            "security_count": 0,
+            "download_size": 0,
+            "install_size": 0
+        }
+        
+        self.logger.info("Checking for updates...")
+        if callback:
+            callback("Checking for available updates...")
+        
+        try:
+            list_result = subprocess.run(
+                ["apt", "list", "--upgradable"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_MEDIUM,
+                env={**os.environ, "LANG": "C"}
+            )
+            
+            if list_result.returncode == 0:
+                for line in list_result.stdout.split('\n'):
+                    if '/' in line and '[upgradable' in line:
+                        parts = line.split('/')
+                        if len(parts) >= 2:
+                            package_name = parts[0].strip()
+                            
+                            version_info = parts[1] if len(parts) > 1 else ""
+                            
+                            update_info = {
+                                "name": package_name,
+                                "version_info": version_info,
+                                "is_security": False
+                            }
+                            
+                            if "security" in line.lower():
+                                update_info["is_security"] = True
+                                result["security_updates"].append(update_info)
+                                result["security_count"] += 1
+                            
+                            result["updates"].append(update_info)
+                            result["total_count"] += 1
+            
+            try:
+                simulate_result = subprocess.run(
+                    ["apt", "upgrade", "--dry-run"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_MEDIUM,
+                    env={**os.environ, "LANG": "C"}
+                )
+                
+                if simulate_result.returncode == 0:
+                    for line in simulate_result.stdout.split('\n'):
+                        if "Need to get" in line:
+                            match = re.search(r'([\d.]+)\s*(B|kB|MB|GB)', line)
+                            if match:
+                                size = float(match.group(1))
+                                unit = match.group(2)
+                                multipliers = {'B': 1, 'kB': 1024, 'MB': 1024**2, 'GB': 1024**3}
+                                result["download_size"] = int(size * multipliers.get(unit, 1))
+                        elif "After this operation" in line:
+                            match = re.search(r'([\d.]+)\s*(B|kB|MB|GB)', line)
+                            if match:
+                                size = float(match.group(1))
+                                unit = match.group(2)
+                                multipliers = {'B': 1, 'kB': 1024, 'MB': 1024**2, 'GB': 1024**3}
+                                result["install_size"] = int(size * multipliers.get(unit, 1))
+            except Exception:
+                pass
+            
+            result["success"] = True
+            
+            try:
+                if self.data_dir.exists() and os.access(str(self.data_dir), os.W_OK):
+                    with open(self.cache_file, 'w') as f:
+                        json.dump({
+                            "timestamp": datetime.now().isoformat(),
+                            "updates": result["updates"],
+                            "total_count": result["total_count"],
+                            "security_count": result["security_count"]
+                        }, f, indent=2)
+            except Exception:
+                pass
+            
+            if callback:
+                callback(f"\nFound {result['total_count']} updates available")
+                if result["security_count"] > 0:
+                    callback(f"  ({result['security_count']} security updates)")
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Update check error: {e}")
+        
+        return result
+    
+    def get_package_changelog(self, package: str, callback=None) -> Dict:
+        """Get changelog for a package"""
+        result = {"success": False, "error": "", "changelog": ""}
+        
+        self.logger.info(f"Fetching changelog for {package}...")
+        if callback:
+            callback(f"Fetching changelog for {package}...")
+        
+        try:
+            changelog_result = subprocess.run(
+                ["apt", "changelog", package],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_MEDIUM
+            )
+            
+            if changelog_result.returncode == 0:
+                result["changelog"] = changelog_result.stdout[:10000]
+                result["success"] = True
+            else:
+                result["error"] = "Could not fetch changelog"
+                
+        except FileNotFoundError:
+            result["error"] = "apt command not found"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def install_updates(self, packages: List[str] = None, security_only: bool = False, callback=None) -> Dict:
+        """Install updates"""
+        result = {
+            "success": False,
+            "error": "",
+            "packages_upgraded": 0,
+            "packages_installed": 0,
+            "packages_removed": 0,
+            "output": ""
+        }
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Installing updates...")
+        if callback:
+            callback("="*50)
+            callback("INSTALLING UPDATES")
+            callback("="*50)
+            if not is_root():
+                callback(f"  {get_privilege_escalation_info()}")
+        
+        try:
+            if packages:
+                cmd = priv_cmd + ["apt", "install", "-y"] + packages
+                if callback:
+                    callback(f"\nInstalling specific packages: {', '.join(packages)}")
+            else:
+                if security_only:
+                    cmd = priv_cmd + ["apt", "upgrade", "-y", "-o", "Dir::Etc::SourceList=/etc/apt/sources.list.d/security.list"]
+                    if callback:
+                        callback("\nInstalling security updates only...")
+                else:
+                    cmd = priv_cmd + ["apt", "upgrade", "-y"]
+                    if callback:
+                        callback("\nInstalling all updates...")
+            
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                line = line.strip()
+                output_lines.append(line)
+                if callback:
+                    callback(f"  {line}")
+                
+                if "upgraded" in line.lower() and "newly installed" in line.lower():
+                    match = re.search(r'(\d+)\s+upgraded.*?(\d+)\s+newly installed.*?(\d+)\s+to remove', line)
+                    if match:
+                        result["packages_upgraded"] = int(match.group(1))
+                        result["packages_installed"] = int(match.group(2))
+                        result["packages_removed"] = int(match.group(3))
+            
+            process.wait()
+            result["output"] = "\n".join(output_lines)
+            result["success"] = process.returncode == 0
+            
+            if result["success"]:
+                self.config["last_update"] = datetime.now().isoformat()
+                self.save_config()
+                self.add_history("upgrade", packages or ["all"], True, 
+                               f"Upgraded {result['packages_upgraded']}, installed {result['packages_installed']}")
+                
+                if callback:
+                    callback("\n" + "="*50)
+                    callback("UPDATE COMPLETE")
+                    callback(f"  Upgraded: {result['packages_upgraded']}")
+                    callback(f"  Installed: {result['packages_installed']}")
+                    callback(f"  Removed: {result['packages_removed']}")
+                    callback("="*50)
+            else:
+                result["error"] = f"apt upgrade failed with exit code {process.returncode}"
+                self.add_history("upgrade", packages or ["all"], False, result["error"])
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Update installation error: {e}")
+        
+        return result
+    
+    def download_updates(self, callback=None) -> Dict:
+        """Download updates without installing"""
+        result = {"success": False, "error": "", "output": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Downloading updates...")
+        if callback:
+            callback("Downloading updates (not installing)...")
+        
+        try:
+            cmd = priv_cmd + ["apt", "upgrade", "--download-only", "-y"]
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.strip())
+                if callback:
+                    callback(f"  {line.strip()}")
+            
+            process.wait()
+            result["output"] = "\n".join(output_lines)
+            result["success"] = process.returncode == 0
+            
+            if not result["success"]:
+                result["error"] = f"Download failed with exit code {process.returncode}"
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Update download error: {e}")
+        
+        return result
+    
+    def check_reboot_required(self) -> bool:
+        """Check if a reboot is required after updates"""
+        reboot_file = Path("/var/run/reboot-required")
+        return reboot_file.exists()
+    
+    def get_reboot_packages(self) -> List[str]:
+        """Get list of packages that require a reboot"""
+        packages = []
+        pkgs_file = Path("/var/run/reboot-required.pkgs")
+        
+        try:
+            if pkgs_file.exists():
+                packages = pkgs_file.read_text().strip().split('\n')
+        except Exception:
+            pass
+        
+        return packages
+    
+    def get_update_summary(self) -> Dict:
+        """Get a summary of update status"""
+        summary = {
+            "last_check": self.config.get("last_check"),
+            "last_update": self.config.get("last_update"),
+            "reboot_required": self.check_reboot_required(),
+            "reboot_packages": [],
+            "cached_update_count": 0,
+            "cached_security_count": 0
+        }
+        
+        if summary["reboot_required"]:
+            summary["reboot_packages"] = self.get_reboot_packages()
+        
+        try:
+            if self.cache_file.exists():
+                with open(self.cache_file, 'r') as f:
+                    cache = json.load(f)
+                    summary["cached_update_count"] = cache.get("total_count", 0)
+                    summary["cached_security_count"] = cache.get("security_count", 0)
+        except Exception:
+            pass
+        
+        return summary
+    
+    def setup_auto_updates(self, enable: bool, security_only: bool = True, callback=None) -> Dict:
+        """Configure automatic updates via unattended-upgrades"""
+        result = {"success": False, "error": "", "message": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info(f"{'Enabling' if enable else 'Disabling'} automatic updates...")
+        if callback:
+            callback(f"{'Enabling' if enable else 'Disabling'} automatic updates...")
+        
+        try:
+            check_result = subprocess.run(
+                ["dpkg", "-l", "unattended-upgrades"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            
+            if check_result.returncode != 0 or "ii" not in check_result.stdout:
+                if callback:
+                    callback("  Installing unattended-upgrades package...")
+                
+                install_cmd = priv_cmd + ["apt", "install", "-y", "unattended-upgrades"]
+                subprocess.run(install_cmd, timeout=SUBPROCESS_TIMEOUT_MEDIUM)
+            
+            config_content = f"""APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "{1 if enable else 0}";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+"""
+            
+            config_path = "/etc/apt/apt.conf.d/20auto-upgrades"
+            
+            if is_root():
+                with open(config_path, 'w') as f:
+                    f.write(config_content)
+            else:
+                cmd = priv_cmd + ["bash", "-c", f"echo '{config_content}' > {config_path}"]
+                subprocess.run(cmd, timeout=SUBPROCESS_TIMEOUT_SHORT)
+            
+            self.config["auto_install"] = enable
+            self.config["auto_install_security"] = security_only
+            self.save_config()
+            
+            result["success"] = True
+            result["message"] = f"Automatic updates {'enabled' if enable else 'disabled'}"
+            
+            if callback:
+                callback(f"  {result['message']}")
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Auto-update setup error: {e}")
+        
+        return result
+    
+    def clean_package_cache(self, callback=None) -> Dict:
+        """Clean the package cache to free space"""
+        result = {"success": False, "error": "", "space_freed": 0}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Cleaning package cache...")
+        if callback:
+            callback("Cleaning package cache...")
+        
+        try:
+            cmd = priv_cmd + ["apt", "clean"]
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+            
+            result["success"] = process.returncode == 0
+            
+            if callback:
+                callback("  Package cache cleaned")
+                
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+
+
+class UpdateManagerGUI:
+    def __init__(self, manager: AegisUpdateManager):
+        self.manager = manager
+        self.root = tk.Tk()
+        self.root.title(f"Aegis Update Manager v{manager.version}")
+        self.root.geometry("900x700")
+        self.root.minsize(800, 600)
+        
+        self.updates = []
+        
+        self.setup_styles()
+        self.create_widgets()
+        self.refresh_status()
+    
+    def setup_styles(self):
+        """Configure ttk styles"""
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 11, "bold"))
+        style.configure("Big.TLabel", font=("Helvetica", 24, "bold"))
+        style.configure("Warning.TLabel", foreground="orange")
+        style.configure("Security.TLabel", foreground="red", font=("Helvetica", 10, "bold"))
+    
+    def create_widgets(self):
+        """Create the main GUI widgets"""
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(title_frame, text="🔄 Aegis Update Manager", style="Title.TLabel").pack(side=tk.LEFT)
+        
+        btn_frame = ttk.Frame(title_frame)
+        btn_frame.pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="Check Updates", command=self.check_updates).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Install All", command=self.install_all_updates).pack(side=tk.LEFT, padx=2)
+        
+        status_frame = ttk.LabelFrame(main_frame, text="Update Status", padding="10")
+        status_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        left_status = ttk.Frame(status_frame)
+        left_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.update_count_var = tk.StringVar(value="0")
+        ttk.Label(left_status, text="Available Updates:").pack(side=tk.LEFT)
+        ttk.Label(left_status, textvariable=self.update_count_var, style="Big.TLabel").pack(side=tk.LEFT, padx=10)
+        
+        self.security_count_var = tk.StringVar(value="")
+        ttk.Label(left_status, textvariable=self.security_count_var, style="Security.TLabel").pack(side=tk.LEFT)
+        
+        right_status = ttk.Frame(status_frame)
+        right_status.pack(side=tk.RIGHT)
+        
+        self.last_check_var = tk.StringVar(value="Never")
+        ttk.Label(right_status, text="Last Check:").pack(side=tk.LEFT)
+        ttk.Label(right_status, textvariable=self.last_check_var).pack(side=tk.LEFT, padx=5)
+        
+        self.reboot_frame = ttk.Frame(main_frame)
+        self.reboot_label = ttk.Label(self.reboot_frame, text="⚠️ Reboot required to complete updates", 
+                                      style="Warning.TLabel")
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.updates_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.updates_frame, text="Updates")
+        
+        self.settings_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.settings_frame, text="Settings")
+        
+        self.history_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.history_frame, text="History")
+        
+        self.log_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.log_frame, text="Log")
+        
+        tree_frame = ttk.Frame(self.updates_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        columns = ("Package", "Version", "Security")
+        self.updates_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
+        self.updates_tree.heading("Package", text="Package")
+        self.updates_tree.heading("Version", text="Version Info")
+        self.updates_tree.heading("Security", text="Security")
+        self.updates_tree.column("Package", width=200)
+        self.updates_tree.column("Version", width=400)
+        self.updates_tree.column("Security", width=80)
+        
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.updates_tree.yview)
+        self.updates_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.updates_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.updates_tree.bind("<Double-1>", self.show_changelog)
+        
+        self.create_settings_tab()
+        self.create_history_tab()
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=15, width=80)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill=tk.X)
+        
+        self.progress_var = tk.StringVar(value="Ready")
+        ttk.Label(bottom_frame, textvariable=self.progress_var).pack(side=tk.LEFT)
+        
+        self.progress = ttk.Progressbar(bottom_frame, mode='indeterminate', length=100)
+        self.progress.pack(side=tk.RIGHT)
+    
+    def create_settings_tab(self):
+        """Create the settings tab"""
+        auto_frame = ttk.LabelFrame(self.settings_frame, text="Automatic Updates", padding="10")
+        auto_frame.pack(fill=tk.X, pady=5)
+        
+        self.auto_check_var = tk.BooleanVar(value=self.manager.config.get("auto_check_enabled", True))
+        ttk.Checkbutton(auto_frame, text="Automatically check for updates", 
+                       variable=self.auto_check_var).pack(anchor=tk.W)
+        
+        self.auto_download_var = tk.BooleanVar(value=self.manager.config.get("auto_download", False))
+        ttk.Checkbutton(auto_frame, text="Automatically download updates", 
+                       variable=self.auto_download_var).pack(anchor=tk.W)
+        
+        self.auto_security_var = tk.BooleanVar(value=self.manager.config.get("auto_install_security", True))
+        ttk.Checkbutton(auto_frame, text="Automatically install security updates", 
+                       variable=self.auto_security_var).pack(anchor=tk.W)
+        
+        ttk.Button(auto_frame, text="Save Settings", command=self.save_settings).pack(pady=10)
+        
+        actions_frame = ttk.LabelFrame(self.settings_frame, text="Maintenance", padding="10")
+        actions_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(actions_frame, text="Clean Package Cache", 
+                  command=self.clean_cache).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Refresh Package Lists", 
+                  command=self.refresh_lists).pack(side=tk.LEFT, padx=5)
+    
+    def create_history_tab(self):
+        """Create the history tab"""
+        columns = ("Date", "Action", "Packages", "Status")
+        self.history_tree = ttk.Treeview(self.history_frame, columns=columns, show="headings", height=15)
+        self.history_tree.heading("Date", text="Date")
+        self.history_tree.heading("Action", text="Action")
+        self.history_tree.heading("Packages", text="Packages")
+        self.history_tree.heading("Status", text="Status")
+        self.history_tree.column("Date", width=150)
+        self.history_tree.column("Action", width=100)
+        self.history_tree.column("Packages", width=300)
+        self.history_tree.column("Status", width=80)
+        
+        scrollbar = ttk.Scrollbar(self.history_frame, orient=tk.VERTICAL, command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.history_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.update_history_tab()
+    
+    def update_history_tab(self):
+        """Update history tab with latest data"""
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        history = self.manager.get_history()
+        for entry in reversed(history[-50:]):
+            date = entry.get("timestamp", "")[:19].replace("T", " ")
+            action = entry.get("action", "")
+            packages = f"{entry.get('package_count', 0)} packages"
+            status = "✓" if entry.get("success") else "✗"
+            
+            self.history_tree.insert("", tk.END, values=(date, action, packages, status))
+    
+    def log(self, message: str):
+        """Add message to log"""
+        self.log_text.insert(tk.END, f"{datetime.now().strftime('%H:%M:%S')} - {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def refresh_status(self):
+        """Refresh the update status display"""
+        summary = self.manager.get_update_summary()
+        
+        self.update_count_var.set(str(summary["cached_update_count"]))
+        
+        if summary["cached_security_count"] > 0:
+            self.security_count_var.set(f"({summary['cached_security_count']} security)")
+        else:
+            self.security_count_var.set("")
+        
+        if summary["last_check"]:
+            try:
+                dt = datetime.fromisoformat(summary["last_check"])
+                self.last_check_var.set(dt.strftime("%Y-%m-%d %H:%M"))
+            except:
+                self.last_check_var.set("Unknown")
+        else:
+            self.last_check_var.set("Never")
+        
+        if summary["reboot_required"]:
+            self.reboot_frame.pack(fill=tk.X, pady=5)
+            self.reboot_label.pack()
+        else:
+            self.reboot_frame.pack_forget()
+    
+    def check_updates(self):
+        """Check for updates"""
+        self.progress_var.set("Checking for updates...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        self.log("Refreshing package lists...")
+        refresh_result = self.manager.refresh_package_lists(callback=self.log)
+        
+        if not refresh_result["success"]:
+            self.progress.stop()
+            self.progress_var.set("Error refreshing package lists")
+            messagebox.showerror("Error", f"Failed to refresh: {refresh_result['error']}")
+            return
+        
+        self.log("\nChecking for available updates...")
+        result = self.manager.check_updates(callback=self.log)
+        
+        self.progress.stop()
+        
+        if result["success"]:
+            self.updates = result["updates"]
+            self.update_updates_tree()
+            self.refresh_status()
+            self.progress_var.set(f"Found {result['total_count']} updates")
+            
+            if result["total_count"] == 0:
+                messagebox.showinfo("Up to Date", "Your system is up to date!")
+        else:
+            self.progress_var.set("Error checking updates")
+            messagebox.showerror("Error", f"Failed to check updates: {result['error']}")
+    
+    def update_updates_tree(self):
+        """Update the updates treeview"""
+        for item in self.updates_tree.get_children():
+            self.updates_tree.delete(item)
+        
+        for update in self.updates:
+            security = "🔒 Yes" if update.get("is_security") else ""
+            self.updates_tree.insert("", tk.END, values=(
+                update["name"],
+                update.get("version_info", "")[:60],
+                security
+            ))
+    
+    def show_changelog(self, event):
+        """Show changelog for selected package"""
+        selection = self.updates_tree.selection()
+        if not selection:
+            return
+        
+        item = self.updates_tree.item(selection[0])
+        package = item["values"][0]
+        
+        self.progress_var.set(f"Fetching changelog for {package}...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        result = self.manager.get_package_changelog(package, callback=self.log)
+        
+        self.progress.stop()
+        self.progress_var.set("Ready")
+        
+        if result["success"]:
+            changelog_window = tk.Toplevel(self.root)
+            changelog_window.title(f"Changelog - {package}")
+            changelog_window.geometry("600x400")
+            
+            text = scrolledtext.ScrolledText(changelog_window, wrap=tk.WORD)
+            text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            text.insert(tk.END, result["changelog"])
+            text.config(state=tk.DISABLED)
+        else:
+            messagebox.showerror("Error", f"Could not fetch changelog: {result['error']}")
+    
+    def install_all_updates(self):
+        """Install all available updates"""
+        if not self.updates:
+            messagebox.showinfo("No Updates", "No updates available to install.")
+            return
+        
+        if not messagebox.askyesno("Confirm Update", 
+                                   f"Install {len(self.updates)} update(s)?\n\n"
+                                   f"{get_privilege_escalation_info()}"):
+            return
+        
+        self.progress_var.set("Installing updates...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        result = self.manager.install_updates(callback=self.log)
+        
+        self.progress.stop()
+        
+        if result["success"]:
+            self.progress_var.set("Updates installed successfully")
+            
+            msg = f"Updates installed successfully!\n\n"
+            msg += f"Upgraded: {result['packages_upgraded']}\n"
+            msg += f"Installed: {result['packages_installed']}\n"
+            msg += f"Removed: {result['packages_removed']}"
+            
+            if self.manager.check_reboot_required():
+                msg += "\n\n⚠️ A reboot is required to complete the updates."
+            
+            messagebox.showinfo("Success", msg)
+            
+            self.check_updates()
+            self.update_history_tab()
+        else:
+            self.progress_var.set("Update failed")
+            messagebox.showerror("Error", f"Update failed: {result['error']}")
+    
+    def save_settings(self):
+        """Save settings"""
+        self.manager.config["auto_check_enabled"] = self.auto_check_var.get()
+        self.manager.config["auto_download"] = self.auto_download_var.get()
+        self.manager.config["auto_install_security"] = self.auto_security_var.get()
+        self.manager.save_config()
+        
+        if self.auto_security_var.get():
+            result = self.manager.setup_auto_updates(True, security_only=True, callback=self.log)
+            if result["success"]:
+                messagebox.showinfo("Success", "Settings saved and automatic security updates enabled!")
+            else:
+                messagebox.showwarning("Warning", f"Settings saved but auto-updates setup failed: {result['error']}")
+        else:
+            messagebox.showinfo("Success", "Settings saved!")
+    
+    def clean_cache(self):
+        """Clean package cache"""
+        result = self.manager.clean_package_cache(callback=self.log)
+        if result["success"]:
+            messagebox.showinfo("Success", "Package cache cleaned!")
+        else:
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+    
+    def refresh_lists(self):
+        """Refresh package lists"""
+        self.progress_var.set("Refreshing package lists...")
+        self.progress.start()
+        
+        result = self.manager.refresh_package_lists(callback=self.log)
+        
+        self.progress.stop()
+        
+        if result["success"]:
+            self.progress_var.set("Package lists refreshed")
+            messagebox.showinfo("Success", "Package lists refreshed!")
+        else:
+            self.progress_var.set("Refresh failed")
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def print_update_summary(updates_result: Dict, summary: Dict):
+    """Print update summary to console"""
+    print("\n" + "="*60)
+    print("SYSTEM UPDATE STATUS")
+    print("="*60)
+    
+    last_check = summary.get("last_check")
+    if last_check:
+        try:
+            dt = datetime.fromisoformat(last_check)
+            print(f"\n📅 Last Check: {dt.strftime('%Y-%m-%d %H:%M')}")
+        except:
+            print(f"\n📅 Last Check: {last_check}")
+    else:
+        print("\n📅 Last Check: Never")
+    
+    print(f"\n📦 Available Updates: {updates_result.get('total_count', 0)}")
+    
+    security_count = updates_result.get('security_count', 0)
+    if security_count > 0:
+        print(f"🔒 Security Updates: {security_count}")
+    
+    if summary.get("reboot_required"):
+        print(f"\n⚠️  REBOOT REQUIRED")
+        pkgs = summary.get("reboot_packages", [])
+        if pkgs:
+            print(f"   Packages requiring reboot: {', '.join(pkgs[:5])}")
+    
+    if updates_result.get("updates"):
+        print(f"\n📋 Updates available:")
+        for update in updates_result["updates"][:20]:
+            security = "🔒" if update.get("is_security") else "  "
+            print(f"   {security} {update['name']}")
+        
+        if len(updates_result["updates"]) > 20:
+            print(f"   ... and {len(updates_result['updates']) - 20} more")
+    
+    if updates_result.get("download_size"):
+        size_mb = updates_result["download_size"] / (1024*1024)
+        print(f"\n💾 Download Size: {size_mb:.1f} MB")
+    
+    print("\n" + "="*60)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Update Manager - System Update Management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-update-manager                    # Launch GUI
+  aegis-update-manager --cli              # CLI mode, check for updates
+  aegis-update-manager check              # Check for available updates
+  aegis-update-manager list               # List available updates
+  aegis-update-manager install            # Install all updates
+  aegis-update-manager install-security   # Install security updates only
+  aegis-update-manager download           # Download updates without installing
+  aegis-update-manager changelog PACKAGE  # Show changelog for package
+  aegis-update-manager history            # Show update history
+  aegis-update-manager auto-on            # Enable automatic updates
+  aegis-update-manager auto-off           # Disable automatic updates
+        """
+    )
+    
+    parser.add_argument("command", nargs="?", default=None,
+                       choices=["check", "list", "install", "install-security", 
+                               "download", "changelog", "history", "auto-on", "auto-off", "clean"],
+                       help="Command to execute")
+    parser.add_argument("package", nargs="?", default=None, help="Package name (for changelog)")
+    parser.add_argument("--cli", action="store_true", help="Force CLI mode")
+    parser.add_argument("--gui", action="store_true", help="Force GUI mode")
+    parser.add_argument("--version", action="version", version="Aegis Update Manager v1.0.0")
+    parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    parser.add_argument("-y", "--yes", action="store_true", help="Assume yes to prompts")
+    
+    args = parser.parse_args()
+    
+    manager = AegisUpdateManager()
+    
+    if args.command:
+        if args.command == "check" or args.command == "list":
+            print(f"\n{get_privilege_escalation_info()}\n")
+            print("Refreshing package lists...")
+            manager.refresh_package_lists(callback=lambda x: print(f"  {x}"))
+            
+            print("\nChecking for updates...")
+            result = manager.check_updates(callback=lambda x: print(f"  {x}"))
+            summary = manager.get_update_summary()
+            
+            if args.json:
+                print(json.dumps(result, indent=2))
+            else:
+                print_update_summary(result, summary)
+        
+        elif args.command == "install":
+            if not args.yes:
+                response = input("\nInstall all updates? [y/N]: ")
+                if response.lower() != 'y':
+                    print("Cancelled.")
+                    sys.exit(0)
+            
+            print(f"\n{get_privilege_escalation_info()}\n")
+            result = manager.install_updates(callback=print)
+            
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+            
+            if manager.check_reboot_required():
+                print("\n⚠️  A reboot is required to complete the updates.")
+        
+        elif args.command == "install-security":
+            print(f"\n{get_privilege_escalation_info()}\n")
+            print("Installing security updates only...")
+            result = manager.install_updates(security_only=True, callback=print)
+            
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "download":
+            result = manager.download_updates(callback=print)
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+            print("\n✓ Updates downloaded")
+        
+        elif args.command == "changelog":
+            if not args.package:
+                print("Error: Package name required")
+                sys.exit(1)
+            
+            result = manager.get_package_changelog(args.package)
+            if result["success"]:
+                print(result["changelog"])
+            else:
+                print(f"Error: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "history":
+            history = manager.get_history()
+            print("\nUpdate History:")
+            print("-"*60)
+            for entry in reversed(history[-20:]):
+                date = entry.get("timestamp", "")[:19].replace("T", " ")
+                action = entry.get("action", "")
+                count = entry.get("package_count", 0)
+                status = "✓" if entry.get("success") else "✗"
+                print(f"  {date}  {status} {action} ({count} packages)")
+        
+        elif args.command == "auto-on":
+            result = manager.setup_auto_updates(True, callback=print)
+            if result["success"]:
+                print("\n✓ Automatic updates enabled")
+            else:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "auto-off":
+            result = manager.setup_auto_updates(False, callback=print)
+            if result["success"]:
+                print("\n✓ Automatic updates disabled")
+            else:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "clean":
+            result = manager.clean_package_cache(callback=print)
+            if result["success"]:
+                print("\n✓ Package cache cleaned")
+            else:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+    
+    elif args.cli:
+        print("Checking for updates...")
+        result = manager.check_updates()
+        summary = manager.get_update_summary()
+        print_update_summary(result, summary)
+    
+    else:
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available. Use --cli for command-line mode.")
+            sys.exit(1)
+        
+        gui = UpdateManagerGUI(manager)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()

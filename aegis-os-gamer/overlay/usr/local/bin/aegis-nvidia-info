@@ -1,0 +1,102 @@
+
+#!/bin/bash
+
+# Aegis OS - NVIDIA GPU Information Script
+# Displays detailed information about NVIDIA GPUs using nouveau
+
+echo "🛡️ Aegis OS - NVIDIA GPU Information"
+echo "====================================="
+echo
+
+# Check if NVIDIA GPU is present
+if ! lspci | grep -i nvidia > /dev/null 2>&1; then
+    echo "❌ No NVIDIA GPU detected"
+    exit 1
+fi
+
+echo "✅ NVIDIA GPU detected!"
+echo
+
+# Display GPU information
+echo "📊 GPU Details:"
+lspci | grep -i nvidia | while read line; do
+    echo "   $line"
+done
+echo
+
+# Check nouveau driver status
+echo "🔧 Driver Status:"
+if lsmod | grep -q nouveau; then
+    echo "   ✅ Nouveau driver loaded"
+else
+    echo "   ❌ Nouveau driver not loaded"
+fi
+
+# Display DRM information
+if [ -d /sys/class/drm ]; then
+    echo
+    echo "🖥️ Display Information:"
+    for card in /sys/class/drm/card*; do
+        if [ -d "$card" ]; then
+            card_name=$(basename "$card")
+            echo "   Card: $card_name"
+            
+            # Check for connected displays
+            for connector in "$card"/card*; do
+                if [ -f "$connector/status" ]; then
+                    status=$(cat "$connector/status" 2>/dev/null || echo "unknown")
+                    connector_name=$(basename "$connector")
+                    if [ "$status" = "connected" ]; then
+                        echo "   ✅ $connector_name: $status"
+                        
+                        # Show modes if available
+                        if [ -f "$connector/modes" ]; then
+                            echo "      Modes: $(cat "$connector/modes" 2>/dev/null | head -1)"
+                        fi
+                    fi
+                fi
+            done
+        fi
+    done
+fi
+
+# Check OpenGL support
+echo
+echo "🎮 3D Acceleration:"
+if command -v glxinfo >/dev/null 2>&1; then
+    renderer=$(glxinfo 2>/dev/null | grep "OpenGL renderer" | cut -d: -f2 | xargs || echo "Unknown")
+    version=$(glxinfo 2>/dev/null | grep "OpenGL version" | cut -d: -f2 | xargs || echo "Unknown")
+    echo "   Renderer: $renderer"
+    echo "   OpenGL Version: $version"
+else
+    echo "   ⚠️ glxinfo not available"
+fi
+
+# Check Vulkan support
+echo
+echo "🌋 Vulkan Support:"
+if command -v vulkaninfo >/dev/null 2>&1; then
+    if vulkaninfo --summary >/dev/null 2>&1; then
+        echo "   ✅ Vulkan is available"
+        vulkaninfo --summary 2>/dev/null | grep -E "(GPU|Driver Version)" | head -2
+    else
+        echo "   ❌ Vulkan not available"
+    fi
+else
+    echo "   ⚠️ vulkaninfo not available"
+fi
+
+echo
+echo "🔧 Optimization Status:"
+if [ -f /var/log/aegis-nouveau.log ]; then
+    echo "   ✅ Nouveau optimizations applied"
+    tail -3 /var/log/aegis-nouveau.log | sed 's/^/   /'
+else
+    echo "   ⚠️ Run 'sudo systemctl start aegis-nouveau-optimizer' to apply optimizations"
+fi
+
+echo
+echo "💡 Tips:"
+echo "   • For gaming: ensure 'performance' CPU governor is set"
+echo "   • Monitor GPU usage: watch -n1 'cat /sys/class/drm/card*/device/gpu_busy_percent 2>/dev/null || echo N/A'"
+echo "   • Check temperatures: sensors nouveau-* 2>/dev/null || echo 'Install lm-sensors'"

@@ -1,17 +1,25 @@
-=========================================
-      AEGIS OS basic EDITION
-=========================================
 
-This is a demo ISO structure for Aegis OS.
+Aegis OS Basic 1.5.0
+====================
 
-Edition: basic
-Size: 3.5 GB
-Packages: 500
+Professional productivity suite with development tools
 
-For actual bootable ISOs, please visit:
-https://aegis-os.com/downloads
+System Requirements:
+- CPU: 64-bit processor (x86_64)
+- RAM: 2 GB minimum, 4 GB recommended
+- Storage: 7000 MB minimum
+- Graphics: Any GPU with OpenGL 3.0 support
 
-Installation Guide:
-https://aegis-os.com/install-guide
+Quick Start:
+1. Boot from this ISO
+2. Select "Start Aegis OS Basic" from the menu
+3. Follow the on-screen installer
 
-=========================================
+Documentation: https://aegis-os.io/docs
+Support: https://aegis-os.io/support
+
+Build Information:
+- Version: 1.5.0
+- Kernel: 6.8.0-45-generic
+- Base: Ubuntu 24.04 (noble)
+- Build Date: 2025-11-28T03:13:01.660429+00:00

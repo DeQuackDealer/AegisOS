@@ -1,0 +1,1094 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Performance Tuner - System Performance Optimization
+Controls CPU governors, memory settings, I/O schedulers, and gaming mode
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+SUBPROCESS_TIMEOUT_SHORT = 10
+SUBPROCESS_TIMEOUT_MEDIUM = 30
+
+
+def is_root() -> bool:
+    """Check if the current user is root"""
+    return os.geteuid() == 0
+
+
+def check_pkexec_available() -> bool:
+    """Check if pkexec is available for privilege escalation"""
+    try:
+        result = subprocess.run(["which", "pkexec"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def check_sudo_available() -> bool:
+    """Check if sudo is available"""
+    try:
+        result = subprocess.run(["which", "sudo"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def get_privilege_command() -> List[str]:
+    """Get the appropriate privilege escalation command prefix."""
+    if is_root():
+        return []
+    if check_pkexec_available():
+        return ["pkexec"]
+    if check_sudo_available():
+        return ["sudo"]
+    return []
+
+
+def get_privilege_escalation_info() -> str:
+    """Get information about available privilege escalation methods"""
+    if is_root():
+        return "Running as root"
+    if check_pkexec_available():
+        return "Using pkexec for privilege escalation"
+    if check_sudo_available():
+        return "Using sudo for privilege escalation"
+    return "No privilege escalation method available (pkexec or sudo required)"
+
+
+class AegisPerformanceTuner:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/performance")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "performance-config.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        
+        self.cpu_governors = ["performance", "powersave", "ondemand", "conservative", "schedutil"]
+        self.io_schedulers = ["none", "mq-deadline", "kyber", "bfq"]
+        
+    def ensure_directories(self):
+        """Create required directories with proper error handling"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+            except OSError as e:
+                print(f"Warning: Could not create directory {directory}: {e}", file=sys.stderr)
+    
+    def setup_logging(self):
+        """Configure logging with fallback to console-only if file logging fails"""
+        log_file = self.log_dir / "aegis-performance-tuner.log"
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if self.log_dir.exists() and os.access(str(self.log_dir), os.W_OK):
+                handlers.insert(0, logging.FileHandler(log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisPerformanceTuner")
+    
+    def load_config(self):
+        """Load configuration with fallback defaults"""
+        default_config = {
+            "gaming_mode": False,
+            "saved_governor": None,
+            "saved_swappiness": None,
+            "saved_scheduler": None,
+            "auto_gaming_mode": False,
+            "gaming_processes": ["steam", "lutris", "wine", "proton"],
+            "last_modified": None
+        }
+        
+        self.config = default_config.copy()
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded_config = json.load(f)
+                    self.config.update(loaded_config)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, PermissionError) as e:
+            self.logger.debug(f"Could not load config: {e}")
+    
+    def save_config(self):
+        """Save configuration with error handling"""
+        self.config["last_modified"] = datetime.now().isoformat()
+        try:
+            if self.config_dir.exists() and os.access(str(self.config_dir), os.W_OK):
+                with open(self.config_file, 'w') as f:
+                    json.dump(self.config, f, indent=2)
+        except (OSError, PermissionError, IOError) as e:
+            self.logger.debug(f"Could not save config: {e}")
+    
+    def get_cpu_info(self) -> Dict:
+        """Get CPU information"""
+        info = {
+            "model": "Unknown",
+            "cores": 0,
+            "threads": 0,
+            "current_freq": [],
+            "min_freq": 0,
+            "max_freq": 0,
+            "current_governor": "unknown",
+            "available_governors": []
+        }
+        
+        try:
+            with open("/proc/cpuinfo", 'r') as f:
+                content = f.read()
+                for line in content.split('\n'):
+                    if line.startswith("model name"):
+                        info["model"] = line.split(':')[1].strip()
+                        break
+                
+                info["threads"] = content.count("processor")
+        except Exception:
+            pass
+        
+        try:
+            cpu_path = Path("/sys/devices/system/cpu")
+            core_dirs = list(cpu_path.glob("cpu[0-9]*"))
+            info["cores"] = len([d for d in core_dirs if (d / "topology/core_id").exists()])
+            if info["cores"] == 0:
+                info["cores"] = len(core_dirs)
+        except Exception:
+            pass
+        
+        try:
+            gov_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+            if gov_path.exists():
+                info["current_governor"] = gov_path.read_text().strip()
+        except Exception:
+            pass
+        
+        try:
+            avail_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors")
+            if avail_path.exists():
+                info["available_governors"] = avail_path.read_text().strip().split()
+        except Exception:
+            pass
+        
+        try:
+            for cpu_dir in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
+                freq_path = cpu_dir / "cpufreq/scaling_cur_freq"
+                if freq_path.exists():
+                    freq_khz = int(freq_path.read_text().strip())
+                    info["current_freq"].append(freq_khz / 1000)
+            
+            min_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq")
+            max_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq")
+            if min_path.exists():
+                info["min_freq"] = int(min_path.read_text().strip()) / 1000
+            if max_path.exists():
+                info["max_freq"] = int(max_path.read_text().strip()) / 1000
+        except Exception:
+            pass
+        
+        return info
+    
+    def get_memory_info(self) -> Dict:
+        """Get memory and swap information"""
+        info = {
+            "total_ram": 0,
+            "available_ram": 0,
+            "used_ram": 0,
+            "total_swap": 0,
+            "used_swap": 0,
+            "swappiness": 60,
+            "cache_pressure": 100,
+            "dirty_ratio": 20,
+            "dirty_background_ratio": 10
+        }
+        
+        try:
+            with open("/proc/meminfo", 'r') as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        key = parts[0].rstrip(':')
+                        value = int(parts[1])
+                        
+                        if key == "MemTotal":
+                            info["total_ram"] = value * 1024
+                        elif key == "MemAvailable":
+                            info["available_ram"] = value * 1024
+                        elif key == "SwapTotal":
+                            info["total_swap"] = value * 1024
+                        elif key == "SwapFree":
+                            info["used_swap"] = info["total_swap"] - (value * 1024)
+            
+            info["used_ram"] = info["total_ram"] - info["available_ram"]
+        except Exception:
+            pass
+        
+        try:
+            swappiness_path = Path("/proc/sys/vm/swappiness")
+            if swappiness_path.exists():
+                info["swappiness"] = int(swappiness_path.read_text().strip())
+        except Exception:
+            pass
+        
+        try:
+            pressure_path = Path("/proc/sys/vm/vfs_cache_pressure")
+            if pressure_path.exists():
+                info["cache_pressure"] = int(pressure_path.read_text().strip())
+        except Exception:
+            pass
+        
+        try:
+            dirty_path = Path("/proc/sys/vm/dirty_ratio")
+            if dirty_path.exists():
+                info["dirty_ratio"] = int(dirty_path.read_text().strip())
+            
+            dirty_bg_path = Path("/proc/sys/vm/dirty_background_ratio")
+            if dirty_bg_path.exists():
+                info["dirty_background_ratio"] = int(dirty_bg_path.read_text().strip())
+        except Exception:
+            pass
+        
+        return info
+    
+    def get_io_scheduler(self, device: str = None) -> Dict:
+        """Get I/O scheduler information"""
+        info = {
+            "devices": {},
+            "available_schedulers": []
+        }
+        
+        try:
+            block_path = Path("/sys/block")
+            for dev_path in block_path.iterdir():
+                if dev_path.name.startswith(("sd", "nvme", "vd")):
+                    sched_path = dev_path / "queue/scheduler"
+                    if sched_path.exists():
+                        content = sched_path.read_text().strip()
+                        
+                        current = None
+                        available = []
+                        for sched in content.split():
+                            if sched.startswith('[') and sched.endswith(']'):
+                                current = sched[1:-1]
+                                available.append(current)
+                            else:
+                                available.append(sched)
+                        
+                        info["devices"][dev_path.name] = {
+                            "current": current,
+                            "available": available
+                        }
+                        
+                        if not info["available_schedulers"]:
+                            info["available_schedulers"] = available
+        except Exception:
+            pass
+        
+        return info
+    
+    def get_network_info(self) -> Dict:
+        """Get network tuning information"""
+        info = {
+            "tcp_congestion": "unknown",
+            "available_congestion": [],
+            "rmem_max": 0,
+            "wmem_max": 0,
+            "netdev_max_backlog": 0
+        }
+        
+        try:
+            cong_path = Path("/proc/sys/net/ipv4/tcp_congestion_control")
+            if cong_path.exists():
+                info["tcp_congestion"] = cong_path.read_text().strip()
+        except Exception:
+            pass
+        
+        try:
+            avail_path = Path("/proc/sys/net/ipv4/tcp_available_congestion_control")
+            if avail_path.exists():
+                info["available_congestion"] = avail_path.read_text().strip().split()
+        except Exception:
+            pass
+        
+        try:
+            rmem_path = Path("/proc/sys/net/core/rmem_max")
+            if rmem_path.exists():
+                info["rmem_max"] = int(rmem_path.read_text().strip())
+            
+            wmem_path = Path("/proc/sys/net/core/wmem_max")
+            if wmem_path.exists():
+                info["wmem_max"] = int(wmem_path.read_text().strip())
+            
+            backlog_path = Path("/proc/sys/net/core/netdev_max_backlog")
+            if backlog_path.exists():
+                info["netdev_max_backlog"] = int(backlog_path.read_text().strip())
+        except Exception:
+            pass
+        
+        return info
+    
+    def set_cpu_governor(self, governor: str, callback=None) -> Dict:
+        """Set CPU frequency governor"""
+        result = {"success": False, "error": ""}
+        
+        cpu_info = self.get_cpu_info()
+        if governor not in cpu_info.get("available_governors", []):
+            result["error"] = f"Governor '{governor}' not available. Available: {', '.join(cpu_info.get('available_governors', []))}"
+            return result
+        
+        self.logger.info(f"Setting CPU governor to {governor}")
+        if callback:
+            callback(f"Setting CPU governor to {governor}...")
+        
+        priv_cmd = get_privilege_command()
+        
+        try:
+            for cpu_dir in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
+                gov_path = cpu_dir / "cpufreq/scaling_governor"
+                if gov_path.exists():
+                    if is_root():
+                        gov_path.write_text(governor)
+                    else:
+                        cmd = priv_cmd + ["bash", "-c", f"echo {governor} > {gov_path}"]
+                        subprocess.run(cmd, check=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+            
+            result["success"] = True
+            if callback:
+                callback(f"  CPU governor set to {governor}")
+                
+        except subprocess.CalledProcessError as e:
+            result["error"] = f"Failed to set governor: {e}"
+        except PermissionError:
+            result["error"] = "Permission denied. Run with elevated privileges."
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error setting CPU governor: {e}")
+        
+        return result
+    
+    def set_swappiness(self, value: int, callback=None) -> Dict:
+        """Set vm.swappiness value"""
+        result = {"success": False, "error": ""}
+        
+        if not 0 <= value <= 100:
+            result["error"] = "Swappiness must be between 0 and 100"
+            return result
+        
+        self.logger.info(f"Setting swappiness to {value}")
+        if callback:
+            callback(f"Setting swappiness to {value}...")
+        
+        priv_cmd = get_privilege_command()
+        
+        try:
+            cmd = priv_cmd + ["sysctl", f"vm.swappiness={value}"]
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+            
+            if process.returncode == 0:
+                result["success"] = True
+                if callback:
+                    callback(f"  Swappiness set to {value}")
+            else:
+                result["error"] = process.stderr
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error setting swappiness: {e}")
+        
+        return result
+    
+    def set_io_scheduler(self, scheduler: str, device: str = None, callback=None) -> Dict:
+        """Set I/O scheduler for block devices"""
+        result = {"success": False, "error": "", "devices_changed": []}
+        
+        self.logger.info(f"Setting I/O scheduler to {scheduler}")
+        if callback:
+            callback(f"Setting I/O scheduler to {scheduler}...")
+        
+        priv_cmd = get_privilege_command()
+        
+        try:
+            block_path = Path("/sys/block")
+            devices_to_change = []
+            
+            if device:
+                dev_path = block_path / device
+                if dev_path.exists():
+                    devices_to_change.append(dev_path)
+            else:
+                for dev_path in block_path.iterdir():
+                    if dev_path.name.startswith(("sd", "nvme", "vd")):
+                        devices_to_change.append(dev_path)
+            
+            for dev_path in devices_to_change:
+                sched_path = dev_path / "queue/scheduler"
+                if sched_path.exists():
+                    if is_root():
+                        sched_path.write_text(scheduler)
+                    else:
+                        cmd = priv_cmd + ["bash", "-c", f"echo {scheduler} > {sched_path}"]
+                        subprocess.run(cmd, check=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                    
+                    result["devices_changed"].append(dev_path.name)
+                    if callback:
+                        callback(f"  Set {dev_path.name} scheduler to {scheduler}")
+            
+            result["success"] = len(result["devices_changed"]) > 0
+            
+        except subprocess.CalledProcessError as e:
+            result["error"] = f"Failed to set scheduler: {e}"
+        except PermissionError:
+            result["error"] = "Permission denied. Run with elevated privileges."
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error setting I/O scheduler: {e}")
+        
+        return result
+    
+    def set_network_buffers(self, rmem_max: int = 16777216, wmem_max: int = 16777216, callback=None) -> Dict:
+        """Set network buffer sizes"""
+        result = {"success": False, "error": ""}
+        
+        self.logger.info(f"Setting network buffers (rmem={rmem_max}, wmem={wmem_max})")
+        if callback:
+            callback("Setting network buffer sizes...")
+        
+        priv_cmd = get_privilege_command()
+        
+        try:
+            settings = [
+                f"net.core.rmem_max={rmem_max}",
+                f"net.core.wmem_max={wmem_max}",
+                "net.core.netdev_max_backlog=5000",
+                f"net.ipv4.tcp_rmem=4096 87380 {rmem_max}",
+                f"net.ipv4.tcp_wmem=4096 65536 {wmem_max}"
+            ]
+            
+            for setting in settings:
+                cmd = priv_cmd + ["sysctl", setting]
+                subprocess.run(cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                if callback:
+                    callback(f"  Applied: {setting}")
+            
+            result["success"] = True
+            
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error setting network buffers: {e}")
+        
+        return result
+    
+    def enable_gaming_mode(self, callback=None) -> Dict:
+        """Enable gaming mode with optimized settings"""
+        result = {"success": False, "error": "", "changes": []}
+        
+        self.logger.info("Enabling gaming mode...")
+        if callback:
+            callback("="*50)
+            callback("ENABLING GAMING MODE")
+            callback("="*50)
+        
+        cpu_info = self.get_cpu_info()
+        self.config["saved_governor"] = cpu_info.get("current_governor")
+        
+        mem_info = self.get_memory_info()
+        self.config["saved_swappiness"] = mem_info.get("swappiness")
+        
+        try:
+            if "performance" in cpu_info.get("available_governors", []):
+                gov_result = self.set_cpu_governor("performance", callback)
+                if gov_result["success"]:
+                    result["changes"].append("CPU governor: performance")
+            
+            swap_result = self.set_swappiness(10, callback)
+            if swap_result["success"]:
+                result["changes"].append("Swappiness: 10")
+            
+            io_result = self.set_io_scheduler("mq-deadline", callback=callback)
+            if io_result["success"]:
+                result["changes"].append(f"I/O scheduler: mq-deadline")
+            
+            net_result = self.set_network_buffers(callback=callback)
+            if net_result["success"]:
+                result["changes"].append("Network buffers: optimized")
+            
+            priv_cmd = get_privilege_command()
+            
+            try:
+                cmd = priv_cmd + ["sysctl", "vm.vfs_cache_pressure=50"]
+                subprocess.run(cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                result["changes"].append("Cache pressure: 50")
+                if callback:
+                    callback("  Set vm.vfs_cache_pressure=50")
+            except Exception:
+                pass
+            
+            try:
+                cmd = priv_cmd + ["sysctl", "kernel.sched_autogroup_enabled=0"]
+                subprocess.run(cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                result["changes"].append("Scheduler autogroup: disabled")
+                if callback:
+                    callback("  Disabled scheduler autogroup")
+            except Exception:
+                pass
+            
+            self.config["gaming_mode"] = True
+            self.save_config()
+            
+            result["success"] = True
+            
+            if callback:
+                callback("\n" + "="*50)
+                callback("GAMING MODE ENABLED")
+                callback("Changes applied:")
+                for change in result["changes"]:
+                    callback(f"  • {change}")
+                callback("="*50)
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error enabling gaming mode: {e}")
+        
+        return result
+    
+    def disable_gaming_mode(self, callback=None) -> Dict:
+        """Disable gaming mode and restore previous settings"""
+        result = {"success": False, "error": "", "changes": []}
+        
+        self.logger.info("Disabling gaming mode...")
+        if callback:
+            callback("="*50)
+            callback("DISABLING GAMING MODE")
+            callback("="*50)
+        
+        try:
+            saved_governor = self.config.get("saved_governor", "schedutil")
+            if saved_governor:
+                gov_result = self.set_cpu_governor(saved_governor, callback)
+                if gov_result["success"]:
+                    result["changes"].append(f"CPU governor: {saved_governor}")
+            
+            saved_swappiness = self.config.get("saved_swappiness", 60)
+            if saved_swappiness is not None:
+                swap_result = self.set_swappiness(saved_swappiness, callback)
+                if swap_result["success"]:
+                    result["changes"].append(f"Swappiness: {saved_swappiness}")
+            
+            priv_cmd = get_privilege_command()
+            
+            try:
+                cmd = priv_cmd + ["sysctl", "vm.vfs_cache_pressure=100"]
+                subprocess.run(cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                result["changes"].append("Cache pressure: 100")
+            except Exception:
+                pass
+            
+            try:
+                cmd = priv_cmd + ["sysctl", "kernel.sched_autogroup_enabled=1"]
+                subprocess.run(cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT)
+                result["changes"].append("Scheduler autogroup: enabled")
+            except Exception:
+                pass
+            
+            self.config["gaming_mode"] = False
+            self.save_config()
+            
+            result["success"] = True
+            
+            if callback:
+                callback("\n" + "="*50)
+                callback("GAMING MODE DISABLED")
+                callback("Settings restored:")
+                for change in result["changes"]:
+                    callback(f"  • {change}")
+                callback("="*50)
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error disabling gaming mode: {e}")
+        
+        return result
+    
+    def get_system_status(self) -> Dict:
+        """Get comprehensive system performance status"""
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "cpu": self.get_cpu_info(),
+            "memory": self.get_memory_info(),
+            "io": self.get_io_scheduler(),
+            "network": self.get_network_info(),
+            "gaming_mode": self.config.get("gaming_mode", False)
+        }
+
+
+class PerformanceTunerGUI:
+    def __init__(self, tuner: AegisPerformanceTuner):
+        self.tuner = tuner
+        self.root = tk.Tk()
+        self.root.title(f"Aegis Performance Tuner v{tuner.version}")
+        self.root.geometry("850x650")
+        self.root.minsize(750, 550)
+        
+        self.setup_styles()
+        self.create_widgets()
+        self.refresh_status()
+    
+    def setup_styles(self):
+        """Configure ttk styles"""
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 11, "bold"))
+        style.configure("Big.TLabel", font=("Helvetica", 18, "bold"))
+        style.configure("Success.TLabel", foreground="green")
+        style.configure("Gaming.TButton", font=("Helvetica", 12, "bold"))
+    
+    def create_widgets(self):
+        """Create the main GUI widgets"""
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(title_frame, text="⚡ Aegis Performance Tuner", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Button(title_frame, text="Refresh", command=self.refresh_status).pack(side=tk.RIGHT)
+        
+        gaming_frame = ttk.LabelFrame(main_frame, text="Gaming Mode", padding="10")
+        gaming_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.gaming_status_var = tk.StringVar(value="OFF")
+        ttk.Label(gaming_frame, text="Status:").pack(side=tk.LEFT)
+        ttk.Label(gaming_frame, textvariable=self.gaming_status_var, style="Big.TLabel").pack(side=tk.LEFT, padx=10)
+        
+        self.gaming_btn = ttk.Button(gaming_frame, text="Enable Gaming Mode", 
+                                    command=self.toggle_gaming_mode, style="Gaming.TButton")
+        self.gaming_btn.pack(side=tk.RIGHT)
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.cpu_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.cpu_frame, text="CPU")
+        
+        self.memory_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.memory_frame, text="Memory")
+        
+        self.io_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.io_frame, text="I/O")
+        
+        self.network_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.network_frame, text="Network")
+        
+        self.log_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.log_frame, text="Log")
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=15, width=80)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+    
+    def log(self, message: str):
+        """Add message to log"""
+        self.log_text.insert(tk.END, f"{datetime.now().strftime('%H:%M:%S')} - {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def refresh_status(self):
+        """Refresh system status"""
+        self.status_var.set("Refreshing...")
+        self.root.update_idletasks()
+        
+        status = self.tuner.get_system_status()
+        
+        if status["gaming_mode"]:
+            self.gaming_status_var.set("ON")
+            self.gaming_btn.config(text="Disable Gaming Mode")
+        else:
+            self.gaming_status_var.set("OFF")
+            self.gaming_btn.config(text="Enable Gaming Mode")
+        
+        self.update_cpu_tab(status["cpu"])
+        self.update_memory_tab(status["memory"])
+        self.update_io_tab(status["io"])
+        self.update_network_tab(status["network"])
+        
+        self.status_var.set("Ready")
+    
+    def update_cpu_tab(self, cpu_info: Dict):
+        """Update CPU tab"""
+        for widget in self.cpu_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.cpu_frame, text="CPU Information", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        info_frame = ttk.LabelFrame(self.cpu_frame, text="Hardware", padding="10")
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(info_frame, text=f"Model: {cpu_info['model'][:60]}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Cores: {cpu_info['cores']} / Threads: {cpu_info['threads']}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Frequency Range: {cpu_info['min_freq']:.0f} - {cpu_info['max_freq']:.0f} MHz").pack(anchor=tk.W)
+        
+        if cpu_info['current_freq']:
+            avg_freq = sum(cpu_info['current_freq']) / len(cpu_info['current_freq'])
+            ttk.Label(info_frame, text=f"Current Avg Frequency: {avg_freq:.0f} MHz").pack(anchor=tk.W)
+        
+        gov_frame = ttk.LabelFrame(self.cpu_frame, text="CPU Governor", padding="10")
+        gov_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(gov_frame, text=f"Current: {cpu_info['current_governor']}").pack(anchor=tk.W)
+        
+        if cpu_info['available_governors']:
+            ttk.Label(gov_frame, text="Set Governor:").pack(anchor=tk.W, pady=(10, 5))
+            
+            btn_frame = ttk.Frame(gov_frame)
+            btn_frame.pack(fill=tk.X)
+            
+            for gov in cpu_info['available_governors']:
+                btn = ttk.Button(btn_frame, text=gov, 
+                               command=lambda g=gov: self.set_governor(g))
+                btn.pack(side=tk.LEFT, padx=2)
+    
+    def update_memory_tab(self, mem_info: Dict):
+        """Update memory tab"""
+        for widget in self.memory_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.memory_frame, text="Memory Settings", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        def format_bytes(b):
+            for unit in ['B', 'KB', 'MB', 'GB']:
+                if b < 1024:
+                    return f"{b:.1f} {unit}"
+                b /= 1024
+            return f"{b:.1f} TB"
+        
+        info_frame = ttk.LabelFrame(self.memory_frame, text="Memory Usage", padding="10")
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(info_frame, text=f"Total RAM: {format_bytes(mem_info['total_ram'])}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Available: {format_bytes(mem_info['available_ram'])}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Used: {format_bytes(mem_info['used_ram'])}").pack(anchor=tk.W)
+        
+        if mem_info['total_swap'] > 0:
+            ttk.Label(info_frame, text=f"Swap: {format_bytes(mem_info['used_swap'])} / {format_bytes(mem_info['total_swap'])}").pack(anchor=tk.W)
+        
+        swap_frame = ttk.LabelFrame(self.memory_frame, text="Swappiness", padding="10")
+        swap_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(swap_frame, text=f"Current swappiness: {mem_info['swappiness']}").pack(anchor=tk.W)
+        ttk.Label(swap_frame, text="(0 = avoid swap, 100 = swap aggressively)").pack(anchor=tk.W)
+        
+        slider_frame = ttk.Frame(swap_frame)
+        slider_frame.pack(fill=tk.X, pady=10)
+        
+        self.swappiness_var = tk.IntVar(value=mem_info['swappiness'])
+        swappiness_scale = ttk.Scale(slider_frame, from_=0, to=100, variable=self.swappiness_var, length=300)
+        swappiness_scale.pack(side=tk.LEFT)
+        
+        ttk.Label(slider_frame, textvariable=self.swappiness_var).pack(side=tk.LEFT, padx=10)
+        ttk.Button(slider_frame, text="Apply", command=self.apply_swappiness).pack(side=tk.LEFT)
+        
+        presets_frame = ttk.Frame(swap_frame)
+        presets_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(presets_frame, text="Presets:").pack(side=tk.LEFT)
+        for name, value in [("Gaming (10)", 10), ("Balanced (60)", 60), ("Server (10)", 10)]:
+            ttk.Button(presets_frame, text=name, 
+                      command=lambda v=value: self.set_swappiness_preset(v)).pack(side=tk.LEFT, padx=2)
+    
+    def update_io_tab(self, io_info: Dict):
+        """Update I/O tab"""
+        for widget in self.io_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.io_frame, text="I/O Scheduler Settings", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        for device, info in io_info["devices"].items():
+            dev_frame = ttk.LabelFrame(self.io_frame, text=f"/dev/{device}", padding="10")
+            dev_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(dev_frame, text=f"Current scheduler: {info['current']}").pack(anchor=tk.W)
+            
+            btn_frame = ttk.Frame(dev_frame)
+            btn_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(btn_frame, text="Set scheduler:").pack(side=tk.LEFT)
+            
+            for sched in info['available']:
+                btn = ttk.Button(btn_frame, text=sched,
+                               command=lambda s=sched, d=device: self.set_io_scheduler(s, d))
+                btn.pack(side=tk.LEFT, padx=2)
+    
+    def update_network_tab(self, net_info: Dict):
+        """Update network tab"""
+        for widget in self.network_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.network_frame, text="Network Settings", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        info_frame = ttk.LabelFrame(self.network_frame, text="Current Settings", padding="10")
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(info_frame, text=f"TCP Congestion Control: {net_info['tcp_congestion']}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Max Receive Buffer: {net_info['rmem_max']:,} bytes").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Max Send Buffer: {net_info['wmem_max']:,} bytes").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Network Backlog: {net_info['netdev_max_backlog']}").pack(anchor=tk.W)
+        
+        action_frame = ttk.LabelFrame(self.network_frame, text="Optimize", padding="10")
+        action_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(action_frame, text="Apply Optimized Network Settings",
+                  command=self.optimize_network).pack(pady=5)
+        ttk.Label(action_frame, text="Increases buffer sizes for better throughput").pack()
+    
+    def toggle_gaming_mode(self):
+        """Toggle gaming mode on/off"""
+        if self.tuner.config.get("gaming_mode"):
+            if messagebox.askyesno("Disable Gaming Mode", "Disable gaming mode and restore previous settings?"):
+                result = self.tuner.disable_gaming_mode(callback=self.log)
+                if result["success"]:
+                    messagebox.showinfo("Success", "Gaming mode disabled!")
+                else:
+                    messagebox.showerror("Error", f"Failed: {result['error']}")
+        else:
+            if messagebox.askyesno("Enable Gaming Mode", 
+                                   f"Enable gaming mode?\n\nThis will:\n"
+                                   "• Set CPU to performance mode\n"
+                                   "• Reduce swappiness to 10\n"
+                                   "• Optimize I/O scheduler\n"
+                                   "• Tune network buffers\n\n"
+                                   f"{get_privilege_escalation_info()}"):
+                result = self.tuner.enable_gaming_mode(callback=self.log)
+                if result["success"]:
+                    messagebox.showinfo("Success", "Gaming mode enabled!\n\nOptimizations applied:\n" + 
+                                       "\n".join(f"• {c}" for c in result["changes"]))
+                else:
+                    messagebox.showerror("Error", f"Failed: {result['error']}")
+        
+        self.refresh_status()
+    
+    def set_governor(self, governor: str):
+        """Set CPU governor"""
+        result = self.tuner.set_cpu_governor(governor, callback=self.log)
+        if result["success"]:
+            self.log(f"CPU governor set to {governor}")
+            messagebox.showinfo("Success", f"CPU governor set to {governor}")
+        else:
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+        self.refresh_status()
+    
+    def apply_swappiness(self):
+        """Apply swappiness setting"""
+        value = self.swappiness_var.get()
+        result = self.tuner.set_swappiness(value, callback=self.log)
+        if result["success"]:
+            messagebox.showinfo("Success", f"Swappiness set to {value}")
+        else:
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+        self.refresh_status()
+    
+    def set_swappiness_preset(self, value: int):
+        """Set swappiness to a preset value"""
+        self.swappiness_var.set(value)
+        self.apply_swappiness()
+    
+    def set_io_scheduler(self, scheduler: str, device: str):
+        """Set I/O scheduler for a device"""
+        result = self.tuner.set_io_scheduler(scheduler, device, callback=self.log)
+        if result["success"]:
+            messagebox.showinfo("Success", f"I/O scheduler for {device} set to {scheduler}")
+        else:
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+        self.refresh_status()
+    
+    def optimize_network(self):
+        """Apply optimized network settings"""
+        result = self.tuner.set_network_buffers(callback=self.log)
+        if result["success"]:
+            messagebox.showinfo("Success", "Network settings optimized!")
+        else:
+            messagebox.showerror("Error", f"Failed: {result['error']}")
+        self.refresh_status()
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def print_status(status: Dict):
+    """Print system status to console"""
+    print("\n" + "="*60)
+    print("SYSTEM PERFORMANCE STATUS")
+    print("="*60)
+    
+    print(f"\n🎮 Gaming Mode: {'ENABLED' if status['gaming_mode'] else 'DISABLED'}")
+    
+    cpu = status['cpu']
+    print(f"\n💻 CPU:")
+    print(f"   Model: {cpu['model'][:50]}")
+    print(f"   Cores/Threads: {cpu['cores']}/{cpu['threads']}")
+    print(f"   Governor: {cpu['current_governor']}")
+    if cpu['current_freq']:
+        avg = sum(cpu['current_freq']) / len(cpu['current_freq'])
+        print(f"   Current Freq: {avg:.0f} MHz")
+    print(f"   Available Governors: {', '.join(cpu['available_governors'])}")
+    
+    mem = status['memory']
+    def fmt(b):
+        return f"{b / (1024**3):.1f} GB"
+    print(f"\n🧠 Memory:")
+    print(f"   RAM: {fmt(mem['used_ram'])} / {fmt(mem['total_ram'])}")
+    if mem['total_swap'] > 0:
+        print(f"   Swap: {fmt(mem['used_swap'])} / {fmt(mem['total_swap'])}")
+    print(f"   Swappiness: {mem['swappiness']}")
+    print(f"   Cache Pressure: {mem['cache_pressure']}")
+    
+    io = status['io']
+    print(f"\n💾 I/O Schedulers:")
+    for dev, info in io['devices'].items():
+        print(f"   {dev}: {info['current']}")
+    
+    net = status['network']
+    print(f"\n🌐 Network:")
+    print(f"   TCP Congestion: {net['tcp_congestion']}")
+    print(f"   Buffer Max: {net['rmem_max']:,} / {net['wmem_max']:,} bytes")
+    
+    print("\n" + "="*60)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Performance Tuner - System Performance Optimization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-performance-tuner                  # Launch GUI
+  aegis-performance-tuner --cli            # CLI mode, show status
+  aegis-performance-tuner status           # Show system status
+  aegis-performance-tuner gaming-on        # Enable gaming mode
+  aegis-performance-tuner gaming-off       # Disable gaming mode
+  aegis-performance-tuner governor performance  # Set CPU governor
+  aegis-performance-tuner swappiness 10    # Set swappiness
+  aegis-performance-tuner scheduler mq-deadline  # Set I/O scheduler
+        """
+    )
+    
+    parser.add_argument("command", nargs="?", default=None,
+                       choices=["status", "gaming-on", "gaming-off", "governor", 
+                               "swappiness", "scheduler", "network"],
+                       help="Command to execute")
+    parser.add_argument("value", nargs="?", default=None, help="Value for the command")
+    parser.add_argument("--cli", action="store_true", help="Force CLI mode")
+    parser.add_argument("--gui", action="store_true", help="Force GUI mode")
+    parser.add_argument("--version", action="version", version="Aegis Performance Tuner v1.0.0")
+    parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    
+    args = parser.parse_args()
+    
+    tuner = AegisPerformanceTuner()
+    
+    if args.command:
+        if args.command == "status":
+            status = tuner.get_system_status()
+            if args.json:
+                print(json.dumps(status, indent=2))
+            else:
+                print_status(status)
+        
+        elif args.command == "gaming-on":
+            print(f"\n{get_privilege_escalation_info()}\n")
+            result = tuner.enable_gaming_mode(callback=print)
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "gaming-off":
+            result = tuner.disable_gaming_mode(callback=print)
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+        
+        elif args.command == "governor":
+            if not args.value:
+                cpu_info = tuner.get_cpu_info()
+                print(f"Current governor: {cpu_info['current_governor']}")
+                print(f"Available: {', '.join(cpu_info['available_governors'])}")
+            else:
+                result = tuner.set_cpu_governor(args.value, callback=print)
+                if not result["success"]:
+                    print(f"Error: {result['error']}")
+                    sys.exit(1)
+                print(f"✓ Governor set to {args.value}")
+        
+        elif args.command == "swappiness":
+            if not args.value:
+                mem_info = tuner.get_memory_info()
+                print(f"Current swappiness: {mem_info['swappiness']}")
+            else:
+                result = tuner.set_swappiness(int(args.value), callback=print)
+                if not result["success"]:
+                    print(f"Error: {result['error']}")
+                    sys.exit(1)
+                print(f"✓ Swappiness set to {args.value}")
+        
+        elif args.command == "scheduler":
+            if not args.value:
+                io_info = tuner.get_io_scheduler()
+                for dev, info in io_info["devices"].items():
+                    print(f"{dev}: {info['current']} (available: {', '.join(info['available'])})")
+            else:
+                result = tuner.set_io_scheduler(args.value, callback=print)
+                if not result["success"]:
+                    print(f"Error: {result['error']}")
+                    sys.exit(1)
+                print(f"✓ I/O scheduler set to {args.value}")
+        
+        elif args.command == "network":
+            result = tuner.set_network_buffers(callback=print)
+            if not result["success"]:
+                print(f"Error: {result['error']}")
+                sys.exit(1)
+            print("✓ Network settings optimized")
+    
+    elif args.cli:
+        status = tuner.get_system_status()
+        print_status(status)
+    
+    else:
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available. Use --cli for command-line mode.")
+            sys.exit(1)
+        
+        gui = PerformanceTunerGUI(tuner)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()

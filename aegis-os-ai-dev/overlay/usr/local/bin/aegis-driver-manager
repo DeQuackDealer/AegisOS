@@ -1,0 +1,1030 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Driver Manager - Hardware Detection and Driver Management
+Detects hardware and manages driver installation for graphics, printers, wifi, etc.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+SUBPROCESS_TIMEOUT_SHORT = 10
+SUBPROCESS_TIMEOUT_MEDIUM = 30
+SUBPROCESS_TIMEOUT_LONG = 300
+
+
+def is_root() -> bool:
+    """Check if the current user is root"""
+    return os.geteuid() == 0
+
+
+def check_pkexec_available() -> bool:
+    """Check if pkexec is available for privilege escalation"""
+    try:
+        result = subprocess.run(["which", "pkexec"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def check_sudo_available() -> bool:
+    """Check if sudo is available"""
+    try:
+        result = subprocess.run(["which", "sudo"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def get_privilege_command() -> List[str]:
+    """Get the appropriate privilege escalation command prefix."""
+    if is_root():
+        return []
+    if check_pkexec_available():
+        return ["pkexec"]
+    if check_sudo_available():
+        return ["sudo"]
+    return []
+
+
+def get_privilege_escalation_info() -> str:
+    """Get information about available privilege escalation methods"""
+    if is_root():
+        return "Running as root"
+    if check_pkexec_available():
+        return "Using pkexec for privilege escalation"
+    if check_sudo_available():
+        return "Using sudo for privilege escalation"
+    return "No privilege escalation method available (pkexec or sudo required)"
+
+
+class AegisDriverManager:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/drivers")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "driver-config.json"
+        self.history_file = self.data_dir / "driver-history.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        
+        self.gpu_drivers = {
+            "nvidia": {
+                "proprietary": ["nvidia-driver", "nvidia-driver-535", "nvidia-driver-525"],
+                "nouveau": ["xserver-xorg-video-nouveau"],
+                "description": "NVIDIA Graphics Drivers"
+            },
+            "amd": {
+                "amdgpu": ["xserver-xorg-video-amdgpu", "firmware-amd-graphics"],
+                "radeon": ["xserver-xorg-video-radeon", "firmware-linux-nonfree"],
+                "description": "AMD/ATI Graphics Drivers"
+            },
+            "intel": {
+                "intel": ["xserver-xorg-video-intel", "intel-media-va-driver"],
+                "description": "Intel Graphics Drivers"
+            }
+        }
+        
+        self.wifi_drivers = {
+            "broadcom": ["broadcom-sta-dkms", "firmware-b43-installer"],
+            "realtek": ["firmware-realtek"],
+            "intel": ["firmware-iwlwifi"],
+            "atheros": ["firmware-atheros"],
+            "ralink": ["firmware-misc-nonfree"]
+        }
+        
+        self.printer_drivers = {
+            "cups": ["cups", "cups-client", "cups-bsd"],
+            "hp": ["hplip", "hplip-gui", "printer-driver-hpcups"],
+            "epson": ["printer-driver-escpr", "printer-driver-escpr2"],
+            "canon": ["printer-driver-gutenprint"],
+            "brother": ["printer-driver-brlaser"],
+            "generic": ["printer-driver-all", "printer-driver-gutenprint"]
+        }
+        
+    def ensure_directories(self):
+        """Create required directories with proper error handling"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+            except OSError as e:
+                print(f"Warning: Could not create directory {directory}: {e}", file=sys.stderr)
+    
+    def setup_logging(self):
+        """Configure logging with fallback to console-only if file logging fails"""
+        log_file = self.log_dir / "aegis-driver-manager.log"
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if self.log_dir.exists() and os.access(str(self.log_dir), os.W_OK):
+                handlers.insert(0, logging.FileHandler(log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisDriverManager")
+    
+    def load_config(self):
+        """Load configuration with fallback defaults"""
+        default_config = {
+            "auto_detect": True,
+            "prefer_open_source": False,
+            "installed_drivers": [],
+            "last_scan": None
+        }
+        
+        self.config = default_config.copy()
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded_config = json.load(f)
+                    self.config.update(loaded_config)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, PermissionError) as e:
+            self.logger.debug(f"Could not load config: {e}")
+    
+    def save_config(self):
+        """Save configuration with error handling"""
+        try:
+            if self.config_dir.exists() and os.access(str(self.config_dir), os.W_OK):
+                with open(self.config_file, 'w') as f:
+                    json.dump(self.config, f, indent=2)
+        except (OSError, PermissionError, IOError) as e:
+            self.logger.debug(f"Could not save config: {e}")
+    
+    def add_history(self, action: str, driver: str, success: bool, details: str = ""):
+        """Add entry to driver history"""
+        try:
+            history = []
+            if self.history_file.exists():
+                with open(self.history_file, 'r') as f:
+                    history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+        
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "driver": driver,
+            "success": success,
+            "details": details
+        }
+        history.append(entry)
+        history = history[-500:]
+        
+        try:
+            if self.data_dir.exists() and os.access(str(self.data_dir), os.W_OK):
+                with open(self.history_file, 'w') as f:
+                    json.dump(history, f, indent=2)
+        except (OSError, PermissionError, IOError):
+            pass
+    
+    def detect_pci_devices(self) -> List[Dict]:
+        """Detect PCI devices using lspci"""
+        devices = []
+        try:
+            result = subprocess.run(
+                ["lspci", "-nn"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        devices.append({
+                            "type": "pci",
+                            "raw": line.strip(),
+                            "category": self._categorize_pci_device(line)
+                        })
+        except FileNotFoundError:
+            self.logger.warning("lspci not found")
+        except subprocess.TimeoutExpired:
+            self.logger.warning("lspci timed out")
+        except Exception as e:
+            self.logger.error(f"Error detecting PCI devices: {e}")
+        
+        return devices
+    
+    def detect_usb_devices(self) -> List[Dict]:
+        """Detect USB devices using lsusb"""
+        devices = []
+        try:
+            result = subprocess.run(
+                ["lsusb"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        devices.append({
+                            "type": "usb",
+                            "raw": line.strip(),
+                            "category": self._categorize_usb_device(line)
+                        })
+        except FileNotFoundError:
+            self.logger.warning("lsusb not found")
+        except subprocess.TimeoutExpired:
+            self.logger.warning("lsusb timed out")
+        except Exception as e:
+            self.logger.error(f"Error detecting USB devices: {e}")
+        
+        return devices
+    
+    def _categorize_pci_device(self, device_line: str) -> str:
+        """Categorize a PCI device based on its description"""
+        line_lower = device_line.lower()
+        if "vga" in line_lower or "3d" in line_lower or "display" in line_lower:
+            return "graphics"
+        elif "network" in line_lower or "ethernet" in line_lower or "wifi" in line_lower or "wireless" in line_lower:
+            return "network"
+        elif "audio" in line_lower or "sound" in line_lower:
+            return "audio"
+        elif "usb" in line_lower:
+            return "usb_controller"
+        elif "sata" in line_lower or "ide" in line_lower or "nvme" in line_lower:
+            return "storage"
+        return "other"
+    
+    def _categorize_usb_device(self, device_line: str) -> str:
+        """Categorize a USB device based on its description"""
+        line_lower = device_line.lower()
+        if "printer" in line_lower:
+            return "printer"
+        elif "scanner" in line_lower:
+            return "scanner"
+        elif "camera" in line_lower or "webcam" in line_lower:
+            return "camera"
+        elif "wifi" in line_lower or "wireless" in line_lower or "wlan" in line_lower:
+            return "wifi"
+        elif "bluetooth" in line_lower:
+            return "bluetooth"
+        elif "keyboard" in line_lower:
+            return "keyboard"
+        elif "mouse" in line_lower:
+            return "mouse"
+        return "other"
+    
+    def detect_graphics_card(self) -> Dict:
+        """Detect graphics card and recommend drivers"""
+        result = {
+            "detected": False,
+            "vendor": "unknown",
+            "model": "unknown",
+            "current_driver": "unknown",
+            "recommended_drivers": []
+        }
+        
+        try:
+            lspci_result = subprocess.run(
+                ["lspci", "-nn"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if lspci_result.returncode == 0:
+                for line in lspci_result.stdout.split('\n'):
+                    if "VGA" in line or "3D" in line or "Display" in line:
+                        result["detected"] = True
+                        result["model"] = line.strip()
+                        
+                        if "nvidia" in line.lower():
+                            result["vendor"] = "nvidia"
+                            if self.config.get("prefer_open_source"):
+                                result["recommended_drivers"] = self.gpu_drivers["nvidia"]["nouveau"]
+                            else:
+                                result["recommended_drivers"] = self.gpu_drivers["nvidia"]["proprietary"]
+                        elif "amd" in line.lower() or "ati" in line.lower() or "radeon" in line.lower():
+                            result["vendor"] = "amd"
+                            result["recommended_drivers"] = self.gpu_drivers["amd"]["amdgpu"]
+                        elif "intel" in line.lower():
+                            result["vendor"] = "intel"
+                            result["recommended_drivers"] = self.gpu_drivers["intel"]["intel"]
+                        break
+        except Exception as e:
+            self.logger.error(f"Error detecting graphics card: {e}")
+        
+        try:
+            glxinfo_result = subprocess.run(
+                ["glxinfo"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if glxinfo_result.returncode == 0:
+                for line in glxinfo_result.stdout.split('\n'):
+                    if "OpenGL renderer" in line:
+                        result["current_driver"] = line.split(':')[1].strip() if ':' in line else "unknown"
+                        break
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        
+        return result
+    
+    def detect_wifi_adapter(self) -> Dict:
+        """Detect WiFi adapter and recommend drivers"""
+        result = {
+            "detected": False,
+            "adapters": [],
+            "recommended_drivers": []
+        }
+        
+        try:
+            lspci_result = subprocess.run(
+                ["lspci", "-nn"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if lspci_result.returncode == 0:
+                for line in lspci_result.stdout.split('\n'):
+                    line_lower = line.lower()
+                    if "wireless" in line_lower or "wifi" in line_lower or "network controller" in line_lower:
+                        result["detected"] = True
+                        adapter = {"device": line.strip(), "type": "pci"}
+                        
+                        if "broadcom" in line_lower:
+                            adapter["vendor"] = "broadcom"
+                            result["recommended_drivers"].extend(self.wifi_drivers["broadcom"])
+                        elif "realtek" in line_lower:
+                            adapter["vendor"] = "realtek"
+                            result["recommended_drivers"].extend(self.wifi_drivers["realtek"])
+                        elif "intel" in line_lower:
+                            adapter["vendor"] = "intel"
+                            result["recommended_drivers"].extend(self.wifi_drivers["intel"])
+                        elif "atheros" in line_lower or "qualcomm" in line_lower:
+                            adapter["vendor"] = "atheros"
+                            result["recommended_drivers"].extend(self.wifi_drivers["atheros"])
+                        elif "ralink" in line_lower or "mediatek" in line_lower:
+                            adapter["vendor"] = "ralink"
+                            result["recommended_drivers"].extend(self.wifi_drivers["ralink"])
+                        
+                        result["adapters"].append(adapter)
+            
+            lsusb_result = subprocess.run(
+                ["lsusb"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if lsusb_result.returncode == 0:
+                for line in lsusb_result.stdout.split('\n'):
+                    line_lower = line.lower()
+                    if "wireless" in line_lower or "wifi" in line_lower or "wlan" in line_lower:
+                        result["detected"] = True
+                        result["adapters"].append({"device": line.strip(), "type": "usb"})
+                        
+        except Exception as e:
+            self.logger.error(f"Error detecting WiFi adapter: {e}")
+        
+        result["recommended_drivers"] = list(set(result["recommended_drivers"]))
+        return result
+    
+    def detect_printers(self) -> Dict:
+        """Detect printers and recommend drivers"""
+        result = {
+            "detected": False,
+            "printers": [],
+            "cups_installed": False,
+            "recommended_drivers": self.printer_drivers["cups"]
+        }
+        
+        try:
+            dpkg_result = subprocess.run(
+                ["dpkg", "-l", "cups"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            result["cups_installed"] = dpkg_result.returncode == 0 and "ii" in dpkg_result.stdout
+        except Exception:
+            pass
+        
+        try:
+            lpstat_result = subprocess.run(
+                ["lpstat", "-p"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if lpstat_result.returncode == 0 and lpstat_result.stdout.strip():
+                result["detected"] = True
+                for line in lpstat_result.stdout.strip().split('\n'):
+                    if line.strip():
+                        result["printers"].append(line.strip())
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        
+        try:
+            lsusb_result = subprocess.run(
+                ["lsusb"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if lsusb_result.returncode == 0:
+                for line in lsusb_result.stdout.split('\n'):
+                    line_lower = line.lower()
+                    if "printer" in line_lower:
+                        result["detected"] = True
+                        
+                        if "hp" in line_lower or "hewlett" in line_lower:
+                            result["recommended_drivers"].extend(self.printer_drivers["hp"])
+                        elif "epson" in line_lower:
+                            result["recommended_drivers"].extend(self.printer_drivers["epson"])
+                        elif "canon" in line_lower:
+                            result["recommended_drivers"].extend(self.printer_drivers["canon"])
+                        elif "brother" in line_lower:
+                            result["recommended_drivers"].extend(self.printer_drivers["brother"])
+        except Exception:
+            pass
+        
+        result["recommended_drivers"] = list(set(result["recommended_drivers"]))
+        return result
+    
+    def get_all_hardware_info(self) -> Dict:
+        """Get comprehensive hardware detection results"""
+        self.logger.info("Scanning hardware...")
+        
+        info = {
+            "timestamp": datetime.now().isoformat(),
+            "pci_devices": self.detect_pci_devices(),
+            "usb_devices": self.detect_usb_devices(),
+            "graphics": self.detect_graphics_card(),
+            "wifi": self.detect_wifi_adapter(),
+            "printers": self.detect_printers()
+        }
+        
+        self.config["last_scan"] = info["timestamp"]
+        self.save_config()
+        
+        return info
+    
+    def install_driver(self, packages: List[str], callback=None) -> Dict:
+        """Install driver packages"""
+        result = {
+            "success": False,
+            "packages": packages,
+            "output": "",
+            "error": ""
+        }
+        
+        if not packages:
+            result["error"] = "No packages specified"
+            return result
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required. Install pkexec or sudo, or run as root."
+            return result
+        
+        self.logger.info(f"Installing drivers: {', '.join(packages)}")
+        if callback:
+            callback(f"Installing: {', '.join(packages)}")
+            if not is_root():
+                callback(f"  {get_privilege_escalation_info()}")
+        
+        try:
+            update_cmd = priv_cmd + ["apt", "update"]
+            if callback:
+                callback("Updating package lists...")
+            subprocess.run(update_cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_LONG)
+            
+            install_cmd = priv_cmd + ["apt", "install", "-y"] + packages
+            if callback:
+                callback(f"Running: {' '.join(install_cmd)}")
+            
+            process = subprocess.Popen(
+                install_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.strip())
+                if callback:
+                    callback(line.strip())
+            
+            process.wait()
+            result["output"] = "\n".join(output_lines)
+            result["success"] = process.returncode == 0
+            
+            if result["success"]:
+                self.add_history("install", ", ".join(packages), True)
+                self.config["installed_drivers"].extend(packages)
+                self.config["installed_drivers"] = list(set(self.config["installed_drivers"]))
+                self.save_config()
+            else:
+                result["error"] = f"Installation failed with exit code {process.returncode}"
+                self.add_history("install", ", ".join(packages), False, result["error"])
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Installation timed out"
+            self.add_history("install", ", ".join(packages), False, result["error"])
+        except Exception as e:
+            result["error"] = str(e)
+            self.add_history("install", ", ".join(packages), False, result["error"])
+            self.logger.error(f"Installation error: {e}")
+        
+        return result
+    
+    def remove_driver(self, packages: List[str], callback=None) -> Dict:
+        """Remove driver packages"""
+        result = {
+            "success": False,
+            "packages": packages,
+            "output": "",
+            "error": ""
+        }
+        
+        if not packages:
+            result["error"] = "No packages specified"
+            return result
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required. Install pkexec or sudo, or run as root."
+            return result
+        
+        self.logger.info(f"Removing drivers: {', '.join(packages)}")
+        if callback:
+            callback(f"Removing: {', '.join(packages)}")
+        
+        try:
+            remove_cmd = priv_cmd + ["apt", "remove", "-y"] + packages
+            if callback:
+                callback(f"Running: {' '.join(remove_cmd)}")
+            
+            process = subprocess.Popen(
+                remove_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.strip())
+                if callback:
+                    callback(line.strip())
+            
+            process.wait()
+            result["output"] = "\n".join(output_lines)
+            result["success"] = process.returncode == 0
+            
+            if result["success"]:
+                self.add_history("remove", ", ".join(packages), True)
+                for pkg in packages:
+                    if pkg in self.config["installed_drivers"]:
+                        self.config["installed_drivers"].remove(pkg)
+                self.save_config()
+            else:
+                result["error"] = f"Removal failed with exit code {process.returncode}"
+                self.add_history("remove", ", ".join(packages), False, result["error"])
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Removal timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Removal error: {e}")
+        
+        return result
+    
+    def get_nvidia_info(self) -> Dict:
+        """Get NVIDIA driver information if installed"""
+        info = {
+            "installed": False,
+            "version": "N/A",
+            "gpus": []
+        }
+        
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                info["installed"] = True
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = line.split(',')
+                        if len(parts) >= 3:
+                            info["gpus"].append({
+                                "name": parts[0].strip(),
+                                "driver_version": parts[1].strip(),
+                                "memory": parts[2].strip()
+                            })
+                            info["version"] = parts[1].strip()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+        
+        return info
+
+
+class DriverManagerGUI:
+    def __init__(self, manager: AegisDriverManager):
+        self.manager = manager
+        self.root = tk.Tk()
+        self.root.title(f"Aegis Driver Manager v{manager.version}")
+        self.root.geometry("900x650")
+        self.root.minsize(800, 550)
+        
+        self.setup_styles()
+        self.create_widgets()
+        self.refresh_hardware_info()
+    
+    def setup_styles(self):
+        """Configure ttk styles"""
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 11, "bold"))
+        style.configure("Info.TLabel", font=("Helvetica", 10))
+        style.configure("Success.TLabel", foreground="green")
+        style.configure("Warning.TLabel", foreground="orange")
+        style.configure("Error.TLabel", foreground="red")
+    
+    def create_widgets(self):
+        """Create the main GUI widgets"""
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(title_frame, text="🔧 Aegis Driver Manager", style="Title.TLabel").pack(side=tk.LEFT)
+        ttk.Button(title_frame, text="Scan Hardware", command=self.refresh_hardware_info).pack(side=tk.RIGHT)
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.graphics_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.graphics_frame, text="Graphics")
+        
+        self.wifi_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.wifi_frame, text="WiFi")
+        
+        self.printer_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.printer_frame, text="Printers")
+        
+        self.devices_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.devices_frame, text="All Devices")
+        
+        self.log_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.log_frame, text="Log")
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=20, width=80)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+    
+    def log(self, message: str):
+        """Add message to log"""
+        self.log_text.insert(tk.END, f"{datetime.now().strftime('%H:%M:%S')} - {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def refresh_hardware_info(self):
+        """Refresh hardware detection"""
+        self.status_var.set("Scanning hardware...")
+        self.log("Starting hardware scan...")
+        self.root.update_idletasks()
+        
+        info = self.manager.get_all_hardware_info()
+        
+        self.update_graphics_tab(info["graphics"])
+        self.update_wifi_tab(info["wifi"])
+        self.update_printer_tab(info["printers"])
+        self.update_devices_tab(info["pci_devices"], info["usb_devices"])
+        
+        self.status_var.set("Hardware scan complete")
+        self.log("Hardware scan complete")
+    
+    def update_graphics_tab(self, graphics_info: Dict):
+        """Update graphics tab with detected info"""
+        for widget in self.graphics_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.graphics_frame, text="Graphics Card Detection", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        if graphics_info["detected"]:
+            info_frame = ttk.LabelFrame(self.graphics_frame, text="Detected Graphics Card", padding="10")
+            info_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(info_frame, text=f"Vendor: {graphics_info['vendor'].upper()}").pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"Model: {graphics_info['model'][:80]}...").pack(anchor=tk.W)
+            ttk.Label(info_frame, text=f"Current Driver: {graphics_info['current_driver']}").pack(anchor=tk.W)
+            
+            if graphics_info["recommended_drivers"]:
+                driver_frame = ttk.LabelFrame(self.graphics_frame, text="Recommended Drivers", padding="10")
+                driver_frame.pack(fill=tk.X, pady=10)
+                
+                for driver in graphics_info["recommended_drivers"]:
+                    frame = ttk.Frame(driver_frame)
+                    frame.pack(fill=tk.X, pady=2)
+                    ttk.Label(frame, text=f"• {driver}").pack(side=tk.LEFT)
+                    ttk.Button(frame, text="Install", 
+                              command=lambda d=driver: self.install_driver_with_dialog([d])).pack(side=tk.RIGHT)
+            
+            nvidia_info = self.manager.get_nvidia_info()
+            if nvidia_info["installed"]:
+                nvidia_frame = ttk.LabelFrame(self.graphics_frame, text="NVIDIA Driver Info", padding="10")
+                nvidia_frame.pack(fill=tk.X, pady=10)
+                ttk.Label(nvidia_frame, text=f"Driver Version: {nvidia_info['version']}").pack(anchor=tk.W)
+                for gpu in nvidia_info["gpus"]:
+                    ttk.Label(nvidia_frame, text=f"  • {gpu['name']} ({gpu['memory']})").pack(anchor=tk.W)
+        else:
+            ttk.Label(self.graphics_frame, text="No dedicated graphics card detected or using integrated graphics.", 
+                     style="Info.TLabel").pack(pady=20)
+    
+    def update_wifi_tab(self, wifi_info: Dict):
+        """Update WiFi tab with detected info"""
+        for widget in self.wifi_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.wifi_frame, text="WiFi Adapter Detection", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        if wifi_info["detected"]:
+            for adapter in wifi_info["adapters"]:
+                adapter_frame = ttk.LabelFrame(self.wifi_frame, text="Detected Adapter", padding="10")
+                adapter_frame.pack(fill=tk.X, pady=5)
+                ttk.Label(adapter_frame, text=adapter["device"][:80]).pack(anchor=tk.W)
+                if "vendor" in adapter:
+                    ttk.Label(adapter_frame, text=f"Vendor: {adapter['vendor'].upper()}").pack(anchor=tk.W)
+            
+            if wifi_info["recommended_drivers"]:
+                driver_frame = ttk.LabelFrame(self.wifi_frame, text="Recommended Drivers", padding="10")
+                driver_frame.pack(fill=tk.X, pady=10)
+                
+                for driver in wifi_info["recommended_drivers"]:
+                    frame = ttk.Frame(driver_frame)
+                    frame.pack(fill=tk.X, pady=2)
+                    ttk.Label(frame, text=f"• {driver}").pack(side=tk.LEFT)
+                    ttk.Button(frame, text="Install",
+                              command=lambda d=driver: self.install_driver_with_dialog([d])).pack(side=tk.RIGHT)
+        else:
+            ttk.Label(self.wifi_frame, text="No WiFi adapters detected.", 
+                     style="Info.TLabel").pack(pady=20)
+    
+    def update_printer_tab(self, printer_info: Dict):
+        """Update printer tab with detected info"""
+        for widget in self.printer_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.printer_frame, text="Printer Detection", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        cups_status = "✓ Installed" if printer_info["cups_installed"] else "✗ Not Installed"
+        ttk.Label(self.printer_frame, text=f"CUPS Print System: {cups_status}").pack(anchor=tk.W, pady=5)
+        
+        if not printer_info["cups_installed"]:
+            ttk.Button(self.printer_frame, text="Install CUPS Print System",
+                      command=lambda: self.install_driver_with_dialog(self.manager.printer_drivers["cups"])).pack(pady=5)
+        
+        if printer_info["printers"]:
+            printers_frame = ttk.LabelFrame(self.printer_frame, text="Configured Printers", padding="10")
+            printers_frame.pack(fill=tk.X, pady=10)
+            
+            for printer in printer_info["printers"]:
+                ttk.Label(printers_frame, text=f"• {printer}").pack(anchor=tk.W)
+        
+        if printer_info["recommended_drivers"]:
+            driver_frame = ttk.LabelFrame(self.printer_frame, text="Recommended Drivers", padding="10")
+            driver_frame.pack(fill=tk.X, pady=10)
+            
+            for driver in list(set(printer_info["recommended_drivers"]))[:10]:
+                frame = ttk.Frame(driver_frame)
+                frame.pack(fill=tk.X, pady=2)
+                ttk.Label(frame, text=f"• {driver}").pack(side=tk.LEFT)
+                ttk.Button(frame, text="Install",
+                          command=lambda d=driver: self.install_driver_with_dialog([d])).pack(side=tk.RIGHT)
+    
+    def update_devices_tab(self, pci_devices: List, usb_devices: List):
+        """Update all devices tab"""
+        for widget in self.devices_frame.winfo_children():
+            widget.destroy()
+        
+        ttk.Label(self.devices_frame, text="All Detected Devices", style="Header.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        
+        tree = ttk.Treeview(self.devices_frame, columns=("Type", "Category", "Device"), show="headings", height=15)
+        tree.heading("Type", text="Type")
+        tree.heading("Category", text="Category")
+        tree.heading("Device", text="Device")
+        tree.column("Type", width=50)
+        tree.column("Category", width=100)
+        tree.column("Device", width=500)
+        
+        scrollbar = ttk.Scrollbar(self.devices_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        for device in pci_devices:
+            tree.insert("", tk.END, values=("PCI", device["category"], device["raw"][:70]))
+        
+        for device in usb_devices:
+            tree.insert("", tk.END, values=("USB", device["category"], device["raw"][:70]))
+    
+    def install_driver_with_dialog(self, packages: List[str]):
+        """Show dialog and install drivers"""
+        if messagebox.askyesno("Install Drivers", 
+                              f"Install the following packages?\n\n{', '.join(packages)}\n\n"
+                              f"{get_privilege_escalation_info()}"):
+            self.log(f"Installing: {', '.join(packages)}")
+            result = self.manager.install_driver(packages, callback=self.log)
+            
+            if result["success"]:
+                messagebox.showinfo("Success", "Drivers installed successfully!\nA reboot may be required.")
+                self.refresh_hardware_info()
+            else:
+                messagebox.showerror("Error", f"Installation failed:\n{result['error']}")
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def print_hardware_summary(info: Dict):
+    """Print hardware summary to console"""
+    print("\n" + "="*60)
+    print("HARDWARE DETECTION SUMMARY")
+    print("="*60)
+    
+    print(f"\n📅 Scan Time: {info['timestamp']}")
+    
+    print(f"\n🎮 GRAPHICS CARD:")
+    gfx = info["graphics"]
+    if gfx["detected"]:
+        print(f"   Vendor: {gfx['vendor'].upper()}")
+        print(f"   Model: {gfx['model'][:60]}...")
+        print(f"   Current Driver: {gfx['current_driver']}")
+        if gfx["recommended_drivers"]:
+            print(f"   Recommended: {', '.join(gfx['recommended_drivers'])}")
+    else:
+        print("   No dedicated graphics card detected")
+    
+    print(f"\n📶 WIFI ADAPTERS:")
+    wifi = info["wifi"]
+    if wifi["detected"]:
+        for adapter in wifi["adapters"]:
+            print(f"   • {adapter['device'][:60]}")
+        if wifi["recommended_drivers"]:
+            print(f"   Recommended: {', '.join(wifi['recommended_drivers'])}")
+    else:
+        print("   No WiFi adapters detected")
+    
+    print(f"\n🖨️  PRINTERS:")
+    printers = info["printers"]
+    print(f"   CUPS Installed: {'Yes' if printers['cups_installed'] else 'No'}")
+    if printers["printers"]:
+        for p in printers["printers"]:
+            print(f"   • {p}")
+    
+    print(f"\n📊 DEVICE COUNTS:")
+    print(f"   PCI Devices: {len(info['pci_devices'])}")
+    print(f"   USB Devices: {len(info['usb_devices'])}")
+    
+    print("\n" + "="*60)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Driver Manager - Hardware Detection and Driver Management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-driver-manager                    # Launch GUI
+  aegis-driver-manager --cli              # CLI mode, show hardware summary
+  aegis-driver-manager scan               # Detect all hardware
+  aegis-driver-manager graphics           # Show graphics card info
+  aegis-driver-manager wifi               # Show WiFi adapter info
+  aegis-driver-manager install nvidia-driver-535  # Install specific driver
+  aegis-driver-manager remove nvidia-driver      # Remove driver
+        """
+    )
+    
+    parser.add_argument("command", nargs="?", default=None,
+                       choices=["scan", "graphics", "wifi", "printers", "install", "remove"],
+                       help="Command to execute")
+    parser.add_argument("packages", nargs="*", help="Packages to install/remove")
+    parser.add_argument("--cli", action="store_true", help="Force CLI mode")
+    parser.add_argument("--gui", action="store_true", help="Force GUI mode")
+    parser.add_argument("--version", action="version", version="Aegis Driver Manager v1.0.0")
+    parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    
+    args = parser.parse_args()
+    
+    manager = AegisDriverManager()
+    
+    if args.command:
+        if args.command == "scan":
+            info = manager.get_all_hardware_info()
+            if args.json:
+                print(json.dumps(info, indent=2))
+            else:
+                print_hardware_summary(info)
+        
+        elif args.command == "graphics":
+            info = manager.detect_graphics_card()
+            nvidia = manager.get_nvidia_info()
+            if args.json:
+                print(json.dumps({"graphics": info, "nvidia": nvidia}, indent=2))
+            else:
+                print("\n🎮 GRAPHICS CARD INFO:")
+                if info["detected"]:
+                    print(f"   Vendor: {info['vendor'].upper()}")
+                    print(f"   Model: {info['model']}")
+                    print(f"   Current Driver: {info['current_driver']}")
+                    if info["recommended_drivers"]:
+                        print(f"   Recommended: {', '.join(info['recommended_drivers'])}")
+                    if nvidia["installed"]:
+                        print(f"\n   NVIDIA Driver: {nvidia['version']}")
+                        for gpu in nvidia["gpus"]:
+                            print(f"     • {gpu['name']} ({gpu['memory']})")
+                else:
+                    print("   No dedicated graphics card detected")
+        
+        elif args.command == "wifi":
+            info = manager.detect_wifi_adapter()
+            if args.json:
+                print(json.dumps(info, indent=2))
+            else:
+                print("\n📶 WIFI ADAPTER INFO:")
+                if info["detected"]:
+                    for adapter in info["adapters"]:
+                        print(f"   • {adapter['device']}")
+                    if info["recommended_drivers"]:
+                        print(f"   Recommended: {', '.join(info['recommended_drivers'])}")
+                else:
+                    print("   No WiFi adapters detected")
+        
+        elif args.command == "printers":
+            info = manager.detect_printers()
+            if args.json:
+                print(json.dumps(info, indent=2))
+            else:
+                print("\n🖨️  PRINTER INFO:")
+                print(f"   CUPS Installed: {'Yes' if info['cups_installed'] else 'No'}")
+                if info["printers"]:
+                    for p in info["printers"]:
+                        print(f"   • {p}")
+                if info["recommended_drivers"]:
+                    print(f"   Recommended: {', '.join(list(set(info['recommended_drivers']))[:5])}")
+        
+        elif args.command == "install":
+            if not args.packages:
+                print("Error: No packages specified")
+                sys.exit(1)
+            result = manager.install_driver(args.packages, callback=print)
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+            print("\n✓ Installation complete")
+        
+        elif args.command == "remove":
+            if not args.packages:
+                print("Error: No packages specified")
+                sys.exit(1)
+            result = manager.remove_driver(args.packages, callback=print)
+            if not result["success"]:
+                print(f"\nError: {result['error']}")
+                sys.exit(1)
+            print("\n✓ Removal complete")
+    
+    elif args.cli:
+        info = manager.get_all_hardware_info()
+        print_hardware_summary(info)
+    
+    else:
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available. Use --cli for command-line mode.")
+            sys.exit(1)
+        
+        gui = DriverManagerGUI(manager)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()

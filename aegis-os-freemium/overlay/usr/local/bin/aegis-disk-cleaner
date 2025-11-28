@@ -1,0 +1,978 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Disk Cleaner - System Cleanup and Optimization
+Clears caches, removes orphaned packages, and frees up disk space
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+import glob
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+SUBPROCESS_TIMEOUT_SHORT = 10
+SUBPROCESS_TIMEOUT_MEDIUM = 60
+SUBPROCESS_TIMEOUT_LONG = 300
+
+
+def is_root() -> bool:
+    """Check if the current user is root"""
+    return os.geteuid() == 0
+
+
+def check_pkexec_available() -> bool:
+    """Check if pkexec is available for privilege escalation"""
+    try:
+        result = subprocess.run(["which", "pkexec"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def check_sudo_available() -> bool:
+    """Check if sudo is available"""
+    try:
+        result = subprocess.run(["which", "sudo"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def get_privilege_command() -> List[str]:
+    """Get the appropriate privilege escalation command prefix."""
+    if is_root():
+        return []
+    if check_pkexec_available():
+        return ["pkexec"]
+    if check_sudo_available():
+        return ["sudo"]
+    return []
+
+
+def get_privilege_escalation_info() -> str:
+    """Get information about available privilege escalation methods"""
+    if is_root():
+        return "Running as root"
+    if check_pkexec_available():
+        return "Using pkexec for privilege escalation"
+    if check_sudo_available():
+        return "Using sudo for privilege escalation"
+    return "No privilege escalation method available (pkexec or sudo required)"
+
+
+def format_size(bytes_size: int) -> str:
+    """Format bytes to human readable size"""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if bytes_size < 1024.0:
+            return f"{bytes_size:.2f} {unit}"
+        bytes_size /= 1024.0
+    return f"{bytes_size:.2f} PB"
+
+
+def get_dir_size(path: str) -> int:
+    """Get total size of directory"""
+    total_size = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    if not os.path.islink(filepath):
+                        total_size += os.path.getsize(filepath)
+                except (OSError, FileNotFoundError):
+                    pass
+    except (OSError, PermissionError):
+        pass
+    return total_size
+
+
+class AegisDiskCleaner:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/cleaner")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "cleaner-config.json"
+        self.history_file = self.data_dir / "cleanup-history.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        
+    def ensure_directories(self):
+        """Create required directories with proper error handling"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+            except OSError as e:
+                print(f"Warning: Could not create directory {directory}: {e}", file=sys.stderr)
+    
+    def setup_logging(self):
+        """Configure logging with fallback to console-only if file logging fails"""
+        log_file = self.log_dir / "aegis-disk-cleaner.log"
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if self.log_dir.exists() and os.access(str(self.log_dir), os.W_OK):
+                handlers.insert(0, logging.FileHandler(log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisDiskCleaner")
+    
+    def load_config(self):
+        """Load configuration with fallback defaults"""
+        default_config = {
+            "auto_clean_thumbnails": True,
+            "auto_clean_trash": False,
+            "keep_kernel_count": 2,
+            "journal_max_size": "100M",
+            "last_cleanup": None,
+            "total_space_freed": 0
+        }
+        
+        self.config = default_config.copy()
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded_config = json.load(f)
+                    self.config.update(loaded_config)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, PermissionError) as e:
+            self.logger.debug(f"Could not load config: {e}")
+    
+    def save_config(self):
+        """Save configuration with error handling"""
+        try:
+            if self.config_dir.exists() and os.access(str(self.config_dir), os.W_OK):
+                with open(self.config_file, 'w') as f:
+                    json.dump(self.config, f, indent=2)
+        except (OSError, PermissionError, IOError) as e:
+            self.logger.debug(f"Could not save config: {e}")
+    
+    def add_history(self, action: str, space_freed: int, details: str = ""):
+        """Add entry to cleanup history"""
+        try:
+            history = []
+            if self.history_file.exists():
+                with open(self.history_file, 'r') as f:
+                    history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+        
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "space_freed": space_freed,
+            "space_freed_formatted": format_size(space_freed),
+            "details": details
+        }
+        history.append(entry)
+        history = history[-500:]
+        
+        try:
+            if self.data_dir.exists() and os.access(str(self.data_dir), os.W_OK):
+                with open(self.history_file, 'w') as f:
+                    json.dump(history, f, indent=2)
+        except (OSError, PermissionError, IOError):
+            pass
+    
+    def analyze_disk_usage(self) -> Dict:
+        """Analyze disk usage and find cleanable items"""
+        analysis = {
+            "timestamp": datetime.now().isoformat(),
+            "apt_cache": {"size": 0, "cleanable": True},
+            "orphan_packages": {"count": 0, "packages": [], "size": 0},
+            "thumbnail_cache": {"size": 0, "cleanable": True},
+            "journal_logs": {"size": 0, "cleanable": True},
+            "old_kernels": {"count": 0, "kernels": [], "size": 0},
+            "trash": {"size": 0, "cleanable": True},
+            "browser_cache": {"size": 0, "cleanable": True},
+            "total_cleanable": 0
+        }
+        
+        apt_cache_path = "/var/cache/apt/archives"
+        if os.path.exists(apt_cache_path):
+            analysis["apt_cache"]["size"] = get_dir_size(apt_cache_path)
+        
+        try:
+            result = subprocess.run(
+                ["apt", "autoremove", "--dry-run"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_MEDIUM
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if "to remove" in line.lower() and "package" in line.lower():
+                        import re
+                        match = re.search(r'(\d+)', line)
+                        if match:
+                            analysis["orphan_packages"]["count"] = int(match.group(1))
+                    if line.strip() and not line.startswith(' ') and not line.startswith('Reading'):
+                        if "will be removed" not in line.lower() and "freed" not in line.lower():
+                            pass
+                    if "freed" in line.lower():
+                        match = re.search(r'([\d.]+)\s*(B|kB|MB|GB)', line)
+                        if match:
+                            size = float(match.group(1))
+                            unit = match.group(2)
+                            multipliers = {'B': 1, 'kB': 1024, 'MB': 1024**2, 'GB': 1024**3}
+                            analysis["orphan_packages"]["size"] = int(size * multipliers.get(unit, 1))
+        except Exception as e:
+            self.logger.debug(f"Could not analyze orphan packages: {e}")
+        
+        home_dir = os.path.expanduser("~")
+        thumbnail_paths = [
+            os.path.join(home_dir, ".cache", "thumbnails"),
+            os.path.join(home_dir, ".thumbnails")
+        ]
+        for path in thumbnail_paths:
+            if os.path.exists(path):
+                analysis["thumbnail_cache"]["size"] += get_dir_size(path)
+        
+        journal_path = "/var/log/journal"
+        if os.path.exists(journal_path):
+            analysis["journal_logs"]["size"] = get_dir_size(journal_path)
+        
+        try:
+            result = subprocess.run(
+                ["dpkg", "-l", "linux-image-*"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                current_kernel = os.uname().release
+                for line in result.stdout.split('\n'):
+                    if line.startswith('ii') and 'linux-image-' in line:
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            kernel_pkg = parts[1]
+                            if current_kernel not in kernel_pkg:
+                                analysis["old_kernels"]["kernels"].append(kernel_pkg)
+                                analysis["old_kernels"]["count"] += 1
+        except Exception as e:
+            self.logger.debug(f"Could not analyze old kernels: {e}")
+        
+        trash_paths = [
+            os.path.join(home_dir, ".local", "share", "Trash"),
+            os.path.join(home_dir, ".Trash")
+        ]
+        for path in trash_paths:
+            if os.path.exists(path):
+                analysis["trash"]["size"] += get_dir_size(path)
+        
+        browser_cache_paths = [
+            os.path.join(home_dir, ".cache", "google-chrome"),
+            os.path.join(home_dir, ".cache", "chromium"),
+            os.path.join(home_dir, ".cache", "mozilla"),
+            os.path.join(home_dir, ".cache", "firefox"),
+            os.path.join(home_dir, ".cache", "BraveSoftware")
+        ]
+        for path in browser_cache_paths:
+            if os.path.exists(path):
+                analysis["browser_cache"]["size"] += get_dir_size(path)
+        
+        analysis["total_cleanable"] = (
+            analysis["apt_cache"]["size"] +
+            analysis["orphan_packages"]["size"] +
+            analysis["thumbnail_cache"]["size"] +
+            analysis["journal_logs"]["size"] // 2 +
+            analysis["trash"]["size"] +
+            analysis["browser_cache"]["size"]
+        )
+        
+        return analysis
+    
+    def clean_apt_cache(self, callback=None) -> Dict:
+        """Clean APT package cache"""
+        result = {"success": False, "space_freed": 0, "error": ""}
+        
+        before_size = get_dir_size("/var/cache/apt/archives")
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Cleaning APT cache...")
+        if callback:
+            callback("Cleaning APT package cache...")
+        
+        try:
+            cmd = priv_cmd + ["apt", "clean"]
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_MEDIUM)
+            
+            if process.returncode == 0:
+                after_size = get_dir_size("/var/cache/apt/archives")
+                result["space_freed"] = before_size - after_size
+                result["success"] = True
+                self.add_history("apt_cache", result["space_freed"])
+                if callback:
+                    callback(f"  Freed: {format_size(result['space_freed'])}")
+            else:
+                result["error"] = process.stderr
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"APT cache clean error: {e}")
+        
+        return result
+    
+    def remove_orphan_packages(self, callback=None) -> Dict:
+        """Remove orphaned packages using apt autoremove"""
+        result = {"success": False, "space_freed": 0, "packages_removed": 0, "error": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Removing orphaned packages...")
+        if callback:
+            callback("Removing orphaned packages...")
+        
+        try:
+            cmd = priv_cmd + ["apt", "autoremove", "-y"]
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                output_lines.append(line.strip())
+                if callback:
+                    callback(f"  {line.strip()}")
+            
+            process.wait()
+            output = "\n".join(output_lines)
+            
+            if process.returncode == 0:
+                result["success"] = True
+                
+                import re
+                match = re.search(r'(\d+)\s+.*removed', output, re.IGNORECASE)
+                if match:
+                    result["packages_removed"] = int(match.group(1))
+                
+                match = re.search(r'([\d.]+)\s*(B|kB|MB|GB).*freed', output, re.IGNORECASE)
+                if match:
+                    size = float(match.group(1))
+                    unit = match.group(2)
+                    multipliers = {'B': 1, 'kB': 1024, 'MB': 1024**2, 'GB': 1024**3}
+                    result["space_freed"] = int(size * multipliers.get(unit, 1))
+                
+                self.add_history("orphan_packages", result["space_freed"], 
+                               f"Removed {result['packages_removed']} packages")
+                if callback:
+                    callback(f"  Removed {result['packages_removed']} packages, freed {format_size(result['space_freed'])}")
+            else:
+                result["error"] = "autoremove failed"
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Orphan package removal error: {e}")
+        
+        return result
+    
+    def clean_thumbnail_cache(self, callback=None) -> Dict:
+        """Clean thumbnail cache"""
+        result = {"success": False, "space_freed": 0, "error": ""}
+        
+        home_dir = os.path.expanduser("~")
+        thumbnail_paths = [
+            os.path.join(home_dir, ".cache", "thumbnails"),
+            os.path.join(home_dir, ".thumbnails")
+        ]
+        
+        total_freed = 0
+        
+        self.logger.info("Cleaning thumbnail cache...")
+        if callback:
+            callback("Cleaning thumbnail cache...")
+        
+        try:
+            for path in thumbnail_paths:
+                if os.path.exists(path):
+                    before_size = get_dir_size(path)
+                    shutil.rmtree(path, ignore_errors=True)
+                    os.makedirs(path, exist_ok=True)
+                    total_freed += before_size
+                    if callback:
+                        callback(f"  Cleaned: {path}")
+            
+            result["space_freed"] = total_freed
+            result["success"] = True
+            self.add_history("thumbnail_cache", total_freed)
+            if callback:
+                callback(f"  Freed: {format_size(total_freed)}")
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Thumbnail cache clean error: {e}")
+        
+        return result
+    
+    def clean_journal_logs(self, max_size: str = "100M", callback=None) -> Dict:
+        """Clean old systemd journal logs"""
+        result = {"success": False, "space_freed": 0, "error": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        before_size = get_dir_size("/var/log/journal") if os.path.exists("/var/log/journal") else 0
+        
+        self.logger.info(f"Cleaning journal logs (keeping {max_size})...")
+        if callback:
+            callback(f"Cleaning journal logs (keeping {max_size})...")
+        
+        try:
+            cmd = priv_cmd + ["journalctl", f"--vacuum-size={max_size}"]
+            process = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_MEDIUM)
+            
+            if process.returncode == 0:
+                after_size = get_dir_size("/var/log/journal") if os.path.exists("/var/log/journal") else 0
+                result["space_freed"] = before_size - after_size
+                result["success"] = True
+                self.add_history("journal_logs", result["space_freed"])
+                if callback:
+                    callback(f"  Freed: {format_size(result['space_freed'])}")
+                    if process.stdout:
+                        for line in process.stdout.strip().split('\n')[:3]:
+                            callback(f"  {line}")
+            else:
+                result["error"] = process.stderr
+                
+        except FileNotFoundError:
+            result["error"] = "journalctl not found"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Operation timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Journal clean error: {e}")
+        
+        return result
+    
+    def remove_old_kernels(self, keep_count: int = 2, callback=None) -> Dict:
+        """Remove old kernel versions"""
+        result = {"success": False, "space_freed": 0, "kernels_removed": [], "error": ""}
+        
+        priv_cmd = get_privilege_command()
+        if not priv_cmd and not is_root():
+            result["error"] = "Privilege escalation required"
+            return result
+        
+        self.logger.info("Analyzing installed kernels...")
+        if callback:
+            callback("Analyzing installed kernels...")
+        
+        try:
+            current_kernel = os.uname().release
+            
+            dpkg_result = subprocess.run(
+                ["dpkg", "-l", "linux-image-*"],
+                capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            
+            if dpkg_result.returncode != 0:
+                result["error"] = "Could not list kernel packages"
+                return result
+            
+            kernels = []
+            for line in dpkg_result.stdout.split('\n'):
+                if line.startswith('ii') and 'linux-image-' in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        kernel_pkg = parts[1]
+                        if 'generic' in kernel_pkg or 'lowlatency' in kernel_pkg:
+                            kernels.append(kernel_pkg)
+            
+            kernels_to_keep = [k for k in kernels if current_kernel in k]
+            kernels_to_remove = [k for k in kernels if k not in kernels_to_keep]
+            
+            kernels_to_remove = kernels_to_remove[:-keep_count] if len(kernels_to_remove) > keep_count else []
+            
+            if not kernels_to_remove:
+                result["success"] = True
+                if callback:
+                    callback("  No old kernels to remove")
+                return result
+            
+            if callback:
+                callback(f"  Found {len(kernels_to_remove)} old kernel(s) to remove")
+                for k in kernels_to_remove:
+                    callback(f"    • {k}")
+            
+            for kernel in kernels_to_remove:
+                cmd = priv_cmd + ["apt", "remove", "-y", kernel]
+                process = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_LONG)
+                
+                if process.returncode == 0:
+                    result["kernels_removed"].append(kernel)
+                    if callback:
+                        callback(f"  Removed: {kernel}")
+            
+            result["success"] = len(result["kernels_removed"]) > 0
+            self.add_history("old_kernels", 0, f"Removed {len(result['kernels_removed'])} kernels")
+            
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Kernel removal error: {e}")
+        
+        return result
+    
+    def clean_trash(self, callback=None) -> Dict:
+        """Empty user trash"""
+        result = {"success": False, "space_freed": 0, "error": ""}
+        
+        home_dir = os.path.expanduser("~")
+        trash_paths = [
+            os.path.join(home_dir, ".local", "share", "Trash"),
+            os.path.join(home_dir, ".Trash")
+        ]
+        
+        total_freed = 0
+        
+        self.logger.info("Emptying trash...")
+        if callback:
+            callback("Emptying trash...")
+        
+        try:
+            for path in trash_paths:
+                if os.path.exists(path):
+                    before_size = get_dir_size(path)
+                    
+                    for subdir in ["files", "info", "expunged"]:
+                        subpath = os.path.join(path, subdir)
+                        if os.path.exists(subpath):
+                            shutil.rmtree(subpath, ignore_errors=True)
+                            os.makedirs(subpath, exist_ok=True)
+                    
+                    total_freed += before_size
+                    if callback:
+                        callback(f"  Cleaned: {path}")
+            
+            result["space_freed"] = total_freed
+            result["success"] = True
+            self.add_history("trash", total_freed)
+            if callback:
+                callback(f"  Freed: {format_size(total_freed)}")
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Trash clean error: {e}")
+        
+        return result
+    
+    def clean_browser_cache(self, callback=None) -> Dict:
+        """Clean browser caches"""
+        result = {"success": False, "space_freed": 0, "error": ""}
+        
+        home_dir = os.path.expanduser("~")
+        browser_cache_paths = [
+            (os.path.join(home_dir, ".cache", "google-chrome", "Default", "Cache"), "Chrome"),
+            (os.path.join(home_dir, ".cache", "chromium", "Default", "Cache"), "Chromium"),
+            (os.path.join(home_dir, ".cache", "mozilla", "firefox"), "Firefox"),
+            (os.path.join(home_dir, ".cache", "BraveSoftware"), "Brave")
+        ]
+        
+        total_freed = 0
+        
+        self.logger.info("Cleaning browser caches...")
+        if callback:
+            callback("Cleaning browser caches...")
+        
+        try:
+            for path, browser in browser_cache_paths:
+                if os.path.exists(path):
+                    before_size = get_dir_size(path)
+                    shutil.rmtree(path, ignore_errors=True)
+                    total_freed += before_size
+                    if callback:
+                        callback(f"  Cleaned {browser}: {format_size(before_size)}")
+            
+            result["space_freed"] = total_freed
+            result["success"] = True
+            self.add_history("browser_cache", total_freed)
+            if callback:
+                callback(f"  Total freed: {format_size(total_freed)}")
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Browser cache clean error: {e}")
+        
+        return result
+    
+    def run_full_cleanup(self, callback=None) -> Dict:
+        """Run all cleanup operations"""
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "total_space_freed": 0,
+            "operations": {}
+        }
+        
+        self.logger.info("Starting full system cleanup...")
+        if callback:
+            callback("="*50)
+            callback("STARTING FULL SYSTEM CLEANUP")
+            callback("="*50)
+        
+        operations = [
+            ("apt_cache", self.clean_apt_cache),
+            ("orphan_packages", self.remove_orphan_packages),
+            ("thumbnail_cache", self.clean_thumbnail_cache),
+            ("journal_logs", lambda cb: self.clean_journal_logs(self.config.get("journal_max_size", "100M"), cb)),
+            ("trash", self.clean_trash),
+        ]
+        
+        for name, operation in operations:
+            if callback:
+                callback(f"\n--- {name.replace('_', ' ').title()} ---")
+            
+            try:
+                result = operation(callback)
+                results["operations"][name] = result
+                results["total_space_freed"] += result.get("space_freed", 0)
+            except Exception as e:
+                results["operations"][name] = {"success": False, "error": str(e)}
+                self.logger.error(f"Error in {name}: {e}")
+        
+        self.config["last_cleanup"] = results["timestamp"]
+        self.config["total_space_freed"] += results["total_space_freed"]
+        self.save_config()
+        
+        if callback:
+            callback(f"\n{'='*50}")
+            callback(f"CLEANUP COMPLETE")
+            callback(f"Total space freed: {format_size(results['total_space_freed'])}")
+            callback(f"{'='*50}")
+        
+        return results
+
+
+class DiskCleanerGUI:
+    def __init__(self, cleaner: AegisDiskCleaner):
+        self.cleaner = cleaner
+        self.root = tk.Tk()
+        self.root.title(f"Aegis Disk Cleaner v{cleaner.version}")
+        self.root.geometry("800x600")
+        self.root.minsize(700, 500)
+        
+        self.analysis = None
+        
+        self.setup_styles()
+        self.create_widgets()
+        self.analyze_disk()
+    
+    def setup_styles(self):
+        """Configure ttk styles"""
+        style = ttk.Style()
+        style.configure("Title.TLabel", font=("Helvetica", 14, "bold"))
+        style.configure("Header.TLabel", font=("Helvetica", 11, "bold"))
+        style.configure("Big.TLabel", font=("Helvetica", 24, "bold"))
+        style.configure("Success.TLabel", foreground="green")
+        style.configure("Warning.TLabel", foreground="orange")
+    
+    def create_widgets(self):
+        """Create the main GUI widgets"""
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(title_frame, text="🧹 Aegis Disk Cleaner", style="Title.TLabel").pack(side=tk.LEFT)
+        
+        btn_frame = ttk.Frame(title_frame)
+        btn_frame.pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="Analyze", command=self.analyze_disk).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Clean All", command=self.run_full_cleanup).pack(side=tk.LEFT, padx=2)
+        
+        summary_frame = ttk.LabelFrame(main_frame, text="Disk Usage Summary", padding="10")
+        summary_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.cleanable_var = tk.StringVar(value="Analyzing...")
+        ttk.Label(summary_frame, text="Total Cleanable:").pack(side=tk.LEFT)
+        ttk.Label(summary_frame, textvariable=self.cleanable_var, style="Big.TLabel").pack(side=tk.LEFT, padx=10)
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.cleanup_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.cleanup_frame, text="Cleanup Options")
+        
+        self.log_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.log_frame, text="Log")
+        
+        self.log_text = scrolledtext.ScrolledText(self.log_frame, height=20, width=80)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+        
+        self.cleanup_items_frame = ttk.Frame(self.cleanup_frame)
+        self.cleanup_items_frame.pack(fill=tk.BOTH, expand=True)
+        
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+        
+        self.progress = ttk.Progressbar(status_frame, mode='indeterminate', length=100)
+        self.progress.pack(side=tk.RIGHT)
+    
+    def log(self, message: str):
+        """Add message to log"""
+        self.log_text.insert(tk.END, f"{datetime.now().strftime('%H:%M:%S')} - {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+    
+    def analyze_disk(self):
+        """Analyze disk usage"""
+        self.status_var.set("Analyzing disk usage...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        self.log("Starting disk analysis...")
+        self.analysis = self.cleaner.analyze_disk_usage()
+        
+        self.cleanable_var.set(format_size(self.analysis["total_cleanable"]))
+        
+        self.update_cleanup_items()
+        
+        self.progress.stop()
+        self.status_var.set("Analysis complete")
+        self.log(f"Analysis complete. Total cleanable: {format_size(self.analysis['total_cleanable'])}")
+    
+    def update_cleanup_items(self):
+        """Update the cleanup items display"""
+        for widget in self.cleanup_items_frame.winfo_children():
+            widget.destroy()
+        
+        if not self.analysis:
+            return
+        
+        items = [
+            ("APT Package Cache", "apt_cache", self.analysis["apt_cache"]["size"], 
+             lambda: self.run_single_cleanup("apt_cache", self.cleaner.clean_apt_cache)),
+            ("Orphaned Packages", "orphan", self.analysis["orphan_packages"]["size"],
+             lambda: self.run_single_cleanup("orphan", self.cleaner.remove_orphan_packages)),
+            ("Thumbnail Cache", "thumbnails", self.analysis["thumbnail_cache"]["size"],
+             lambda: self.run_single_cleanup("thumbnails", self.cleaner.clean_thumbnail_cache)),
+            ("Journal Logs", "journal", self.analysis["journal_logs"]["size"],
+             lambda: self.run_single_cleanup("journal", lambda cb: self.cleaner.clean_journal_logs("100M", cb))),
+            ("Trash", "trash", self.analysis["trash"]["size"],
+             lambda: self.run_single_cleanup("trash", self.cleaner.clean_trash)),
+            ("Browser Cache", "browser", self.analysis["browser_cache"]["size"],
+             lambda: self.run_single_cleanup("browser", self.cleaner.clean_browser_cache)),
+        ]
+        
+        for i, (name, key, size, action) in enumerate(items):
+            frame = ttk.Frame(self.cleanup_items_frame)
+            frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(frame, text=name, width=25).pack(side=tk.LEFT)
+            ttk.Label(frame, text=format_size(size), width=15).pack(side=tk.LEFT)
+            
+            if size > 0:
+                ttk.Button(frame, text="Clean", command=action).pack(side=tk.RIGHT)
+            else:
+                ttk.Label(frame, text="Clean", foreground="gray").pack(side=tk.RIGHT)
+        
+        if self.analysis["old_kernels"]["count"] > 0:
+            frame = ttk.Frame(self.cleanup_items_frame)
+            frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(frame, text=f"Old Kernels ({self.analysis['old_kernels']['count']})", width=25).pack(side=tk.LEFT)
+            ttk.Button(frame, text="Remove", 
+                      command=lambda: self.run_single_cleanup("kernels", self.cleaner.remove_old_kernels)).pack(side=tk.RIGHT)
+    
+    def run_single_cleanup(self, name: str, operation):
+        """Run a single cleanup operation"""
+        self.status_var.set(f"Cleaning {name}...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        result = operation(callback=self.log)
+        
+        self.progress.stop()
+        
+        if result.get("success"):
+            self.status_var.set(f"Cleaned {name}: freed {format_size(result.get('space_freed', 0))}")
+            messagebox.showinfo("Success", f"Cleanup complete!\nFreed: {format_size(result.get('space_freed', 0))}")
+        else:
+            self.status_var.set(f"Error cleaning {name}")
+            messagebox.showerror("Error", f"Cleanup failed:\n{result.get('error', 'Unknown error')}")
+        
+        self.analyze_disk()
+    
+    def run_full_cleanup(self):
+        """Run full cleanup"""
+        if not messagebox.askyesno("Confirm Full Cleanup", 
+                                   f"This will clean all categories.\n\n"
+                                   f"Estimated space to free: {format_size(self.analysis['total_cleanable'] if self.analysis else 0)}\n\n"
+                                   f"{get_privilege_escalation_info()}\n\n"
+                                   "Continue?"):
+            return
+        
+        self.status_var.set("Running full cleanup...")
+        self.progress.start()
+        self.root.update_idletasks()
+        
+        results = self.cleaner.run_full_cleanup(callback=self.log)
+        
+        self.progress.stop()
+        self.status_var.set(f"Cleanup complete: freed {format_size(results['total_space_freed'])}")
+        
+        messagebox.showinfo("Cleanup Complete", 
+                          f"Full cleanup finished!\n\nTotal space freed: {format_size(results['total_space_freed'])}")
+        
+        self.analyze_disk()
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def print_analysis(analysis: Dict):
+    """Print disk analysis to console"""
+    print("\n" + "="*60)
+    print("DISK USAGE ANALYSIS")
+    print("="*60)
+    
+    print(f"\n📅 Analysis Time: {analysis['timestamp']}")
+    
+    print(f"\n📦 APT Package Cache:     {format_size(analysis['apt_cache']['size']):>15}")
+    print(f"📦 Orphaned Packages:     {format_size(analysis['orphan_packages']['size']):>15}  ({analysis['orphan_packages']['count']} packages)")
+    print(f"🖼️  Thumbnail Cache:       {format_size(analysis['thumbnail_cache']['size']):>15}")
+    print(f"📋 Journal Logs:          {format_size(analysis['journal_logs']['size']):>15}")
+    print(f"🗑️  Trash:                 {format_size(analysis['trash']['size']):>15}")
+    print(f"🌐 Browser Cache:         {format_size(analysis['browser_cache']['size']):>15}")
+    print(f"🐧 Old Kernels:           {analysis['old_kernels']['count']:>15} kernel(s)")
+    
+    print(f"\n{'='*60}")
+    print(f"TOTAL CLEANABLE:          {format_size(analysis['total_cleanable']):>15}")
+    print("="*60)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Disk Cleaner - System Cleanup and Optimization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-disk-cleaner                 # Launch GUI
+  aegis-disk-cleaner --cli           # CLI mode, show analysis
+  aegis-disk-cleaner analyze         # Analyze disk usage
+  aegis-disk-cleaner clean-all       # Run all cleanup operations
+  aegis-disk-cleaner apt-cache       # Clean APT cache only
+  aegis-disk-cleaner orphans         # Remove orphaned packages
+  aegis-disk-cleaner thumbnails      # Clean thumbnail cache
+  aegis-disk-cleaner journal         # Clean journal logs
+  aegis-disk-cleaner trash           # Empty trash
+  aegis-disk-cleaner kernels         # Remove old kernels
+        """
+    )
+    
+    parser.add_argument("command", nargs="?", default=None,
+                       choices=["analyze", "clean-all", "apt-cache", "orphans", 
+                               "thumbnails", "journal", "trash", "browser", "kernels"],
+                       help="Command to execute")
+    parser.add_argument("--cli", action="store_true", help="Force CLI mode")
+    parser.add_argument("--gui", action="store_true", help="Force GUI mode")
+    parser.add_argument("--version", action="version", version="Aegis Disk Cleaner v1.0.0")
+    parser.add_argument("--json", action="store_true", help="Output in JSON format")
+    parser.add_argument("--journal-size", default="100M", help="Max journal size to keep (default: 100M)")
+    parser.add_argument("--keep-kernels", type=int, default=2, help="Number of old kernels to keep (default: 2)")
+    
+    args = parser.parse_args()
+    
+    cleaner = AegisDiskCleaner()
+    
+    if args.command:
+        if args.command == "analyze":
+            analysis = cleaner.analyze_disk_usage()
+            if args.json:
+                print(json.dumps(analysis, indent=2))
+            else:
+                print_analysis(analysis)
+        
+        elif args.command == "clean-all":
+            print(f"\n{get_privilege_escalation_info()}\n")
+            results = cleaner.run_full_cleanup(callback=print)
+            if args.json:
+                print(json.dumps(results, indent=2))
+        
+        elif args.command == "apt-cache":
+            result = cleaner.clean_apt_cache(callback=print)
+            print(f"\n✓ Freed: {format_size(result['space_freed'])}" if result["success"] else f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "orphans":
+            result = cleaner.remove_orphan_packages(callback=print)
+            if result["success"]:
+                print(f"\n✓ Removed {result.get('packages_removed', 0)} packages, freed {format_size(result['space_freed'])}")
+            else:
+                print(f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "thumbnails":
+            result = cleaner.clean_thumbnail_cache(callback=print)
+            print(f"\n✓ Freed: {format_size(result['space_freed'])}" if result["success"] else f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "journal":
+            result = cleaner.clean_journal_logs(args.journal_size, callback=print)
+            print(f"\n✓ Freed: {format_size(result['space_freed'])}" if result["success"] else f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "trash":
+            result = cleaner.clean_trash(callback=print)
+            print(f"\n✓ Freed: {format_size(result['space_freed'])}" if result["success"] else f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "browser":
+            result = cleaner.clean_browser_cache(callback=print)
+            print(f"\n✓ Freed: {format_size(result['space_freed'])}" if result["success"] else f"\n✗ Error: {result['error']}")
+        
+        elif args.command == "kernels":
+            result = cleaner.remove_old_kernels(args.keep_kernels, callback=print)
+            if result["success"]:
+                print(f"\n✓ Removed {len(result['kernels_removed'])} kernel(s)")
+            else:
+                print(f"\n✗ Error: {result['error']}")
+    
+    elif args.cli:
+        analysis = cleaner.analyze_disk_usage()
+        print_analysis(analysis)
+    
+    else:
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available. Use --cli for command-line mode.")
+            sys.exit(1)
+        
+        gui = DiskCleanerGUI(cleaner)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()
