@@ -347,13 +347,20 @@ Function GetPowerShellCode()
     code = code & "Write-P 3 'USB drive validated' '' '' '' ''" & vbCrLf
     code = code & "$tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null" & vbCrLf
     code = code & "$isoPath = ""$tempDir\base.iso""" & vbCrLf
-    code = code & "$isoUrl = 'https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'" & vbCrLf
-    code = code & "$expectedHash = 'a3e5c4f82b1d9e6f0a2c8b7d4e3f1a2b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1'" & vbCrLf
-    code = code & "$maxRetries = 3; $retryCount = 0; $downloadSuccess = $false" & vbCrLf
-    code = code & "Write-P 5 'Preparing download...' 'Aegis OS Freemium (~2.1 GB)'" & vbCrLf
-    code = code & "while (-not $downloadSuccess -and $retryCount -lt $maxRetries) {" & vbCrLf
+    code = code & "$mirrors = @(" & vbCrLf
+    code = code & "  'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'," & vbCrLf
+    code = code & "  'https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'," & vbCrLf
+    code = code & "  'https://mirrors.xtom.com/osdn/storage/g/l/li/linuxlite/7.2/linux-lite-7.2-64bit.iso'" & vbCrLf
+    code = code & ")" & vbCrLf
+    code = code & "$expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'" & vbCrLf
+    code = code & "$maxRetries = 3; $mirrorIndex = 0; $downloadSuccess = $false" & vbCrLf
+    code = code & "Write-P 5 'Preparing download...' 'Aegis OS Freemium (~2.9 GB)'" & vbCrLf
+    code = code & "while (-not $downloadSuccess -and $mirrorIndex -lt $mirrors.Count) {" & vbCrLf
+    code = code & "  $isoUrl = $mirrors[$mirrorIndex]" & vbCrLf
+    code = code & "  $retryCount = 0" & vbCrLf
+    code = code & "  while (-not $downloadSuccess -and $retryCount -lt $maxRetries) {" & vbCrLf
     code = code & "  try {" & vbCrLf
-    code = code & "    if ($retryCount -gt 0) { Write-P 6 ""Retry attempt $retryCount of $maxRetries..."" }" & vbCrLf
+    code = code & "    if ($mirrorIndex -gt 0 -or $retryCount -gt 0) { Write-P 6 ""Mirror $($mirrorIndex+1), Attempt $($retryCount+1)..."" }" & vbCrLf
     code = code & "    $webRequest = [System.Net.HttpWebRequest]::Create($isoUrl)" & vbCrLf
     code = code & "    $webRequest.UserAgent = 'AegisOS/2.5'" & vbCrLf
     code = code & "    $webRequest.Timeout = 30000" & vbCrLf
@@ -387,10 +394,13 @@ Function GetPowerShellCode()
     code = code & "    $downloadSuccess = $true" & vbCrLf
     code = code & "  } catch {" & vbCrLf
     code = code & "    $retryCount++; if ($fileStream) { $fileStream.Close() }; if ($responseStream) { $responseStream.Close() }" & vbCrLf
-    code = code & "    if ($retryCount -ge $maxRetries) { throw $_ }" & vbCrLf
+    code = code & "    if ($retryCount -ge $maxRetries) { break }" & vbCrLf
     code = code & "    Start-Sleep -Seconds (2 * $retryCount)" & vbCrLf
     code = code & "  }" & vbCrLf
+    code = code & "  }" & vbCrLf
+    code = code & "  if (-not $downloadSuccess) { $mirrorIndex++ }" & vbCrLf
     code = code & "}" & vbCrLf
+    code = code & "if (-not $downloadSuccess) { Write-P -1 'ALL_MIRRORS_FAILED: Could not download from any mirror. Check your connection.'; exit 1 }" & vbCrLf
     code = code & "if (-not (Test-Path $isoPath) -or (Get-Item $isoPath).Length -lt 500MB) { Write-P -1 'DOWNLOAD_INCOMPLETE: Download was interrupted. Check your connection.'; exit 1 }" & vbCrLf
     code = code & "Write-P 50 'Verifying download integrity...' 'Computing SHA256 checksum'" & vbCrLf
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
