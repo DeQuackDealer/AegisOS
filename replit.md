@@ -192,32 +192,38 @@ The promotional website references but does not implement:
 - SENDGRID_FROM_EMAIL defaults to riley.liang@hotmail.com
 - Sends purchase confirmation with license key, invoice details, next steps
 
-### Aegis Exclusive Tools (16 Total per Edition)
+### Aegis Exclusive Tools (22 Total per Edition)
 
-All editions include 16 custom Aegis-branded Python utilities located in `/usr/local/bin/`:
+All editions include 22 custom Aegis-branded Python utilities located in `/usr/local/bin/`:
 
 **System Utilities**:
 - `aegis-system-monitor` - Real-time system resource monitoring (CPU, RAM, disk, network)
 - `aegis-system-info` - Hardware detection and system information display
 - `aegis-vm-optimizer` - Virtual machine performance tuning
 - `aegis-kernel-interface` - Kernel parameter configuration
+- `aegis-performance-tuner` - CPU governor, memory, and I/O optimization
+- `aegis-update-manager` - System update management with changelog viewing
 
 **Desktop Customization**:
 - `aegis-desktop-effects` - Window compositing and transparency effects
 - `aegis-wallpaper-engine` - Animated wallpaper support
 - `aegis-taskbar-manager` - Taskbar layout and behavior customization
 
-**Security & Backup** (NEW):
+**Security & Backup**:
 - `aegis-security-center` - All-in-one security dashboard with ClamAV/UFW integration
 - `aegis-backup-pro` - Scheduled rsync-based backup system with incremental snapshots
 
-**App Management** (NEW):
-- `aegis-app-store` - Curated marketplace with 62 apps, apt/flatpak installation
+**App Management**:
+- `aegis-app-store` - Curated marketplace with 104 apps across 10 categories
 - `aegis-game-library` - Unified game launcher (Steam, Lutris, Heroic, native)
 
-**Device Integration** (NEW):
+**Device Integration**:
 - `aegis-mobile-link` - Phone integration with notifications, file transfer, KDE Connect
 - `aegis-desklink` - Multi-computer mouse/keyboard sharing (Barrier/Synergy compatible)
+
+**System Maintenance**:
+- `aegis-driver-manager` - Hardware driver detection (NVIDIA, AMD, WiFi, printers)
+- `aegis-disk-cleaner` - System cleanup (cache, orphans, old kernels)
 
 **Graphics & Gaming**:
 - `aegis-gaming-optimizer` - Game performance tuning (GameMode integration)
@@ -233,3 +239,32 @@ All tools support:
 - Configuration in `/etc/aegis/`
 - Logging to `/var/log/aegis/`
 - Graceful degradation when dependencies missing
+- Privilege escalation via pkexec/sudo when needed
+
+### Build System
+
+**Build Script**: `build-system/build-aegis.py`
+
+Supports 7 editions: freemium, basic, workplace, gamer, ai, gamer-ai, server
+
+**Build Modes**:
+- **Simulation Mode**: Runs on Replit or systems without dependencies
+- **Real Build Mode**: Creates actual bootable ISOs on Linux with proper tools
+
+**Commands**:
+```bash
+# Check dependencies
+python3 build-aegis.py --check-deps
+
+# List available editions
+python3 build-aegis.py --list-editions
+
+# Build in auto-detect mode
+python3 build-aegis.py --edition freemium
+
+# Force real build (requires sudo)
+sudo python3 build-aegis.py --edition freemium --real-build
+```
+
+**Required Dependencies for Real Builds**:
+- debootstrap, mksquashfs, xorriso, isolinux, squashfs-tools
