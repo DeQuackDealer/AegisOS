@@ -1,0 +1,1572 @@
+#!/usr/bin/env python3
+"""
+Aegis Backup Pro - Professional Backup Solution
+Provides scheduled, incremental backups with rsync
+Supports local, external, and network drives
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import hashlib
+import argparse
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+class AegisBackupPro:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/backup")
+        self.log_dir = Path("/var/log/aegis")
+        self.profiles_file = self.config_dir / "backups.json"
+        self.status_file = self.data_dir / "backup-status.json"
+        self.history_file = self.data_dir / "backup-history.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_profiles()
+        self.load_status()
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            directory.mkdir(parents=True, exist_ok=True)
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "aegis-backup.log"
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("AegisBackup")
+    
+    def load_profiles(self):
+        """Load backup profiles from configuration"""
+        default_profiles = {
+            "profiles": {
+                "home": {
+                    "name": "Home Directory",
+                    "source": "/home",
+                    "destination": "/backup/home",
+                    "exclude": [".cache", ".local/share/Trash", "*.tmp", "*.log"],
+                    "schedule": "daily",
+                    "retention": 7,
+                    "incremental": True,
+                    "verify": True,
+                    "enabled": True,
+                    "last_backup": None,
+                    "last_status": None
+                }
+            },
+            "global_settings": {
+                "max_concurrent_backups": 2,
+                "bandwidth_limit": 0,
+                "compression": True,
+                "preserve_permissions": True,
+                "notify_on_complete": True,
+                "notify_on_error": True
+            }
+        }
+        
+        try:
+            with open(self.profiles_file, 'r') as f:
+                self.profiles = json.load(f)
+                if "profiles" not in self.profiles:
+                    self.profiles["profiles"] = default_profiles["profiles"]
+                if "global_settings" not in self.profiles:
+                    self.profiles["global_settings"] = default_profiles["global_settings"]
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.profiles = default_profiles
+            self.save_profiles()
+    
+    def save_profiles(self):
+        """Save backup profiles to configuration"""
+        with open(self.profiles_file, 'w') as f:
+            json.dump(self.profiles, f, indent=2)
+    
+    def load_status(self):
+        """Load backup status"""
+        try:
+            with open(self.status_file, 'r') as f:
+                self.status = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.status = {
+                "running_backups": [],
+                "last_activity": None,
+                "total_backups": 0,
+                "successful_backups": 0,
+                "failed_backups": 0
+            }
+            self.save_status()
+    
+    def save_status(self):
+        """Save backup status"""
+        with open(self.status_file, 'w') as f:
+            json.dump(self.status, f, indent=2)
+    
+    def load_history(self) -> List[Dict]:
+        """Load backup history"""
+        try:
+            with open(self.history_file, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+    
+    def save_history(self, history: List[Dict]):
+        """Save backup history"""
+        history = history[-1000:]
+        with open(self.history_file, 'w') as f:
+            json.dump(history, f, indent=2)
+    
+    def add_history_entry(self, entry: Dict):
+        """Add entry to backup history"""
+        history = self.load_history()
+        history.append(entry)
+        self.save_history(history)
+    
+    def create_profile(self, profile_id: str, name: str, source: str, destination: str,
+                      exclude: List[str] = None, schedule: str = "daily",
+                      retention: int = 7, incremental: bool = True,
+                      verify: bool = True) -> bool:
+        """Create a new backup profile"""
+        if profile_id in self.profiles["profiles"]:
+            self.logger.error(f"Profile '{profile_id}' already exists")
+            return False
+        
+        self.profiles["profiles"][profile_id] = {
+            "name": name,
+            "source": source,
+            "destination": destination,
+            "exclude": exclude or [],
+            "schedule": schedule,
+            "retention": retention,
+            "incremental": incremental,
+            "verify": verify,
+            "enabled": True,
+            "last_backup": None,
+            "last_status": None
+        }
+        
+        self.save_profiles()
+        self.logger.info(f"Created backup profile: {profile_id}")
+        return True
+    
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a backup profile"""
+        if profile_id not in self.profiles["profiles"]:
+            self.logger.error(f"Profile '{profile_id}' not found")
+            return False
+        
+        del self.profiles["profiles"][profile_id]
+        self.save_profiles()
+        self.logger.info(f"Deleted backup profile: {profile_id}")
+        return True
+    
+    def get_last_backup_path(self, profile_id: str) -> Optional[str]:
+        """Get the path of the last successful backup for incremental backups"""
+        profile = self.profiles["profiles"].get(profile_id)
+        if not profile:
+            return None
+        
+        dest_path = Path(profile["destination"])
+        if not dest_path.exists():
+            return None
+        
+        backup_dirs = sorted([d for d in dest_path.iterdir() if d.is_dir()], 
+                           key=lambda x: x.name, reverse=True)
+        
+        for backup_dir in backup_dirs:
+            status_file = backup_dir / ".backup_status"
+            if status_file.exists():
+                try:
+                    with open(status_file, 'r') as f:
+                        status = json.load(f)
+                        if status.get("status") == "completed":
+                            return str(backup_dir)
+                except:
+                    pass
+        
+        return None
+    
+    def build_rsync_command(self, profile: Dict, backup_path: str, 
+                           link_dest: Optional[str] = None) -> List[str]:
+        """Build rsync command with appropriate options"""
+        cmd = ["rsync", "-av", "--progress", "--stats"]
+        
+        if self.profiles["global_settings"]["compression"]:
+            cmd.append("-z")
+        
+        if self.profiles["global_settings"]["preserve_permissions"]:
+            cmd.extend(["-p", "-o", "-g"])
+        
+        if self.profiles["global_settings"]["bandwidth_limit"] > 0:
+            cmd.append(f"--bwlimit={self.profiles['global_settings']['bandwidth_limit']}")
+        
+        for exclude in profile.get("exclude", []):
+            cmd.append(f"--exclude={exclude}")
+        
+        if profile.get("incremental") and link_dest:
+            cmd.append(f"--link-dest={link_dest}")
+        
+        cmd.append("--delete")
+        
+        source = profile["source"]
+        if not source.endswith("/"):
+            source += "/"
+        
+        cmd.extend([source, backup_path])
+        
+        return cmd
+    
+    def verify_backup(self, source: str, backup_path: str, sample_size: int = 10) -> Tuple[bool, str]:
+        """Verify backup integrity by comparing checksums"""
+        self.logger.info(f"Verifying backup: {backup_path}")
+        
+        try:
+            source_files = []
+            for root, dirs, files in os.walk(source):
+                for file in files[:sample_size]:
+                    source_files.append(os.path.join(root, file))
+            
+            verified = 0
+            failed = 0
+            
+            for source_file in source_files[:sample_size]:
+                rel_path = os.path.relpath(source_file, source)
+                backup_file = os.path.join(backup_path, rel_path)
+                
+                if os.path.exists(backup_file):
+                    source_hash = self.get_file_hash(source_file)
+                    backup_hash = self.get_file_hash(backup_file)
+                    
+                    if source_hash == backup_hash:
+                        verified += 1
+                    else:
+                        failed += 1
+                        self.logger.warning(f"Hash mismatch: {rel_path}")
+                else:
+                    failed += 1
+                    self.logger.warning(f"Missing file in backup: {rel_path}")
+            
+            if failed == 0:
+                return True, f"Verified {verified} files successfully"
+            else:
+                return False, f"Verification failed: {failed} files with issues"
+                
+        except Exception as e:
+            return False, f"Verification error: {str(e)}"
+    
+    def get_file_hash(self, filepath: str, block_size: int = 65536) -> str:
+        """Calculate SHA256 hash of a file"""
+        sha256 = hashlib.sha256()
+        try:
+            with open(filepath, 'rb') as f:
+                for block in iter(lambda: f.read(block_size), b''):
+                    sha256.update(block)
+            return sha256.hexdigest()
+        except:
+            return ""
+    
+    def run_backup(self, profile_id: str, callback=None) -> Dict:
+        """Run a backup for the specified profile"""
+        if profile_id not in self.profiles["profiles"]:
+            return {"status": "error", "message": f"Profile '{profile_id}' not found"}
+        
+        profile = self.profiles["profiles"][profile_id]
+        
+        if not profile.get("enabled", True):
+            return {"status": "skipped", "message": "Profile is disabled"}
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_name = f"backup_{timestamp}"
+        backup_path = os.path.join(profile["destination"], backup_name)
+        
+        result = {
+            "profile_id": profile_id,
+            "backup_name": backup_name,
+            "backup_path": backup_path,
+            "start_time": datetime.now().isoformat(),
+            "end_time": None,
+            "status": "running",
+            "files_transferred": 0,
+            "bytes_transferred": 0,
+            "errors": [],
+            "verified": False,
+            "verification_message": ""
+        }
+        
+        self.logger.info(f"Starting backup: {profile_id} -> {backup_path}")
+        
+        self.status["running_backups"].append(profile_id)
+        self.status["last_activity"] = datetime.now().isoformat()
+        self.save_status()
+        
+        try:
+            os.makedirs(backup_path, exist_ok=True)
+            
+            link_dest = None
+            if profile.get("incremental"):
+                link_dest = self.get_last_backup_path(profile_id)
+                if link_dest:
+                    self.logger.info(f"Using incremental backup with link-dest: {link_dest}")
+            
+            cmd = self.build_rsync_command(profile, backup_path, link_dest)
+            self.logger.info(f"Running: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            stdout_lines = []
+            for line in process.stdout:
+                stdout_lines.append(line.strip())
+                if callback:
+                    callback(line.strip())
+                if "to-check=" in line or "xfr#" in line:
+                    self.logger.debug(line.strip())
+            
+            process.wait()
+            stderr = process.stderr.read()
+            
+            for line in stdout_lines:
+                if "Number of files:" in line:
+                    try:
+                        result["files_transferred"] = int(line.split(":")[1].strip().split()[0].replace(",", ""))
+                    except:
+                        pass
+                elif "Total file size:" in line or "Total transferred file size:" in line:
+                    try:
+                        size_str = line.split(":")[1].strip().split()[0].replace(",", "")
+                        result["bytes_transferred"] = int(size_str)
+                    except:
+                        pass
+            
+            if process.returncode == 0:
+                result["status"] = "completed"
+                
+                if profile.get("verify"):
+                    verified, verify_msg = self.verify_backup(profile["source"], backup_path)
+                    result["verified"] = verified
+                    result["verification_message"] = verify_msg
+                
+                backup_status = {
+                    "status": "completed",
+                    "timestamp": result["start_time"],
+                    "files": result["files_transferred"],
+                    "bytes": result["bytes_transferred"],
+                    "verified": result["verified"]
+                }
+                with open(os.path.join(backup_path, ".backup_status"), 'w') as f:
+                    json.dump(backup_status, f, indent=2)
+                
+                self.profiles["profiles"][profile_id]["last_backup"] = result["start_time"]
+                self.profiles["profiles"][profile_id]["last_status"] = "success"
+                self.save_profiles()
+                
+                self.status["successful_backups"] += 1
+                
+            else:
+                result["status"] = "failed"
+                result["errors"].append(stderr)
+                self.profiles["profiles"][profile_id]["last_status"] = "failed"
+                self.save_profiles()
+                self.status["failed_backups"] += 1
+                
+        except Exception as e:
+            result["status"] = "error"
+            result["errors"].append(str(e))
+            self.logger.error(f"Backup error: {e}")
+            self.status["failed_backups"] += 1
+        
+        finally:
+            result["end_time"] = datetime.now().isoformat()
+            
+            if profile_id in self.status["running_backups"]:
+                self.status["running_backups"].remove(profile_id)
+            self.status["total_backups"] += 1
+            self.save_status()
+            
+            self.add_history_entry(result)
+            
+            self.cleanup_old_backups(profile_id)
+        
+        return result
+    
+    def cleanup_old_backups(self, profile_id: str):
+        """Remove old backups beyond retention period"""
+        profile = self.profiles["profiles"].get(profile_id)
+        if not profile:
+            return
+        
+        retention = profile.get("retention", 7)
+        dest_path = Path(profile["destination"])
+        
+        if not dest_path.exists():
+            return
+        
+        backup_dirs = sorted([d for d in dest_path.iterdir() if d.is_dir()], 
+                           key=lambda x: x.name)
+        
+        while len(backup_dirs) > retention:
+            old_backup = backup_dirs.pop(0)
+            try:
+                import shutil
+                shutil.rmtree(old_backup)
+                self.logger.info(f"Removed old backup: {old_backup}")
+            except Exception as e:
+                self.logger.error(f"Failed to remove old backup {old_backup}: {e}")
+    
+    def list_backups(self, profile_id: str = None) -> Dict[str, List[Dict]]:
+        """List all available backups"""
+        backups = {}
+        
+        profiles_to_check = [profile_id] if profile_id else self.profiles["profiles"].keys()
+        
+        for pid in profiles_to_check:
+            profile = self.profiles["profiles"].get(pid)
+            if not profile:
+                continue
+            
+            dest_path = Path(profile["destination"])
+            backups[pid] = []
+            
+            if dest_path.exists():
+                for backup_dir in sorted(dest_path.iterdir(), key=lambda x: x.name, reverse=True):
+                    if backup_dir.is_dir():
+                        backup_info = {
+                            "name": backup_dir.name,
+                            "path": str(backup_dir),
+                            "timestamp": None,
+                            "size": 0,
+                            "status": "unknown",
+                            "verified": False
+                        }
+                        
+                        status_file = backup_dir / ".backup_status"
+                        if status_file.exists():
+                            try:
+                                with open(status_file, 'r') as f:
+                                    status = json.load(f)
+                                    backup_info["timestamp"] = status.get("timestamp")
+                                    backup_info["status"] = status.get("status", "unknown")
+                                    backup_info["verified"] = status.get("verified", False)
+                            except:
+                                pass
+                        
+                        try:
+                            backup_info["size"] = sum(
+                                f.stat().st_size for f in backup_dir.rglob('*') if f.is_file()
+                            )
+                        except:
+                            pass
+                        
+                        backups[pid].append(backup_info)
+        
+        return backups
+    
+    def restore_backup(self, profile_id: str, backup_name: str, 
+                      restore_path: str = None, callback=None) -> Dict:
+        """Restore from a specific backup"""
+        profile = self.profiles["profiles"].get(profile_id)
+        if not profile:
+            return {"status": "error", "message": f"Profile '{profile_id}' not found"}
+        
+        backup_path = os.path.join(profile["destination"], backup_name)
+        if not os.path.exists(backup_path):
+            return {"status": "error", "message": f"Backup '{backup_name}' not found"}
+        
+        if restore_path is None:
+            restore_path = profile["source"]
+        
+        result = {
+            "profile_id": profile_id,
+            "backup_name": backup_name,
+            "backup_path": backup_path,
+            "restore_path": restore_path,
+            "start_time": datetime.now().isoformat(),
+            "end_time": None,
+            "status": "running",
+            "files_restored": 0,
+            "bytes_restored": 0,
+            "errors": [],
+            "verified": False,
+            "verification_message": ""
+        }
+        
+        self.logger.info(f"Starting restore: {backup_path} -> {restore_path}")
+        
+        try:
+            os.makedirs(restore_path, exist_ok=True)
+            
+            cmd = ["rsync", "-av", "--progress", "--stats"]
+            
+            if self.profiles["global_settings"]["preserve_permissions"]:
+                cmd.extend(["-p", "-o", "-g"])
+            
+            source = backup_path
+            if not source.endswith("/"):
+                source += "/"
+            
+            cmd.extend([source, restore_path])
+            
+            self.logger.info(f"Running: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            stdout_lines = []
+            for line in process.stdout:
+                stdout_lines.append(line.strip())
+                if callback:
+                    callback(line.strip())
+            
+            process.wait()
+            stderr = process.stderr.read()
+            
+            for line in stdout_lines:
+                if "Number of files:" in line:
+                    try:
+                        result["files_restored"] = int(line.split(":")[1].strip().split()[0].replace(",", ""))
+                    except:
+                        pass
+                elif "Total file size:" in line or "Total transferred file size:" in line:
+                    try:
+                        size_str = line.split(":")[1].strip().split()[0].replace(",", "")
+                        result["bytes_restored"] = int(size_str)
+                    except:
+                        pass
+            
+            if process.returncode == 0:
+                result["status"] = "completed"
+                
+                verified, verify_msg = self.verify_backup(backup_path, restore_path)
+                result["verified"] = verified
+                result["verification_message"] = verify_msg
+                
+            else:
+                result["status"] = "failed"
+                result["errors"].append(stderr)
+                
+        except Exception as e:
+            result["status"] = "error"
+            result["errors"].append(str(e))
+            self.logger.error(f"Restore error: {e}")
+        
+        finally:
+            result["end_time"] = datetime.now().isoformat()
+            self.add_history_entry(result)
+        
+        return result
+    
+    def get_status(self) -> Dict:
+        """Get overall backup status"""
+        self.load_status()
+        
+        status = {
+            "running_backups": self.status.get("running_backups", []),
+            "last_activity": self.status.get("last_activity"),
+            "total_backups": self.status.get("total_backups", 0),
+            "successful_backups": self.status.get("successful_backups", 0),
+            "failed_backups": self.status.get("failed_backups", 0),
+            "profiles": {}
+        }
+        
+        for profile_id, profile in self.profiles["profiles"].items():
+            status["profiles"][profile_id] = {
+                "name": profile.get("name", profile_id),
+                "enabled": profile.get("enabled", True),
+                "last_backup": profile.get("last_backup"),
+                "last_status": profile.get("last_status"),
+                "schedule": profile.get("schedule", "manual")
+            }
+        
+        return status
+    
+    def check_scheduled_backups(self):
+        """Check and run scheduled backups"""
+        now = datetime.now()
+        
+        for profile_id, profile in self.profiles["profiles"].items():
+            if not profile.get("enabled", True):
+                continue
+            
+            schedule = profile.get("schedule", "manual")
+            if schedule == "manual":
+                continue
+            
+            last_backup = profile.get("last_backup")
+            should_run = False
+            
+            if last_backup is None:
+                should_run = True
+            else:
+                try:
+                    last_time = datetime.fromisoformat(last_backup)
+                    elapsed = now - last_time
+                    
+                    if schedule == "hourly" and elapsed.total_seconds() >= 3600:
+                        should_run = True
+                    elif schedule == "daily" and elapsed.days >= 1:
+                        should_run = True
+                    elif schedule == "weekly" and elapsed.days >= 7:
+                        should_run = True
+                    elif schedule == "monthly" and elapsed.days >= 30:
+                        should_run = True
+                except:
+                    pass
+            
+            if should_run:
+                self.logger.info(f"Running scheduled backup: {profile_id}")
+                self.run_backup(profile_id)
+    
+    def format_size(self, size_bytes: int) -> str:
+        """Format bytes to human readable size"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.2f} PB"
+
+
+class BackupProGUI:
+    def __init__(self):
+        self.backup = AegisBackupPro()
+        self.root = tk.Tk()
+        self.backup_thread = None
+        self.setup_window()
+        self.create_widgets()
+        self.refresh_status()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis Backup Pro")
+        self.root.geometry("1000x750")
+        self.root.configure(bg='#1a1a2e')
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='white')
+        style.configure('TButton', padding=10)
+        style.configure('Header.TLabel', font=('Arial', 24, 'bold'), foreground='#00d4ff')
+        style.configure('Status.TLabel', font=('Arial', 11))
+        style.configure('TLabelframe', background='#1a1a2e', foreground='white')
+        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='#00d4ff', font=('Arial', 12, 'bold'))
+        style.configure('Treeview', background='#0f0f1a', foreground='white', fieldbackground='#0f0f1a')
+        style.configure('Treeview.Heading', background='#2a2a4e', foreground='white')
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header = ttk.Frame(self.root)
+        header.pack(fill='x', padx=20, pady=20)
+        
+        title = ttk.Label(header, text="💾 Aegis Backup Pro", style='Header.TLabel')
+        title.pack(side='left')
+        
+        btn_frame = ttk.Frame(header)
+        btn_frame.pack(side='right')
+        
+        ttk.Button(btn_frame, text="🔄 Refresh", command=self.refresh_status).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="➕ New Profile", command=self.show_new_profile_dialog).pack(side='left', padx=5)
+        
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        profiles_tab = ttk.Frame(notebook)
+        notebook.add(profiles_tab, text="📁 Backup Profiles")
+        self.create_profiles_tab(profiles_tab)
+        
+        backups_tab = ttk.Frame(notebook)
+        notebook.add(backups_tab, text="📦 Backups")
+        self.create_backups_tab(backups_tab)
+        
+        restore_tab = ttk.Frame(notebook)
+        notebook.add(restore_tab, text="🔄 Restore")
+        self.create_restore_tab(restore_tab)
+        
+        history_tab = ttk.Frame(notebook)
+        notebook.add(history_tab, text="📜 History")
+        self.create_history_tab(history_tab)
+        
+        progress_frame = ttk.LabelFrame(self.root, text="Progress", padding=10)
+        progress_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill='x', pady=5)
+        
+        self.progress_label = ttk.Label(progress_frame, text="Ready", style='Status.TLabel')
+        self.progress_label.pack(anchor='w')
+        
+        self.progress_text = scrolledtext.ScrolledText(progress_frame, height=4, 
+                                                       bg='#0f0f1a', fg='#00ff00', font=('Courier', 9))
+        self.progress_text.pack(fill='x', pady=5)
+        
+    def create_profiles_tab(self, parent):
+        """Create the profiles tab"""
+        columns = ('name', 'source', 'destination', 'schedule', 'last_backup', 'status')
+        self.profiles_tree = ttk.Treeview(parent, columns=columns, show='headings')
+        
+        self.profiles_tree.heading('name', text='Profile Name')
+        self.profiles_tree.heading('source', text='Source')
+        self.profiles_tree.heading('destination', text='Destination')
+        self.profiles_tree.heading('schedule', text='Schedule')
+        self.profiles_tree.heading('last_backup', text='Last Backup')
+        self.profiles_tree.heading('status', text='Status')
+        
+        self.profiles_tree.column('name', width=150)
+        self.profiles_tree.column('source', width=200)
+        self.profiles_tree.column('destination', width=200)
+        self.profiles_tree.column('schedule', width=80)
+        self.profiles_tree.column('last_backup', width=150)
+        self.profiles_tree.column('status', width=80)
+        
+        scrollbar = ttk.Scrollbar(parent, orient='vertical', command=self.profiles_tree.yview)
+        self.profiles_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.profiles_tree.pack(side='left', fill='both', expand=True, pady=10)
+        scrollbar.pack(side='right', fill='y', pady=10)
+        
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill='x', pady=10)
+        
+        ttk.Button(btn_frame, text="▶️ Run Backup", command=self.run_selected_backup).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit", command=self.edit_selected_profile).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="🗑️ Delete", command=self.delete_selected_profile).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="📊 View Backups", command=self.view_profile_backups).pack(side='left', padx=5)
+        
+    def create_backups_tab(self, parent):
+        """Create the backups tab"""
+        left_frame = ttk.Frame(parent)
+        left_frame.pack(side='left', fill='y', padx=10, pady=10)
+        
+        ttk.Label(left_frame, text="Select Profile:", style='Status.TLabel').pack(anchor='w')
+        
+        self.backup_profile_var = tk.StringVar()
+        self.backup_profile_combo = ttk.Combobox(left_frame, textvariable=self.backup_profile_var, width=25)
+        self.backup_profile_combo.pack(pady=5)
+        self.backup_profile_combo.bind('<<ComboboxSelected>>', self.on_backup_profile_selected)
+        
+        right_frame = ttk.Frame(parent)
+        right_frame.pack(side='right', fill='both', expand=True, padx=10, pady=10)
+        
+        columns = ('name', 'timestamp', 'size', 'status', 'verified')
+        self.backups_tree = ttk.Treeview(right_frame, columns=columns, show='headings')
+        
+        self.backups_tree.heading('name', text='Backup Name')
+        self.backups_tree.heading('timestamp', text='Timestamp')
+        self.backups_tree.heading('size', text='Size')
+        self.backups_tree.heading('status', text='Status')
+        self.backups_tree.heading('verified', text='Verified')
+        
+        self.backups_tree.column('name', width=200)
+        self.backups_tree.column('timestamp', width=150)
+        self.backups_tree.column('size', width=100)
+        self.backups_tree.column('status', width=100)
+        self.backups_tree.column('verified', width=80)
+        
+        scrollbar = ttk.Scrollbar(right_frame, orient='vertical', command=self.backups_tree.yview)
+        self.backups_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.backups_tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+    def create_restore_tab(self, parent):
+        """Create the restore tab"""
+        form_frame = ttk.Frame(parent)
+        form_frame.pack(fill='x', padx=20, pady=20)
+        
+        ttk.Label(form_frame, text="Profile:", style='Status.TLabel').grid(row=0, column=0, sticky='w', pady=5)
+        self.restore_profile_var = tk.StringVar()
+        self.restore_profile_combo = ttk.Combobox(form_frame, textvariable=self.restore_profile_var, width=30)
+        self.restore_profile_combo.grid(row=0, column=1, pady=5, padx=10)
+        self.restore_profile_combo.bind('<<ComboboxSelected>>', self.on_restore_profile_selected)
+        
+        ttk.Label(form_frame, text="Backup:", style='Status.TLabel').grid(row=1, column=0, sticky='w', pady=5)
+        self.restore_backup_var = tk.StringVar()
+        self.restore_backup_combo = ttk.Combobox(form_frame, textvariable=self.restore_backup_var, width=30)
+        self.restore_backup_combo.grid(row=1, column=1, pady=5, padx=10)
+        
+        ttk.Label(form_frame, text="Restore To:", style='Status.TLabel').grid(row=2, column=0, sticky='w', pady=5)
+        self.restore_path_var = tk.StringVar()
+        self.restore_path_entry = ttk.Entry(form_frame, textvariable=self.restore_path_var, width=30)
+        self.restore_path_entry.grid(row=2, column=1, pady=5, padx=10)
+        ttk.Button(form_frame, text="Browse", command=self.browse_restore_path).grid(row=2, column=2, pady=5)
+        
+        self.restore_original_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form_frame, text="Restore to original location", 
+                       variable=self.restore_original_var, 
+                       command=self.toggle_restore_path).grid(row=3, column=1, sticky='w', pady=5)
+        
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(pady=20)
+        
+        ttk.Button(btn_frame, text="🔄 Start Restore", command=self.start_restore).pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="✅ Verify Backup", command=self.verify_selected_backup).pack(side='left', padx=10)
+        
+        info_frame = ttk.LabelFrame(parent, text="Restore Information", padding=15)
+        info_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        self.restore_info_text = scrolledtext.ScrolledText(info_frame, height=10, 
+                                                           bg='#0f0f1a', fg='white', font=('Courier', 10))
+        self.restore_info_text.pack(fill='both', expand=True)
+        
+    def create_history_tab(self, parent):
+        """Create the history tab"""
+        columns = ('timestamp', 'profile', 'type', 'status', 'files', 'size')
+        self.history_tree = ttk.Treeview(parent, columns=columns, show='headings')
+        
+        self.history_tree.heading('timestamp', text='Timestamp')
+        self.history_tree.heading('profile', text='Profile')
+        self.history_tree.heading('type', text='Type')
+        self.history_tree.heading('status', text='Status')
+        self.history_tree.heading('files', text='Files')
+        self.history_tree.heading('size', text='Size')
+        
+        self.history_tree.column('timestamp', width=150)
+        self.history_tree.column('profile', width=150)
+        self.history_tree.column('type', width=80)
+        self.history_tree.column('status', width=100)
+        self.history_tree.column('files', width=80)
+        self.history_tree.column('size', width=100)
+        
+        scrollbar = ttk.Scrollbar(parent, orient='vertical', command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.history_tree.pack(side='left', fill='both', expand=True, padx=10, pady=10)
+        scrollbar.pack(side='right', fill='y', pady=10)
+        
+    def refresh_status(self):
+        """Refresh all status information"""
+        for item in self.profiles_tree.get_children():
+            self.profiles_tree.delete(item)
+        
+        for profile_id, profile in self.backup.profiles["profiles"].items():
+            last_backup = profile.get("last_backup", "Never")
+            if last_backup and last_backup != "Never":
+                try:
+                    dt = datetime.fromisoformat(last_backup)
+                    last_backup = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            
+            status = profile.get("last_status", "Unknown")
+            if status == "success":
+                status = "✅ Success"
+            elif status == "failed":
+                status = "❌ Failed"
+            else:
+                status = "⚪ Unknown"
+            
+            self.profiles_tree.insert('', 'end', iid=profile_id, values=(
+                profile.get("name", profile_id),
+                profile.get("source", ""),
+                profile.get("destination", ""),
+                profile.get("schedule", "manual").capitalize(),
+                last_backup,
+                status
+            ))
+        
+        profiles = list(self.backup.profiles["profiles"].keys())
+        self.backup_profile_combo['values'] = profiles
+        self.restore_profile_combo['values'] = profiles
+        
+        self.refresh_history()
+        
+    def refresh_history(self):
+        """Refresh history tab"""
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        history = self.backup.load_history()
+        for entry in reversed(history[-100:]):
+            timestamp = entry.get("start_time", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            
+            entry_type = "Backup" if "files_transferred" in entry else "Restore"
+            files = entry.get("files_transferred", entry.get("files_restored", 0))
+            size = entry.get("bytes_transferred", entry.get("bytes_restored", 0))
+            
+            self.history_tree.insert('', 'end', values=(
+                timestamp,
+                entry.get("profile_id", ""),
+                entry_type,
+                entry.get("status", ""),
+                files,
+                self.backup.format_size(size)
+            ))
+        
+    def show_new_profile_dialog(self):
+        """Show dialog to create new profile"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("New Backup Profile")
+        dialog.geometry("500x450")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        form = ttk.Frame(dialog)
+        form.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        ttk.Label(form, text="Profile ID:", style='Status.TLabel').grid(row=0, column=0, sticky='w', pady=5)
+        profile_id_var = tk.StringVar()
+        ttk.Entry(form, textvariable=profile_id_var, width=35).grid(row=0, column=1, pady=5)
+        
+        ttk.Label(form, text="Profile Name:", style='Status.TLabel').grid(row=1, column=0, sticky='w', pady=5)
+        name_var = tk.StringVar()
+        ttk.Entry(form, textvariable=name_var, width=35).grid(row=1, column=1, pady=5)
+        
+        ttk.Label(form, text="Source Path:", style='Status.TLabel').grid(row=2, column=0, sticky='w', pady=5)
+        source_var = tk.StringVar()
+        source_entry = ttk.Entry(form, textvariable=source_var, width=35)
+        source_entry.grid(row=2, column=1, pady=5)
+        ttk.Button(form, text="Browse", 
+                  command=lambda: source_var.set(filedialog.askdirectory())).grid(row=2, column=2, padx=5)
+        
+        ttk.Label(form, text="Destination Path:", style='Status.TLabel').grid(row=3, column=0, sticky='w', pady=5)
+        dest_var = tk.StringVar()
+        dest_entry = ttk.Entry(form, textvariable=dest_var, width=35)
+        dest_entry.grid(row=3, column=1, pady=5)
+        ttk.Button(form, text="Browse", 
+                  command=lambda: dest_var.set(filedialog.askdirectory())).grid(row=3, column=2, padx=5)
+        
+        ttk.Label(form, text="Schedule:", style='Status.TLabel').grid(row=4, column=0, sticky='w', pady=5)
+        schedule_var = tk.StringVar(value="daily")
+        schedule_combo = ttk.Combobox(form, textvariable=schedule_var, width=32,
+                                      values=["manual", "hourly", "daily", "weekly", "monthly"])
+        schedule_combo.grid(row=4, column=1, pady=5)
+        
+        ttk.Label(form, text="Retention (days):", style='Status.TLabel').grid(row=5, column=0, sticky='w', pady=5)
+        retention_var = tk.StringVar(value="7")
+        ttk.Entry(form, textvariable=retention_var, width=35).grid(row=5, column=1, pady=5)
+        
+        ttk.Label(form, text="Exclude patterns:", style='Status.TLabel').grid(row=6, column=0, sticky='w', pady=5)
+        exclude_var = tk.StringVar(value=".cache,*.tmp,*.log")
+        ttk.Entry(form, textvariable=exclude_var, width=35).grid(row=6, column=1, pady=5)
+        
+        incremental_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="Incremental backups", variable=incremental_var).grid(row=7, column=1, sticky='w', pady=5)
+        
+        verify_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(form, text="Verify after backup", variable=verify_var).grid(row=8, column=1, sticky='w', pady=5)
+        
+        def save_profile():
+            if not profile_id_var.get() or not source_var.get() or not dest_var.get():
+                messagebox.showerror("Error", "Please fill in all required fields")
+                return
+            
+            exclude = [x.strip() for x in exclude_var.get().split(",") if x.strip()]
+            
+            try:
+                retention = int(retention_var.get())
+            except ValueError:
+                retention = 7
+            
+            success = self.backup.create_profile(
+                profile_id=profile_id_var.get(),
+                name=name_var.get() or profile_id_var.get(),
+                source=source_var.get(),
+                destination=dest_var.get(),
+                exclude=exclude,
+                schedule=schedule_var.get(),
+                retention=retention,
+                incremental=incremental_var.get(),
+                verify=verify_var.get()
+            )
+            
+            if success:
+                messagebox.showinfo("Success", "Profile created successfully")
+                dialog.destroy()
+                self.refresh_status()
+            else:
+                messagebox.showerror("Error", "Failed to create profile")
+        
+        btn_frame = ttk.Frame(form)
+        btn_frame.grid(row=9, column=0, columnspan=3, pady=20)
+        
+        ttk.Button(btn_frame, text="Create Profile", command=save_profile).pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side='left', padx=10)
+        
+    def run_selected_backup(self):
+        """Run backup for selected profile"""
+        selection = self.profiles_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a profile")
+            return
+        
+        profile_id = selection[0]
+        
+        if self.backup_thread and self.backup_thread.is_alive():
+            messagebox.showwarning("Warning", "A backup is already running")
+            return
+        
+        self.progress_text.delete('1.0', tk.END)
+        self.progress_var.set(0)
+        self.progress_label.config(text=f"Starting backup: {profile_id}")
+        
+        def run_backup():
+            def callback(line):
+                self.root.after(0, lambda: self.update_progress(line))
+            
+            result = self.backup.run_backup(profile_id, callback)
+            self.root.after(0, lambda: self.backup_complete(result))
+        
+        self.backup_thread = threading.Thread(target=run_backup)
+        self.backup_thread.start()
+        
+    def update_progress(self, line):
+        """Update progress display"""
+        self.progress_text.insert(tk.END, line + "\n")
+        self.progress_text.see(tk.END)
+        
+        if "%" in line:
+            try:
+                percent = int(line.split("%")[0].split()[-1])
+                self.progress_var.set(percent)
+            except:
+                pass
+        
+        self.progress_label.config(text=line[:80])
+        
+    def backup_complete(self, result):
+        """Handle backup completion"""
+        self.progress_var.set(100)
+        
+        if result["status"] == "completed":
+            msg = f"Backup completed successfully!\n\nFiles: {result.get('files_transferred', 0)}\n"
+            msg += f"Size: {self.backup.format_size(result.get('bytes_transferred', 0))}"
+            if result.get("verified"):
+                msg += "\n\n✅ Verification passed"
+            messagebox.showinfo("Backup Complete", msg)
+        else:
+            errors = "\n".join(result.get("errors", ["Unknown error"]))
+            messagebox.showerror("Backup Failed", f"Status: {result['status']}\n\n{errors}")
+        
+        self.progress_label.config(text="Ready")
+        self.refresh_status()
+        
+    def edit_selected_profile(self):
+        """Edit the selected profile"""
+        selection = self.profiles_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a profile")
+            return
+        
+        profile_id = selection[0]
+        profile = self.backup.profiles["profiles"].get(profile_id)
+        if not profile:
+            return
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Edit Profile: {profile_id}")
+        dialog.geometry("500x400")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        form = ttk.Frame(dialog)
+        form.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        ttk.Label(form, text="Profile Name:", style='Status.TLabel').grid(row=0, column=0, sticky='w', pady=5)
+        name_var = tk.StringVar(value=profile.get("name", ""))
+        ttk.Entry(form, textvariable=name_var, width=35).grid(row=0, column=1, pady=5)
+        
+        ttk.Label(form, text="Source Path:", style='Status.TLabel').grid(row=1, column=0, sticky='w', pady=5)
+        source_var = tk.StringVar(value=profile.get("source", ""))
+        ttk.Entry(form, textvariable=source_var, width=35).grid(row=1, column=1, pady=5)
+        
+        ttk.Label(form, text="Destination Path:", style='Status.TLabel').grid(row=2, column=0, sticky='w', pady=5)
+        dest_var = tk.StringVar(value=profile.get("destination", ""))
+        ttk.Entry(form, textvariable=dest_var, width=35).grid(row=2, column=1, pady=5)
+        
+        ttk.Label(form, text="Schedule:", style='Status.TLabel').grid(row=3, column=0, sticky='w', pady=5)
+        schedule_var = tk.StringVar(value=profile.get("schedule", "daily"))
+        ttk.Combobox(form, textvariable=schedule_var, width=32,
+                    values=["manual", "hourly", "daily", "weekly", "monthly"]).grid(row=3, column=1, pady=5)
+        
+        ttk.Label(form, text="Retention:", style='Status.TLabel').grid(row=4, column=0, sticky='w', pady=5)
+        retention_var = tk.StringVar(value=str(profile.get("retention", 7)))
+        ttk.Entry(form, textvariable=retention_var, width=35).grid(row=4, column=1, pady=5)
+        
+        enabled_var = tk.BooleanVar(value=profile.get("enabled", True))
+        ttk.Checkbutton(form, text="Enabled", variable=enabled_var).grid(row=5, column=1, sticky='w', pady=5)
+        
+        incremental_var = tk.BooleanVar(value=profile.get("incremental", True))
+        ttk.Checkbutton(form, text="Incremental backups", variable=incremental_var).grid(row=6, column=1, sticky='w', pady=5)
+        
+        verify_var = tk.BooleanVar(value=profile.get("verify", True))
+        ttk.Checkbutton(form, text="Verify after backup", variable=verify_var).grid(row=7, column=1, sticky='w', pady=5)
+        
+        def save_changes():
+            try:
+                retention = int(retention_var.get())
+            except ValueError:
+                retention = 7
+            
+            self.backup.profiles["profiles"][profile_id].update({
+                "name": name_var.get(),
+                "source": source_var.get(),
+                "destination": dest_var.get(),
+                "schedule": schedule_var.get(),
+                "retention": retention,
+                "enabled": enabled_var.get(),
+                "incremental": incremental_var.get(),
+                "verify": verify_var.get()
+            })
+            self.backup.save_profiles()
+            messagebox.showinfo("Success", "Profile updated successfully")
+            dialog.destroy()
+            self.refresh_status()
+        
+        btn_frame = ttk.Frame(form)
+        btn_frame.grid(row=8, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(btn_frame, text="Save Changes", command=save_changes).pack(side='left', padx=10)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side='left', padx=10)
+        
+    def delete_selected_profile(self):
+        """Delete the selected profile"""
+        selection = self.profiles_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a profile")
+            return
+        
+        profile_id = selection[0]
+        
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete profile '{profile_id}'?"):
+            if self.backup.delete_profile(profile_id):
+                messagebox.showinfo("Success", "Profile deleted successfully")
+                self.refresh_status()
+            else:
+                messagebox.showerror("Error", "Failed to delete profile")
+                
+    def view_profile_backups(self):
+        """View backups for selected profile"""
+        selection = self.profiles_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a profile")
+            return
+        
+        profile_id = selection[0]
+        self.backup_profile_var.set(profile_id)
+        self.on_backup_profile_selected(None)
+        
+    def on_backup_profile_selected(self, event):
+        """Handle backup profile selection"""
+        profile_id = self.backup_profile_var.get()
+        if not profile_id:
+            return
+        
+        for item in self.backups_tree.get_children():
+            self.backups_tree.delete(item)
+        
+        backups = self.backup.list_backups(profile_id)
+        
+        for backup_info in backups.get(profile_id, []):
+            timestamp = backup_info.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            
+            self.backups_tree.insert('', 'end', values=(
+                backup_info.get("name", ""),
+                timestamp,
+                self.backup.format_size(backup_info.get("size", 0)),
+                backup_info.get("status", "unknown"),
+                "✅" if backup_info.get("verified") else "❌"
+            ))
+            
+    def on_restore_profile_selected(self, event):
+        """Handle restore profile selection"""
+        profile_id = self.restore_profile_var.get()
+        if not profile_id:
+            return
+        
+        backups = self.backup.list_backups(profile_id)
+        backup_names = [b["name"] for b in backups.get(profile_id, [])]
+        self.restore_backup_combo['values'] = backup_names
+        
+        if backup_names:
+            self.restore_backup_var.set(backup_names[0])
+        
+        profile = self.backup.profiles["profiles"].get(profile_id)
+        if profile:
+            self.restore_path_var.set(profile.get("source", ""))
+            
+    def toggle_restore_path(self):
+        """Toggle restore path entry state"""
+        if self.restore_original_var.get():
+            profile_id = self.restore_profile_var.get()
+            if profile_id:
+                profile = self.backup.profiles["profiles"].get(profile_id)
+                if profile:
+                    self.restore_path_var.set(profile.get("source", ""))
+            self.restore_path_entry.config(state='disabled')
+        else:
+            self.restore_path_entry.config(state='normal')
+            
+    def browse_restore_path(self):
+        """Browse for restore path"""
+        path = filedialog.askdirectory()
+        if path:
+            self.restore_path_var.set(path)
+            self.restore_original_var.set(False)
+            
+    def start_restore(self):
+        """Start the restore process"""
+        profile_id = self.restore_profile_var.get()
+        backup_name = self.restore_backup_var.get()
+        restore_path = self.restore_path_var.get() if not self.restore_original_var.get() else None
+        
+        if not profile_id or not backup_name:
+            messagebox.showwarning("Warning", "Please select a profile and backup")
+            return
+        
+        if messagebox.askyesno("Confirm Restore", 
+                              f"Are you sure you want to restore backup '{backup_name}'?\n\n"
+                              f"This will overwrite files in the destination."):
+            
+            self.progress_text.delete('1.0', tk.END)
+            self.progress_var.set(0)
+            self.progress_label.config(text=f"Restoring: {backup_name}")
+            
+            def run_restore():
+                def callback(line):
+                    self.root.after(0, lambda: self.update_progress(line))
+                
+                result = self.backup.restore_backup(profile_id, backup_name, restore_path, callback)
+                self.root.after(0, lambda: self.restore_complete(result))
+            
+            threading.Thread(target=run_restore).start()
+            
+    def restore_complete(self, result):
+        """Handle restore completion"""
+        self.progress_var.set(100)
+        
+        if result["status"] == "completed":
+            msg = f"Restore completed successfully!\n\nFiles: {result.get('files_restored', 0)}\n"
+            msg += f"Size: {self.backup.format_size(result.get('bytes_restored', 0))}"
+            if result.get("verified"):
+                msg += "\n\n✅ Verification passed"
+            else:
+                msg += f"\n\n⚠️ {result.get('verification_message', '')}"
+            messagebox.showinfo("Restore Complete", msg)
+        else:
+            errors = "\n".join(result.get("errors", ["Unknown error"]))
+            messagebox.showerror("Restore Failed", f"Status: {result['status']}\n\n{errors}")
+        
+        self.progress_label.config(text="Ready")
+        self.refresh_status()
+        
+    def verify_selected_backup(self):
+        """Verify the selected backup"""
+        profile_id = self.restore_profile_var.get()
+        backup_name = self.restore_backup_var.get()
+        
+        if not profile_id or not backup_name:
+            messagebox.showwarning("Warning", "Please select a profile and backup")
+            return
+        
+        profile = self.backup.profiles["profiles"].get(profile_id)
+        if not profile:
+            return
+        
+        backup_path = os.path.join(profile["destination"], backup_name)
+        
+        self.restore_info_text.delete('1.0', tk.END)
+        self.restore_info_text.insert(tk.END, f"Verifying backup: {backup_path}\n\n")
+        
+        verified, message = self.backup.verify_backup(profile["source"], backup_path)
+        
+        if verified:
+            self.restore_info_text.insert(tk.END, f"✅ {message}\n")
+            messagebox.showinfo("Verification", f"✅ {message}")
+        else:
+            self.restore_info_text.insert(tk.END, f"❌ {message}\n")
+            messagebox.showwarning("Verification", f"❌ {message}")
+        
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def show_cli_status(backup: AegisBackupPro):
+    """Display backup status in CLI"""
+    status = backup.get_status()
+    
+    print("\n" + "="*60)
+    print("💾 AEGIS BACKUP PRO - STATUS")
+    print("="*60)
+    
+    print(f"\n📊 Statistics:")
+    print(f"   Total Backups:      {status['total_backups']}")
+    print(f"   Successful:         {status['successful_backups']}")
+    print(f"   Failed:             {status['failed_backups']}")
+    print(f"   Last Activity:      {status['last_activity'] or 'Never'}")
+    
+    if status['running_backups']:
+        print(f"\n⏳ Running Backups: {', '.join(status['running_backups'])}")
+    
+    print(f"\n📁 Profiles:")
+    for profile_id, info in status['profiles'].items():
+        enabled = "✅" if info['enabled'] else "❌"
+        status_icon = "✅" if info['last_status'] == "success" else ("❌" if info['last_status'] == "failed" else "⚪")
+        last_backup = info['last_backup'] or "Never"
+        if last_backup != "Never":
+            try:
+                dt = datetime.fromisoformat(last_backup)
+                last_backup = dt.strftime("%Y-%m-%d %H:%M")
+            except:
+                pass
+        
+        print(f"   {enabled} {profile_id}: {info['name']}")
+        print(f"      Schedule: {info['schedule'].capitalize()} | Last: {last_backup} | Status: {status_icon}")
+    
+    print("="*60 + "\n")
+
+
+def show_cli_backups(backup: AegisBackupPro, profile_id: str = None):
+    """List backups in CLI"""
+    backups = backup.list_backups(profile_id)
+    
+    print("\n" + "="*60)
+    print("📦 AVAILABLE BACKUPS")
+    print("="*60)
+    
+    for pid, backup_list in backups.items():
+        print(f"\n📁 Profile: {pid}")
+        print("-"*40)
+        
+        if not backup_list:
+            print("   No backups found")
+            continue
+        
+        for b in backup_list:
+            timestamp = b.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    timestamp = dt.strftime("%Y-%m-%d %H:%M")
+                except:
+                    pass
+            
+            verified = "✅" if b.get("verified") else "❌"
+            status = b.get("status", "unknown")
+            size = backup.format_size(b.get("size", 0))
+            
+            print(f"   {b['name']}")
+            print(f"      Time: {timestamp} | Size: {size} | Status: {status} | Verified: {verified}")
+    
+    print("="*60 + "\n")
+
+
+def run_cli_backup(backup: AegisBackupPro, profile_id: str):
+    """Run backup from CLI"""
+    print(f"\n💾 Starting backup: {profile_id}")
+    print("-"*40)
+    
+    def callback(line):
+        if line and not line.startswith(" "):
+            print(f"   {line[:70]}")
+    
+    result = backup.run_backup(profile_id, callback)
+    
+    print("-"*40)
+    
+    if result["status"] == "completed":
+        print(f"✅ Backup completed successfully!")
+        print(f"   Files: {result.get('files_transferred', 0)}")
+        print(f"   Size:  {backup.format_size(result.get('bytes_transferred', 0))}")
+        if result.get("verified"):
+            print(f"   ✅ Verification passed")
+    else:
+        print(f"❌ Backup failed: {result['status']}")
+        for error in result.get("errors", []):
+            print(f"   Error: {error}")
+    
+    print()
+
+
+def run_cli_restore(backup: AegisBackupPro, profile_id: str, backup_name: str, restore_path: str = None):
+    """Run restore from CLI"""
+    print(f"\n🔄 Starting restore: {backup_name}")
+    print("-"*40)
+    
+    def callback(line):
+        if line and not line.startswith(" "):
+            print(f"   {line[:70]}")
+    
+    result = backup.restore_backup(profile_id, backup_name, restore_path, callback)
+    
+    print("-"*40)
+    
+    if result["status"] == "completed":
+        print(f"✅ Restore completed successfully!")
+        print(f"   Files: {result.get('files_restored', 0)}")
+        print(f"   Size:  {backup.format_size(result.get('bytes_restored', 0))}")
+        if result.get("verified"):
+            print(f"   ✅ Verification passed")
+        else:
+            print(f"   ⚠️ {result.get('verification_message', '')}")
+    else:
+        print(f"❌ Restore failed: {result['status']}")
+        for error in result.get("errors", []):
+            print(f"   Error: {error}")
+    
+    print()
+
+
+def create_profile_interactive(backup: AegisBackupPro):
+    """Create profile interactively in CLI"""
+    print("\n➕ CREATE NEW BACKUP PROFILE")
+    print("-"*40)
+    
+    profile_id = input("Profile ID (e.g., 'documents'): ").strip()
+    if not profile_id:
+        print("❌ Profile ID is required")
+        return
+    
+    name = input("Profile Name: ").strip() or profile_id
+    source = input("Source Path: ").strip()
+    if not source:
+        print("❌ Source path is required")
+        return
+    
+    destination = input("Destination Path: ").strip()
+    if not destination:
+        print("❌ Destination path is required")
+        return
+    
+    schedule = input("Schedule (manual/hourly/daily/weekly/monthly) [daily]: ").strip() or "daily"
+    retention = input("Retention (days) [7]: ").strip() or "7"
+    exclude = input("Exclude patterns (comma-separated) [.cache,*.tmp]: ").strip() or ".cache,*.tmp"
+    incremental = input("Incremental backups? (y/n) [y]: ").strip().lower() != 'n'
+    verify = input("Verify after backup? (y/n) [y]: ").strip().lower() != 'n'
+    
+    try:
+        retention = int(retention)
+    except ValueError:
+        retention = 7
+    
+    exclude_list = [x.strip() for x in exclude.split(",") if x.strip()]
+    
+    success = backup.create_profile(
+        profile_id=profile_id,
+        name=name,
+        source=source,
+        destination=destination,
+        exclude=exclude_list,
+        schedule=schedule,
+        retention=retention,
+        incremental=incremental,
+        verify=verify
+    )
+    
+    if success:
+        print(f"\n✅ Profile '{profile_id}' created successfully!")
+    else:
+        print(f"\n❌ Failed to create profile")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Backup Pro - Professional Backup Solution",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-backup-pro                      # Launch GUI
+  aegis-backup-pro --status             # Show backup status
+  aegis-backup-pro --backup home        # Run backup for 'home' profile
+  aegis-backup-pro --list-backups       # List all backups
+  aegis-backup-pro --list-backups home  # List backups for 'home' profile
+  aegis-backup-pro --restore home backup_20240101_120000
+  aegis-backup-pro --restore home backup_20240101_120000 --restore-path /tmp/restore
+  aegis-backup-pro --create-profile     # Create new profile interactively
+        """
+    )
+    
+    parser.add_argument('--status', action='store_true', help='Show backup status')
+    parser.add_argument('--backup', metavar='PROFILE', help='Run backup for specified profile')
+    parser.add_argument('--restore', nargs=2, metavar=('PROFILE', 'BACKUP'), help='Restore from backup')
+    parser.add_argument('--restore-path', metavar='PATH', help='Custom restore path')
+    parser.add_argument('--list-backups', nargs='?', const='all', metavar='PROFILE', 
+                       help='List available backups')
+    parser.add_argument('--create-profile', action='store_true', help='Create new backup profile')
+    parser.add_argument('--gui', action='store_true', help='Force GUI mode')
+    parser.add_argument('--daemon', action='store_true', help='Run in daemon mode for scheduled backups')
+    parser.add_argument('--version', action='version', version='Aegis Backup Pro 1.0.0')
+    
+    args = parser.parse_args()
+    
+    backup = AegisBackupPro()
+    
+    if args.status:
+        show_cli_status(backup)
+    elif args.backup:
+        run_cli_backup(backup, args.backup)
+    elif args.restore:
+        run_cli_restore(backup, args.restore[0], args.restore[1], args.restore_path)
+    elif args.list_backups:
+        profile_id = None if args.list_backups == 'all' else args.list_backups
+        show_cli_backups(backup, profile_id)
+    elif args.create_profile:
+        create_profile_interactive(backup)
+    elif args.daemon:
+        print("🔄 Aegis Backup Pro - Daemon Mode")
+        print("Checking for scheduled backups every minute...")
+        while True:
+            try:
+                backup.check_scheduled_backups()
+                time.sleep(60)
+            except KeyboardInterrupt:
+                print("\nDaemon stopped")
+                break
+    elif args.gui or (len(sys.argv) == 1 and TKINTER_AVAILABLE):
+        if TKINTER_AVAILABLE:
+            gui = BackupProGUI()
+            gui.run()
+        else:
+            print("❌ GUI not available (tkinter not installed)")
+            print("Use --status, --backup, --restore, or --list-backups for CLI mode")
+            show_cli_status(backup)
+    else:
+        show_cli_status(backup)
+
+
+if __name__ == "__main__":
+    main()

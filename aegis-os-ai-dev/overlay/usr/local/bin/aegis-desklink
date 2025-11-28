@@ -1,0 +1,1580 @@
+#!/usr/bin/env python3
+"""
+Aegis OS DeskLink - Multi-Computer Mouse/Keyboard Sharing Tool
+Provides seamless cursor edge switching, clipboard sharing, and input sharing
+between multiple computers on the local network.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import socket
+import hashlib
+import ssl
+import struct
+import time
+import base64
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+import selectors
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+try:
+    from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
+    ZEROCONF_AVAILABLE = True
+except ImportError:
+    ZEROCONF_AVAILABLE = False
+
+
+class AegisDeskLink:
+    """Core DeskLink functionality for multi-computer input sharing"""
+    
+    SERVICE_TYPE = "_aegis-desklink._tcp.local."
+    DEFAULT_PORT = 24800
+    PROTOCOL_VERSION = "1.0"
+    
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/desklink")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "desklink-config.json"
+        self.peers_file = self.data_dir / "peers.json"
+        
+        self.server_socket = None
+        self.client_socket = None
+        self.is_running = False
+        self.mode = None  # 'server' or 'client'
+        self.connected_clients = {}
+        self.connected_server = None
+        self.discovered_peers = {}
+        self.zeroconf = None
+        self.service_info = None
+        self.browser = None
+        self.clipboard_content = ""
+        self.last_clipboard_sync = None
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        self.load_peers()
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError):
+                pass
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "aegis-desklink.log"
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(log_file),
+                    logging.StreamHandler()
+                ]
+            )
+        except (PermissionError, OSError):
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+        self.logger = logging.getLogger("AegisDeskLink")
+    
+    def load_config(self):
+        """Load configuration"""
+        default_config = {
+            "mode": "server",
+            "hostname": socket.gethostname(),
+            "port": self.DEFAULT_PORT,
+            "screen_position": "center",
+            "screen_arrangement": {
+                "left": None,
+                "right": None,
+                "above": None,
+                "below": None
+            },
+            "encryption_enabled": True,
+            "clipboard_sharing": True,
+            "clipboard_sync_interval": 1.0,
+            "auto_connect": False,
+            "auto_connect_peers": [],
+            "barrier_integration": True,
+            "synergy_integration": True,
+            "edge_detection_size": 10,
+            "switch_delay_ms": 100,
+            "scroll_lock_toggle": True,
+            "shared_secret": self._generate_secret(),
+            "allowed_peers": [],
+            "blocked_peers": []
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                self.config = {**default_config, **json.load(f)}
+                if not self.config.get("shared_secret"):
+                    self.config["shared_secret"] = self._generate_secret()
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
+            self.config = default_config
+            self.save_config()
+    
+    def save_config(self):
+        """Save configuration"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except (PermissionError, FileNotFoundError, OSError):
+            self.logger.warning("Cannot save config - permission denied or read-only")
+    
+    def _generate_secret(self) -> str:
+        """Generate a shared secret for encryption"""
+        return hashlib.sha256(os.urandom(32)).hexdigest()[:32]
+    
+    def load_peers(self):
+        """Load known peers"""
+        try:
+            with open(self.peers_file, 'r') as f:
+                self.peers = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
+            self.peers = {
+                "known": {},
+                "trusted": [],
+                "history": [],
+                "last_updated": None
+            }
+            self.save_peers()
+    
+    def save_peers(self):
+        """Save known peers"""
+        self.peers["last_updated"] = datetime.now().isoformat()
+        try:
+            with open(self.peers_file, 'w') as f:
+                json.dump(self.peers, f, indent=2)
+        except (PermissionError, FileNotFoundError, OSError):
+            self.logger.warning("Cannot save peers - permission denied or read-only")
+    
+    def get_local_ip(self) -> str:
+        """Get local IP address"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+    
+    def check_barrier_installed(self) -> Dict:
+        """Check if Barrier is installed and get version"""
+        result = {"installed": False, "version": None, "running": False}
+        try:
+            proc = subprocess.run(["barriers", "--version"], 
+                                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                result["installed"] = True
+                result["version"] = proc.stdout.strip() or proc.stderr.strip()
+            proc_status = subprocess.run(["pgrep", "-x", "barriers"], 
+                                        capture_output=True, timeout=5)
+            result["running"] = proc_status.returncode == 0
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            pass
+        return result
+    
+    def check_synergy_installed(self) -> Dict:
+        """Check if Synergy is installed and get version"""
+        result = {"installed": False, "version": None, "running": False}
+        try:
+            proc = subprocess.run(["synergys", "--version"], 
+                                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                result["installed"] = True
+                result["version"] = proc.stdout.strip() or proc.stderr.strip()
+            proc_status = subprocess.run(["pgrep", "-x", "synergys"], 
+                                        capture_output=True, timeout=5)
+            result["running"] = proc_status.returncode == 0
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            pass
+        return result
+    
+    def discover_peers(self, timeout: int = 5) -> List[Dict]:
+        """Discover DeskLink peers on the local network"""
+        self.logger.info("Starting peer discovery...")
+        discovered = []
+        
+        if ZEROCONF_AVAILABLE:
+            discovered.extend(self._discover_mdns(timeout))
+        
+        if self.config.get("barrier_integration", True):
+            discovered.extend(self._discover_barrier())
+        
+        if self.config.get("synergy_integration", True):
+            discovered.extend(self._discover_synergy())
+        
+        discovered.extend(self._scan_network_for_peers())
+        
+        unique_peers = {}
+        for peer in discovered:
+            key = f"{peer.get('ip', '')}:{peer.get('port', self.DEFAULT_PORT)}"
+            if key not in unique_peers:
+                unique_peers[key] = peer
+                self.discovered_peers[key] = peer
+        
+        self.logger.info(f"Discovered {len(unique_peers)} peers")
+        return list(unique_peers.values())
+    
+    def _discover_mdns(self, timeout: int = 5) -> List[Dict]:
+        """Discover peers using mDNS/Zeroconf"""
+        peers = []
+        
+        if not ZEROCONF_AVAILABLE:
+            return peers
+        
+        class PeerListener:
+            def __init__(self):
+                self.peers = []
+            
+            def add_service(self, zeroconf, service_type, name):
+                info = zeroconf.get_service_info(service_type, name)
+                if info:
+                    addresses = [socket.inet_ntoa(addr) for addr in info.addresses]
+                    properties = {}
+                    if info.properties:
+                        for key, value in info.properties.items():
+                            if isinstance(key, bytes):
+                                key = key.decode('utf-8')
+                            if isinstance(value, bytes):
+                                value = value.decode('utf-8')
+                            properties[key] = value
+                    
+                    self.peers.append({
+                        "name": properties.get("hostname", info.server.rstrip('.')),
+                        "ip": addresses[0] if addresses else "unknown",
+                        "port": info.port,
+                        "type": "desklink",
+                        "version": properties.get("version", "unknown"),
+                        "mode": properties.get("mode", "unknown")
+                    })
+            
+            def remove_service(self, zeroconf, service_type, name):
+                pass
+            
+            def update_service(self, zeroconf, service_type, name):
+                pass
+        
+        try:
+            zeroconf = Zeroconf()
+            listener = PeerListener()
+            browser = ServiceBrowser(zeroconf, self.SERVICE_TYPE, listener)
+            time.sleep(min(timeout, 5))
+            peers = listener.peers
+            zeroconf.close()
+        except Exception as e:
+            self.logger.warning(f"mDNS discovery error: {e}")
+        
+        return peers
+    
+    def _discover_barrier(self) -> List[Dict]:
+        """Discover Barrier servers on the network"""
+        peers = []
+        barrier_port = 24800
+        
+        try:
+            local_ip = self.get_local_ip()
+            network_prefix = '.'.join(local_ip.split('.')[:3])
+            
+            for i in range(1, 255):
+                ip = f"{network_prefix}.{i}"
+                if ip == local_ip:
+                    continue
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.1)
+                    result = sock.connect_ex((ip, barrier_port))
+                    sock.close()
+                    if result == 0:
+                        peers.append({
+                            "name": f"Barrier at {ip}",
+                            "ip": ip,
+                            "port": barrier_port,
+                            "type": "barrier"
+                        })
+                except:
+                    pass
+        except Exception as e:
+            self.logger.debug(f"Barrier discovery error: {e}")
+        
+        return peers[:10]
+    
+    def _discover_synergy(self) -> List[Dict]:
+        """Discover Synergy servers on the network"""
+        return []
+    
+    def _scan_network_for_peers(self) -> List[Dict]:
+        """Scan network for DeskLink peers"""
+        peers = []
+        local_ip = self.get_local_ip()
+        
+        if local_ip == "127.0.0.1":
+            return peers
+        
+        network_prefix = '.'.join(local_ip.split('.')[:3])
+        
+        def check_host(ip):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                result = sock.connect_ex((ip, self.DEFAULT_PORT))
+                sock.close()
+                if result == 0:
+                    return {
+                        "ip": ip,
+                        "port": self.DEFAULT_PORT,
+                        "type": "desklink",
+                        "name": f"DeskLink at {ip}"
+                    }
+            except:
+                pass
+            return None
+        
+        threads = []
+        results = []
+        
+        for i in range(1, 50):
+            ip = f"{network_prefix}.{i}"
+            if ip != local_ip:
+                t = threading.Thread(target=lambda ip=ip: results.append(check_host(ip)))
+                threads.append(t)
+                t.start()
+        
+        for t in threads:
+            t.join(timeout=1)
+        
+        peers = [r for r in results if r is not None]
+        return peers
+    
+    def register_mdns_service(self):
+        """Register this instance as an mDNS service"""
+        if not ZEROCONF_AVAILABLE:
+            self.logger.warning("Zeroconf not available, skipping mDNS registration")
+            return False
+        
+        try:
+            local_ip = self.get_local_ip()
+            
+            properties = {
+                "version": self.PROTOCOL_VERSION,
+                "hostname": self.config["hostname"],
+                "mode": self.mode or "unknown"
+            }
+            
+            self.service_info = ServiceInfo(
+                self.SERVICE_TYPE,
+                f"{self.config['hostname']}._aegis-desklink._tcp.local.",
+                addresses=[socket.inet_aton(local_ip)],
+                port=self.config["port"],
+                properties=properties
+            )
+            
+            self.zeroconf = Zeroconf()
+            self.zeroconf.register_service(self.service_info)
+            self.logger.info(f"Registered mDNS service at {local_ip}:{self.config['port']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to register mDNS service: {e}")
+            return False
+    
+    def unregister_mdns_service(self):
+        """Unregister mDNS service"""
+        if self.zeroconf and self.service_info:
+            try:
+                self.zeroconf.unregister_service(self.service_info)
+                self.zeroconf.close()
+                self.logger.info("Unregistered mDNS service")
+            except:
+                pass
+            self.zeroconf = None
+            self.service_info = None
+    
+    def start_server(self) -> Dict:
+        """Start as DeskLink server (shares keyboard/mouse)"""
+        result = {"success": False, "message": ""}
+        
+        if self.is_running:
+            result["message"] = "DeskLink is already running"
+            return result
+        
+        barrier = self.check_barrier_installed()
+        if barrier["installed"] and self.config.get("barrier_integration", True):
+            return self._start_barrier_server()
+        
+        try:
+            self.mode = "server"
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind(("0.0.0.0", self.config["port"]))
+            self.server_socket.listen(5)
+            self.server_socket.setblocking(False)
+            
+            self.is_running = True
+            self.register_mdns_service()
+            
+            self.server_thread = threading.Thread(target=self._server_loop, daemon=True)
+            self.server_thread.start()
+            
+            if self.config.get("clipboard_sharing", True):
+                self.clipboard_thread = threading.Thread(target=self._clipboard_sync_loop, daemon=True)
+                self.clipboard_thread.start()
+            
+            result["success"] = True
+            result["message"] = f"Server started on port {self.config['port']}"
+            result["ip"] = self.get_local_ip()
+            result["port"] = self.config["port"]
+            
+            self.logger.info(f"DeskLink server started on {result['ip']}:{result['port']}")
+            
+        except Exception as e:
+            result["message"] = f"Failed to start server: {e}"
+            self.logger.error(result["message"])
+        
+        return result
+    
+    def _start_barrier_server(self) -> Dict:
+        """Start Barrier as the backend server"""
+        result = {"success": False, "message": ""}
+        
+        try:
+            config_content = self._generate_barrier_config()
+            barrier_config = Path.home() / ".barrier.conf"
+            with open(barrier_config, 'w') as f:
+                f.write(config_content)
+            
+            subprocess.run(["pkill", "-x", "barriers"], capture_output=True)
+            time.sleep(0.5)
+            
+            cmd = ["barriers", "-f", "--config", str(barrier_config)]
+            if not self.config.get("encryption_enabled", True):
+                cmd.append("--disable-crypto")
+            
+            self.barrier_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            time.sleep(1)
+            
+            if self.barrier_process.poll() is None:
+                self.mode = "server"
+                self.is_running = True
+                self.register_mdns_service()
+                
+                result["success"] = True
+                result["message"] = "Barrier server started"
+                result["ip"] = self.get_local_ip()
+                result["port"] = 24800
+                result["backend"] = "barrier"
+                
+                self.logger.info("Barrier server started successfully")
+            else:
+                _, stderr = self.barrier_process.communicate()
+                result["message"] = f"Barrier failed to start: {stderr.decode()}"
+                
+        except Exception as e:
+            result["message"] = f"Failed to start Barrier server: {e}"
+            self.logger.error(result["message"])
+        
+        return result
+    
+    def _generate_barrier_config(self) -> str:
+        """Generate Barrier configuration file"""
+        hostname = self.config["hostname"]
+        arrangement = self.config.get("screen_arrangement", {})
+        
+        config = f"""section: screens
+    {hostname}:
+        halfDuplexCapsLock = false
+        halfDuplexNumLock = false
+        halfDuplexScrollLock = false
+        xtestIsXineramaUnaware = false
+        switchCorners = none
+        switchCornerSize = 0
+"""
+        
+        for direction, peer in arrangement.items():
+            if peer:
+                config += f"""    {peer}:
+        halfDuplexCapsLock = false
+        halfDuplexNumLock = false
+        halfDuplexScrollLock = false
+        xtestIsXineramaUnaware = false
+        switchCorners = none
+        switchCornerSize = 0
+"""
+        
+        config += "end\n\nsection: links\n"
+        config += f"    {hostname}:\n"
+        
+        for direction, peer in arrangement.items():
+            if peer:
+                config += f"        {direction} = {peer}\n"
+        
+        for direction, peer in arrangement.items():
+            if peer:
+                opposite = {"left": "right", "right": "left", 
+                           "above": "below", "below": "above"}
+                config += f"    {peer}:\n"
+                config += f"        {opposite[direction]} = {hostname}\n"
+        
+        config += "end\n"
+        
+        return config
+    
+    def _server_loop(self):
+        """Main server loop for handling client connections"""
+        selector = selectors.DefaultSelector()
+        selector.register(self.server_socket, selectors.EVENT_READ, data=None)
+        
+        while self.is_running:
+            try:
+                events = selector.select(timeout=1)
+                for key, mask in events:
+                    if key.data is None:
+                        self._accept_connection(key.fileobj, selector)
+                    else:
+                        self._service_connection(key, mask, selector)
+            except Exception as e:
+                if self.is_running:
+                    self.logger.error(f"Server loop error: {e}")
+        
+        selector.close()
+    
+    def _accept_connection(self, sock, selector):
+        """Accept a new client connection"""
+        try:
+            conn, addr = sock.accept()
+            self.logger.info(f"Connection from {addr}")
+            conn.setblocking(False)
+            
+            client_info = {
+                "address": addr,
+                "connected_at": datetime.now().isoformat(),
+                "authenticated": False
+            }
+            
+            selector.register(conn, selectors.EVENT_READ, data=client_info)
+            self.connected_clients[addr] = {
+                "socket": conn,
+                "info": client_info
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Accept connection error: {e}")
+    
+    def _service_connection(self, key, mask, selector):
+        """Service an existing client connection"""
+        sock = key.fileobj
+        client_info = key.data
+        
+        try:
+            data = sock.recv(4096)
+            if data:
+                self._handle_message(sock, client_info, data)
+            else:
+                self._disconnect_client(sock, selector)
+        except ConnectionResetError:
+            self._disconnect_client(sock, selector)
+        except Exception as e:
+            self.logger.error(f"Service connection error: {e}")
+            self._disconnect_client(sock, selector)
+    
+    def _handle_message(self, sock, client_info, data):
+        """Handle incoming message from client"""
+        try:
+            message = json.loads(data.decode('utf-8'))
+            msg_type = message.get("type", "")
+            
+            if msg_type == "auth":
+                self._handle_auth(sock, client_info, message)
+            elif msg_type == "clipboard":
+                self._handle_clipboard(sock, client_info, message)
+            elif msg_type == "ping":
+                self._send_message(sock, {"type": "pong", "timestamp": time.time()})
+            elif msg_type == "screen_info":
+                self._handle_screen_info(sock, client_info, message)
+            
+        except json.JSONDecodeError:
+            pass
+        except Exception as e:
+            self.logger.error(f"Handle message error: {e}")
+    
+    def _handle_auth(self, sock, client_info, message):
+        """Handle client authentication"""
+        client_secret = message.get("secret", "")
+        client_hostname = message.get("hostname", "unknown")
+        
+        if client_secret == self.config["shared_secret"]:
+            client_info["authenticated"] = True
+            client_info["hostname"] = client_hostname
+            
+            self._send_message(sock, {
+                "type": "auth_response",
+                "success": True,
+                "server_hostname": self.config["hostname"]
+            })
+            
+            self.logger.info(f"Client {client_hostname} authenticated")
+            
+            addr = client_info.get("address")
+            if addr:
+                self.peers["known"][client_hostname] = {
+                    "ip": addr[0],
+                    "port": addr[1],
+                    "last_connected": datetime.now().isoformat()
+                }
+                self.save_peers()
+        else:
+            self._send_message(sock, {
+                "type": "auth_response",
+                "success": False,
+                "message": "Invalid secret"
+            })
+            self.logger.warning(f"Authentication failed for {client_info.get('address')}")
+    
+    def _handle_clipboard(self, sock, client_info, message):
+        """Handle clipboard sync message"""
+        if not client_info.get("authenticated", False):
+            return
+        
+        content = message.get("content", "")
+        self.clipboard_content = content
+        self._set_system_clipboard(content)
+        
+        for addr, client in self.connected_clients.items():
+            if client["socket"] != sock:
+                try:
+                    self._send_message(client["socket"], {
+                        "type": "clipboard",
+                        "content": content
+                    })
+                except:
+                    pass
+    
+    def _handle_screen_info(self, sock, client_info, message):
+        """Handle screen info from client"""
+        if not client_info.get("authenticated", False):
+            return
+        
+        client_info["screen_width"] = message.get("width", 1920)
+        client_info["screen_height"] = message.get("height", 1080)
+        client_info["position"] = message.get("position", "right")
+    
+    def _send_message(self, sock, message):
+        """Send a message to a socket"""
+        try:
+            data = json.dumps(message).encode('utf-8')
+            sock.send(data)
+        except Exception as e:
+            self.logger.error(f"Send message error: {e}")
+    
+    def _disconnect_client(self, sock, selector):
+        """Disconnect a client"""
+        try:
+            selector.unregister(sock)
+            sock.close()
+            
+            for addr, client in list(self.connected_clients.items()):
+                if client["socket"] == sock:
+                    self.logger.info(f"Client {addr} disconnected")
+                    del self.connected_clients[addr]
+                    break
+        except:
+            pass
+    
+    def start_client(self, server_host: str, server_port: int = None) -> Dict:
+        """Start as DeskLink client (receives keyboard/mouse from server)"""
+        result = {"success": False, "message": ""}
+        
+        if self.is_running:
+            result["message"] = "DeskLink is already running"
+            return result
+        
+        server_port = server_port or self.DEFAULT_PORT
+        
+        barrier = self.check_barrier_installed()
+        if barrier["installed"] and self.config.get("barrier_integration", True):
+            return self._start_barrier_client(server_host)
+        
+        try:
+            self.mode = "client"
+            self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_socket.settimeout(10)
+            self.client_socket.connect((server_host, server_port))
+            
+            self._send_message(self.client_socket, {
+                "type": "auth",
+                "secret": self.config["shared_secret"],
+                "hostname": self.config["hostname"]
+            })
+            
+            response = self.client_socket.recv(4096)
+            auth_response = json.loads(response.decode('utf-8'))
+            
+            if auth_response.get("success"):
+                self.is_running = True
+                self.connected_server = {
+                    "host": server_host,
+                    "port": server_port,
+                    "hostname": auth_response.get("server_hostname", server_host)
+                }
+                
+                self.client_socket.setblocking(False)
+                
+                self.client_thread = threading.Thread(target=self._client_loop, daemon=True)
+                self.client_thread.start()
+                
+                if self.config.get("clipboard_sharing", True):
+                    self.clipboard_thread = threading.Thread(target=self._clipboard_sync_loop, daemon=True)
+                    self.clipboard_thread.start()
+                
+                result["success"] = True
+                result["message"] = f"Connected to {server_host}:{server_port}"
+                result["server"] = self.connected_server
+                
+                self.peers["known"][auth_response.get("server_hostname", server_host)] = {
+                    "ip": server_host,
+                    "port": server_port,
+                    "last_connected": datetime.now().isoformat()
+                }
+                self.save_peers()
+                
+                self.logger.info(f"Connected to server {server_host}:{server_port}")
+            else:
+                result["message"] = auth_response.get("message", "Authentication failed")
+                self.client_socket.close()
+                self.client_socket = None
+                
+        except socket.timeout:
+            result["message"] = f"Connection to {server_host}:{server_port} timed out"
+        except ConnectionRefusedError:
+            result["message"] = f"Connection refused by {server_host}:{server_port}"
+        except Exception as e:
+            result["message"] = f"Failed to connect: {e}"
+            self.logger.error(result["message"])
+        
+        return result
+    
+    def _start_barrier_client(self, server_host: str) -> Dict:
+        """Start Barrier as the backend client"""
+        result = {"success": False, "message": ""}
+        
+        try:
+            subprocess.run(["pkill", "-x", "barrierc"], capture_output=True)
+            time.sleep(0.5)
+            
+            cmd = ["barrierc", "-f", server_host]
+            if not self.config.get("encryption_enabled", True):
+                cmd.insert(2, "--disable-crypto")
+            
+            self.barrier_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            time.sleep(1)
+            
+            if self.barrier_process.poll() is None:
+                self.mode = "client"
+                self.is_running = True
+                self.connected_server = {
+                    "host": server_host,
+                    "port": 24800,
+                    "hostname": server_host
+                }
+                
+                result["success"] = True
+                result["message"] = f"Barrier client connected to {server_host}"
+                result["server"] = self.connected_server
+                result["backend"] = "barrier"
+                
+                self.logger.info(f"Barrier client connected to {server_host}")
+            else:
+                _, stderr = self.barrier_process.communicate()
+                result["message"] = f"Barrier failed to connect: {stderr.decode()}"
+                
+        except Exception as e:
+            result["message"] = f"Failed to start Barrier client: {e}"
+            self.logger.error(result["message"])
+        
+        return result
+    
+    def _client_loop(self):
+        """Main client loop for receiving data from server"""
+        selector = selectors.DefaultSelector()
+        selector.register(self.client_socket, selectors.EVENT_READ)
+        
+        while self.is_running and self.client_socket:
+            try:
+                events = selector.select(timeout=1)
+                for key, mask in events:
+                    try:
+                        data = self.client_socket.recv(4096)
+                        if data:
+                            self._handle_server_message(data)
+                        else:
+                            self.logger.info("Server disconnected")
+                            self.stop()
+                            break
+                    except BlockingIOError:
+                        pass
+                    except ConnectionResetError:
+                        self.logger.info("Server connection reset")
+                        self.stop()
+                        break
+            except Exception as e:
+                if self.is_running:
+                    self.logger.error(f"Client loop error: {e}")
+        
+        selector.close()
+    
+    def _handle_server_message(self, data):
+        """Handle incoming message from server"""
+        try:
+            message = json.loads(data.decode('utf-8'))
+            msg_type = message.get("type", "")
+            
+            if msg_type == "clipboard":
+                content = message.get("content", "")
+                self.clipboard_content = content
+                self._set_system_clipboard(content)
+            elif msg_type == "pong":
+                pass
+                
+        except json.JSONDecodeError:
+            pass
+        except Exception as e:
+            self.logger.error(f"Handle server message error: {e}")
+    
+    def _clipboard_sync_loop(self):
+        """Periodically sync clipboard content"""
+        while self.is_running:
+            try:
+                current = self._get_system_clipboard()
+                if current and current != self.clipboard_content:
+                    self.clipboard_content = current
+                    self._broadcast_clipboard(current)
+                
+                time.sleep(self.config.get("clipboard_sync_interval", 1.0))
+            except Exception as e:
+                self.logger.debug(f"Clipboard sync error: {e}")
+                time.sleep(1)
+    
+    def _get_system_clipboard(self) -> str:
+        """Get content from system clipboard"""
+        try:
+            result = subprocess.run(
+                ["xclip", "-selection", "clipboard", "-o"],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode == 0:
+                return result.stdout
+        except:
+            pass
+        
+        try:
+            result = subprocess.run(
+                ["xsel", "--clipboard", "--output"],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode == 0:
+                return result.stdout
+        except:
+            pass
+        
+        return ""
+    
+    def _set_system_clipboard(self, content: str):
+        """Set content to system clipboard"""
+        try:
+            process = subprocess.Popen(
+                ["xclip", "-selection", "clipboard"],
+                stdin=subprocess.PIPE
+            )
+            process.communicate(input=content.encode('utf-8'), timeout=2)
+            return
+        except:
+            pass
+        
+        try:
+            process = subprocess.Popen(
+                ["xsel", "--clipboard", "--input"],
+                stdin=subprocess.PIPE
+            )
+            process.communicate(input=content.encode('utf-8'), timeout=2)
+        except:
+            pass
+    
+    def _broadcast_clipboard(self, content: str):
+        """Broadcast clipboard content to all connected peers"""
+        message = {"type": "clipboard", "content": content}
+        
+        if self.mode == "server":
+            for addr, client in self.connected_clients.items():
+                if client["info"].get("authenticated", False):
+                    try:
+                        self._send_message(client["socket"], message)
+                    except:
+                        pass
+        elif self.mode == "client" and self.client_socket:
+            try:
+                self._send_message(self.client_socket, message)
+            except:
+                pass
+    
+    def stop(self):
+        """Stop DeskLink"""
+        self.is_running = False
+        
+        if hasattr(self, 'barrier_process') and self.barrier_process:
+            try:
+                self.barrier_process.terminate()
+                self.barrier_process.wait(timeout=5)
+            except:
+                try:
+                    self.barrier_process.kill()
+                except:
+                    pass
+            self.barrier_process = None
+        
+        self.unregister_mdns_service()
+        
+        if self.server_socket:
+            try:
+                self.server_socket.close()
+            except:
+                pass
+            self.server_socket = None
+        
+        if self.client_socket:
+            try:
+                self.client_socket.close()
+            except:
+                pass
+            self.client_socket = None
+        
+        for addr, client in list(self.connected_clients.items()):
+            try:
+                client["socket"].close()
+            except:
+                pass
+        self.connected_clients.clear()
+        
+        self.connected_server = None
+        self.mode = None
+        
+        self.logger.info("DeskLink stopped")
+    
+    def set_screen_arrangement(self, position: str, peer_hostname: str) -> bool:
+        """Set screen arrangement (left/right/above/below)"""
+        if position not in ["left", "right", "above", "below"]:
+            return False
+        
+        self.config["screen_arrangement"][position] = peer_hostname
+        self.save_config()
+        
+        self.logger.info(f"Set {peer_hostname} to {position}")
+        return True
+    
+    def get_status(self) -> Dict:
+        """Get current DeskLink status"""
+        status = {
+            "running": self.is_running,
+            "mode": self.mode,
+            "hostname": self.config["hostname"],
+            "ip": self.get_local_ip(),
+            "port": self.config["port"],
+            "clipboard_sharing": self.config.get("clipboard_sharing", True),
+            "encryption": self.config.get("encryption_enabled", True),
+            "connected_clients": len(self.connected_clients),
+            "connected_server": self.connected_server,
+            "screen_arrangement": self.config.get("screen_arrangement", {}),
+            "barrier": self.check_barrier_installed(),
+            "synergy": self.check_synergy_installed(),
+            "zeroconf_available": ZEROCONF_AVAILABLE
+        }
+        
+        if self.mode == "server":
+            status["clients"] = [
+                {
+                    "address": str(addr),
+                    "hostname": info["info"].get("hostname", "unknown"),
+                    "authenticated": info["info"].get("authenticated", False)
+                }
+                for addr, info in self.connected_clients.items()
+            ]
+        
+        return status
+
+
+class DeskLinkGUI:
+    """Tkinter GUI for Aegis DeskLink"""
+    
+    def __init__(self):
+        self.desklink = AegisDeskLink()
+        self.root = tk.Tk()
+        self.setup_window()
+        self.create_widgets()
+        self.refresh_status()
+        self.start_refresh_timer()
+    
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis DeskLink")
+        self.root.geometry("800x600")
+        self.root.configure(bg='#1a1a2e')
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='white')
+        style.configure('TButton', padding=10)
+        style.configure('Header.TLabel', font=('Arial', 20, 'bold'), foreground='#00d4ff')
+        style.configure('Status.TLabel', font=('Arial', 11))
+        style.configure('TLabelframe', background='#1a1a2e')
+        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='#00d4ff')
+    
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header = ttk.Frame(self.root)
+        header.pack(fill='x', padx=20, pady=15)
+        
+        title = ttk.Label(header, text="🖥️ Aegis DeskLink", style='Header.TLabel')
+        title.pack(side='left')
+        
+        btn_frame = ttk.Frame(header)
+        btn_frame.pack(side='right')
+        
+        ttk.Button(btn_frame, text="🔄 Refresh", command=self.refresh_status).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="📡 Scan", command=self.scan_network).pack(side='left', padx=5)
+        
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        left_panel = ttk.Frame(main_frame)
+        left_panel.pack(side='left', fill='both', expand=True)
+        
+        status_frame = ttk.LabelFrame(left_panel, text="Status", padding=15)
+        status_frame.pack(fill='x', pady=5)
+        
+        self.status_label = ttk.Label(status_frame, text="⚪ Not Running", style='Status.TLabel')
+        self.status_label.pack(anchor='w')
+        
+        self.mode_label = ttk.Label(status_frame, text="Mode: None", style='Status.TLabel')
+        self.mode_label.pack(anchor='w')
+        
+        self.ip_label = ttk.Label(status_frame, text="IP: --", style='Status.TLabel')
+        self.ip_label.pack(anchor='w')
+        
+        self.clients_label = ttk.Label(status_frame, text="Connections: 0", style='Status.TLabel')
+        self.clients_label.pack(anchor='w')
+        
+        controls_frame = ttk.LabelFrame(left_panel, text="Controls", padding=15)
+        controls_frame.pack(fill='x', pady=10)
+        
+        mode_frame = ttk.Frame(controls_frame)
+        mode_frame.pack(fill='x', pady=5)
+        
+        self.server_btn = ttk.Button(mode_frame, text="▶ Start Server", command=self.start_server)
+        self.server_btn.pack(side='left', padx=5)
+        
+        self.client_btn = ttk.Button(mode_frame, text="🔗 Connect", command=self.show_connect_dialog)
+        self.client_btn.pack(side='left', padx=5)
+        
+        self.stop_btn = ttk.Button(mode_frame, text="⏹ Stop", command=self.stop_desklink, state='disabled')
+        self.stop_btn.pack(side='left', padx=5)
+        
+        options_frame = ttk.LabelFrame(left_panel, text="Options", padding=15)
+        options_frame.pack(fill='x', pady=10)
+        
+        self.clipboard_var = tk.BooleanVar(value=self.desklink.config.get("clipboard_sharing", True))
+        clipboard_cb = ttk.Checkbutton(options_frame, text="Clipboard Sharing", 
+                                       variable=self.clipboard_var, command=self.toggle_clipboard)
+        clipboard_cb.pack(anchor='w')
+        
+        self.encryption_var = tk.BooleanVar(value=self.desklink.config.get("encryption_enabled", True))
+        encryption_cb = ttk.Checkbutton(options_frame, text="Encryption", 
+                                        variable=self.encryption_var, command=self.toggle_encryption)
+        encryption_cb.pack(anchor='w')
+        
+        right_panel = ttk.Frame(main_frame)
+        right_panel.pack(side='right', fill='both', expand=True, padx=(20, 0))
+        
+        arrangement_frame = ttk.LabelFrame(right_panel, text="Screen Arrangement", padding=15)
+        arrangement_frame.pack(fill='both', expand=True, pady=5)
+        
+        self.canvas = tk.Canvas(arrangement_frame, bg='#0f0f1a', width=300, height=200)
+        self.canvas.pack(fill='both', expand=True, pady=10)
+        self._draw_arrangement()
+        
+        arr_controls = ttk.Frame(arrangement_frame)
+        arr_controls.pack(fill='x')
+        
+        ttk.Label(arr_controls, text="Add screen:", style='Status.TLabel').pack(side='left')
+        
+        self.position_var = tk.StringVar(value="right")
+        position_combo = ttk.Combobox(arr_controls, textvariable=self.position_var, 
+                                      values=["left", "right", "above", "below"], width=10)
+        position_combo.pack(side='left', padx=5)
+        
+        self.peer_entry = ttk.Entry(arr_controls, width=15)
+        self.peer_entry.pack(side='left', padx=5)
+        self.peer_entry.insert(0, "hostname")
+        
+        ttk.Button(arr_controls, text="Add", command=self.add_screen).pack(side='left', padx=5)
+        
+        peers_frame = ttk.LabelFrame(right_panel, text="Discovered Peers", padding=10)
+        peers_frame.pack(fill='both', expand=True, pady=10)
+        
+        self.peers_list = tk.Listbox(peers_frame, bg='#0f0f1a', fg='#00ff00', 
+                                     selectbackground='#00d4ff', height=8)
+        self.peers_list.pack(fill='both', expand=True)
+        self.peers_list.bind('<Double-1>', self.connect_to_selected)
+        
+        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=10)
+        log_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, bg='#0f0f1a', 
+                                                  fg='#00ff00', font=('Courier', 9))
+        self.log_text.pack(fill='x')
+    
+    def _draw_arrangement(self):
+        """Draw the screen arrangement visualization"""
+        self.canvas.delete("all")
+        
+        center_x, center_y = 150, 100
+        screen_w, screen_h = 80, 50
+        
+        self.canvas.create_rectangle(center_x - screen_w//2, center_y - screen_h//2,
+                                    center_x + screen_w//2, center_y + screen_h//2,
+                                    fill='#00d4ff', outline='white', width=2)
+        self.canvas.create_text(center_x, center_y, text=self.desklink.config["hostname"][:10],
+                              fill='black', font=('Arial', 8, 'bold'))
+        
+        arrangement = self.desklink.config.get("screen_arrangement", {})
+        
+        positions = {
+            "left": (center_x - screen_w - 20, center_y),
+            "right": (center_x + screen_w + 20, center_y),
+            "above": (center_x, center_y - screen_h - 20),
+            "below": (center_x, center_y + screen_h + 20)
+        }
+        
+        for direction, peer in arrangement.items():
+            if peer:
+                x, y = positions[direction]
+                self.canvas.create_rectangle(x - screen_w//2, y - screen_h//2,
+                                           x + screen_w//2, y + screen_h//2,
+                                           fill='#4a4a6a', outline='#888', width=1)
+                self.canvas.create_text(x, y, text=peer[:10], fill='white', font=('Arial', 8))
+    
+    def refresh_status(self):
+        """Refresh status display"""
+        status = self.desklink.get_status()
+        
+        if status["running"]:
+            self.status_label.config(text=f"🟢 Running as {status['mode'].upper()}")
+            self.server_btn.config(state='disabled')
+            self.client_btn.config(state='disabled')
+            self.stop_btn.config(state='normal')
+        else:
+            self.status_label.config(text="⚪ Not Running")
+            self.server_btn.config(state='normal')
+            self.client_btn.config(state='normal')
+            self.stop_btn.config(state='disabled')
+        
+        self.mode_label.config(text=f"Mode: {status['mode'] or 'None'}")
+        self.ip_label.config(text=f"IP: {status['ip']}:{status['port']}")
+        
+        if status["mode"] == "server":
+            self.clients_label.config(text=f"Connected Clients: {status['connected_clients']}")
+        elif status["mode"] == "client" and status["connected_server"]:
+            self.clients_label.config(text=f"Server: {status['connected_server']['hostname']}")
+        else:
+            self.clients_label.config(text="Connections: 0")
+        
+        self._draw_arrangement()
+    
+    def start_refresh_timer(self):
+        """Start periodic refresh timer"""
+        self.refresh_status()
+        self.root.after(5000, self.start_refresh_timer)
+    
+    def start_server(self):
+        """Start DeskLink server"""
+        result = self.desklink.start_server()
+        if result["success"]:
+            self.log(f"✅ {result['message']}")
+            if "backend" in result:
+                self.log(f"   Using {result['backend']} backend")
+        else:
+            self.log(f"❌ {result['message']}")
+            messagebox.showerror("Error", result["message"])
+        self.refresh_status()
+    
+    def show_connect_dialog(self):
+        """Show dialog to connect to a server"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Connect to Server")
+        dialog.geometry("300x150")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="Server Address:", style='Status.TLabel').pack(pady=10)
+        
+        host_entry = ttk.Entry(dialog, width=30)
+        host_entry.pack(pady=5)
+        host_entry.focus()
+        
+        def do_connect():
+            host = host_entry.get().strip()
+            if host:
+                dialog.destroy()
+                result = self.desklink.start_client(host)
+                if result["success"]:
+                    self.log(f"✅ {result['message']}")
+                else:
+                    self.log(f"❌ {result['message']}")
+                    messagebox.showerror("Connection Error", result["message"])
+                self.refresh_status()
+        
+        ttk.Button(dialog, text="Connect", command=do_connect).pack(pady=15)
+    
+    def stop_desklink(self):
+        """Stop DeskLink"""
+        self.desklink.stop()
+        self.log("⏹ DeskLink stopped")
+        self.refresh_status()
+    
+    def scan_network(self):
+        """Scan network for peers"""
+        self.log("📡 Scanning network...")
+        self.peers_list.delete(0, tk.END)
+        
+        def do_scan():
+            peers = self.desklink.discover_peers(timeout=5)
+            self.root.after(0, lambda: self._update_peers_list(peers))
+        
+        threading.Thread(target=do_scan, daemon=True).start()
+    
+    def _update_peers_list(self, peers):
+        """Update the peers list in GUI"""
+        self.peers_list.delete(0, tk.END)
+        for peer in peers:
+            display = f"{peer.get('name', 'Unknown')} ({peer.get('ip', '?')}:{peer.get('port', '?')}) [{peer.get('type', '?')}]"
+            self.peers_list.insert(tk.END, display)
+        self.log(f"📡 Found {len(peers)} peers")
+    
+    def connect_to_selected(self, event):
+        """Connect to selected peer"""
+        selection = self.peers_list.curselection()
+        if selection:
+            index = selection[0]
+            peers = list(self.desklink.discovered_peers.values())
+            if index < len(peers):
+                peer = peers[index]
+                host = peer.get('ip', '')
+                port = peer.get('port', self.desklink.DEFAULT_PORT)
+                
+                if messagebox.askyesno("Connect", f"Connect to {peer.get('name', host)}?"):
+                    result = self.desklink.start_client(host, port)
+                    if result["success"]:
+                        self.log(f"✅ {result['message']}")
+                    else:
+                        self.log(f"❌ {result['message']}")
+                        messagebox.showerror("Connection Error", result["message"])
+                    self.refresh_status()
+    
+    def add_screen(self):
+        """Add a screen to the arrangement"""
+        position = self.position_var.get()
+        hostname = self.peer_entry.get().strip()
+        
+        if hostname and hostname != "hostname":
+            if self.desklink.set_screen_arrangement(position, hostname):
+                self.log(f"📺 Added {hostname} to {position}")
+                self._draw_arrangement()
+            else:
+                messagebox.showerror("Error", "Invalid position")
+    
+    def toggle_clipboard(self):
+        """Toggle clipboard sharing"""
+        self.desklink.config["clipboard_sharing"] = self.clipboard_var.get()
+        self.desklink.save_config()
+        state = "enabled" if self.clipboard_var.get() else "disabled"
+        self.log(f"📋 Clipboard sharing {state}")
+    
+    def toggle_encryption(self):
+        """Toggle encryption"""
+        self.desklink.config["encryption_enabled"] = self.encryption_var.get()
+        self.desklink.save_config()
+        state = "enabled" if self.encryption_var.get() else "disabled"
+        self.log(f"🔒 Encryption {state}")
+    
+    def log(self, message: str):
+        """Add message to log"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log_text.see(tk.END)
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.mainloop()
+    
+    def on_close(self):
+        """Handle window close"""
+        if self.desklink.is_running:
+            if messagebox.askyesno("Quit", "DeskLink is running. Stop and quit?"):
+                self.desklink.stop()
+                self.root.destroy()
+        else:
+            self.root.destroy()
+
+
+def show_cli_status(desklink: AegisDeskLink):
+    """Display status in CLI"""
+    status = desklink.get_status()
+    
+    print("\n" + "=" * 50)
+    print("  🖥️  Aegis DeskLink Status")
+    print("=" * 50)
+    
+    running_icon = "🟢" if status["running"] else "⚪"
+    print(f"\n  Status:        {running_icon} {'Running' if status['running'] else 'Not Running'}")
+    print(f"  Mode:          {status['mode'] or 'None'}")
+    print(f"  Hostname:      {status['hostname']}")
+    print(f"  IP Address:    {status['ip']}")
+    print(f"  Port:          {status['port']}")
+    print(f"  Clipboard:     {'Enabled' if status['clipboard_sharing'] else 'Disabled'}")
+    print(f"  Encryption:    {'Enabled' if status['encryption'] else 'Disabled'}")
+    
+    print(f"\n  Backend Support:")
+    barrier = status['barrier']
+    synergy = status['synergy']
+    print(f"    Barrier:     {'✅ Installed' if barrier['installed'] else '❌ Not Installed'}")
+    if barrier['installed']:
+        print(f"                 {barrier.get('version', 'Unknown version')}")
+    print(f"    Synergy:     {'✅ Installed' if synergy['installed'] else '❌ Not Installed'}")
+    print(f"    Zeroconf:    {'✅ Available' if status['zeroconf_available'] else '❌ Not Available'}")
+    
+    if status["mode"] == "server":
+        print(f"\n  Connected Clients: {status['connected_clients']}")
+        if status.get("clients"):
+            for client in status["clients"]:
+                auth = "🔓" if client['authenticated'] else "🔒"
+                print(f"    {auth} {client['hostname']} ({client['address']})")
+    elif status["mode"] == "client" and status["connected_server"]:
+        server = status["connected_server"]
+        print(f"\n  Connected to: {server['hostname']} ({server['host']}:{server['port']})")
+    
+    arrangement = status.get("screen_arrangement", {})
+    configured = [(k, v) for k, v in arrangement.items() if v]
+    if configured:
+        print("\n  Screen Arrangement:")
+        for position, hostname in configured:
+            print(f"    {position.capitalize()}: {hostname}")
+    
+    print("\n" + "=" * 50 + "\n")
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Aegis DeskLink - Multi-Computer Mouse/Keyboard Sharing",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-desklink --server           Start as server (share your keyboard/mouse)
+  aegis-desklink --client HOSTNAME  Connect to a server
+  aegis-desklink --scan             Scan for peers on the network
+  aegis-desklink --status           Show current status
+  aegis-desklink                    Launch GUI mode
+        """
+    )
+    
+    parser.add_argument('--server', action='store_true', 
+                       help='Start as server (share keyboard/mouse)')
+    parser.add_argument('--client', metavar='HOST', 
+                       help='Connect to server at HOST')
+    parser.add_argument('--scan', action='store_true', 
+                       help='Scan network for DeskLink peers')
+    parser.add_argument('--connect', metavar='HOST', 
+                       help='Connect to a specific host')
+    parser.add_argument('--disconnect', action='store_true', 
+                       help='Disconnect from current connection')
+    parser.add_argument('--status', action='store_true', 
+                       help='Show current status')
+    parser.add_argument('--port', type=int, default=24800, 
+                       help='Port number (default: 24800)')
+    parser.add_argument('--no-gui', action='store_true', 
+                       help='Run in CLI mode only')
+    parser.add_argument('--clipboard', action='store_true', 
+                       help='Enable clipboard sharing (default)')
+    parser.add_argument('--no-clipboard', action='store_true', 
+                       help='Disable clipboard sharing')
+    parser.add_argument('--set-position', metavar='POS:HOST', 
+                       help='Set screen position (e.g., left:hostname)')
+    parser.add_argument('--secret', metavar='SECRET', 
+                       help='Set shared secret for authentication')
+    parser.add_argument('--version', action='version', version='Aegis DeskLink 1.0.0')
+    
+    args = parser.parse_args()
+    
+    desklink = AegisDeskLink()
+    
+    if args.port:
+        desklink.config["port"] = args.port
+        desklink.save_config()
+    
+    if args.no_clipboard:
+        desklink.config["clipboard_sharing"] = False
+        desklink.save_config()
+    elif args.clipboard:
+        desklink.config["clipboard_sharing"] = True
+        desklink.save_config()
+    
+    if args.secret:
+        desklink.config["shared_secret"] = args.secret
+        desklink.save_config()
+        print(f"✅ Shared secret updated")
+    
+    if args.set_position:
+        try:
+            position, hostname = args.set_position.split(':')
+            if desklink.set_screen_arrangement(position, hostname):
+                print(f"✅ Set {hostname} to {position}")
+            else:
+                print(f"❌ Invalid position: {position}")
+                sys.exit(1)
+        except ValueError:
+            print("❌ Invalid format. Use: --set-position left:hostname")
+            sys.exit(1)
+    
+    if args.status:
+        show_cli_status(desklink)
+        return
+    
+    if args.scan:
+        print("\n📡 Scanning network for DeskLink peers...")
+        peers = desklink.discover_peers(timeout=5)
+        
+        if peers:
+            print(f"\nFound {len(peers)} peer(s):\n")
+            for i, peer in enumerate(peers, 1):
+                print(f"  {i}. {peer.get('name', 'Unknown')}")
+                print(f"     IP: {peer.get('ip', 'unknown')}:{peer.get('port', '?')}")
+                print(f"     Type: {peer.get('type', 'unknown')}")
+                print()
+        else:
+            print("\nNo peers found on the network.")
+        return
+    
+    if args.disconnect:
+        if desklink.is_running:
+            desklink.stop()
+            print("✅ Disconnected")
+        else:
+            print("⚠️ Not connected")
+        return
+    
+    if args.server:
+        print("\n🖥️ Starting DeskLink server...")
+        result = desklink.start_server()
+        
+        if result["success"]:
+            print(f"✅ {result['message']}")
+            print(f"   IP: {result.get('ip', 'unknown')}")
+            print(f"   Port: {result.get('port', desklink.DEFAULT_PORT)}")
+            if result.get("backend"):
+                print(f"   Backend: {result['backend']}")
+            print("\n   Press Ctrl+C to stop...")
+            
+            try:
+                while desklink.is_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n\n⏹ Stopping server...")
+                desklink.stop()
+                print("✅ Server stopped")
+        else:
+            print(f"❌ {result['message']}")
+            sys.exit(1)
+        return
+    
+    if args.client or args.connect:
+        host = args.client or args.connect
+        print(f"\n🔗 Connecting to {host}...")
+        result = desklink.start_client(host, args.port)
+        
+        if result["success"]:
+            print(f"✅ {result['message']}")
+            if result.get("backend"):
+                print(f"   Backend: {result['backend']}")
+            print("\n   Press Ctrl+C to disconnect...")
+            
+            try:
+                while desklink.is_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n\n⏹ Disconnecting...")
+                desklink.stop()
+                print("✅ Disconnected")
+        else:
+            print(f"❌ {result['message']}")
+            sys.exit(1)
+        return
+    
+    if args.no_gui or not TKINTER_AVAILABLE:
+        print("\n🖥️ Aegis DeskLink - CLI Mode")
+        print("=" * 40)
+        print("\nAvailable commands:")
+        print("  aegis-desklink --server      Start as server")
+        print("  aegis-desklink --client HOST Connect to server")
+        print("  aegis-desklink --scan        Scan for peers")
+        print("  aegis-desklink --status      Show status")
+        print("  aegis-desklink --help        Show all options")
+        
+        if not TKINTER_AVAILABLE:
+            print("\n⚠️ GUI not available (tkinter not installed)")
+        
+        show_cli_status(desklink)
+        return
+    
+    gui = DeskLinkGUI()
+    gui.run()
+
+
+if __name__ == "__main__":
+    main()

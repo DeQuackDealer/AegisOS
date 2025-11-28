@@ -1,0 +1,1032 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Security Center - All-in-One Security Dashboard
+Provides antivirus, firewall, and system security monitoring
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import shutil
+from datetime import datetime
+from pathlib import Path
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+SUBPROCESS_TIMEOUT_SHORT = 10
+SUBPROCESS_TIMEOUT_MEDIUM = 30
+SCAN_TIMEOUT_QUICK = 300
+SCAN_TIMEOUT_FULL = 3600
+
+class AegisSecurityCenter:
+    def __init__(self):
+        self.version = "1.0.1"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/security")
+        self.log_dir = Path("/var/log/aegis")
+        self.config_file = self.config_dir / "security-config.json"
+        self.events_file = self.data_dir / "security-events.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        
+    def ensure_directories(self):
+        """Create required directories with proper error handling"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+            except OSError as e:
+                print(f"Warning: Could not create directory {directory}: {e}", file=sys.stderr)
+    
+    def setup_logging(self):
+        """Configure logging with fallback to console-only if file logging fails"""
+        log_file = self.log_dir / "aegis-security.log"
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if self.log_dir.exists() and os.access(str(self.log_dir), os.W_OK):
+                handlers.insert(0, logging.FileHandler(log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisSecurity")
+    
+    def load_config(self):
+        """Load security configuration with fallback defaults"""
+        default_config = {
+            "auto_scan_enabled": True,
+            "scan_schedule": "daily",
+            "firewall_enabled": True,
+            "realtime_protection": False,
+            "scan_paths": ["/home", "/tmp", "/var/tmp"],
+            "excluded_paths": ["/home/*/.cache"],
+            "quarantine_dir": "/var/lib/aegis/quarantine",
+            "last_scan": None,
+            "threats_found": 0
+        }
+        
+        self.config = default_config.copy()
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded_config = json.load(f)
+                    self.config.update(loaded_config)
+        except (FileNotFoundError, json.JSONDecodeError, OSError, PermissionError) as e:
+            pass
+    
+    def save_config(self):
+        """Save configuration with error handling"""
+        try:
+            if self.config_dir.exists() and os.access(str(self.config_dir), os.W_OK):
+                with open(self.config_file, 'w') as f:
+                    json.dump(self.config, f, indent=2)
+        except (OSError, PermissionError, IOError):
+            pass
+    
+    def log_event(self, event_type, message, severity="info"):
+        """Log a security event with error handling"""
+        events = self.load_events()
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "type": event_type,
+            "message": message,
+            "severity": severity
+        }
+        events.append(event)
+        events = events[-1000:]
+        
+        try:
+            if self.data_dir.exists() and os.access(str(self.data_dir), os.W_OK):
+                with open(self.events_file, 'w') as f:
+                    json.dump(events, f, indent=2)
+        except (OSError, PermissionError, IOError):
+            pass
+        
+        self.logger.info(f"[{event_type}] {message}")
+    
+    def load_events(self):
+        """Load security events"""
+        try:
+            with open(self.events_file, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+    
+    def check_clamav_status(self):
+        """Check ClamAV antivirus status"""
+        status = {
+            "installed": False,
+            "running": False,
+            "version": "Not installed",
+            "database_date": "N/A",
+            "definitions": 0
+        }
+        
+        try:
+            result = subprocess.run(
+                ["clamscan", "--version"], 
+                capture_output=True, text=True, 
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                status["installed"] = True
+                version_line = result.stdout.strip().split('\n')[0] if result.stdout else ""
+                status["version"] = version_line if version_line else "Unknown version"
+        except FileNotFoundError:
+            status["version"] = "Not installed"
+        except subprocess.TimeoutExpired:
+            status["version"] = "Check timed out"
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"ClamAV version check failed: {e}")
+        
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "clamav-freshclam"],
+                capture_output=True, text=True, 
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            status["running"] = result.stdout.strip() == "active"
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            pass
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"ClamAV service check failed: {e}")
+        
+        try:
+            for db_name in ["daily.cvd", "daily.cld", "main.cvd", "main.cld"]:
+                db_path = Path(f"/var/lib/clamav/{db_name}")
+                if db_path.exists():
+                    mtime = datetime.fromtimestamp(db_path.stat().st_mtime)
+                    status["database_date"] = mtime.strftime("%Y-%m-%d %H:%M")
+                    break
+        except (OSError, ValueError) as e:
+            self.logger.debug(f"Database date check failed: {e}")
+        
+        return status
+    
+    def check_firewall_status(self):
+        """Check firewall status (UFW or iptables)"""
+        status = {
+            "enabled": False,
+            "type": "none",
+            "rules_count": 0,
+            "incoming_policy": "unknown",
+            "outgoing_policy": "unknown"
+        }
+        
+        try:
+            result = subprocess.run(
+                ["ufw", "status", "verbose"],
+                capture_output=True, text=True, 
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0:
+                output = result.stdout
+                status["type"] = "ufw"
+                status["enabled"] = "Status: active" in output
+                
+                if "Default: deny (incoming)" in output:
+                    status["incoming_policy"] = "deny"
+                elif "Default: allow (incoming)" in output:
+                    status["incoming_policy"] = "allow"
+                
+                if "Default: allow (outgoing)" in output:
+                    status["outgoing_policy"] = "allow"
+                elif "Default: deny (outgoing)" in output:
+                    status["outgoing_policy"] = "deny"
+                
+                lines = [l for l in output.split('\n') if l.strip() and not l.startswith('Status:') and not l.startswith('Default:') and not l.startswith('Logging:')]
+                status["rules_count"] = max(0, len(lines) - 2)
+        except FileNotFoundError:
+            try:
+                result = subprocess.run(
+                    ["iptables", "-L", "-n"],
+                    capture_output=True, text=True, 
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                if result.returncode == 0:
+                    status["type"] = "iptables"
+                    status["enabled"] = True
+                    non_empty_lines = [l for l in result.stdout.split('\n') if l.strip()]
+                    status["rules_count"] = len(non_empty_lines)
+            except FileNotFoundError:
+                pass
+            except subprocess.TimeoutExpired:
+                self.logger.debug("iptables check timed out")
+            except (OSError, subprocess.SubprocessError) as e:
+                self.logger.debug(f"iptables check failed: {e}")
+        except subprocess.TimeoutExpired:
+            self.logger.debug("UFW status check timed out")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"UFW status check failed: {e}")
+        
+        return status
+    
+    def check_system_integrity(self):
+        """Check system integrity using various tools"""
+        checks = {
+            "rkhunter": {"installed": False, "last_run": "Never", "status": "unknown"},
+            "aide": {"installed": False, "last_run": "Never", "status": "unknown"},
+            "chkrootkit": {"installed": False, "last_run": "Never", "status": "unknown"}
+        }
+        
+        for tool in checks.keys():
+            try:
+                checks[tool]["installed"] = shutil.which(tool) is not None
+            except (OSError, ValueError) as e:
+                self.logger.debug(f"Tool check failed for {tool}: {e}")
+        
+        return checks
+    
+    def check_failed_logins(self):
+        """Check for failed login attempts"""
+        failed_logins = []
+        
+        try:
+            auth_log = Path("/var/log/auth.log")
+            if auth_log.exists():
+                result = subprocess.run(
+                    ["grep", "-i", "failed", str(auth_log)],
+                    capture_output=True, text=True, 
+                    timeout=SUBPROCESS_TIMEOUT_MEDIUM
+                )
+                if result.stdout:
+                    lines = result.stdout.strip().split('\n')[-10:]
+                    for line in lines:
+                        if line.strip():
+                            failed_logins.append(line)
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            self.logger.debug("Auth log search timed out")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"Failed login check error: {e}")
+        
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", "sshd", "--since", "24 hours ago", 
+                 "--grep", "Failed", "--no-pager", "-n", "10"],
+                capture_output=True, text=True, 
+                timeout=SUBPROCESS_TIMEOUT_MEDIUM
+            )
+            if result.returncode == 0 and result.stdout:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip() and line not in failed_logins:
+                        failed_logins.append(line)
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            self.logger.debug("Journalctl search timed out")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"Journalctl check error: {e}")
+        
+        return failed_logins[-10:]
+    
+    def check_open_ports(self):
+        """Check for open network ports"""
+        open_ports = []
+        
+        try:
+            result = subprocess.run(
+                ["ss", "-tuln"],
+                capture_output=True, text=True, 
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            if result.returncode == 0 and result.stdout:
+                lines = result.stdout.strip().split('\n')[1:]
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        proto = parts[0]
+                        local_addr = parts[4]
+                        open_ports.append({
+                            "protocol": proto,
+                            "address": local_addr
+                        })
+        except FileNotFoundError:
+            try:
+                result = subprocess.run(
+                    ["netstat", "-tuln"],
+                    capture_output=True, text=True, 
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                if result.returncode == 0 and result.stdout:
+                    lines = result.stdout.strip().split('\n')[2:]
+                    for line in lines:
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            proto = parts[0]
+                            local_addr = parts[3]
+                            open_ports.append({
+                                "protocol": proto,
+                                "address": local_addr
+                            })
+            except (FileNotFoundError, subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
+                pass
+        except subprocess.TimeoutExpired:
+            self.logger.debug("Port check timed out")
+        except (OSError, subprocess.SubprocessError) as e:
+            self.logger.debug(f"Port check error: {e}")
+        
+        return open_ports
+    
+    def run_quick_scan(self, path="/home", timeout=None):
+        """Run a quick antivirus scan with proper error handling and timeout"""
+        self.log_event("scan", f"Starting quick scan of {path}", "info")
+        
+        if timeout is None:
+            timeout = SCAN_TIMEOUT_FULL if path == "/" else SCAN_TIMEOUT_QUICK
+        
+        results = {
+            "status": "completed",
+            "path": path,
+            "files_scanned": 0,
+            "threats_found": 0,
+            "threats": [],
+            "duration": 0,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if not shutil.which("clamscan"):
+            results["status"] = "error"
+            results["error"] = "ClamAV not installed. Install with: sudo apt install clamav"
+            self.log_event("scan", "Scan failed: ClamAV not installed", "error")
+            return results
+        
+        scan_path = Path(path)
+        if not scan_path.exists():
+            results["status"] = "error"
+            results["error"] = f"Scan path does not exist: {path}"
+            self.log_event("scan", f"Scan failed: Path not found: {path}", "error")
+            return results
+        
+        try:
+            start_time = datetime.now()
+            
+            result = subprocess.run(
+                ["clamscan", "-r", "--infected", path],
+                capture_output=True, text=True, 
+                timeout=timeout
+            )
+            end_time = datetime.now()
+            results["duration"] = int((end_time - start_time).total_seconds())
+            
+            output = result.stdout if result.stdout else ""
+            stderr = result.stderr if result.stderr else ""
+            
+            for line in output.split('\n'):
+                if "FOUND" in line and ": " in line:
+                    results["threats_found"] += 1
+                    results["threats"].append(line.strip())
+                elif "Scanned files:" in line:
+                    try:
+                        results["files_scanned"] = int(line.split(':')[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+                elif "Known viruses:" in line:
+                    try:
+                        results["definitions"] = int(line.split(':')[1].strip())
+                    except (ValueError, IndexError):
+                        pass
+            
+            if result.returncode == 1 and results["threats_found"] > 0:
+                results["status"] = "threats_detected"
+            elif result.returncode == 2:
+                results["status"] = "error"
+                error_msg = stderr.strip() if stderr.strip() else "Some files could not be scanned"
+                results["error"] = error_msg
+                self.log_event("scan", f"Scan completed with errors: {error_msg}", "warning")
+            elif result.returncode != 0 and result.returncode != 1:
+                results["status"] = "error"
+                results["error"] = stderr.strip() if stderr.strip() else f"ClamAV exited with code {result.returncode}"
+                self.log_event("scan", f"Scan error: exit code {result.returncode}", "error")
+            
+            try:
+                self.config["last_scan"] = results["timestamp"]
+                self.config["threats_found"] = results["threats_found"]
+                self.save_config()
+            except (OSError, PermissionError) as e:
+                self.logger.debug(f"Could not save scan config: {e}")
+            
+            severity = "warning" if results["threats_found"] > 0 else "info"
+            self.log_event("scan", 
+                          f"Scan complete: {results['files_scanned']} files, "
+                          f"{results['threats_found']} threats, {results['duration']}s", 
+                          severity)
+            
+        except subprocess.TimeoutExpired as e:
+            results["status"] = "timeout"
+            timeout_min = timeout // 60
+            results["error"] = f"Scan timed out after {timeout_min} minutes. Try scanning a smaller directory."
+            results["duration"] = timeout
+            self.log_event("scan", f"Scan timed out after {timeout_min} minutes", "warning")
+        except PermissionError as e:
+            results["status"] = "error"
+            results["error"] = f"Permission denied scanning {path}. Try running with sudo."
+            self.log_event("scan", f"Scan permission denied: {e}", "error")
+        except OSError as e:
+            results["status"] = "error"
+            results["error"] = f"System error during scan: {e}"
+            self.log_event("scan", f"Scan system error: {e}", "error")
+        except subprocess.SubprocessError as e:
+            results["status"] = "error"
+            results["error"] = f"Subprocess error: {e}"
+            self.log_event("scan", f"Scan subprocess error: {e}", "error")
+        
+        return results
+    
+    def enable_firewall(self):
+        """Enable the firewall with proper error handling"""
+        ufw_available = shutil.which("ufw") is not None
+        
+        if ufw_available:
+            try:
+                result = subprocess.run(
+                    ["sudo", "ufw", "--force", "enable"], 
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_MEDIUM
+                )
+                if result.returncode == 0:
+                    self.config["firewall_enabled"] = True
+                    try:
+                        self.save_config()
+                    except (OSError, PermissionError):
+                        pass
+                    self.log_event("firewall", "UFW firewall enabled", "info")
+                    return True
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                    self.log_event("firewall", f"UFW enable failed: {error_msg}", "error")
+                    return False
+            except subprocess.TimeoutExpired:
+                self.log_event("firewall", "UFW enable command timed out", "error")
+                return False
+            except PermissionError:
+                self.log_event("firewall", "Permission denied. Run with sudo.", "error")
+                return False
+            except FileNotFoundError:
+                pass
+            except (OSError, subprocess.SubprocessError) as e:
+                self.log_event("firewall", f"Failed to enable UFW: {e}", "error")
+                return False
+        
+        if shutil.which("iptables"):
+            try:
+                result = subprocess.run(
+                    ["sudo", "iptables", "-P", "INPUT", "DROP"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                subprocess.run(
+                    ["sudo", "iptables", "-P", "FORWARD", "DROP"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                subprocess.run(
+                    ["sudo", "iptables", "-A", "INPUT", "-i", "lo", "-j", "ACCEPT"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                subprocess.run(
+                    ["sudo", "iptables", "-A", "INPUT", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                self.config["firewall_enabled"] = True
+                try:
+                    self.save_config()
+                except (OSError, PermissionError):
+                    pass
+                self.log_event("firewall", "iptables firewall enabled (basic rules)", "info")
+                return True
+            except subprocess.TimeoutExpired:
+                self.log_event("firewall", "iptables command timed out", "error")
+                return False
+            except (FileNotFoundError, PermissionError, OSError, subprocess.SubprocessError) as e:
+                self.log_event("firewall", f"Failed to enable iptables: {e}", "error")
+                return False
+        
+        self.log_event("firewall", "No firewall tool available (install ufw or iptables)", "error")
+        return False
+    
+    def disable_firewall(self):
+        """Disable the firewall with proper error handling"""
+        ufw_available = shutil.which("ufw") is not None
+        
+        if ufw_available:
+            try:
+                result = subprocess.run(
+                    ["sudo", "ufw", "disable"], 
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_MEDIUM
+                )
+                if result.returncode == 0:
+                    self.config["firewall_enabled"] = False
+                    try:
+                        self.save_config()
+                    except (OSError, PermissionError):
+                        pass
+                    self.log_event("firewall", "UFW firewall disabled", "warning")
+                    return True
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+                    self.log_event("firewall", f"UFW disable failed: {error_msg}", "error")
+                    return False
+            except subprocess.TimeoutExpired:
+                self.log_event("firewall", "UFW disable command timed out", "error")
+                return False
+            except PermissionError:
+                self.log_event("firewall", "Permission denied. Run with sudo.", "error")
+                return False
+            except FileNotFoundError:
+                pass
+            except (OSError, subprocess.SubprocessError) as e:
+                self.log_event("firewall", f"Failed to disable UFW: {e}", "error")
+                return False
+        
+        if shutil.which("iptables"):
+            try:
+                subprocess.run(
+                    ["sudo", "iptables", "-P", "INPUT", "ACCEPT"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                subprocess.run(
+                    ["sudo", "iptables", "-P", "FORWARD", "ACCEPT"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                subprocess.run(
+                    ["sudo", "iptables", "-F"],
+                    capture_output=True, text=True,
+                    timeout=SUBPROCESS_TIMEOUT_SHORT
+                )
+                self.config["firewall_enabled"] = False
+                try:
+                    self.save_config()
+                except (OSError, PermissionError):
+                    pass
+                self.log_event("firewall", "iptables firewall disabled (rules flushed)", "warning")
+                return True
+            except subprocess.TimeoutExpired:
+                self.log_event("firewall", "iptables command timed out", "error")
+                return False
+            except (FileNotFoundError, PermissionError, OSError, subprocess.SubprocessError) as e:
+                self.log_event("firewall", f"Failed to disable iptables: {e}", "error")
+                return False
+        
+        self.log_event("firewall", "No firewall tool available (install ufw or iptables)", "error")
+        return False
+    
+    def get_security_score(self):
+        """Calculate overall security score"""
+        score = 100
+        issues = []
+        
+        av_status = self.check_clamav_status()
+        if not av_status["installed"]:
+            score -= 20
+            issues.append("Antivirus not installed")
+        elif not av_status["running"]:
+            score -= 10
+            issues.append("Antivirus not running")
+        
+        fw_status = self.check_firewall_status()
+        if not fw_status["enabled"]:
+            score -= 25
+            issues.append("Firewall not enabled")
+        
+        if self.config.get("last_scan") is None:
+            score -= 15
+            issues.append("No antivirus scan performed yet")
+        
+        failed_logins = self.check_failed_logins()
+        if len(failed_logins) > 5:
+            score -= 10
+            issues.append(f"Multiple failed login attempts detected ({len(failed_logins)})")
+        
+        return max(0, score), issues
+    
+    def get_full_status(self):
+        """Get comprehensive security status"""
+        return {
+            "antivirus": self.check_clamav_status(),
+            "firewall": self.check_firewall_status(),
+            "integrity": self.check_system_integrity(),
+            "failed_logins": len(self.check_failed_logins()),
+            "open_ports": len(self.check_open_ports()),
+            "last_scan": self.config.get("last_scan"),
+            "threats_found": self.config.get("threats_found", 0),
+            "security_score": self.get_security_score()
+        }
+
+
+class SecurityCenterGUI:
+    def __init__(self):
+        self.security = AegisSecurityCenter()
+        self.root = tk.Tk()
+        self.setup_window()
+        self.create_widgets()
+        self.refresh_status()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis Security Center")
+        self.root.geometry("900x700")
+        self.root.configure(bg='#1a1a2e')
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='white')
+        style.configure('TButton', padding=10)
+        style.configure('Header.TLabel', font=('Arial', 24, 'bold'), foreground='#00d4ff')
+        style.configure('Status.TLabel', font=('Arial', 12))
+        style.configure('Score.TLabel', font=('Arial', 48, 'bold'))
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header = ttk.Frame(self.root)
+        header.pack(fill='x', padx=20, pady=20)
+        
+        title = ttk.Label(header, text="🛡️ Aegis Security Center", style='Header.TLabel')
+        title.pack(side='left')
+        
+        refresh_btn = ttk.Button(header, text="🔄 Refresh", command=self.refresh_status)
+        refresh_btn.pack(side='right')
+        
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=20)
+        
+        left_panel = ttk.Frame(main_frame)
+        left_panel.pack(side='left', fill='both', expand=True)
+        
+        score_frame = ttk.LabelFrame(left_panel, text="Security Score", padding=20)
+        score_frame.pack(fill='x', pady=10)
+        
+        self.score_label = ttk.Label(score_frame, text="--", style='Score.TLabel')
+        self.score_label.pack()
+        
+        self.score_status = ttk.Label(score_frame, text="Calculating...", style='Status.TLabel')
+        self.score_status.pack()
+        
+        av_frame = ttk.LabelFrame(left_panel, text="🦠 Antivirus (ClamAV)", padding=15)
+        av_frame.pack(fill='x', pady=10)
+        
+        self.av_status = ttk.Label(av_frame, text="Checking...", style='Status.TLabel')
+        self.av_status.pack(anchor='w')
+        
+        self.av_version = ttk.Label(av_frame, text="", style='Status.TLabel')
+        self.av_version.pack(anchor='w')
+        
+        self.av_db = ttk.Label(av_frame, text="", style='Status.TLabel')
+        self.av_db.pack(anchor='w')
+        
+        av_buttons = ttk.Frame(av_frame)
+        av_buttons.pack(fill='x', pady=10)
+        
+        ttk.Button(av_buttons, text="Quick Scan", command=self.run_scan).pack(side='left', padx=5)
+        ttk.Button(av_buttons, text="Full Scan", command=lambda: self.run_scan("/")).pack(side='left', padx=5)
+        
+        fw_frame = ttk.LabelFrame(left_panel, text="🔥 Firewall", padding=15)
+        fw_frame.pack(fill='x', pady=10)
+        
+        self.fw_status = ttk.Label(fw_frame, text="Checking...", style='Status.TLabel')
+        self.fw_status.pack(anchor='w')
+        
+        self.fw_rules = ttk.Label(fw_frame, text="", style='Status.TLabel')
+        self.fw_rules.pack(anchor='w')
+        
+        fw_buttons = ttk.Frame(fw_frame)
+        fw_buttons.pack(fill='x', pady=10)
+        
+        ttk.Button(fw_buttons, text="Enable", command=self.enable_firewall).pack(side='left', padx=5)
+        ttk.Button(fw_buttons, text="Disable", command=self.disable_firewall).pack(side='left', padx=5)
+        
+        right_panel = ttk.Frame(main_frame)
+        right_panel.pack(side='right', fill='both', expand=True, padx=(20, 0))
+        
+        events_frame = ttk.LabelFrame(right_panel, text="📋 Recent Security Events", padding=10)
+        events_frame.pack(fill='both', expand=True)
+        
+        self.events_text = scrolledtext.ScrolledText(events_frame, height=15, bg='#0f0f1a', 
+                                                     fg='#00ff00', font=('Courier', 9))
+        self.events_text.pack(fill='both', expand=True)
+        
+        ports_frame = ttk.LabelFrame(right_panel, text="🌐 Open Ports", padding=10)
+        ports_frame.pack(fill='x', pady=10)
+        
+        self.ports_text = tk.Text(ports_frame, height=5, bg='#0f0f1a', 
+                                  fg='white', font=('Courier', 9))
+        self.ports_text.pack(fill='x')
+        
+        issues_frame = ttk.LabelFrame(right_panel, text="⚠️ Security Issues", padding=10)
+        issues_frame.pack(fill='x')
+        
+        self.issues_text = tk.Text(issues_frame, height=4, bg='#0f0f1a',
+                                   fg='#ff6b6b', font=('Arial', 10))
+        self.issues_text.pack(fill='x')
+        
+    def refresh_status(self):
+        """Refresh all security status information"""
+        status = self.security.get_full_status()
+        
+        score, issues = status["security_score"]
+        self.score_label.config(text=f"{score}%")
+        
+        if score >= 80:
+            color = '#00ff00'
+            text = "Good"
+        elif score >= 60:
+            color = '#ffff00'
+            text = "Fair"
+        else:
+            color = '#ff0000'
+            text = "Poor"
+        
+        self.score_label.config(foreground=color)
+        self.score_status.config(text=f"Status: {text}")
+        
+        av = status["antivirus"]
+        if av["installed"]:
+            av_text = f"✅ Installed - {'Running' if av['running'] else '⚠️ Not Running'}"
+        else:
+            av_text = "❌ Not Installed"
+        self.av_status.config(text=av_text)
+        self.av_version.config(text=f"Version: {av['version']}")
+        self.av_db.config(text=f"Database: {av['database_date']}")
+        
+        fw = status["firewall"]
+        if fw["enabled"]:
+            fw_text = f"✅ Enabled ({fw['type'].upper()})"
+        else:
+            fw_text = "❌ Disabled"
+        self.fw_status.config(text=fw_text)
+        self.fw_rules.config(text=f"Rules: {fw['rules_count']} | In: {fw['incoming_policy']} | Out: {fw['outgoing_policy']}")
+        
+        events = self.security.load_events()[-20:]
+        self.events_text.delete('1.0', tk.END)
+        for event in reversed(events):
+            self.events_text.insert(tk.END, 
+                f"[{event['timestamp'][:19]}] [{event['severity'].upper()}] {event['message']}\n")
+        
+        ports = self.security.check_open_ports()
+        self.ports_text.delete('1.0', tk.END)
+        for port in ports[:10]:
+            self.ports_text.insert(tk.END, f"{port['protocol']}: {port['address']}\n")
+        
+        self.issues_text.delete('1.0', tk.END)
+        if issues:
+            for issue in issues:
+                self.issues_text.insert(tk.END, f"• {issue}\n")
+        else:
+            self.issues_text.insert(tk.END, "✅ No security issues detected")
+            self.issues_text.config(fg='#00ff00')
+        
+    def run_scan(self, path="/home"):
+        """Run antivirus scan with proper status handling"""
+        self.av_status.config(text="🔄 Scanning...")
+        self.root.update()
+        
+        results = self.security.run_quick_scan(path)
+        status = results.get("status", "unknown")
+        
+        if status in ("completed", "threats_detected"):
+            if results.get("threats_found", 0) > 0:
+                threats_list = "\n".join(results.get("threats", [])[:5])
+                if len(results.get("threats", [])) > 5:
+                    threats_list += f"\n... and {len(results['threats']) - 5} more"
+                messagebox.showwarning("Scan Complete", 
+                    f"⚠️ Found {results['threats_found']} threat(s)!\n\n{threats_list}")
+            else:
+                messagebox.showinfo("Scan Complete", 
+                    f"✅ Scan complete!\n\n"
+                    f"Files scanned: {results.get('files_scanned', 0)}\n"
+                    f"Threats found: 0\n"
+                    f"Duration: {results.get('duration', 0)} seconds")
+        elif status == "timeout":
+            messagebox.showwarning("Scan Timeout", 
+                f"⏱️ {results.get('error', 'Scan timed out')}")
+        elif status == "error":
+            messagebox.showerror("Scan Error", 
+                results.get("error", "Unknown error occurred during scan"))
+        else:
+            messagebox.showwarning("Scan Status", 
+                f"Scan completed with status: {status}")
+        
+        self.refresh_status()
+        
+    def enable_firewall(self):
+        """Enable firewall"""
+        if self.security.enable_firewall():
+            messagebox.showinfo("Firewall", "✅ Firewall enabled successfully")
+        else:
+            messagebox.showerror("Firewall", "❌ Failed to enable firewall")
+        self.refresh_status()
+        
+    def disable_firewall(self):
+        """Disable firewall"""
+        if messagebox.askyesno("Confirm", "Are you sure you want to disable the firewall?"):
+            if self.security.disable_firewall():
+                messagebox.showinfo("Firewall", "⚠️ Firewall disabled")
+            else:
+                messagebox.showerror("Firewall", "❌ Failed to disable firewall")
+            self.refresh_status()
+        
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def show_cli_status(security=None):
+    """Display security status in CLI"""
+    if security is None:
+        security = AegisSecurityCenter()
+    status = security.get_full_status()
+    
+    score, issues = status["security_score"]
+    
+    print("""
+╔════════════════════════════════════════════════════════════════╗
+║               🛡️  AEGIS SECURITY CENTER                        ║
+╚════════════════════════════════════════════════════════════════╝
+""")
+    
+    print(f"  SECURITY SCORE: {score}%")
+    if score >= 80:
+        print("  Status: ✅ GOOD")
+    elif score >= 60:
+        print("  Status: ⚠️  FAIR")
+    else:
+        print("  Status: ❌ POOR")
+    
+    print("\n" + "─" * 60)
+    print("  🦠 ANTIVIRUS (ClamAV)")
+    av = status["antivirus"]
+    print(f"     Installed: {'✅ Yes' if av['installed'] else '❌ No'}")
+    print(f"     Running: {'✅ Yes' if av['running'] else '❌ No'}")
+    print(f"     Version: {av['version']}")
+    print(f"     Database: {av['database_date']}")
+    
+    print("\n" + "─" * 60)
+    print("  🔥 FIREWALL")
+    fw = status["firewall"]
+    print(f"     Status: {'✅ Enabled' if fw['enabled'] else '❌ Disabled'}")
+    print(f"     Type: {fw['type'].upper()}")
+    print(f"     Rules: {fw['rules_count']}")
+    print(f"     Incoming: {fw['incoming_policy']} | Outgoing: {fw['outgoing_policy']}")
+    
+    print("\n" + "─" * 60)
+    print("  📊 SYSTEM STATUS")
+    print(f"     Failed Login Attempts: {status['failed_logins']}")
+    print(f"     Open Ports: {status['open_ports']}")
+    print(f"     Last Scan: {status['last_scan'] or 'Never'}")
+    print(f"     Threats Found: {status['threats_found']}")
+    
+    if issues:
+        print("\n" + "─" * 60)
+        print("  ⚠️  SECURITY ISSUES:")
+        for issue in issues:
+            print(f"     • {issue}")
+    
+    print("\n" + "═" * 60)
+    print("  Commands: aegis-security-center --scan | --enable-firewall | --help")
+    print("═" * 60 + "\n")
+
+
+def print_scan_results(results):
+    """Print scan results in a formatted way"""
+    status = results.get("status", "unknown")
+    
+    if status == "error":
+        print(f"❌ Scan failed: {results.get('error', 'Unknown error')}")
+        return False
+    elif status == "timeout":
+        print(f"⏱️ {results.get('error', 'Scan timed out')}")
+        return False
+    elif status in ("completed", "threats_detected"):
+        files_scanned = results.get('files_scanned', 0)
+        threats_found = results.get('threats_found', 0)
+        duration = results.get('duration', 0)
+        
+        if threats_found > 0:
+            print(f"⚠️ Scan complete: {files_scanned} files scanned, {threats_found} threat(s) found!")
+            print("\n  Threats detected:")
+            for threat in results.get('threats', [])[:10]:
+                print(f"    • {threat}")
+            if len(results.get('threats', [])) > 10:
+                print(f"    ... and {len(results['threats']) - 10} more")
+        else:
+            print(f"✅ Scan complete: {files_scanned} files scanned, no threats found")
+        
+        print(f"   Duration: {duration} seconds")
+        return True
+    else:
+        print(f"⚠️ Scan completed with unknown status: {status}")
+        return True
+
+
+def main():
+    """Main entry point"""
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--help" or sys.argv[1] == "-h":
+            print("""
+Aegis Security Center - All-in-One Security Dashboard
+
+Usage:
+  aegis-security-center              Launch GUI (or CLI if no display)
+  aegis-security-center --status     Show security status
+  aegis-security-center --scan [PATH] Run quick antivirus scan (default: /home)
+  aegis-security-center --scan-full  Run full system scan (scans /)
+  aegis-security-center --enable-fw  Enable firewall
+  aegis-security-center --disable-fw Disable firewall
+  aegis-security-center --events     Show recent security events
+  aegis-security-center --help       Show this help
+
+Examples:
+  aegis-security-center --scan /tmp     Scan the /tmp directory
+  aegis-security-center --scan          Scan /home directory
+  aegis-security-center --scan-full     Scan entire system
+            """)
+            return
+        
+        security = AegisSecurityCenter()
+        
+        if sys.argv[1] == "--status":
+            show_cli_status(security)
+        elif sys.argv[1] == "--scan":
+            scan_path = sys.argv[2] if len(sys.argv) > 2 else "/home"
+            print(f"🔄 Running quick scan of {scan_path}...")
+            print("   (This may take a few minutes depending on the size)")
+            results = security.run_quick_scan(scan_path)
+            print_scan_results(results)
+        elif sys.argv[1] == "--scan-full":
+            print("🔄 Running full system scan...")
+            print("   ⚠️ This may take a long time (up to 1 hour)")
+            results = security.run_quick_scan("/", timeout=SCAN_TIMEOUT_FULL)
+            print_scan_results(results)
+        elif sys.argv[1] == "--enable-fw":
+            print("🔄 Enabling firewall...")
+            if security.enable_firewall():
+                print("✅ Firewall enabled successfully")
+            else:
+                print("❌ Failed to enable firewall")
+                print("   Tip: Make sure ufw or iptables is installed and you have sudo permissions")
+                sys.exit(1)
+        elif sys.argv[1] == "--disable-fw":
+            print("🔄 Disabling firewall...")
+            if security.disable_firewall():
+                print("⚠️ Firewall disabled")
+            else:
+                print("❌ Failed to disable firewall")
+                print("   Tip: Make sure ufw or iptables is installed and you have sudo permissions")
+                sys.exit(1)
+        elif sys.argv[1] == "--events":
+            events = security.load_events()[-20:]
+            if events:
+                print("\n📋 Recent Security Events:\n")
+                for event in events:
+                    timestamp = event.get('timestamp', 'Unknown')[:19]
+                    severity = event.get('severity', 'info').upper()
+                    message = event.get('message', 'No message')
+                    print(f"[{timestamp}] [{severity}] {message}")
+            else:
+                print("\n📋 No security events recorded yet.\n")
+        else:
+            print(f"Unknown option: {sys.argv[1]}")
+            print("Use --help for usage information")
+            sys.exit(1)
+    else:
+        if TKINTER_AVAILABLE and os.environ.get('DISPLAY'):
+            try:
+                app = SecurityCenterGUI()
+                app.run()
+            except tk.TclError as e:
+                print(f"GUI failed (display error): {e}")
+                show_cli_status()
+            except Exception as e:
+                print(f"GUI failed: {e}")
+                show_cli_status()
+        else:
+            show_cli_status()
+
+
+if __name__ == "__main__":
+    main()

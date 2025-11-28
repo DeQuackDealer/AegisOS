@@ -1,0 +1,1712 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Mobile Link - Phone Integration Tool
+Connect your Android/iOS devices for file sharing, notifications, and more
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import socket
+import http.server
+import socketserver
+import random
+import time
+import hashlib
+import secrets
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from http.server import SimpleHTTPRequestHandler
+import urllib.parse
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+try:
+    from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
+    ZEROCONF_AVAILABLE = True
+except ImportError:
+    ZEROCONF_AVAILABLE = False
+
+
+class AegisMobileLink:
+    def __init__(self):
+        self.version = "1.1.0"
+        self.using_user_dirs = False
+        
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/mobile")
+        self.log_dir = Path("/var/log/aegis")
+        
+        if not self._can_write_to_system_dirs():
+            self.using_user_dirs = True
+            user_config_dir = Path.home() / ".config" / "aegis"
+            user_data_dir = Path.home() / ".local" / "share" / "aegis" / "mobile"
+            user_log_dir = Path.home() / ".local" / "share" / "aegis" / "logs"
+            self.config_dir = user_config_dir
+            self.data_dir = user_data_dir
+            self.log_dir = user_log_dir
+        
+        self.config_file = self.config_dir / "mobile-config.json"
+        self.devices_file = self.data_dir / "devices.json"
+        self.notifications_file = self.data_dir / "notifications.json"
+        self.transfer_dir = Path.home() / "AegisMobileTransfer"
+        
+        self.http_server = None
+        self.http_port = 8765
+        self.http_bind_address = "127.0.0.1"
+        self.auth_token = None
+        self.discovery_running = False
+        self.discovered_devices = {}
+        self.zeroconf = None
+        self.browser = None
+        self.kdeconnect_available = None
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        self.load_devices()
+    
+    def _can_write_to_system_dirs(self) -> bool:
+        """Check if we can write to system directories"""
+        test_dirs = [Path("/etc/aegis"), Path("/var/lib/aegis")]
+        for d in test_dirs:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+                test_file = d / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                return True
+            except (PermissionError, OSError):
+                continue
+        return False
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir, self.transfer_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "aegis-mobile-link.log"
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(log_file),
+                    logging.StreamHandler()
+                ]
+            )
+        except PermissionError:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+        self.logger = logging.getLogger("AegisMobileLink")
+    
+    def load_config(self):
+        """Load configuration"""
+        default_config = {
+            "auto_discover": True,
+            "discovery_interval": 30,
+            "http_port": 8765,
+            "http_bind_localhost_only": True,
+            "http_require_auth": True,
+            "enable_notifications": True,
+            "enable_file_transfer": True,
+            "enable_battery_monitor": True,
+            "auto_accept_files": False,
+            "max_file_size_mb": 500,
+            "kdeconnect_enabled": True,
+            "trusted_networks": [],
+            "transfer_directory": str(self.transfer_dir),
+            "notification_retention_hours": 24
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                self.config = {**default_config, **json.load(f)}
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+            self.config = default_config
+            self.save_config()
+        
+        self.transfer_dir = Path(self.config.get("transfer_directory", str(self.transfer_dir)))
+        self.http_port = self.config.get("http_port", 8765)
+        if self.config.get("http_bind_localhost_only", True):
+            self.http_bind_address = "127.0.0.1"
+        else:
+            self.http_bind_address = "0.0.0.0"
+    
+    def save_config(self):
+        """Save configuration"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save config - permission denied")
+    
+    def load_devices(self):
+        """Load paired devices"""
+        try:
+            with open(self.devices_file, 'r') as f:
+                self.devices = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+            self.devices = {
+                "paired": {},
+                "pending": {},
+                "last_updated": None
+            }
+            self.save_devices()
+    
+    def save_devices(self):
+        """Save paired devices"""
+        self.devices["last_updated"] = datetime.now().isoformat()
+        try:
+            with open(self.devices_file, 'w') as f:
+                json.dump(self.devices, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save devices - permission denied")
+    
+    def get_local_ip(self) -> str:
+        """Get local IP address"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+    
+    def generate_device_id(self) -> str:
+        """Generate unique device ID"""
+        hostname = socket.gethostname()
+        mac = hex(random.getrandbits(48))[2:]
+        return hashlib.sha256(f"{hostname}-{mac}-{time.time()}".encode()).hexdigest()[:16]
+    
+    def generate_pairing_pin(self) -> str:
+        """Generate a 6-digit pairing PIN"""
+        return str(random.randint(100000, 999999))
+    
+    def discover_devices(self, timeout: int = 10) -> List[Dict]:
+        """Discover devices on the local network"""
+        self.logger.info("Starting device discovery...")
+        discovered = []
+        
+        if ZEROCONF_AVAILABLE:
+            discovered.extend(self._discover_mdns(timeout))
+        
+        discovered.extend(self._discover_kdeconnect())
+        
+        discovered.extend(self._scan_network())
+        
+        unique_devices = {}
+        for device in discovered:
+            key = f"{device.get('ip', '')}:{device.get('name', '')}"
+            if key not in unique_devices:
+                unique_devices[key] = device
+        
+        return list(unique_devices.values())
+    
+    def _discover_mdns(self, timeout: int = 10) -> List[Dict]:
+        """Discover devices using mDNS/Zeroconf"""
+        devices = []
+        
+        if not ZEROCONF_AVAILABLE:
+            return devices
+        
+        class MyListener:
+            def __init__(self):
+                self.devices = []
+            
+            def add_service(self, zeroconf, service_type, name):
+                info = zeroconf.get_service_info(service_type, name)
+                if info:
+                    addresses = [socket.inet_ntoa(addr) for addr in info.addresses]
+                    self.devices.append({
+                        "name": info.server.rstrip('.'),
+                        "ip": addresses[0] if addresses else "unknown",
+                        "port": info.port,
+                        "type": "mdns",
+                        "service": service_type
+                    })
+            
+            def remove_service(self, zeroconf, service_type, name):
+                pass
+            
+            def update_service(self, zeroconf, service_type, name):
+                pass
+        
+        try:
+            zeroconf = Zeroconf()
+            listener = MyListener()
+            
+            services = [
+                "_kdeconnect._udp.local.",
+                "_aegis-mobile._tcp.local.",
+                "_http._tcp.local.",
+            ]
+            
+            browsers = []
+            for service in services:
+                try:
+                    browser = ServiceBrowser(zeroconf, service, listener)
+                    browsers.append(browser)
+                except:
+                    pass
+            
+            time.sleep(min(timeout, 5))
+            
+            devices = listener.devices
+            zeroconf.close()
+            
+        except Exception as e:
+            self.logger.warning(f"mDNS discovery error: {e}")
+        
+        return devices
+    
+    def _discover_kdeconnect(self) -> List[Dict]:
+        """Discover KDE Connect devices"""
+        devices = []
+        
+        if not self.config.get("kdeconnect_enabled", True):
+            return devices
+        
+        try:
+            result = subprocess.run(
+                ["kdeconnect-cli", "-l", "--id-name-only"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = line.split(' ', 1)
+                        if len(parts) >= 2:
+                            device_id, name = parts[0], parts[1]
+                            
+                            detail = subprocess.run(
+                                ["kdeconnect-cli", "-d", device_id, "--ping"],
+                                capture_output=True, text=True, timeout=5
+                            )
+                            
+                            devices.append({
+                                "id": device_id,
+                                "name": name,
+                                "type": "kdeconnect",
+                                "reachable": detail.returncode == 0
+                            })
+        except FileNotFoundError:
+            self.logger.debug("KDE Connect not installed")
+        except subprocess.TimeoutExpired:
+            self.logger.warning("KDE Connect discovery timed out")
+        except Exception as e:
+            self.logger.warning(f"KDE Connect discovery error: {e}")
+        
+        return devices
+    
+    def _scan_network(self) -> List[Dict]:
+        """Basic network scan for mobile devices"""
+        devices = []
+        local_ip = self.get_local_ip()
+        
+        if local_ip == "127.0.0.1":
+            return devices
+        
+        network_prefix = '.'.join(local_ip.split('.')[:3])
+        
+        common_ports = [8765, 1714, 1716, 1739, 5000]
+        
+        def check_host(ip, port):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.5)
+                result = sock.connect_ex((ip, port))
+                sock.close()
+                return result == 0
+            except:
+                return False
+        
+        for i in range(1, 20):
+            ip = f"{network_prefix}.{i}"
+            if ip != local_ip:
+                for port in common_ports[:2]:
+                    if check_host(ip, port):
+                        devices.append({
+                            "ip": ip,
+                            "port": port,
+                            "type": "network",
+                            "name": f"Device at {ip}"
+                        })
+                        break
+        
+        return devices
+    
+    def pair_device(self, device_info: Dict, pin: str = None) -> Dict:
+        """Pair with a device"""
+        result = {
+            "success": False,
+            "device_id": None,
+            "message": ""
+        }
+        
+        device_id = device_info.get("id") or self.generate_device_id()
+        
+        if device_id in self.devices.get("paired", {}):
+            result["message"] = "Device already paired"
+            result["device_id"] = device_id
+            result["success"] = True
+            return result
+        
+        if device_info.get("type") == "kdeconnect":
+            return self._pair_kdeconnect(device_info)
+        
+        pairing_pin = pin or self.generate_pairing_pin()
+        
+        self.devices["pending"][device_id] = {
+            "name": device_info.get("name", "Unknown Device"),
+            "ip": device_info.get("ip", ""),
+            "type": device_info.get("type", "unknown"),
+            "pin": pairing_pin,
+            "timestamp": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        self.save_devices()
+        
+        result["success"] = True
+        result["device_id"] = device_id
+        result["pin"] = pairing_pin
+        result["message"] = f"Pairing initiated. Enter PIN on device: {pairing_pin}"
+        
+        self.logger.info(f"Pairing initiated with {device_info.get('name', 'Unknown')} - PIN: {pairing_pin}")
+        
+        return result
+    
+    def _pair_kdeconnect(self, device_info: Dict) -> Dict:
+        """Pair using KDE Connect"""
+        result = {
+            "success": False,
+            "device_id": device_info.get("id"),
+            "message": ""
+        }
+        
+        try:
+            proc = subprocess.run(
+                ["kdeconnect-cli", "-d", device_info["id"], "--pair"],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            if proc.returncode == 0:
+                self.devices["paired"][device_info["id"]] = {
+                    "name": device_info.get("name", "KDE Connect Device"),
+                    "type": "kdeconnect",
+                    "paired_at": datetime.now().isoformat(),
+                    "last_seen": datetime.now().isoformat()
+                }
+                self.save_devices()
+                
+                result["success"] = True
+                result["message"] = "Successfully paired via KDE Connect"
+            else:
+                result["message"] = f"KDE Connect pairing failed: {proc.stderr}"
+                
+        except Exception as e:
+            result["message"] = f"Pairing error: {e}"
+        
+        return result
+    
+    def confirm_pairing(self, device_id: str, entered_pin: str) -> Dict:
+        """Confirm pairing with PIN verification"""
+        result = {
+            "success": False,
+            "message": ""
+        }
+        
+        if device_id not in self.devices.get("pending", {}):
+            result["message"] = "No pending pairing for this device"
+            return result
+        
+        pending = self.devices["pending"][device_id]
+        
+        if pending.get("pin") != entered_pin:
+            result["message"] = "Invalid PIN"
+            return result
+        
+        self.devices["paired"][device_id] = {
+            "name": pending.get("name", "Unknown Device"),
+            "ip": pending.get("ip", ""),
+            "type": pending.get("type", "unknown"),
+            "paired_at": datetime.now().isoformat(),
+            "last_seen": datetime.now().isoformat(),
+            "battery": None,
+            "notifications": []
+        }
+        
+        del self.devices["pending"][device_id]
+        self.save_devices()
+        
+        result["success"] = True
+        result["message"] = f"Successfully paired with {pending.get('name', 'Unknown Device')}"
+        self.logger.info(result["message"])
+        
+        return result
+    
+    def unpair_device(self, device_id: str) -> Dict:
+        """Unpair a device"""
+        result = {
+            "success": False,
+            "message": ""
+        }
+        
+        if device_id in self.devices.get("paired", {}):
+            device_info = self.devices["paired"][device_id]
+            
+            if device_info.get("type") == "kdeconnect":
+                try:
+                    subprocess.run(
+                        ["kdeconnect-cli", "-d", device_id, "--unpair"],
+                        capture_output=True, timeout=10
+                    )
+                except:
+                    pass
+            
+            del self.devices["paired"][device_id]
+            self.save_devices()
+            
+            result["success"] = True
+            result["message"] = f"Unpaired device: {device_info.get('name', device_id)}"
+            self.logger.info(result["message"])
+        else:
+            result["message"] = "Device not found in paired devices"
+        
+        return result
+    
+    def get_paired_devices(self) -> List[Dict]:
+        """Get list of paired devices with current status"""
+        devices = []
+        
+        for device_id, info in self.devices.get("paired", {}).items():
+            device = {
+                "id": device_id,
+                **info,
+                "online": False
+            }
+            
+            if info.get("type") == "kdeconnect":
+                try:
+                    result = subprocess.run(
+                        ["kdeconnect-cli", "-d", device_id, "--ping"],
+                        capture_output=True, timeout=5
+                    )
+                    device["online"] = result.returncode == 0
+                except:
+                    pass
+            elif info.get("ip"):
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(1)
+                    result = sock.connect_ex((info["ip"], self.http_port))
+                    sock.close()
+                    device["online"] = result == 0
+                except:
+                    pass
+            
+            devices.append(device)
+        
+        return devices
+    
+    def get_device_battery(self, device_id: str) -> Optional[Dict]:
+        """Get battery status of a paired device"""
+        if device_id not in self.devices.get("paired", {}):
+            return None
+        
+        device = self.devices["paired"][device_id]
+        
+        if device.get("type") == "kdeconnect":
+            try:
+                result = subprocess.run(
+                    ["kdeconnect-cli", "-d", device_id, "-b"],
+                    capture_output=True, text=True, timeout=10
+                )
+                
+                if result.returncode == 0:
+                    output = result.stdout.strip()
+                    battery_info = {
+                        "level": None,
+                        "charging": False,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    if "%" in output:
+                        try:
+                            level = int(''.join(filter(str.isdigit, output.split('%')[0][-3:])))
+                            battery_info["level"] = level
+                        except:
+                            pass
+                    
+                    battery_info["charging"] = "charging" in output.lower()
+                    
+                    self.devices["paired"][device_id]["battery"] = battery_info
+                    self.save_devices()
+                    
+                    return battery_info
+            except:
+                pass
+        
+        return device.get("battery")
+    
+    def send_file(self, device_id: str, file_path: str) -> Dict:
+        """Send a file to a paired device"""
+        result = {
+            "success": False,
+            "message": "",
+            "file": file_path
+        }
+        
+        if not os.path.exists(file_path):
+            result["message"] = f"File not found: {file_path}"
+            return result
+        
+        if device_id not in self.devices.get("paired", {}):
+            result["message"] = "Device not paired"
+            return result
+        
+        device = self.devices["paired"][device_id]
+        
+        if device.get("type") == "kdeconnect":
+            try:
+                proc = subprocess.run(
+                    ["kdeconnect-cli", "-d", device_id, "--share", file_path],
+                    capture_output=True, text=True, timeout=60
+                )
+                
+                if proc.returncode == 0:
+                    result["success"] = True
+                    result["message"] = f"File sent successfully via KDE Connect"
+                else:
+                    result["message"] = f"KDE Connect error: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"Send error: {e}"
+        else:
+            result["message"] = "Direct file transfer not supported for this device type"
+        
+        return result
+    
+    def ping_device(self, device_id: str) -> Dict:
+        """Send a ping to find the device"""
+        result = {
+            "success": False,
+            "message": ""
+        }
+        
+        if device_id not in self.devices.get("paired", {}):
+            result["message"] = "Device not paired"
+            return result
+        
+        device = self.devices["paired"][device_id]
+        
+        if device.get("type") == "kdeconnect":
+            try:
+                proc = subprocess.run(
+                    ["kdeconnect-cli", "-d", device_id, "--ring"],
+                    capture_output=True, text=True, timeout=10
+                )
+                
+                if proc.returncode == 0:
+                    result["success"] = True
+                    result["message"] = "Ping sent - device should ring"
+                else:
+                    proc = subprocess.run(
+                        ["kdeconnect-cli", "-d", device_id, "--ping-msg", "Aegis Mobile Link: Finding your phone!"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    result["success"] = proc.returncode == 0
+                    result["message"] = "Ping notification sent" if result["success"] else "Ping failed"
+            except Exception as e:
+                result["message"] = f"Ping error: {e}"
+        else:
+            if device.get("ip"):
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    sock.sendto(b"AEGIS_PING", (device["ip"], self.http_port))
+                    sock.close()
+                    result["success"] = True
+                    result["message"] = "Ping packet sent"
+                except Exception as e:
+                    result["message"] = f"Ping failed: {e}"
+            else:
+                result["message"] = "Device IP not available"
+        
+        return result
+    
+    def get_notifications(self, device_id: str = None) -> List[Dict]:
+        """Get notifications from paired devices"""
+        notifications = []
+        
+        devices_to_check = [device_id] if device_id else list(self.devices.get("paired", {}).keys())
+        
+        for did in devices_to_check:
+            if did not in self.devices.get("paired", {}):
+                continue
+            
+            device = self.devices["paired"][did]
+            
+            if device.get("type") == "kdeconnect":
+                try:
+                    result = subprocess.run(
+                        ["kdeconnect-cli", "-d", did, "--list-notifications"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    
+                    if result.returncode == 0:
+                        for line in result.stdout.strip().split('\n'):
+                            if line.strip():
+                                notifications.append({
+                                    "device_id": did,
+                                    "device_name": device.get("name", "Unknown"),
+                                    "content": line.strip(),
+                                    "timestamp": datetime.now().isoformat(),
+                                    "type": "kdeconnect"
+                                })
+                except:
+                    pass
+            
+            stored = device.get("notifications", [])
+            for notif in stored[-50:]:
+                notif["device_id"] = did
+                notif["device_name"] = device.get("name", "Unknown")
+                notifications.append(notif)
+        
+        notifications.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return notifications[:100]
+    
+    def generate_auth_token(self) -> str:
+        """Generate a secure authentication token for file uploads"""
+        self.auth_token = secrets.token_urlsafe(24)
+        return self.auth_token
+    
+    def start_file_server(self, bind_all: bool = False, show_warning: bool = True) -> Dict:
+        """Start HTTP server for file transfers
+        
+        Args:
+            bind_all: If True, bind to 0.0.0.0 (network accessible). Default False (localhost only).
+            show_warning: If True, print security warnings. Default True.
+        
+        Returns:
+            Dict with server info including auth token
+        """
+        result = {
+            "success": False,
+            "message": "",
+            "bind_address": "",
+            "port": self.http_port,
+            "auth_token": None,
+            "transfer_dir": str(self.transfer_dir)
+        }
+        
+        if self.http_server:
+            result["success"] = True
+            result["message"] = "Server already running"
+            result["auth_token"] = self.auth_token
+            result["bind_address"] = self.http_bind_address
+            return result
+        
+        if bind_all:
+            self.http_bind_address = "0.0.0.0"
+        elif self.config.get("http_bind_localhost_only", True):
+            self.http_bind_address = "127.0.0.1"
+        else:
+            self.http_bind_address = "0.0.0.0"
+        
+        self.generate_auth_token()
+        require_auth = self.config.get("http_require_auth", True)
+        
+        auth_token_ref = self.auth_token
+        transfer_dir_ref = self.transfer_dir
+        logger_ref = self.logger
+        
+        class TransferHandler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=str(transfer_dir_ref), **kwargs)
+            
+            def log_message(self, format, *args):
+                pass
+            
+            def do_POST(self):
+                if self.path == '/upload':
+                    if require_auth:
+                        provided_token = self.headers.get('X-Auth-Token', '')
+                        if provided_token != auth_token_ref:
+                            self.send_response(401)
+                            self.send_header('Content-type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(json.dumps({
+                                "status": "error", 
+                                "message": "Invalid or missing authentication token. Use X-Auth-Token header."
+                            }).encode())
+                            logger_ref.warning(f"Rejected upload: invalid auth token from {self.client_address[0]}")
+                            return
+                    
+                    try:
+                        content_length = int(self.headers.get('Content-Length', 0))
+                    except ValueError:
+                        self.send_response(400)
+                        self.end_headers()
+                        return
+                    
+                    content_type = self.headers.get('Content-Type', '')
+                    
+                    if 'multipart/form-data' in content_type:
+                        self.send_response(501)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "status": "error",
+                            "message": "Multipart form data not supported. Use raw file upload with X-Filename header."
+                        }).encode())
+                        return
+                    
+                    filename = self.headers.get('X-Filename', f'upload_{int(time.time())}')
+                    filename = os.path.basename(filename)
+                    filename = "".join(c for c in filename if c.isalnum() or c in '._-')
+                    if not filename:
+                        filename = f'upload_{int(time.time())}'
+                    
+                    filepath = os.path.join(str(transfer_dir_ref), filename)
+                    
+                    try:
+                        with open(filepath, 'wb') as f:
+                            remaining = content_length
+                            while remaining > 0:
+                                chunk = self.rfile.read(min(8192, remaining))
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                remaining -= len(chunk)
+                        
+                        logger_ref.info(f"File received: {filename} from {self.client_address[0]}")
+                        
+                        self.send_response(200)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"status": "success", "file": filename}).encode())
+                    except Exception as e:
+                        self.send_response(500)
+                        self.send_header('Content-type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+        
+        try:
+            self.http_server = socketserver.TCPServer((self.http_bind_address, self.http_port), TransferHandler)
+            
+            server_thread = threading.Thread(target=self.http_server.serve_forever)
+            server_thread.daemon = True
+            server_thread.start()
+            
+            result["success"] = True
+            result["bind_address"] = self.http_bind_address
+            result["auth_token"] = self.auth_token
+            
+            if show_warning:
+                if self.http_bind_address == "0.0.0.0":
+                    self.logger.warning("=" * 60)
+                    self.logger.warning("SECURITY WARNING: File server is accessible from the network!")
+                    self.logger.warning(f"Anyone on your network can connect to port {self.http_port}")
+                    self.logger.warning("Use --receive-local for localhost-only access")
+                    self.logger.warning("=" * 60)
+                    result["message"] = f"Server started on ALL interfaces (0.0.0.0:{self.http_port}) - NETWORK ACCESSIBLE"
+                else:
+                    result["message"] = f"Server started on localhost only (127.0.0.1:{self.http_port})"
+            
+            self.logger.info(f"File transfer server started on {self.http_bind_address}:{self.http_port}")
+            if require_auth:
+                self.logger.info(f"Authentication enabled. Token required for uploads.")
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Failed to start file server: {e}")
+            result["message"] = f"Failed to start server: {e}"
+            return result
+    
+    def stop_file_server(self):
+        """Stop HTTP file server"""
+        if self.http_server:
+            self.http_server.shutdown()
+            self.http_server = None
+            self.logger.info("File transfer server stopped")
+    
+    def get_status(self) -> Dict:
+        """Get overall mobile link status"""
+        paired_devices = self.get_paired_devices()
+        online_count = sum(1 for d in paired_devices if d.get("online", False))
+        
+        kdeconnect_status = self._check_kdeconnect()
+        
+        return {
+            "version": self.version,
+            "local_ip": self.get_local_ip(),
+            "http_port": self.http_port,
+            "http_bind_address": self.http_bind_address,
+            "http_auth_enabled": self.config.get("http_require_auth", True),
+            "server_running": self.http_server is not None,
+            "auth_token": self.auth_token if self.http_server else None,
+            "paired_devices": len(paired_devices),
+            "online_devices": online_count,
+            "devices": paired_devices,
+            "transfer_directory": str(self.transfer_dir),
+            "kdeconnect_available": kdeconnect_status,
+            "zeroconf_available": ZEROCONF_AVAILABLE,
+            "using_user_dirs": self.using_user_dirs,
+            "config_dir": str(self.config_dir),
+            "last_updated": self.devices.get("last_updated")
+        }
+    
+    def _check_kdeconnect(self) -> bool:
+        """Check if KDE Connect is available and cache the result"""
+        if self.kdeconnect_available is not None:
+            return self.kdeconnect_available
+        
+        try:
+            result = subprocess.run(
+                ["kdeconnect-cli", "--version"],
+                capture_output=True, timeout=5
+            )
+            self.kdeconnect_available = result.returncode == 0
+        except FileNotFoundError:
+            self.kdeconnect_available = False
+            self.logger.debug("KDE Connect not installed - some features will be limited")
+        except subprocess.TimeoutExpired:
+            self.kdeconnect_available = False
+            self.logger.debug("KDE Connect check timed out")
+        except Exception:
+            self.kdeconnect_available = False
+        
+        return self.kdeconnect_available
+    
+    def get_kdeconnect_status_message(self) -> str:
+        """Get a user-friendly message about KDE Connect status"""
+        if self._check_kdeconnect():
+            return "KDE Connect is available and ready"
+        else:
+            return ("KDE Connect is not installed. Some features like phone notifications, "
+                    "battery monitoring, and file sharing via phone are unavailable. "
+                    "Install KDE Connect for full functionality.")
+
+
+class MobileLinkGUI:
+    def __init__(self):
+        self.mobile = AegisMobileLink()
+        self.root = tk.Tk()
+        self.selected_device = None
+        self.setup_window()
+        self.create_widgets()
+        self.refresh_devices()
+        server_result = self.mobile.start_file_server(bind_all=False, show_warning=False)
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis Mobile Link")
+        self.root.geometry("950x700")
+        self.root.configure(bg='#1a1a2e')
+        self.root.minsize(800, 600)
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='white', font=('Arial', 10))
+        style.configure('TButton', padding=8, font=('Arial', 10))
+        style.configure('Header.TLabel', font=('Arial', 20, 'bold'), foreground='#00d4ff')
+        style.configure('SubHeader.TLabel', font=('Arial', 14, 'bold'), foreground='#00d4ff')
+        style.configure('Device.TLabel', font=('Arial', 11), foreground='white')
+        style.configure('Online.TLabel', font=('Arial', 10, 'bold'), foreground='#00ff00')
+        style.configure('Offline.TLabel', font=('Arial', 10), foreground='#888888')
+        style.configure('Battery.TLabel', font=('Arial', 10), foreground='#ffd700')
+        
+        style.configure('TLabelframe', background='#1a1a2e')
+        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='white', font=('Arial', 11, 'bold'))
+        
+        style.configure('TNotebook', background='#1a1a2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Arial', 10, 'bold'))
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header_frame = ttk.Frame(self.root)
+        header_frame.pack(fill='x', padx=20, pady=15)
+        
+        title = ttk.Label(header_frame, text="📱 Aegis Mobile Link", style='Header.TLabel')
+        title.pack(side='left')
+        
+        self.status_label = ttk.Label(header_frame, text="", style='TLabel')
+        self.status_label.pack(side='right')
+        
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        left_panel = ttk.Frame(main_frame, width=280)
+        left_panel.pack(side='left', fill='y', padx=(0, 15))
+        left_panel.pack_propagate(False)
+        
+        devices_frame = ttk.LabelFrame(left_panel, text="📱 Paired Devices", padding=10)
+        devices_frame.pack(fill='both', expand=True)
+        
+        self.devices_listbox = tk.Listbox(
+            devices_frame, bg='#16213e', fg='white', 
+            selectbackground='#00d4ff', selectforeground='black',
+            font=('Arial', 11), height=12
+        )
+        self.devices_listbox.pack(fill='both', expand=True, pady=(0, 10))
+        self.devices_listbox.bind('<<ListboxSelect>>', self.on_device_select)
+        
+        device_buttons = ttk.Frame(devices_frame)
+        device_buttons.pack(fill='x')
+        
+        ttk.Button(device_buttons, text="🔍 Discover", command=self.discover_devices).pack(side='left', padx=2)
+        ttk.Button(device_buttons, text="➕ Pair", command=self.pair_new_device).pack(side='left', padx=2)
+        ttk.Button(device_buttons, text="🔄", command=self.refresh_devices, width=3).pack(side='right', padx=2)
+        
+        device_info_frame = ttk.LabelFrame(left_panel, text="📊 Device Info", padding=10)
+        device_info_frame.pack(fill='x', pady=(10, 0))
+        
+        self.device_name_label = ttk.Label(device_info_frame, text="No device selected", style='Device.TLabel')
+        self.device_name_label.pack(anchor='w')
+        
+        self.device_status_label = ttk.Label(device_info_frame, text="", style='Offline.TLabel')
+        self.device_status_label.pack(anchor='w')
+        
+        self.battery_label = ttk.Label(device_info_frame, text="", style='Battery.TLabel')
+        self.battery_label.pack(anchor='w')
+        
+        action_buttons = ttk.Frame(device_info_frame)
+        action_buttons.pack(fill='x', pady=(10, 0))
+        
+        ttk.Button(action_buttons, text="📍 Find", command=self.ping_device).pack(side='left', padx=2)
+        ttk.Button(action_buttons, text="🔋 Battery", command=self.check_battery).pack(side='left', padx=2)
+        ttk.Button(action_buttons, text="❌ Unpair", command=self.unpair_device).pack(side='right', padx=2)
+        
+        right_panel = ttk.Frame(main_frame)
+        right_panel.pack(side='right', fill='both', expand=True)
+        
+        notebook = ttk.Notebook(right_panel)
+        notebook.pack(fill='both', expand=True)
+        
+        files_tab = ttk.Frame(notebook)
+        notebook.add(files_tab, text="📁 File Transfer")
+        
+        transfer_frame = ttk.LabelFrame(files_tab, text="Send Files", padding=15)
+        transfer_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(transfer_frame, text="Select a file to send to the connected device:").pack(anchor='w', pady=(0, 10))
+        
+        file_select_frame = ttk.Frame(transfer_frame)
+        file_select_frame.pack(fill='x')
+        
+        self.file_path_var = tk.StringVar()
+        file_entry = ttk.Entry(file_select_frame, textvariable=self.file_path_var, width=40)
+        file_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
+        ttk.Button(file_select_frame, text="Browse...", command=self.browse_file).pack(side='left', padx=(0, 10))
+        ttk.Button(file_select_frame, text="Send", command=self.send_file).pack(side='left')
+        
+        receive_frame = ttk.LabelFrame(files_tab, text="Received Files", padding=15)
+        receive_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        self.files_listbox = tk.Listbox(
+            receive_frame, bg='#16213e', fg='white',
+            font=('Courier', 10), height=8
+        )
+        self.files_listbox.pack(fill='both', expand=True, pady=(0, 10))
+        
+        files_buttons = ttk.Frame(receive_frame)
+        files_buttons.pack(fill='x')
+        
+        ttk.Button(files_buttons, text="📂 Open Folder", command=self.open_transfer_folder).pack(side='left', padx=2)
+        ttk.Button(files_buttons, text="🔄 Refresh", command=self.refresh_files).pack(side='left', padx=2)
+        
+        self.refresh_files()
+        
+        notif_tab = ttk.Frame(notebook)
+        notebook.add(notif_tab, text="🔔 Notifications")
+        
+        notif_frame = ttk.LabelFrame(notif_tab, text="Phone Notifications", padding=10)
+        notif_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        self.notif_text = scrolledtext.ScrolledText(
+            notif_frame, bg='#16213e', fg='#00ff00',
+            font=('Courier', 10), height=15
+        )
+        self.notif_text.pack(fill='both', expand=True, pady=(0, 10))
+        
+        ttk.Button(notif_frame, text="🔄 Refresh Notifications", command=self.refresh_notifications).pack()
+        
+        settings_tab = ttk.Frame(notebook)
+        notebook.add(settings_tab, text="⚙️ Settings")
+        
+        settings_frame = ttk.LabelFrame(settings_tab, text="Configuration", padding=15)
+        settings_frame.pack(fill='x', padx=10, pady=10)
+        
+        self.auto_discover_var = tk.BooleanVar(value=self.mobile.config.get("auto_discover", True))
+        ttk.Checkbutton(settings_frame, text="Auto-discover devices on startup", 
+                       variable=self.auto_discover_var, command=self.save_settings).pack(anchor='w', pady=2)
+        
+        self.enable_notif_var = tk.BooleanVar(value=self.mobile.config.get("enable_notifications", True))
+        ttk.Checkbutton(settings_frame, text="Enable notification sync", 
+                       variable=self.enable_notif_var, command=self.save_settings).pack(anchor='w', pady=2)
+        
+        self.kdeconnect_var = tk.BooleanVar(value=self.mobile.config.get("kdeconnect_enabled", True))
+        ttk.Checkbutton(settings_frame, text="Enable KDE Connect integration", 
+                       variable=self.kdeconnect_var, command=self.save_settings).pack(anchor='w', pady=2)
+        
+        port_frame = ttk.Frame(settings_frame)
+        port_frame.pack(fill='x', pady=10)
+        ttk.Label(port_frame, text="HTTP Port:").pack(side='left')
+        self.port_var = tk.StringVar(value=str(self.mobile.http_port))
+        ttk.Entry(port_frame, textvariable=self.port_var, width=8).pack(side='left', padx=10)
+        
+        dir_frame = ttk.Frame(settings_frame)
+        dir_frame.pack(fill='x', pady=5)
+        ttk.Label(dir_frame, text="Transfer Directory:").pack(side='left')
+        self.transfer_dir_var = tk.StringVar(value=str(self.mobile.transfer_dir))
+        ttk.Entry(dir_frame, textvariable=self.transfer_dir_var, width=30).pack(side='left', padx=10)
+        ttk.Button(dir_frame, text="Browse", command=self.browse_transfer_dir).pack(side='left')
+        
+        info_frame = ttk.LabelFrame(settings_tab, text="Connection Info", padding=15)
+        info_frame.pack(fill='x', padx=10, pady=10)
+        
+        status = self.mobile.get_status()
+        ttk.Label(info_frame, text=f"Local IP: {status['local_ip']}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"Server Port: {status['http_port']}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"KDE Connect: {'Available' if status['kdeconnect_available'] else 'Not Installed'}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"Zeroconf/mDNS: {'Available' if status['zeroconf_available'] else 'Not Available'}").pack(anchor='w')
+        
+        status_bar = ttk.Frame(self.root)
+        status_bar.pack(fill='x', padx=20, pady=10)
+        
+        status = self.mobile.get_status()
+        server_status = "🟢 Server Running" if status['server_running'] else "🔴 Server Stopped"
+        self.server_status_label = ttk.Label(status_bar, text=server_status)
+        self.server_status_label.pack(side='left')
+        
+        ttk.Label(status_bar, text=f"Transfer: {status['transfer_directory']}").pack(side='right')
+    
+    def refresh_devices(self):
+        """Refresh the device list"""
+        self.devices_listbox.delete(0, tk.END)
+        
+        devices = self.mobile.get_paired_devices()
+        
+        for device in devices:
+            status_icon = "🟢" if device.get("online") else "⚪"
+            name = device.get("name", device.get("id", "Unknown"))[:25]
+            self.devices_listbox.insert(tk.END, f"{status_icon} {name}")
+        
+        self.device_list = devices
+        
+        online = sum(1 for d in devices if d.get("online"))
+        self.status_label.config(text=f"Devices: {len(devices)} | Online: {online}")
+    
+    def on_device_select(self, event):
+        """Handle device selection"""
+        selection = self.devices_listbox.curselection()
+        if selection and hasattr(self, 'device_list'):
+            idx = selection[0]
+            if idx < len(self.device_list):
+                self.selected_device = self.device_list[idx]
+                
+                self.device_name_label.config(text=self.selected_device.get("name", "Unknown"))
+                
+                if self.selected_device.get("online"):
+                    self.device_status_label.config(text="● Online", style='Online.TLabel')
+                else:
+                    self.device_status_label.config(text="○ Offline", style='Offline.TLabel')
+                
+                battery = self.selected_device.get("battery")
+                if battery and battery.get("level") is not None:
+                    charge = "⚡" if battery.get("charging") else ""
+                    self.battery_label.config(text=f"🔋 {battery['level']}% {charge}")
+                else:
+                    self.battery_label.config(text="")
+    
+    def discover_devices(self):
+        """Discover new devices"""
+        self.status_label.config(text="Searching for devices...")
+        self.root.update()
+        
+        def do_discovery():
+            devices = self.mobile.discover_devices(timeout=5)
+            self.root.after(0, lambda: self.show_discovery_results(devices))
+        
+        thread = threading.Thread(target=do_discovery)
+        thread.daemon = True
+        thread.start()
+    
+    def show_discovery_results(self, devices):
+        """Show discovered devices"""
+        self.refresh_devices()
+        
+        if not devices:
+            messagebox.showinfo("Discovery", "No new devices found on the network.\n\n"
+                              "Make sure your phone:\n"
+                              "• Is on the same WiFi network\n"
+                              "• Has KDE Connect or similar app installed\n"
+                              "• Has discovery enabled")
+            return
+        
+        result = "Found devices:\n\n"
+        for i, device in enumerate(devices[:10]):
+            name = device.get("name", device.get("ip", "Unknown"))
+            dtype = device.get("type", "unknown")
+            result += f"{i+1}. {name} ({dtype})\n"
+        
+        result += "\nWould you like to pair with a discovered device?"
+        
+        if messagebox.askyesno("Devices Found", result):
+            self.pair_new_device()
+    
+    def pair_new_device(self):
+        """Open pairing dialog"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Pair New Device")
+        dialog.geometry("400x300")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="🔗 Pair New Device", style='SubHeader.TLabel').pack(pady=15)
+        
+        ttk.Label(dialog, text="Enter device name or IP address:").pack(pady=5)
+        
+        name_var = tk.StringVar()
+        name_entry = ttk.Entry(dialog, textvariable=name_var, width=30)
+        name_entry.pack(pady=5)
+        
+        ttk.Label(dialog, text="IP Address (optional):").pack(pady=5)
+        
+        ip_var = tk.StringVar()
+        ip_entry = ttk.Entry(dialog, textvariable=ip_var, width=30)
+        ip_entry.pack(pady=5)
+        
+        pin_frame = ttk.Frame(dialog)
+        pin_frame.pack(pady=15)
+        
+        pin_label = ttk.Label(pin_frame, text="", font=('Arial', 24, 'bold'), foreground='#00ff00')
+        pin_label.pack()
+        
+        def do_pair():
+            name = name_var.get() or "New Device"
+            ip = ip_var.get()
+            
+            device_info = {"name": name, "ip": ip, "type": "manual"}
+            result = self.mobile.pair_device(device_info)
+            
+            if result.get("success"):
+                pin = result.get("pin", "")
+                if pin:
+                    pin_label.config(text=f"PIN: {pin}")
+                    messagebox.showinfo("Pairing", f"Pairing initiated!\n\nEnter this PIN on your phone:\n{pin}")
+                else:
+                    messagebox.showinfo("Pairing", result.get("message", "Pairing complete"))
+                    dialog.destroy()
+                    self.refresh_devices()
+            else:
+                messagebox.showerror("Error", result.get("message", "Pairing failed"))
+        
+        ttk.Button(dialog, text="Start Pairing", command=do_pair).pack(pady=10)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
+    
+    def unpair_device(self):
+        """Unpair selected device"""
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Please select a device first")
+            return
+        
+        name = self.selected_device.get("name", "this device")
+        if messagebox.askyesno("Confirm", f"Unpair {name}?"):
+            result = self.mobile.unpair_device(self.selected_device.get("id"))
+            if result.get("success"):
+                messagebox.showinfo("Success", result.get("message"))
+                self.selected_device = None
+                self.device_name_label.config(text="No device selected")
+                self.device_status_label.config(text="")
+                self.battery_label.config(text="")
+                self.refresh_devices()
+            else:
+                messagebox.showerror("Error", result.get("message"))
+    
+    def ping_device(self):
+        """Ping/find selected device"""
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Please select a device first")
+            return
+        
+        result = self.mobile.ping_device(self.selected_device.get("id"))
+        if result.get("success"):
+            messagebox.showinfo("Find My Phone", result.get("message"))
+        else:
+            messagebox.showerror("Error", result.get("message"))
+    
+    def check_battery(self):
+        """Check battery of selected device"""
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Please select a device first")
+            return
+        
+        battery = self.mobile.get_device_battery(self.selected_device.get("id"))
+        if battery and battery.get("level") is not None:
+            charge_status = " (Charging)" if battery.get("charging") else ""
+            self.battery_label.config(text=f"🔋 {battery['level']}%{charge_status}")
+            messagebox.showinfo("Battery", f"Battery Level: {battery['level']}%{charge_status}")
+        else:
+            messagebox.showinfo("Battery", "Unable to get battery status.\n\nThis feature requires KDE Connect.")
+    
+    def browse_file(self):
+        """Browse for file to send"""
+        filename = filedialog.askopenfilename(title="Select file to send")
+        if filename:
+            self.file_path_var.set(filename)
+    
+    def send_file(self):
+        """Send file to selected device"""
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Please select a device first")
+            return
+        
+        file_path = self.file_path_var.get()
+        if not file_path:
+            messagebox.showwarning("Warning", "Please select a file first")
+            return
+        
+        result = self.mobile.send_file(self.selected_device.get("id"), file_path)
+        if result.get("success"):
+            messagebox.showinfo("Success", result.get("message"))
+            self.file_path_var.set("")
+        else:
+            messagebox.showerror("Error", result.get("message"))
+    
+    def refresh_files(self):
+        """Refresh received files list"""
+        self.files_listbox.delete(0, tk.END)
+        
+        try:
+            if self.mobile.transfer_dir.exists():
+                files = list(self.mobile.transfer_dir.iterdir())
+                files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                
+                for f in files[:50]:
+                    if f.is_file():
+                        size = f.stat().st_size
+                        size_str = self._format_size(size)
+                        self.files_listbox.insert(tk.END, f"{f.name} ({size_str})")
+        except Exception as e:
+            self.files_listbox.insert(tk.END, f"Error: {e}")
+    
+    def _format_size(self, size: int) -> str:
+        """Format file size"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+    
+    def open_transfer_folder(self):
+        """Open transfer folder in file manager"""
+        try:
+            subprocess.run(["xdg-open", str(self.mobile.transfer_dir)])
+        except:
+            messagebox.showinfo("Transfer Folder", f"Location: {self.mobile.transfer_dir}")
+    
+    def refresh_notifications(self):
+        """Refresh notifications from devices"""
+        self.notif_text.delete('1.0', tk.END)
+        
+        notifications = self.mobile.get_notifications()
+        
+        if not notifications:
+            self.notif_text.insert(tk.END, "No notifications available.\n\n")
+            self.notif_text.insert(tk.END, "To receive notifications:\n")
+            self.notif_text.insert(tk.END, "• Pair a device with KDE Connect\n")
+            self.notif_text.insert(tk.END, "• Enable notification sync on your phone\n")
+            self.notif_text.insert(tk.END, "• Grant notification access to KDE Connect\n")
+            return
+        
+        for notif in notifications[:50]:
+            timestamp = notif.get("timestamp", "")[:19]
+            device = notif.get("device_name", "Unknown")
+            content = notif.get("content", "")
+            
+            self.notif_text.insert(tk.END, f"[{timestamp}] {device}\n")
+            self.notif_text.insert(tk.END, f"  {content}\n\n")
+    
+    def browse_transfer_dir(self):
+        """Browse for transfer directory"""
+        directory = filedialog.askdirectory(title="Select Transfer Directory")
+        if directory:
+            self.transfer_dir_var.set(directory)
+            self.save_settings()
+    
+    def save_settings(self):
+        """Save settings"""
+        self.mobile.config["auto_discover"] = self.auto_discover_var.get()
+        self.mobile.config["enable_notifications"] = self.enable_notif_var.get()
+        self.mobile.config["kdeconnect_enabled"] = self.kdeconnect_var.get()
+        
+        try:
+            self.mobile.config["http_port"] = int(self.port_var.get())
+        except:
+            pass
+        
+        self.mobile.config["transfer_directory"] = self.transfer_dir_var.get()
+        self.mobile.save_config()
+    
+    def on_closing(self):
+        """Handle window close"""
+        self.mobile.stop_file_server()
+        self.root.destroy()
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.mainloop()
+
+
+def show_cli_status(mobile: AegisMobileLink):
+    """Display status in CLI"""
+    status = mobile.get_status()
+    
+    print("\n" + "=" * 60)
+    print("📱 Aegis Mobile Link Status")
+    print("=" * 60)
+    print(f"Version: {status['version']}")
+    print(f"Local IP: {status['local_ip']}")
+    print(f"HTTP Port: {status['http_port']}")
+    print(f"HTTP Bind: {status.get('http_bind_address', '127.0.0.1')}")
+    print(f"Auth Required: {'Yes' if status.get('http_auth_enabled', True) else 'No'}")
+    print(f"Server: {'Running' if status['server_running'] else 'Stopped'}")
+    print(f"Transfer Directory: {status['transfer_directory']}")
+    print()
+    
+    if status.get('using_user_dirs'):
+        print(f"Config Location: {status.get('config_dir', 'N/A')} (user mode)")
+    else:
+        print(f"Config Location: {status.get('config_dir', 'N/A')} (system mode)")
+    print()
+    
+    kdeconnect_status = "✓ Available" if status['kdeconnect_available'] else "✗ Not Installed"
+    zeroconf_status = "✓ Available" if status['zeroconf_available'] else "✗ Not Available"
+    print(f"KDE Connect: {kdeconnect_status}")
+    print(f"Zeroconf/mDNS: {zeroconf_status}")
+    
+    if not status['kdeconnect_available']:
+        print("\n  ℹ️  Install KDE Connect for full phone integration features")
+        print("     (notifications, battery status, file sharing, find phone)")
+    
+    print()
+    print(f"Paired Devices: {status['paired_devices']}")
+    print(f"Online Devices: {status['online_devices']}")
+    print()
+    
+    if status['devices']:
+        print("Devices:")
+        print("-" * 50)
+        for device in status['devices']:
+            status_icon = "🟢" if device.get("online") else "⚪"
+            name = device.get("name", device.get("id", "Unknown"))
+            dtype = device.get("type", "unknown")
+            battery = device.get("battery", {})
+            battery_str = f" 🔋{battery.get('level')}%" if battery and battery.get('level') else ""
+            print(f"  {status_icon} {name} ({dtype}){battery_str}")
+    else:
+        print("No paired devices. Use --pair to add a device.")
+    
+    print("=" * 60 + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Mobile Link - Connect your phone to your desktop",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-mobile-link                    # Launch GUI
+  aegis-mobile-link --status           # Show connection status
+  aegis-mobile-link --pair             # Start device pairing
+  aegis-mobile-link --unpair DEVICE_ID # Unpair a device
+  aegis-mobile-link --send file.txt    # Send file to paired device
+  aegis-mobile-link --receive          # Receive files (localhost only, secure)
+  aegis-mobile-link --receive-network  # Receive files from network (shows warning)
+  aegis-mobile-link --ping DEVICE_ID   # Ring/find your phone
+  aegis-mobile-link --discover         # Discover devices on network
+  aegis-mobile-link --notifications    # View phone notifications
+  aegis-mobile-link --battery          # Check device battery level
+
+Security Notes:
+  - File receive server binds to localhost by default (127.0.0.1)
+  - Use --receive-network to allow network access (with security warning)
+  - File uploads require authentication token (shown on server start)
+        """
+    )
+    
+    parser.add_argument('--status', '-s', action='store_true',
+                       help='Show mobile link status')
+    parser.add_argument('--pair', '-p', action='store_true',
+                       help='Start device pairing')
+    parser.add_argument('--unpair', '-u', metavar='DEVICE_ID',
+                       help='Unpair a device')
+    parser.add_argument('--send', metavar='FILE',
+                       help='Send a file to paired device')
+    parser.add_argument('--receive', '-r', action='store_true',
+                       help='Start receiving files (localhost only - secure)')
+    parser.add_argument('--receive-network', action='store_true',
+                       help='Start receiving files from network (0.0.0.0 - less secure)')
+    parser.add_argument('--ping', metavar='DEVICE_ID', nargs='?', const='first',
+                       help='Ring/find your phone')
+    parser.add_argument('--discover', '-d', action='store_true',
+                       help='Discover devices on the network')
+    parser.add_argument('--notifications', '-n', action='store_true',
+                       help='View phone notifications')
+    parser.add_argument('--battery', '-b', metavar='DEVICE_ID', nargs='?', const='first',
+                       help='Check device battery level')
+    parser.add_argument('--list', '-l', action='store_true',
+                       help='List paired devices')
+    parser.add_argument('--gui', '-g', action='store_true',
+                       help='Launch GUI mode')
+    parser.add_argument('--version', '-v', action='store_true',
+                       help='Show version')
+    
+    args = parser.parse_args()
+    
+    if args.version:
+        print("Aegis Mobile Link v1.1.0")
+        print("Security improvements: localhost-only server, auth tokens")
+        return
+    
+    if args.gui or (not any(vars(args).values())):
+        if TKINTER_AVAILABLE:
+            try:
+                app = MobileLinkGUI()
+                app.run()
+            except Exception as e:
+                print(f"GUI Error: {e}")
+                print("Falling back to CLI mode...")
+                args.status = True
+        else:
+            print("GUI not available (tkinter not installed)")
+            print("Running in CLI mode...")
+            args.status = True
+    
+    mobile = AegisMobileLink()
+    
+    if args.status:
+        show_cli_status(mobile)
+    
+    elif args.list:
+        devices = mobile.get_paired_devices()
+        print("\n📱 Paired Devices:")
+        print("-" * 40)
+        if devices:
+            for device in devices:
+                status = "🟢 Online" if device.get("online") else "⚪ Offline"
+                print(f"  {device.get('id')}: {device.get('name')} - {status}")
+        else:
+            print("  No paired devices")
+        print()
+    
+    elif args.discover:
+        print("\n🔍 Discovering devices on the network...")
+        
+        if not mobile._check_kdeconnect():
+            print("\n   ℹ️  Note: KDE Connect is not installed.")
+            print("   Discovery will use network scanning only (limited).")
+            print("   Install KDE Connect for better device discovery.\n")
+        
+        devices = mobile.discover_devices(timeout=10)
+        
+        if devices:
+            print(f"\nFound {len(devices)} device(s):\n")
+            for i, device in enumerate(devices):
+                name = device.get("name", device.get("ip", "Unknown"))
+                dtype = device.get("type", "unknown")
+                ip = device.get("ip", "N/A")
+                reachable = device.get("reachable", "unknown")
+                print(f"  {i+1}. {name}")
+                print(f"     Type: {dtype} | IP: {ip}")
+                if dtype == "kdeconnect":
+                    print(f"     Reachable: {'Yes' if reachable else 'No'}")
+                print()
+        else:
+            print("\nNo devices found.")
+            print("\nTroubleshooting tips:")
+            print("  • Ensure devices are on the same WiFi network")
+            print("  • Install KDE Connect on your phone and desktop")
+            print("  • Enable device discovery in KDE Connect settings")
+            print("  • Check firewall settings (ports 1714-1764 UDP/TCP)")
+    
+    elif args.pair:
+        print("\n🔗 Device Pairing")
+        print("-" * 40)
+        
+        name = input("Enter device name: ").strip() or "New Device"
+        ip = input("Enter device IP (optional): ").strip()
+        
+        device_info = {"name": name, "ip": ip, "type": "manual"}
+        result = mobile.pair_device(device_info)
+        
+        if result.get("success"):
+            pin = result.get("pin", "")
+            if pin:
+                print(f"\n✅ Pairing initiated!")
+                print(f"\n   Enter this PIN on your phone: {pin}")
+                print("\n   Waiting for confirmation...")
+                
+                entered = input("\nEnter PIN to confirm (or press Enter to cancel): ").strip()
+                if entered:
+                    confirm = mobile.confirm_pairing(result.get("device_id"), entered)
+                    if confirm.get("success"):
+                        print(f"\n✅ {confirm.get('message')}")
+                    else:
+                        print(f"\n❌ {confirm.get('message')}")
+            else:
+                print(f"\n✅ {result.get('message')}")
+        else:
+            print(f"\n❌ {result.get('message')}")
+    
+    elif args.unpair:
+        result = mobile.unpair_device(args.unpair)
+        if result.get("success"):
+            print(f"✅ {result.get('message')}")
+        else:
+            print(f"❌ {result.get('message')}")
+    
+    elif args.send:
+        devices = mobile.get_paired_devices()
+        if not devices:
+            print("❌ No paired devices. Use --pair first.")
+            return
+        
+        device = devices[0]
+        print(f"Sending to {device.get('name')}...")
+        
+        result = mobile.send_file(device.get("id"), args.send)
+        if result.get("success"):
+            print(f"✅ {result.get('message')}")
+        else:
+            print(f"❌ {result.get('message')}")
+    
+    elif args.receive or args.receive_network:
+        bind_all = args.receive_network
+        
+        print("\n" + "=" * 60)
+        print("📥 Aegis Mobile Link - File Transfer Server")
+        print("=" * 60)
+        
+        server_result = mobile.start_file_server(bind_all=bind_all, show_warning=True)
+        
+        if not server_result.get("success"):
+            print(f"❌ Failed to start server: {server_result.get('message')}")
+            return
+        
+        print(f"\n   Bind Address: {server_result.get('bind_address', 'unknown')}")
+        print(f"   Port: {server_result.get('port')}")
+        print(f"   Files saved to: {server_result.get('transfer_dir')}")
+        
+        if bind_all:
+            print("\n" + "⚠️ " * 20)
+            print("   SECURITY WARNING: Server is accessible from the network!")
+            print("   Anyone on your local network can connect to this server.")
+            print("   Use Ctrl+C to stop when done receiving files.")
+            print("⚠️ " * 20)
+        else:
+            print("\n   🔒 Server is localhost-only (secure)")
+            print("   Only applications on this computer can upload files.")
+        
+        auth_token = server_result.get("auth_token")
+        if auth_token:
+            print(f"\n   🔑 Authentication Token: {auth_token}")
+            print("   Include 'X-Auth-Token: <token>' header in upload requests")
+            print("\n   Example upload command:")
+            print(f"   curl -X POST -H 'X-Auth-Token: {auth_token}' \\")
+            print(f"        -H 'X-Filename: myfile.txt' --data-binary @myfile.txt \\")
+            print(f"        http://{server_result.get('bind_address')}:{server_result.get('port')}/upload")
+        
+        print("\n   Press Ctrl+C to stop\n")
+        print("=" * 60)
+        
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            mobile.stop_file_server()
+            print("\n✓ Server stopped.")
+    
+    elif args.ping:
+        device_id = args.ping
+        if device_id == 'first':
+            devices = mobile.get_paired_devices()
+            if devices:
+                device_id = devices[0].get("id")
+            else:
+                print("❌ No paired devices")
+                return
+        
+        print(f"📍 Pinging device...")
+        result = mobile.ping_device(device_id)
+        if result.get("success"):
+            print(f"✅ {result.get('message')}")
+        else:
+            print(f"❌ {result.get('message')}")
+    
+    elif args.notifications:
+        notifications = mobile.get_notifications()
+        print("\n🔔 Phone Notifications")
+        print("-" * 50)
+        
+        if notifications:
+            for notif in notifications[:20]:
+                timestamp = notif.get("timestamp", "")[:19]
+                device = notif.get("device_name", "Unknown")
+                content = notif.get("content", "")
+                print(f"[{timestamp}] {device}")
+                print(f"  {content}\n")
+        else:
+            print("No notifications available.")
+            print("\nTo receive notifications, pair a device with KDE Connect")
+            print("and enable notification sync.")
+    
+    elif args.battery:
+        device_id = args.battery
+        if device_id == 'first':
+            devices = mobile.get_paired_devices()
+            if devices:
+                device_id = devices[0].get("id")
+            else:
+                print("❌ No paired devices")
+                return
+        
+        battery = mobile.get_device_battery(device_id)
+        if battery and battery.get("level") is not None:
+            charge = " (Charging)" if battery.get("charging") else ""
+            print(f"🔋 Battery: {battery['level']}%{charge}")
+        else:
+            print("❌ Unable to get battery status")
+            print("   This feature requires KDE Connect")
+
+
+if __name__ == "__main__":
+    main()

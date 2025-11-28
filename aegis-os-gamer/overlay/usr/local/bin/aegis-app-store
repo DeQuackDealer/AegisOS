@@ -1,0 +1,1315 @@
+#!/usr/bin/env python3
+"""
+Aegis OS App Store - Curated Application Marketplace
+Provides easy installation of applications via apt and flatpak
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+
+def is_root() -> bool:
+    """Check if the current user is root"""
+    return os.geteuid() == 0
+
+
+def check_pkexec_available() -> bool:
+    """Check if pkexec is available for privilege escalation"""
+    try:
+        result = subprocess.run(["which", "pkexec"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def check_sudo_available() -> bool:
+    """Check if sudo is available"""
+    try:
+        result = subprocess.run(["which", "sudo"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def get_privilege_command() -> List[str]:
+    """Get the appropriate privilege escalation command prefix.
+    Returns empty list if already root, otherwise pkexec or sudo."""
+    if is_root():
+        return []
+    if check_pkexec_available():
+        return ["pkexec"]
+    if check_sudo_available():
+        return ["sudo"]
+    return []
+
+
+def get_privilege_escalation_info() -> str:
+    """Get information about available privilege escalation methods"""
+    if is_root():
+        return "Running as root"
+    if check_pkexec_available():
+        return "Using pkexec for privilege escalation"
+    if check_sudo_available():
+        return "Using sudo for privilege escalation"
+    return "No privilege escalation method available (pkexec or sudo required)"
+
+
+class AegisAppStore:
+    def __init__(self):
+        self.version = "1.0.0"
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/appstore")
+        self.log_dir = Path("/var/log/aegis")
+        self.catalog_file = Path("/usr/share/aegis/appstore/catalog.json")
+        self.config_file = self.config_dir / "appstore-config.json"
+        self.installed_file = self.data_dir / "installed.json"
+        self.history_file = self.data_dir / "history.json"
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.load_config()
+        self.load_catalog()
+        self.load_installed()
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        for directory in [self.config_dir, self.data_dir, self.log_dir]:
+            directory.mkdir(parents=True, exist_ok=True)
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "aegis-appstore.log"
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("AegisAppStore")
+    
+    def load_config(self):
+        """Load app store configuration"""
+        default_config = {
+            "prefer_flatpak": True,
+            "auto_update_catalog": True,
+            "catalog_update_interval_days": 7,
+            "show_featured_first": True,
+            "enable_notifications": True,
+            "flatpak_enabled": True,
+            "apt_enabled": True,
+            "last_catalog_update": None
+        }
+        
+        try:
+            with open(self.config_file, 'r') as f:
+                self.config = {**default_config, **json.load(f)}
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.config = default_config
+            self.save_config()
+    
+    def save_config(self):
+        """Save configuration"""
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def load_catalog(self):
+        """Load application catalog"""
+        try:
+            with open(self.catalog_file, 'r') as f:
+                self.catalog = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.logger.error(f"Failed to load catalog from {self.catalog_file}")
+            self.catalog = {"version": "0.0.0", "apps": [], "categories": []}
+    
+    def load_installed(self):
+        """Load installed apps tracking data"""
+        try:
+            with open(self.installed_file, 'r') as f:
+                self.installed = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self.installed = {
+                "apps": {},
+                "last_updated": None
+            }
+            self.save_installed()
+    
+    def save_installed(self):
+        """Save installed apps tracking"""
+        self.installed["last_updated"] = datetime.now().isoformat()
+        with open(self.installed_file, 'w') as f:
+            json.dump(self.installed, f, indent=2)
+    
+    def add_history(self, action: str, app_id: str, success: bool, details: str = ""):
+        """Add entry to installation history"""
+        try:
+            with open(self.history_file, 'r') as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+        
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "app_id": app_id,
+            "success": success,
+            "details": details
+        }
+        history.append(entry)
+        history = history[-500:]
+        
+        with open(self.history_file, 'w') as f:
+            json.dump(history, f, indent=2)
+    
+    def get_categories(self) -> List[str]:
+        """Get list of available categories"""
+        return self.catalog.get("categories", [])
+    
+    def get_apps(self, category: str = None, search: str = None) -> List[Dict]:
+        """Get apps, optionally filtered by category or search term"""
+        apps = self.catalog.get("apps", [])
+        
+        if category and category != "All":
+            apps = [app for app in apps if app.get("category") == category]
+        
+        if search:
+            search_lower = search.lower()
+            apps = [
+                app for app in apps
+                if search_lower in app.get("name", "").lower() or
+                   search_lower in app.get("description", "").lower() or
+                   search_lower in app.get("id", "").lower()
+            ]
+        
+        if self.config.get("show_featured_first"):
+            apps = sorted(apps, key=lambda x: (not x.get("featured", False), x.get("name", "")))
+        
+        return apps
+    
+    def get_app(self, app_id: str) -> Optional[Dict]:
+        """Get a specific app by ID"""
+        for app in self.catalog.get("apps", []):
+            if app.get("id") == app_id:
+                return app
+        return None
+    
+    def is_installed(self, app_id: str) -> Tuple[bool, str]:
+        """Check if an app is installed and how"""
+        app = self.get_app(app_id)
+        if not app:
+            return False, ""
+        
+        if app_id in self.installed.get("apps", {}):
+            method = self.installed["apps"][app_id].get("method", "unknown")
+            return True, method
+        
+        if app.get("apt_package"):
+            try:
+                result = subprocess.run(
+                    ["dpkg", "-l", app["apt_package"]],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0 and "ii" in result.stdout:
+                    return True, "apt"
+            except:
+                pass
+        
+        if app.get("flatpak_id"):
+            try:
+                result = subprocess.run(
+                    ["flatpak", "list", "--app", "--columns=application"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if app["flatpak_id"] in result.stdout:
+                    return True, "flatpak"
+            except:
+                pass
+        
+        return False, ""
+    
+    def check_flatpak_available(self) -> Tuple[bool, str]:
+        """Check if flatpak is installed and available.
+        Returns (available, error_message)"""
+        try:
+            result = subprocess.run(["which", "flatpak"], capture_output=True, timeout=5)
+            if result.returncode != 0:
+                return False, "Flatpak is not installed. Install with: sudo apt install flatpak"
+            
+            result = subprocess.run(["flatpak", "--version"], capture_output=True, timeout=5)
+            if result.returncode != 0:
+                return False, "Flatpak command failed. Try reinstalling flatpak."
+            
+            result = subprocess.run(
+                ["flatpak", "remote-list"], 
+                capture_output=True, text=True, timeout=10
+            )
+            if "flathub" not in result.stdout.lower():
+                return False, "Flathub remote not configured. Run: flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo"
+            
+            return True, ""
+        except FileNotFoundError:
+            return False, "Flatpak is not installed. Install with: sudo apt install flatpak"
+        except subprocess.TimeoutExpired:
+            return False, "Flatpak command timed out"
+        except Exception as e:
+            return False, f"Flatpak check failed: {str(e)}"
+    
+    def check_apt_available(self) -> Tuple[bool, str]:
+        """Check if apt is available.
+        Returns (available, error_message)"""
+        try:
+            result = subprocess.run(["which", "apt"], capture_output=True, timeout=5)
+            if result.returncode != 0:
+                return False, "APT package manager is not available on this system"
+            
+            result = subprocess.run(["apt", "--version"], capture_output=True, timeout=5)
+            if result.returncode != 0:
+                return False, "APT command failed"
+            
+            return True, ""
+        except FileNotFoundError:
+            return False, "APT package manager is not installed (this is likely not a Debian-based system)"
+        except subprocess.TimeoutExpired:
+            return False, "APT command timed out"
+        except Exception as e:
+            return False, f"APT check failed: {str(e)}"
+    
+    def check_privilege_available(self) -> Tuple[bool, str]:
+        """Check if privilege escalation is available.
+        Returns (available, error_message)"""
+        if is_root():
+            return True, "Running as root"
+        if check_pkexec_available():
+            return True, "pkexec available"
+        if check_sudo_available():
+            return True, "sudo available"
+        return False, "No privilege escalation available. Install pkexec or sudo, or run as root."
+    
+    def install_app(self, app_id: str, method: str = None, callback=None) -> Dict:
+        """Install an application"""
+        app = self.get_app(app_id)
+        if not app:
+            return {"success": False, "error": f"App '{app_id}' not found in catalog"}
+        
+        is_inst, _ = self.is_installed(app_id)
+        if is_inst:
+            return {"success": False, "error": f"App '{app['name']}' is already installed"}
+        
+        if method is None:
+            if self.config.get("prefer_flatpak") and app.get("flatpak_id"):
+                method = "flatpak"
+            elif app.get("apt_package"):
+                method = "apt"
+            elif app.get("flatpak_id"):
+                method = "flatpak"
+            else:
+                return {"success": False, "error": "No installation method available for this app"}
+        
+        result = {
+            "success": False,
+            "app_id": app_id,
+            "app_name": app["name"],
+            "method": method,
+            "output": "",
+            "error": ""
+        }
+        
+        priv_available, priv_error = self.check_privilege_available()
+        if not priv_available and method == "apt":
+            result["error"] = f"Privilege escalation required for APT installation. {priv_error}"
+            return result
+        
+        self.logger.info(f"Installing {app['name']} via {method}")
+        if callback:
+            callback(f"Installing {app['name']} via {method}...")
+            if not is_root():
+                callback(f"  {get_privilege_escalation_info()}")
+        
+        try:
+            if method == "apt" and app.get("apt_package"):
+                apt_available, apt_error = self.check_apt_available()
+                if not apt_available:
+                    result["error"] = apt_error
+                    if callback:
+                        callback(f"Error: {apt_error}")
+                    return result
+                
+                priv_cmd = get_privilege_command()
+                cmd = priv_cmd + ["apt", "install", "-y", app["apt_package"]]
+                
+                if callback:
+                    callback(f"Running: {' '.join(cmd)}")
+                
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                
+                output_lines = []
+                for line in process.stdout:
+                    output_lines.append(line.strip())
+                    if callback:
+                        callback(line.strip())
+                
+                process.wait()
+                result["output"] = "\n".join(output_lines)
+                result["success"] = process.returncode == 0
+                
+                if not result["success"] and process.returncode != 0:
+                    result["error"] = f"APT install failed with exit code {process.returncode}"
+                    if "Permission denied" in result["output"] or "Operation not permitted" in result["output"]:
+                        result["error"] += ". Try running with elevated privileges."
+                
+            elif method == "flatpak" and app.get("flatpak_id"):
+                flatpak_available, flatpak_error = self.check_flatpak_available()
+                if not flatpak_available:
+                    result["error"] = flatpak_error
+                    if callback:
+                        callback(f"Error: {flatpak_error}")
+                    return result
+                
+                cmd = ["flatpak", "install", "-y", "--noninteractive", "flathub", app["flatpak_id"]]
+                
+                if callback:
+                    callback(f"Running: {' '.join(cmd)}")
+                
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                
+                output_lines = []
+                for line in process.stdout:
+                    output_lines.append(line.strip())
+                    if callback:
+                        callback(line.strip())
+                
+                process.wait()
+                result["output"] = "\n".join(output_lines)
+                result["success"] = process.returncode == 0
+                
+                if not result["success"] and process.returncode != 0:
+                    result["error"] = f"Flatpak install failed with exit code {process.returncode}"
+                
+            else:
+                result["error"] = f"Installation method '{method}' not available for this app"
+                return result
+                
+        except FileNotFoundError as e:
+            result["error"] = f"Command not found: {str(e)}"
+            self.logger.error(f"Installation error: {e}")
+        except PermissionError as e:
+            result["error"] = f"Permission denied: {str(e)}. Try running as root or with sudo/pkexec."
+            self.logger.error(f"Installation error: {e}")
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Installation error: {e}")
+        
+        if result["success"]:
+            self.installed["apps"][app_id] = {
+                "name": app["name"],
+                "method": method,
+                "installed_at": datetime.now().isoformat(),
+                "category": app.get("category", "")
+            }
+            self.save_installed()
+            self.logger.info(f"Successfully installed {app['name']}")
+        else:
+            self.logger.error(f"Failed to install {app['name']}: {result.get('error', 'Unknown error')}")
+        
+        self.add_history("install", app_id, result["success"], result.get("error", ""))
+        return result
+    
+    def remove_app(self, app_id: str, callback=None) -> Dict:
+        """Remove an installed application"""
+        app = self.get_app(app_id)
+        if not app:
+            return {"success": False, "error": f"App '{app_id}' not found in catalog"}
+        
+        is_inst, method = self.is_installed(app_id)
+        if not is_inst:
+            return {"success": False, "error": f"App '{app['name']}' is not installed"}
+        
+        result = {
+            "success": False,
+            "app_id": app_id,
+            "app_name": app["name"],
+            "method": method,
+            "output": "",
+            "error": ""
+        }
+        
+        priv_available, priv_error = self.check_privilege_available()
+        if not priv_available and method == "apt":
+            result["error"] = f"Privilege escalation required for APT removal. {priv_error}"
+            return result
+        
+        self.logger.info(f"Removing {app['name']} (installed via {method})")
+        if callback:
+            callback(f"Removing {app['name']} (installed via {method})...")
+            if not is_root() and method == "apt":
+                callback(f"  {get_privilege_escalation_info()}")
+        
+        try:
+            if method == "apt":
+                apt_available, apt_error = self.check_apt_available()
+                if not apt_available:
+                    result["error"] = apt_error
+                    if callback:
+                        callback(f"Error: {apt_error}")
+                    return result
+                
+                priv_cmd = get_privilege_command()
+                cmd = priv_cmd + ["apt", "remove", "-y", app["apt_package"]]
+                
+                if callback:
+                    callback(f"Running: {' '.join(cmd)}")
+                
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                
+                output_lines = []
+                for line in process.stdout:
+                    output_lines.append(line.strip())
+                    if callback:
+                        callback(line.strip())
+                
+                process.wait()
+                result["output"] = "\n".join(output_lines)
+                result["success"] = process.returncode == 0
+                
+                if not result["success"] and process.returncode != 0:
+                    result["error"] = f"APT remove failed with exit code {process.returncode}"
+                
+            elif method == "flatpak":
+                cmd = ["flatpak", "uninstall", "-y", "--noninteractive", app["flatpak_id"]]
+                
+                if callback:
+                    callback(f"Running: {' '.join(cmd)}")
+                
+                process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                
+                output_lines = []
+                for line in process.stdout:
+                    output_lines.append(line.strip())
+                    if callback:
+                        callback(line.strip())
+                
+                process.wait()
+                result["output"] = "\n".join(output_lines)
+                result["success"] = process.returncode == 0
+                
+                if not result["success"] and process.returncode != 0:
+                    result["error"] = f"Flatpak uninstall failed with exit code {process.returncode}"
+                
+            else:
+                result["error"] = f"Unknown installation method: {method}"
+                return result
+                
+        except FileNotFoundError as e:
+            result["error"] = f"Command not found: {str(e)}"
+            self.logger.error(f"Removal error: {e}")
+        except PermissionError as e:
+            result["error"] = f"Permission denied: {str(e)}. Try running as root or with sudo/pkexec."
+            self.logger.error(f"Removal error: {e}")
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Removal error: {e}")
+        
+        if result["success"]:
+            if app_id in self.installed.get("apps", {}):
+                del self.installed["apps"][app_id]
+                self.save_installed()
+            self.logger.info(f"Successfully removed {app['name']}")
+        else:
+            self.logger.error(f"Failed to remove {app['name']}: {result.get('error', 'Unknown error')}")
+        
+        self.add_history("remove", app_id, result["success"], result.get("error", ""))
+        return result
+    
+    def update_apps(self, callback=None) -> Dict:
+        """Update all installed apps"""
+        results = {
+            "apt_update": None,
+            "flatpak_update": None,
+            "success": True,
+            "errors": []
+        }
+        
+        self.logger.info("Starting app updates")
+        
+        priv_available, priv_error = self.check_privilege_available()
+        if not priv_available:
+            if callback:
+                callback(f"Warning: {priv_error}")
+            results["errors"].append(priv_error)
+        
+        apt_available, apt_error = self.check_apt_available()
+        if apt_available:
+            if callback:
+                callback("Updating APT packages...")
+                if not is_root():
+                    callback(f"  {get_privilege_escalation_info()}")
+            try:
+                priv_cmd = get_privilege_command()
+                
+                update_cmd = priv_cmd + ["apt", "update"]
+                if callback:
+                    callback(f"Running: {' '.join(update_cmd)}")
+                
+                process = subprocess.Popen(
+                    update_cmd,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                for line in process.stdout:
+                    if callback:
+                        callback(line.strip())
+                process.wait()
+                
+                upgrade_cmd = priv_cmd + ["apt", "upgrade", "-y"]
+                if callback:
+                    callback(f"Running: {' '.join(upgrade_cmd)}")
+                
+                process = subprocess.Popen(
+                    upgrade_cmd,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                for line in process.stdout:
+                    if callback:
+                        callback(line.strip())
+                process.wait()
+                
+                results["apt_update"] = process.returncode == 0
+                if not results["apt_update"]:
+                    results["errors"].append(f"APT upgrade failed with exit code {process.returncode}")
+            except Exception as e:
+                results["apt_update"] = False
+                results["errors"].append(f"APT update error: {e}")
+        else:
+            if callback:
+                callback(f"Skipping APT: {apt_error}")
+        
+        flatpak_available, flatpak_error = self.check_flatpak_available()
+        if flatpak_available:
+            if callback:
+                callback("Updating Flatpak apps...")
+            try:
+                cmd = ["flatpak", "update", "-y", "--noninteractive"]
+                if callback:
+                    callback(f"Running: {' '.join(cmd)}")
+                
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+                )
+                for line in process.stdout:
+                    if callback:
+                        callback(line.strip())
+                process.wait()
+                
+                results["flatpak_update"] = process.returncode == 0
+                if not results["flatpak_update"]:
+                    results["errors"].append(f"Flatpak update failed with exit code {process.returncode}")
+            except Exception as e:
+                results["flatpak_update"] = False
+                results["errors"].append(f"Flatpak update error: {e}")
+        else:
+            if callback:
+                callback(f"Skipping Flatpak: {flatpak_error}")
+        
+        results["success"] = len(results["errors"]) == 0
+        self.add_history("update", "all", results["success"], "; ".join(results["errors"]))
+        return results
+    
+    def get_stats(self) -> Dict:
+        """Get app store statistics"""
+        total_apps = len(self.catalog.get("apps", []))
+        installed_count = len(self.installed.get("apps", {}))
+        
+        category_counts = {}
+        for app in self.catalog.get("apps", []):
+            cat = app.get("category", "Unknown")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        
+        installed_by_method = {"apt": 0, "flatpak": 0}
+        for app_data in self.installed.get("apps", {}).values():
+            method = app_data.get("method", "unknown")
+            if method in installed_by_method:
+                installed_by_method[method] += 1
+        
+        flatpak_available, _ = self.check_flatpak_available()
+        apt_available, _ = self.check_apt_available()
+        priv_available, priv_info = self.check_privilege_available()
+        
+        return {
+            "total_apps": total_apps,
+            "installed_count": installed_count,
+            "category_counts": category_counts,
+            "installed_by_method": installed_by_method,
+            "catalog_version": self.catalog.get("version", "unknown"),
+            "flatpak_available": flatpak_available,
+            "apt_available": apt_available,
+            "privilege_available": priv_available,
+            "privilege_info": priv_info,
+            "is_root": is_root()
+        }
+
+
+class AppStoreGUI:
+    def __init__(self):
+        self.store = AegisAppStore()
+        self.root = tk.Tk()
+        self.current_category = "All"
+        self.search_var = tk.StringVar()
+        self.setup_window()
+        self.create_widgets()
+        self.refresh_app_list()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis App Store")
+        self.root.geometry("1000x700")
+        self.root.configure(bg='#1a1a2e')
+        self.root.minsize(800, 600)
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='white', font=('Arial', 10))
+        style.configure('TButton', padding=8, font=('Arial', 10))
+        style.configure('Header.TLabel', font=('Arial', 20, 'bold'), foreground='#00d4ff')
+        style.configure('Category.TButton', padding=10, font=('Arial', 11))
+        style.configure('AppName.TLabel', font=('Arial', 12, 'bold'), foreground='#00d4ff')
+        style.configure('AppDesc.TLabel', font=('Arial', 9), foreground='#cccccc')
+        style.configure('Featured.TLabel', font=('Arial', 9, 'bold'), foreground='#ffd700')
+        style.configure('Installed.TLabel', font=('Arial', 9, 'bold'), foreground='#00ff00')
+        
+        style.configure('TLabelframe', background='#1a1a2e')
+        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='white', font=('Arial', 11, 'bold'))
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header_frame = ttk.Frame(self.root)
+        header_frame.pack(fill='x', padx=20, pady=15)
+        
+        title = ttk.Label(header_frame, text="🛒 Aegis App Store", style='Header.TLabel')
+        title.pack(side='left')
+        
+        stats = self.store.get_stats()
+        stats_label = ttk.Label(
+            header_frame, 
+            text=f"📦 {stats['total_apps']} Apps | ✅ {stats['installed_count']} Installed",
+            style='TLabel'
+        )
+        stats_label.pack(side='right')
+        
+        search_frame = ttk.Frame(self.root)
+        search_frame.pack(fill='x', padx=20, pady=5)
+        
+        search_entry = ttk.Entry(search_frame, textvariable=self.search_var, width=40, font=('Arial', 11))
+        search_entry.pack(side='left', padx=(0, 10))
+        search_entry.insert(0, "Search apps...")
+        search_entry.bind('<FocusIn>', lambda e: search_entry.delete(0, tk.END) if search_entry.get() == "Search apps..." else None)
+        search_entry.bind('<Return>', lambda e: self.do_search())
+        
+        search_btn = ttk.Button(search_frame, text="🔍 Search", command=self.do_search)
+        search_btn.pack(side='left', padx=5)
+        
+        clear_btn = ttk.Button(search_frame, text="✖ Clear", command=self.clear_search)
+        clear_btn.pack(side='left', padx=5)
+        
+        update_btn = ttk.Button(search_frame, text="🔄 Update All", command=self.update_all)
+        update_btn.pack(side='right', padx=5)
+        
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        left_panel = ttk.Frame(main_frame, width=200)
+        left_panel.pack(side='left', fill='y', padx=(0, 10))
+        left_panel.pack_propagate(False)
+        
+        cat_label = ttk.Label(left_panel, text="Categories", style='Header.TLabel')
+        cat_label.pack(pady=(0, 10))
+        
+        all_btn = ttk.Button(
+            left_panel, text="📋 All Apps", style='Category.TButton',
+            command=lambda: self.select_category("All")
+        )
+        all_btn.pack(fill='x', pady=2)
+        
+        category_icons = {
+            "Productivity": "📝",
+            "Development": "💻",
+            "Gaming": "🎮",
+            "Multimedia": "🎬",
+            "Security": "🔒",
+            "Utilities": "🔧"
+        }
+        
+        for category in self.store.get_categories():
+            icon = category_icons.get(category, "📦")
+            btn = ttk.Button(
+                left_panel, text=f"{icon} {category}", style='Category.TButton',
+                command=lambda c=category: self.select_category(c)
+            )
+            btn.pack(fill='x', pady=2)
+        
+        sep = ttk.Separator(left_panel, orient='horizontal')
+        sep.pack(fill='x', pady=15)
+        
+        installed_btn = ttk.Button(
+            left_panel, text="✅ Installed", style='Category.TButton',
+            command=self.show_installed
+        )
+        installed_btn.pack(fill='x', pady=2)
+        
+        right_panel = ttk.Frame(main_frame)
+        right_panel.pack(side='right', fill='both', expand=True)
+        
+        self.category_label = ttk.Label(right_panel, text="All Apps", style='Header.TLabel')
+        self.category_label.pack(anchor='w', pady=(0, 10))
+        
+        list_container = ttk.Frame(right_panel)
+        list_container.pack(fill='both', expand=True)
+        
+        self.canvas = tk.Canvas(list_container, bg='#16213e', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_container, orient='vertical', command=self.canvas.yview)
+        
+        self.app_list_frame = ttk.Frame(self.canvas)
+        
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        
+        scrollbar.pack(side='right', fill='y')
+        self.canvas.pack(side='left', fill='both', expand=True)
+        
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.app_list_frame, anchor='nw')
+        
+        self.app_list_frame.bind('<Configure>', self.on_frame_configure)
+        self.canvas.bind('<Configure>', self.on_canvas_configure)
+        self.canvas.bind_all('<MouseWheel>', self.on_mousewheel)
+        
+        output_frame = ttk.LabelFrame(self.root, text="Output", padding=10)
+        output_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.output_text = scrolledtext.ScrolledText(
+            output_frame, height=6, bg='#0f0f1a', fg='#00ff00',
+            font=('Courier', 9), insertbackground='white'
+        )
+        self.output_text.pack(fill='x')
+        
+    def on_frame_configure(self, event):
+        """Update scroll region when frame changes"""
+        self.canvas.configure(scrollregion=self.canvas.bbox('all'))
+        
+    def on_canvas_configure(self, event):
+        """Adjust the frame width to canvas width"""
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+        
+    def on_mousewheel(self, event):
+        """Handle mouse wheel scrolling"""
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        
+    def select_category(self, category: str):
+        """Select a category and refresh the app list"""
+        self.current_category = category
+        self.category_label.config(text=f"{category} Apps" if category != "All" else "All Apps")
+        self.search_var.set("")
+        self.refresh_app_list()
+        
+    def do_search(self):
+        """Perform search"""
+        search_term = self.search_var.get()
+        if search_term and search_term != "Search apps...":
+            self.category_label.config(text=f"Search: {search_term}")
+            self.refresh_app_list(search=search_term)
+        
+    def clear_search(self):
+        """Clear search and show all apps"""
+        self.search_var.set("")
+        self.current_category = "All"
+        self.category_label.config(text="All Apps")
+        self.refresh_app_list()
+        
+    def show_installed(self):
+        """Show only installed apps"""
+        self.category_label.config(text="Installed Apps")
+        self.current_category = None
+        self.refresh_app_list(installed_only=True)
+        
+    def refresh_app_list(self, search: str = None, installed_only: bool = False):
+        """Refresh the app list display"""
+        for widget in self.app_list_frame.winfo_children():
+            widget.destroy()
+        
+        if installed_only:
+            apps = []
+            for app in self.store.get_apps():
+                is_inst, _ = self.store.is_installed(app["id"])
+                if is_inst:
+                    apps.append(app)
+        else:
+            apps = self.store.get_apps(category=self.current_category, search=search)
+        
+        if not apps:
+            no_apps = ttk.Label(self.app_list_frame, text="No apps found", style='TLabel')
+            no_apps.pack(pady=20)
+            return
+        
+        for app in apps:
+            self.create_app_card(app)
+            
+    def create_app_card(self, app: Dict):
+        """Create an app card widget"""
+        card = ttk.Frame(self.app_list_frame, style='TFrame')
+        card.pack(fill='x', pady=5, padx=5)
+        
+        card_inner = tk.Frame(card, bg='#16213e', bd=1, relief='solid')
+        card_inner.pack(fill='x', pady=2)
+        
+        info_frame = tk.Frame(card_inner, bg='#16213e')
+        info_frame.pack(side='left', fill='both', expand=True, padx=15, pady=10)
+        
+        header_frame = tk.Frame(info_frame, bg='#16213e')
+        header_frame.pack(fill='x')
+        
+        name_label = tk.Label(
+            header_frame, text=app["name"], bg='#16213e', fg='#00d4ff',
+            font=('Arial', 12, 'bold'), anchor='w'
+        )
+        name_label.pack(side='left')
+        
+        if app.get("featured"):
+            featured = tk.Label(
+                header_frame, text="★ Featured", bg='#16213e', fg='#ffd700',
+                font=('Arial', 9, 'bold')
+            )
+            featured.pack(side='left', padx=10)
+        
+        is_installed, method = self.store.is_installed(app["id"])
+        if is_installed:
+            installed = tk.Label(
+                header_frame, text=f"✓ Installed ({method})", bg='#16213e', fg='#00ff00',
+                font=('Arial', 9, 'bold')
+            )
+            installed.pack(side='left', padx=10)
+        
+        desc_label = tk.Label(
+            info_frame, text=app.get("description", ""),
+            bg='#16213e', fg='#aaaaaa', font=('Arial', 9),
+            anchor='w', wraplength=500, justify='left'
+        )
+        desc_label.pack(fill='x', pady=5)
+        
+        meta_frame = tk.Frame(info_frame, bg='#16213e')
+        meta_frame.pack(fill='x')
+        
+        category_label = tk.Label(
+            meta_frame, text=f"📁 {app.get('category', 'Unknown')}",
+            bg='#16213e', fg='#888888', font=('Arial', 8)
+        )
+        category_label.pack(side='left', padx=(0, 15))
+        
+        size_label = tk.Label(
+            meta_frame, text=f"💾 {app.get('size_mb', 0)} MB",
+            bg='#16213e', fg='#888888', font=('Arial', 8)
+        )
+        size_label.pack(side='left', padx=(0, 15))
+        
+        license_label = tk.Label(
+            meta_frame, text=f"📜 {app.get('license', 'Unknown')}",
+            bg='#16213e', fg='#888888', font=('Arial', 8)
+        )
+        license_label.pack(side='left')
+        
+        button_frame = tk.Frame(card_inner, bg='#16213e')
+        button_frame.pack(side='right', padx=15, pady=10)
+        
+        if is_installed:
+            remove_btn = ttk.Button(
+                button_frame, text="🗑 Remove",
+                command=lambda: self.remove_app(app["id"])
+            )
+            remove_btn.pack(pady=2)
+        else:
+            install_methods = []
+            if app.get("apt_package"):
+                install_methods.append(("apt", "📦 APT"))
+            if app.get("flatpak_id"):
+                install_methods.append(("flatpak", "📦 Flatpak"))
+            
+            if len(install_methods) > 1:
+                for method, label in install_methods:
+                    btn = ttk.Button(
+                        button_frame, text=f"Install ({label})",
+                        command=lambda a=app["id"], m=method: self.install_app(a, m)
+                    )
+                    btn.pack(pady=2)
+            elif install_methods:
+                method, label = install_methods[0]
+                btn = ttk.Button(
+                    button_frame, text=f"Install",
+                    command=lambda a=app["id"], m=method: self.install_app(a, m)
+                )
+                btn.pack(pady=2)
+    
+    def log_output(self, message: str):
+        """Log message to output text area"""
+        self.output_text.insert(tk.END, message + "\n")
+        self.output_text.see(tk.END)
+        self.root.update()
+    
+    def install_app(self, app_id: str, method: str):
+        """Install an app with GUI feedback"""
+        app = self.store.get_app(app_id)
+        if not app:
+            return
+        
+        self.output_text.delete('1.0', tk.END)
+        self.log_output(f"Installing {app['name']}...")
+        
+        def do_install():
+            result = self.store.install_app(app_id, method, callback=self.log_output)
+            
+            self.root.after(0, lambda: self.on_install_complete(result))
+        
+        thread = threading.Thread(target=do_install, daemon=True)
+        thread.start()
+    
+    def on_install_complete(self, result: Dict):
+        """Handle installation completion"""
+        if result["success"]:
+            self.log_output(f"\n✅ Successfully installed {result['app_name']}")
+            messagebox.showinfo("Success", f"Successfully installed {result['app_name']}")
+        else:
+            self.log_output(f"\n❌ Failed to install: {result.get('error', 'Unknown error')}")
+            messagebox.showerror("Error", f"Failed to install: {result.get('error', 'Unknown error')}")
+        
+        self.refresh_app_list()
+    
+    def remove_app(self, app_id: str):
+        """Remove an app with GUI feedback"""
+        app = self.store.get_app(app_id)
+        if not app:
+            return
+        
+        if not messagebox.askyesno("Confirm", f"Are you sure you want to remove {app['name']}?"):
+            return
+        
+        self.output_text.delete('1.0', tk.END)
+        self.log_output(f"Removing {app['name']}...")
+        
+        def do_remove():
+            result = self.store.remove_app(app_id, callback=self.log_output)
+            
+            self.root.after(0, lambda: self.on_remove_complete(result))
+        
+        thread = threading.Thread(target=do_remove, daemon=True)
+        thread.start()
+    
+    def on_remove_complete(self, result: Dict):
+        """Handle removal completion"""
+        if result["success"]:
+            self.log_output(f"\n✅ Successfully removed {result['app_name']}")
+            messagebox.showinfo("Success", f"Successfully removed {result['app_name']}")
+        else:
+            self.log_output(f"\n❌ Failed to remove: {result.get('error', 'Unknown error')}")
+            messagebox.showerror("Error", f"Failed to remove: {result.get('error', 'Unknown error')}")
+        
+        self.refresh_app_list()
+    
+    def update_all(self):
+        """Update all installed apps"""
+        if not messagebox.askyesno("Confirm", "Update all installed apps?"):
+            return
+        
+        self.output_text.delete('1.0', tk.END)
+        self.log_output("Starting updates...")
+        
+        def do_update():
+            result = self.store.update_apps(callback=self.log_output)
+            
+            self.root.after(0, lambda: self.on_update_complete(result))
+        
+        thread = threading.Thread(target=do_update, daemon=True)
+        thread.start()
+    
+    def on_update_complete(self, result: Dict):
+        """Handle update completion"""
+        if result["success"]:
+            self.log_output("\n✅ All updates completed successfully")
+            messagebox.showinfo("Success", "All apps updated successfully")
+        else:
+            self.log_output(f"\n⚠️ Updates completed with errors: {'; '.join(result['errors'])}")
+            messagebox.showwarning("Warning", f"Updates completed with some errors")
+        
+        self.refresh_app_list()
+    
+    def run(self):
+        """Run the GUI application"""
+        self.root.mainloop()
+
+
+def print_app_table(apps: List[Dict], store: AegisAppStore):
+    """Print apps in a formatted table"""
+    if not apps:
+        print("No apps found.")
+        return
+    
+    print(f"\n{'ID':<20} {'Name':<25} {'Category':<15} {'Status':<15}")
+    print("-" * 75)
+    
+    for app in apps:
+        is_inst, method = store.is_installed(app["id"])
+        status = f"Installed ({method})" if is_inst else "Available"
+        featured = "★ " if app.get("featured") else ""
+        
+        print(f"{app['id']:<20} {featured}{app['name']:<23} {app.get('category', 'Unknown'):<15} {status:<15}")
+    
+    print(f"\nTotal: {len(apps)} apps")
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Aegis App Store - Curated Application Marketplace",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-app-store                     Launch GUI
+  aegis-app-store --browse            List all available apps
+  aegis-app-store --browse Gaming     List apps in Gaming category
+  aegis-app-store --search vlc        Search for apps
+  aegis-app-store --install vlc       Install an app
+  aegis-app-store --install vlc --method apt
+  aegis-app-store --remove vlc        Remove an app
+  aegis-app-store --update            Update all installed apps
+  aegis-app-store --installed         List installed apps
+  aegis-app-store --info vlc          Show app details
+        """
+    )
+    
+    parser.add_argument('--browse', nargs='?', const='All', metavar='CATEGORY',
+                       help='Browse apps (optionally by category)')
+    parser.add_argument('--search', metavar='TERM',
+                       help='Search for apps')
+    parser.add_argument('--install', metavar='APP_ID',
+                       help='Install an application')
+    parser.add_argument('--remove', metavar='APP_ID',
+                       help='Remove an application')
+    parser.add_argument('--update', action='store_true',
+                       help='Update all installed apps')
+    parser.add_argument('--installed', action='store_true',
+                       help='List installed apps')
+    parser.add_argument('--info', metavar='APP_ID',
+                       help='Show detailed information about an app')
+    parser.add_argument('--method', choices=['apt', 'flatpak'],
+                       help='Installation method (use with --install)')
+    parser.add_argument('--gui', action='store_true',
+                       help='Launch graphical interface')
+    parser.add_argument('--stats', action='store_true',
+                       help='Show app store statistics')
+    parser.add_argument('--version', action='store_true',
+                       help='Show version information')
+    
+    args = parser.parse_args()
+    
+    if args.version:
+        print("Aegis App Store v1.0.0")
+        print("Part of Aegis OS")
+        return
+    
+    store = AegisAppStore()
+    
+    if args.browse is not None:
+        category = args.browse if args.browse != 'All' else None
+        apps = store.get_apps(category=category)
+        print(f"\n📦 Aegis App Store - {args.browse} Apps")
+        print_app_table(apps, store)
+        
+    elif args.search:
+        apps = store.get_apps(search=args.search)
+        print(f"\n🔍 Search results for: {args.search}")
+        print_app_table(apps, store)
+        
+    elif args.install:
+        app = store.get_app(args.install)
+        if not app:
+            print(f"❌ App '{args.install}' not found in catalog")
+            print("   Use --browse to see available apps or --search to find apps")
+            sys.exit(1)
+        
+        print(f"\n📦 Aegis App Store - Installing {app['name']}")
+        print("-" * 50)
+        
+        is_inst, inst_method = store.is_installed(app["id"])
+        if is_inst:
+            print(f"ℹ️  App is already installed via {inst_method}")
+            sys.exit(0)
+        
+        method = args.method
+        if method is None:
+            if store.config.get("prefer_flatpak") and app.get("flatpak_id"):
+                method = "flatpak"
+            elif app.get("apt_package"):
+                method = "apt"
+            elif app.get("flatpak_id"):
+                method = "flatpak"
+        
+        print(f"   App: {app['name']}")
+        print(f"   Category: {app.get('category', 'Unknown')}")
+        print(f"   Method: {method}")
+        print(f"   Size: ~{app.get('size_mb', 'Unknown')} MB")
+        
+        if method == "apt":
+            priv_available, priv_info = store.check_privilege_available()
+            print(f"   Privileges: {priv_info}")
+            if not priv_available:
+                print(f"\n❌ Cannot install: {priv_info}")
+                sys.exit(1)
+        
+        print("\n")
+        
+        def progress(msg):
+            print(f"   {msg}")
+        
+        result = store.install_app(args.install, args.method, callback=progress)
+        
+        if result["success"]:
+            print(f"\n✅ Successfully installed {result['app_name']}")
+            print(f"   Method: {result['method']}")
+        else:
+            print(f"\n❌ Installation failed: {result.get('error', 'Unknown error')}")
+            if result.get("output"):
+                print("\n   Last output lines:")
+                for line in result["output"].split("\n")[-5:]:
+                    if line.strip():
+                        print(f"     {line}")
+            sys.exit(1)
+            
+    elif args.remove:
+        app = store.get_app(args.remove)
+        if not app:
+            print(f"❌ App '{args.remove}' not found in catalog")
+            sys.exit(1)
+        
+        is_inst, method = store.is_installed(app["id"])
+        if not is_inst:
+            print(f"ℹ️  App '{app['name']}' is not installed")
+            sys.exit(0)
+        
+        print(f"\n🗑️  Aegis App Store - Removing {app['name']}")
+        print("-" * 50)
+        print(f"   App: {app['name']}")
+        print(f"   Installed via: {method}")
+        
+        if method == "apt":
+            priv_available, priv_info = store.check_privilege_available()
+            print(f"   Privileges: {priv_info}")
+            if not priv_available:
+                print(f"\n❌ Cannot remove: {priv_info}")
+                sys.exit(1)
+        
+        print("\n")
+        
+        def progress(msg):
+            print(f"   {msg}")
+        
+        result = store.remove_app(args.remove, callback=progress)
+        
+        if result["success"]:
+            print(f"\n✅ Successfully removed {result['app_name']}")
+        else:
+            print(f"\n❌ Removal failed: {result.get('error', 'Unknown error')}")
+            sys.exit(1)
+            
+    elif args.update:
+        def progress(msg):
+            print(msg)
+        
+        print("🔄 Updating all installed apps...")
+        result = store.update_apps(callback=progress)
+        
+        if result["success"]:
+            print("\n✅ All updates completed successfully")
+        else:
+            print(f"\n⚠️ Updates completed with errors: {'; '.join(result['errors'])}")
+            
+    elif args.installed:
+        print("\n✅ Installed Apps")
+        apps = []
+        for app in store.get_apps():
+            is_inst, _ = store.is_installed(app["id"])
+            if is_inst:
+                apps.append(app)
+        print_app_table(apps, store)
+        
+    elif args.info:
+        app = store.get_app(args.info)
+        if app:
+            is_inst, method = store.is_installed(app["id"])
+            print(f"\n📦 {app['name']}")
+            print(f"   ID: {app['id']}")
+            print(f"   Category: {app.get('category', 'Unknown')}")
+            print(f"   Description: {app.get('description', 'N/A')}")
+            print(f"   License: {app.get('license', 'Unknown')}")
+            print(f"   Size: {app.get('size_mb', 'Unknown')} MB")
+            print(f"   Website: {app.get('website', 'N/A')}")
+            print(f"   APT Package: {app.get('apt_package', 'N/A')}")
+            print(f"   Flatpak ID: {app.get('flatpak_id', 'N/A')}")
+            print(f"   Featured: {'Yes' if app.get('featured') else 'No'}")
+            print(f"   Status: {'Installed (' + method + ')' if is_inst else 'Not installed'}")
+        else:
+            print(f"❌ App '{args.info}' not found")
+            sys.exit(1)
+            
+    elif args.stats:
+        stats = store.get_stats()
+        print("\n📊 Aegis App Store Statistics")
+        print(f"   Catalog Version: {stats['catalog_version']}")
+        print(f"   Total Apps: {stats['total_apps']}")
+        print(f"   Installed Apps: {stats['installed_count']}")
+        print("\n   System Status:")
+        print(f"     APT Available: {'✓ Yes' if stats['apt_available'] else '✗ No'}")
+        print(f"     Flatpak Available: {'✓ Yes' if stats['flatpak_available'] else '✗ No'}")
+        print(f"     Running as Root: {'✓ Yes' if stats['is_root'] else '✗ No'}")
+        print(f"     Privilege Escalation: {'✓ ' if stats['privilege_available'] else '✗ '}{stats['privilege_info']}")
+        print("\n   Apps by Category:")
+        for cat, count in sorted(stats['category_counts'].items()):
+            print(f"     {cat}: {count}")
+        print("\n   Installed by Method:")
+        for method, count in stats['installed_by_method'].items():
+            print(f"     {method}: {count}")
+            
+    elif args.gui or len(sys.argv) == 1:
+        if not TKINTER_AVAILABLE:
+            print("❌ GUI requires tkinter. Install python3-tk or run with CLI options.")
+            print("   Run 'aegis-app-store --help' for CLI usage.")
+            sys.exit(1)
+        
+        gui = AppStoreGUI()
+        gui.run()
+    
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
