@@ -268,3 +268,56 @@ sudo python3 build-aegis.py --edition freemium --real-build
 
 **Required Dependencies for Real Builds**:
 - debootstrap, mksquashfs, xorriso, isolinux, squashfs-tools
+
+### Admin Panel API Endpoints
+
+The admin panel provides comprehensive management features:
+
+**Analytics**:
+- GET /api/admin/analytics/sales - Sales data by day/week/month
+- GET /api/admin/analytics/editions - Breakdown by edition type
+- GET /api/admin/analytics/trends - License creation trends
+
+**User Management**:
+- GET /api/admin/users - List users with pagination
+- GET /api/admin/users/<id> - User details with licenses
+- PATCH /api/admin/users/<id> - Update user
+
+**System Health**:
+- GET /api/admin/system/health - Database, disk, memory status
+- GET /api/admin/system/logs - Audit logs with filtering
+
+**Bulk Operations**:
+- POST /api/admin/licenses/bulk - Create up to 100 licenses
+- POST /api/admin/emails/bulk - Send bulk emails
+
+**Reports**:
+- GET /api/admin/reports/monthly - Monthly sales report
+- GET /api/admin/reports/export - Export all data as JSON
+
+### Windows/macOS Installers (v2.5)
+
+**Windows HTA Installers**:
+- aegis-installer-freemium.hta - Cyan theme, free edition
+- aegis-installer-licensed.hta - Gold theme, premium editions
+
+**Features (v2.5)**:
+- Retry logic (3 attempts) with exponential backoff
+- Download speed (MB/s) and ETA display
+- SHA256 checksum verification
+- Admin privilege detection with guidance
+- 8MB buffer for faster writes
+- Progress smoothing for smooth UI updates
+
+**macOS/Linux Shell Scripts**:
+- aegis-installer-freemium.sh
+- aegis-installer-licensed.sh
+
+### Recent Updates (November 2025)
+
+- Expanded to 22 Aegis tools per edition
+- App Store expanded to 104 apps across 10 categories
+- Build system supports real builds on Ubuntu 24.04
+- Admin panel with 12+ API endpoints for analytics and management
+- HTA installers upgraded to v2.5 with verification and retry logic
+- New features: Quick Setup Wizard (Freemium), Cloud Storage, Auto-Backup, Restore Points (Basic)
