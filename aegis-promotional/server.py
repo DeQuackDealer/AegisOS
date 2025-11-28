@@ -4317,6 +4317,764 @@ def admin_save_page(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============= ADMIN: ANALYTICS DASHBOARD ENDPOINTS =============
+
+@app.route('/api/admin/analytics/sales', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_analytics_sales():
+    """Get sales data by day/week/month with revenue totals"""
+    try:
+        period = request.args.get('period', 'month')
+        
+        now = datetime.now()
+        
+        if period == 'day':
+            start_date = now - timedelta(days=1)
+        elif period == 'week':
+            start_date = now - timedelta(weeks=1)
+        else:
+            start_date = now - timedelta(days=30)
+        
+        licenses = License.query.filter(
+            License.created_at >= start_date
+        ).all()
+        
+        daily_sales = {}
+        total_revenue = 0
+        edition_revenue = {}
+        
+        for lic in licenses:
+            date_key = lic.created_at.strftime('%Y-%m-%d') if lic.created_at else 'unknown'
+            
+            if date_key not in daily_sales:
+                daily_sales[date_key] = {'count': 0, 'revenue': 0}
+            
+            daily_sales[date_key]['count'] += 1
+            amount = (lic.amount_paid or 0) / 100
+            daily_sales[date_key]['revenue'] += amount
+            total_revenue += amount
+            
+            edition = lic.edition or 'unknown'
+            if edition not in edition_revenue:
+                edition_revenue[edition] = 0
+            edition_revenue[edition] += amount
+        
+        tamper_protected_audit_log("ADMIN_ANALYTICS_SALES", {
+            "period": period,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'period': period,
+            'start_date': start_date.isoformat(),
+            'end_date': now.isoformat(),
+            'daily_sales': daily_sales,
+            'total_licenses': len(licenses),
+            'total_revenue': round(total_revenue, 2),
+            'edition_revenue': edition_revenue,
+            'currency': 'USD'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching sales analytics: {e}")
+        return jsonify({'error': 'Failed to fetch sales analytics', 'details': str(e)}), 500
+
+@app.route('/api/admin/analytics/editions', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_analytics_editions():
+    """Get breakdown of sales by edition type"""
+    try:
+        licenses = License.query.all()
+        
+        edition_breakdown = {}
+        license_types = {}
+        
+        for lic in licenses:
+            edition = lic.edition or 'unknown'
+            license_type = lic.license_type or 'unknown'
+            
+            if edition not in edition_breakdown:
+                edition_breakdown[edition] = {
+                    'total': 0,
+                    'active': 0,
+                    'revoked': 0,
+                    'expired': 0,
+                    'revenue': 0,
+                    'lifetime': 0,
+                    'annual': 0
+                }
+            
+            edition_breakdown[edition]['total'] += 1
+            edition_breakdown[edition]['revenue'] += (lic.amount_paid or 0) / 100
+            
+            if lic.status == 'active':
+                edition_breakdown[edition]['active'] += 1
+            elif lic.status == 'revoked':
+                edition_breakdown[edition]['revoked'] += 1
+            else:
+                edition_breakdown[edition]['expired'] += 1
+            
+            if lic.license_type == 'lifetime':
+                edition_breakdown[edition]['lifetime'] += 1
+            else:
+                edition_breakdown[edition]['annual'] += 1
+            
+            if license_type not in license_types:
+                license_types[license_type] = 0
+            license_types[license_type] += 1
+        
+        tamper_protected_audit_log("ADMIN_ANALYTICS_EDITIONS", {
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'edition_breakdown': edition_breakdown,
+            'license_types': license_types,
+            'total_licenses': len(licenses),
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching edition analytics: {e}")
+        return jsonify({'error': 'Failed to fetch edition analytics', 'details': str(e)}), 500
+
+@app.route('/api/admin/analytics/trends', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_analytics_trends():
+    """Get license creation trends over time"""
+    try:
+        days = int(request.args.get('days', 30))
+        days = min(days, 365)
+        
+        start_date = datetime.now() - timedelta(days=days)
+        
+        licenses = License.query.filter(
+            License.created_at >= start_date
+        ).order_by(License.created_at).all()
+        
+        daily_trend = {}
+        weekly_trend = {}
+        monthly_trend = {}
+        
+        for lic in licenses:
+            if not lic.created_at:
+                continue
+            
+            day_key = lic.created_at.strftime('%Y-%m-%d')
+            week_key = lic.created_at.strftime('%Y-W%W')
+            month_key = lic.created_at.strftime('%Y-%m')
+            
+            daily_trend[day_key] = daily_trend.get(day_key, 0) + 1
+            weekly_trend[week_key] = weekly_trend.get(week_key, 0) + 1
+            monthly_trend[month_key] = monthly_trend.get(month_key, 0) + 1
+        
+        average_daily = len(licenses) / max(days, 1) if licenses else 0
+        
+        tamper_protected_audit_log("ADMIN_ANALYTICS_TRENDS", {
+            "days": days,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'period_days': days,
+            'total_licenses': len(licenses),
+            'average_daily': round(average_daily, 2),
+            'daily_trend': daily_trend,
+            'weekly_trend': weekly_trend,
+            'monthly_trend': monthly_trend,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching trends analytics: {e}")
+        return jsonify({'error': 'Failed to fetch trends analytics', 'details': str(e)}), 500
+
+# ============= ADMIN: USER MANAGEMENT ENDPOINTS =============
+
+@app.route('/api/admin/users', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_list_users():
+    """List all registered users with pagination"""
+    try:
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 20))
+        per_page = min(per_page, 100)
+        search = request.args.get('search', '').strip()
+        
+        query = User.query
+        
+        if search:
+            query = query.filter(
+                (User.email.ilike(f'%{search}%')) |
+                (User.name.ilike(f'%{search}%'))
+            )
+        
+        total = query.count()
+        users = query.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        
+        user_list = []
+        for user in users:
+            user_data = user.to_dict()
+            user_data['license_count'] = License.query.filter_by(user_id=user.id).count()
+            user_list.append(user_data)
+        
+        tamper_protected_audit_log("ADMIN_LIST_USERS", {
+            "page": page,
+            "per_page": per_page,
+            "search": search[:50] if search else None,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'users': user_list,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': total,
+                'total_pages': (total + per_page - 1) // per_page
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing users: {e}")
+        return jsonify({'error': 'Failed to list users', 'details': str(e)}), 500
+
+@app.route('/api/admin/users/<int:user_id>', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_get_user(user_id):
+    """Get user details with their licenses"""
+    try:
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found', 'code': 'NOT_FOUND'}), 404
+        
+        licenses = License.query.filter_by(user_id=user.id).all()
+        
+        user_data = user.to_dict()
+        user_data['licenses'] = [lic.to_dict() for lic in licenses]
+        user_data['total_spent'] = sum((lic.amount_paid or 0) / 100 for lic in licenses)
+        
+        email_logs = EmailLog.query.filter_by(user_id=user.id).order_by(EmailLog.created_at.desc()).limit(10).all()
+        user_data['recent_emails'] = [{
+            'type': log.email_type,
+            'status': log.status,
+            'sent_at': log.sent_at.isoformat() if log.sent_at else None
+        } for log in email_logs]
+        
+        tamper_protected_audit_log("ADMIN_GET_USER", {
+            "user_id": user_id,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({'user': user_data}), 200
+    except Exception as e:
+        logger.error(f"Error fetching user: {e}")
+        return jsonify({'error': 'Failed to fetch user', 'details': str(e)}), 500
+
+@app.route('/api/admin/users/<int:user_id>', methods=['PATCH'])
+@require_admin
+@rate_limit(limit=50)
+def admin_update_user(user_id):
+    """Update user details"""
+    try:
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found', 'code': 'NOT_FOUND'}), 404
+        
+        data = request.json or {}
+        
+        if 'name' in data:
+            user.name = sanitize_input(str(data['name']).strip())[:255]
+        
+        if 'email_verified' in data:
+            user.email_verified = bool(data['email_verified'])
+        
+        if 'email' in data:
+            new_email = str(data['email']).strip().lower()
+            if validate_email(new_email):
+                existing = User.query.filter(User.email == new_email, User.id != user_id).first()
+                if existing:
+                    return jsonify({'error': 'Email already in use', 'code': 'DUPLICATE_EMAIL'}), 409
+                user.email = new_email
+            else:
+                return jsonify({'error': 'Invalid email format', 'code': 'INVALID_EMAIL'}), 400
+        
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+        
+        tamper_protected_audit_log("ADMIN_UPDATE_USER", {
+            "user_id": user_id,
+            "updated_fields": list(data.keys()),
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'success': True,
+            'user': user.to_dict()
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating user: {e}")
+        return jsonify({'error': 'Failed to update user', 'details': str(e)}), 500
+
+# ============= ADMIN: SYSTEM HEALTH ENDPOINTS =============
+
+@app.route('/api/admin/system/health', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_system_health():
+    """Get system health: database connection, disk space, memory usage"""
+    try:
+        import shutil
+        
+        health = {
+            'status': 'healthy',
+            'timestamp': datetime.now().isoformat(),
+            'checks': {}
+        }
+        
+        try:
+            db.session.execute(db.text('SELECT 1'))
+            health['checks']['database'] = {
+                'status': 'healthy',
+                'message': 'Database connection successful'
+            }
+        except Exception as e:
+            health['checks']['database'] = {
+                'status': 'unhealthy',
+                'message': str(e)
+            }
+            health['status'] = 'degraded'
+        
+        try:
+            total, used, free = shutil.disk_usage('/')
+            health['checks']['disk'] = {
+                'status': 'healthy' if free / total > 0.1 else 'warning',
+                'total_gb': round(total / (1024**3), 2),
+                'used_gb': round(used / (1024**3), 2),
+                'free_gb': round(free / (1024**3), 2),
+                'usage_percent': round((used / total) * 100, 1)
+            }
+            if free / total < 0.05:
+                health['checks']['disk']['status'] = 'critical'
+                health['status'] = 'degraded'
+        except Exception as e:
+            health['checks']['disk'] = {
+                'status': 'unknown',
+                'message': str(e)
+            }
+        
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        key = parts[0].rstrip(':')
+                        value = int(parts[1])
+                        meminfo[key] = value
+                
+                total_kb = meminfo.get('MemTotal', 0)
+                free_kb = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
+                used_kb = total_kb - free_kb
+                
+                health['checks']['memory'] = {
+                    'status': 'healthy' if free_kb / total_kb > 0.1 else 'warning',
+                    'total_mb': round(total_kb / 1024, 1),
+                    'used_mb': round(used_kb / 1024, 1),
+                    'free_mb': round(free_kb / 1024, 1),
+                    'usage_percent': round((used_kb / total_kb) * 100, 1) if total_kb else 0
+                }
+        except Exception as e:
+            health['checks']['memory'] = {
+                'status': 'unknown',
+                'message': str(e)
+            }
+        
+        health['checks']['application'] = {
+            'status': 'healthy',
+            'version': '4.0',
+            'uptime': 'running',
+            'active_admin_sessions': len(ADMIN_TOKENS),
+            'audit_log_entries': len(audit_log)
+        }
+        
+        health['checks']['tables'] = {
+            'users': User.query.count(),
+            'licenses': License.query.count(),
+            'giveaways': Giveaway.query.count(),
+            'admin_users': AdminUser.query.count()
+        }
+        
+        tamper_protected_audit_log("ADMIN_SYSTEM_HEALTH", {
+            "status": health['status'],
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify(health), 200
+    except Exception as e:
+        logger.error(f"Error fetching system health: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/admin/system/logs', methods=['GET'])
+@require_admin
+@rate_limit(limit=100)
+def admin_system_logs():
+    """Get recent audit logs with filtering"""
+    try:
+        limit = int(request.args.get('limit', 100))
+        limit = min(limit, 500)
+        severity = request.args.get('severity', '').upper()
+        action = request.args.get('action', '').upper()
+        
+        filtered_logs = audit_log[-limit:]
+        
+        if severity:
+            filtered_logs = [log for log in filtered_logs if log.get('severity') == severity]
+        
+        if action:
+            filtered_logs = [log for log in filtered_logs if action in log.get('action', '')]
+        
+        tamper_protected_audit_log("ADMIN_VIEW_LOGS", {
+            "limit": limit,
+            "severity_filter": severity or None,
+            "action_filter": action or None,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'logs': filtered_logs[-limit:],
+            'total_available': len(audit_log),
+            'returned': len(filtered_logs[-limit:]),
+            'filters': {
+                'severity': severity or None,
+                'action': action or None
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching system logs: {e}")
+        return jsonify({'error': 'Failed to fetch system logs', 'details': str(e)}), 500
+
+# ============= ADMIN: BULK OPERATIONS ENDPOINTS =============
+
+@app.route('/api/admin/licenses/bulk', methods=['POST'])
+@require_admin
+@rate_limit(limit=20)
+def admin_bulk_create_licenses():
+    """Create multiple licenses at once"""
+    try:
+        data = request.json or {}
+        count = int(data.get('count', 1))
+        count = min(count, 100)
+        edition = str(data.get('edition', 'basic')).strip()
+        license_type = str(data.get('type', 'lifetime')).strip()
+        emails = data.get('emails', [])
+        
+        if edition not in TIERS:
+            return jsonify({'error': 'Invalid edition', 'valid_editions': list(TIERS.keys())}), 400
+        
+        if license_type == 'lifetime':
+            expires = datetime.now() + timedelta(days=36500)
+        elif license_type == 'annual':
+            expires = datetime.now() + timedelta(days=365)
+        else:
+            expires = datetime.now() + timedelta(days=30)
+        
+        created_licenses = []
+        
+        for i in range(count):
+            key = generate_license_key(edition)
+            email = emails[i] if i < len(emails) else None
+            
+            new_license = License(
+                license_key=key,
+                edition=edition,
+                license_type=license_type,
+                customer_email=email,
+                status='active',
+                expires_at=expires
+            )
+            db.session.add(new_license)
+            created_licenses.append({
+                'key': key,
+                'edition': edition,
+                'type': license_type,
+                'email': email,
+                'expires': expires.isoformat()
+            })
+        
+        db.session.commit()
+        
+        tamper_protected_audit_log("ADMIN_BULK_LICENSES_CREATED", {
+            "count": count,
+            "edition": edition,
+            "type": license_type,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'success': True,
+            'count': len(created_licenses),
+            'licenses': created_licenses
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating bulk licenses: {e}")
+        return jsonify({'error': 'Failed to create bulk licenses', 'details': str(e)}), 500
+
+@app.route('/api/admin/emails/bulk', methods=['POST'])
+@require_admin
+@rate_limit(limit=10)
+def admin_bulk_send_emails():
+    """Send bulk emails to license holders"""
+    try:
+        data = request.json or {}
+        subject = str(data.get('subject', '')).strip()
+        content = str(data.get('content', '')).strip()
+        edition_filter = data.get('edition', None)
+        status_filter = data.get('status', 'active')
+        
+        if not subject or not content:
+            return jsonify({'error': 'Subject and content are required'}), 400
+        
+        query = License.query.filter(License.customer_email.isnot(None))
+        
+        if edition_filter:
+            query = query.filter(License.edition == edition_filter)
+        
+        if status_filter:
+            query = query.filter(License.status == status_filter)
+        
+        licenses = query.all()
+        
+        sent_count = 0
+        failed_count = 0
+        sent_to = []
+        
+        if SENDGRID_API_KEY:
+            sg = SendGridAPIClient(SENDGRID_API_KEY)
+            
+            for lic in licenses:
+                if not lic.customer_email:
+                    continue
+                
+                try:
+                    message = Mail(
+                        from_email=Email(SENDGRID_FROM_EMAIL),
+                        to_emails=To(lic.customer_email),
+                        subject=subject,
+                        plain_text_content=Content("text/plain", content)
+                    )
+                    
+                    response = sg.send(message)
+                    
+                    email_log = EmailLog(
+                        license_id=lic.id,
+                        email_to=lic.customer_email,
+                        email_type='bulk_admin',
+                        subject=subject,
+                        status='sent',
+                        sent_at=datetime.utcnow()
+                    )
+                    db.session.add(email_log)
+                    
+                    sent_count += 1
+                    sent_to.append(lic.customer_email)
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Failed to send email to {lic.customer_email}: {e}")
+            
+            db.session.commit()
+        else:
+            for lic in licenses:
+                if lic.customer_email:
+                    email_log = EmailLog(
+                        license_id=lic.id,
+                        email_to=lic.customer_email,
+                        email_type='bulk_admin',
+                        subject=subject,
+                        status='pending',
+                        error_message='SendGrid not configured'
+                    )
+                    db.session.add(email_log)
+                    sent_to.append(lic.customer_email)
+            
+            db.session.commit()
+        
+        tamper_protected_audit_log("ADMIN_BULK_EMAILS_SENT", {
+            "total_recipients": len(licenses),
+            "sent": sent_count,
+            "failed": failed_count,
+            "edition_filter": edition_filter,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'success': True,
+            'total_recipients': len(licenses),
+            'sent': sent_count,
+            'failed': failed_count,
+            'emails': sent_to[:50],
+            'sendgrid_configured': bool(SENDGRID_API_KEY)
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error sending bulk emails: {e}")
+        return jsonify({'error': 'Failed to send bulk emails', 'details': str(e)}), 500
+
+# ============= ADMIN: REPORT GENERATION ENDPOINTS =============
+
+@app.route('/api/admin/reports/monthly', methods=['GET'])
+@require_admin
+@rate_limit(limit=50)
+def admin_report_monthly():
+    """Get monthly sales and license report"""
+    try:
+        year = int(request.args.get('year', datetime.now().year))
+        month = int(request.args.get('month', datetime.now().month))
+        
+        start_date = datetime(year, month, 1)
+        if month == 12:
+            end_date = datetime(year + 1, 1, 1)
+        else:
+            end_date = datetime(year, month + 1, 1)
+        
+        licenses = License.query.filter(
+            License.created_at >= start_date,
+            License.created_at < end_date
+        ).all()
+        
+        edition_counts = {}
+        type_counts = {'lifetime': 0, 'annual': 0, 'monthly': 0}
+        total_revenue = 0
+        daily_breakdown = {}
+        
+        for lic in licenses:
+            edition = lic.edition or 'unknown'
+            edition_counts[edition] = edition_counts.get(edition, 0) + 1
+            
+            lic_type = lic.license_type or 'unknown'
+            if lic_type in type_counts:
+                type_counts[lic_type] += 1
+            
+            total_revenue += (lic.amount_paid or 0) / 100
+            
+            if lic.created_at:
+                day_key = lic.created_at.strftime('%Y-%m-%d')
+                if day_key not in daily_breakdown:
+                    daily_breakdown[day_key] = {'count': 0, 'revenue': 0}
+                daily_breakdown[day_key]['count'] += 1
+                daily_breakdown[day_key]['revenue'] += (lic.amount_paid or 0) / 100
+        
+        users_created = User.query.filter(
+            User.created_at >= start_date,
+            User.created_at < end_date
+        ).count()
+        
+        giveaways_created = Giveaway.query.filter(
+            Giveaway.created_at >= start_date,
+            Giveaway.created_at < end_date
+        ).count()
+        
+        tamper_protected_audit_log("ADMIN_REPORT_MONTHLY", {
+            "year": year,
+            "month": month,
+            "by": request.admin_user
+        }, "INFO")
+        
+        return jsonify({
+            'report': {
+                'period': f'{year}-{month:02d}',
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat(),
+                'summary': {
+                    'total_licenses': len(licenses),
+                    'total_revenue': round(total_revenue, 2),
+                    'average_revenue_per_license': round(total_revenue / len(licenses), 2) if licenses else 0,
+                    'new_users': users_created,
+                    'giveaways_created': giveaways_created
+                },
+                'by_edition': edition_counts,
+                'by_type': type_counts,
+                'daily_breakdown': daily_breakdown
+            },
+            'generated_at': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        logger.error(f"Error generating monthly report: {e}")
+        return jsonify({'error': 'Failed to generate monthly report', 'details': str(e)}), 500
+
+@app.route('/api/admin/reports/export', methods=['GET'])
+@require_admin
+@rate_limit(limit=10)
+def admin_report_export():
+    """Export all data as JSON"""
+    try:
+        include_users = request.args.get('users', 'true').lower() == 'true'
+        include_licenses = request.args.get('licenses', 'true').lower() == 'true'
+        include_giveaways = request.args.get('giveaways', 'true').lower() == 'true'
+        include_logs = request.args.get('logs', 'false').lower() == 'true'
+        
+        export_data = {
+            'exported_at': datetime.now().isoformat(),
+            'exported_by': request.admin_user,
+            'version': '4.0'
+        }
+        
+        if include_users:
+            users = User.query.all()
+            export_data['users'] = [u.to_dict() for u in users]
+            export_data['user_count'] = len(users)
+        
+        if include_licenses:
+            licenses = License.query.all()
+            export_data['licenses'] = [lic.to_dict() for lic in licenses]
+            export_data['license_count'] = len(licenses)
+        
+        if include_giveaways:
+            giveaways = Giveaway.query.all()
+            giveaway_data = []
+            for g in giveaways:
+                gd = g.to_dict()
+                gd['entries'] = [e.to_dict() for e in g.entries.all()]
+                giveaway_data.append(gd)
+            export_data['giveaways'] = giveaway_data
+            export_data['giveaway_count'] = len(giveaways)
+        
+        if include_logs:
+            export_data['audit_logs'] = audit_log[-1000:]
+            export_data['log_count'] = len(audit_log)
+        
+        export_data['summary'] = {
+            'total_users': User.query.count(),
+            'total_licenses': License.query.count(),
+            'active_licenses': License.query.filter_by(status='active').count(),
+            'total_giveaways': Giveaway.query.count(),
+            'active_giveaways': Giveaway.query.filter_by(status='active').count()
+        }
+        
+        tamper_protected_audit_log("ADMIN_DATA_EXPORT", {
+            "include_users": include_users,
+            "include_licenses": include_licenses,
+            "include_giveaways": include_giveaways,
+            "include_logs": include_logs,
+            "by": request.admin_user
+        }, "HIGH")
+        
+        response = make_response(json.dumps(export_data, indent=2, default=str))
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['Content-Disposition'] = f'attachment; filename=aegis_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        
+        return response, 200
+    except Exception as e:
+        logger.error(f"Error exporting data: {e}")
+        return jsonify({'error': 'Failed to export data', 'details': str(e)}), 500
+
 # Admin page routes
 @app.route('/admin')
 @rate_limit(limit=100)

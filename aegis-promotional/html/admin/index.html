@@ -359,7 +359,45 @@
                     </a>
                 </div>
                 <div class="nav-section">
+                    <div class="nav-section-title">Analytics</div>
+                    <a href="#" class="nav-item" onclick="showAnalytics('sales')">
+                        <span class="nav-icon">💰</span>
+                        <span class="nav-text">Sales Analytics</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showAnalytics('editions')">
+                        <span class="nav-icon">📈</span>
+                        <span class="nav-text">Edition Breakdown</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showAnalytics('trends')">
+                        <span class="nav-icon">📉</span>
+                        <span class="nav-text">Trends</span>
+                    </a>
+                </div>
+                <div class="nav-section">
+                    <div class="nav-section-title">Management</div>
+                    <a href="#" class="nav-item" onclick="showUsers()">
+                        <span class="nav-icon">👥</span>
+                        <span class="nav-text">Users</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showBulkOperations()">
+                        <span class="nav-icon">📦</span>
+                        <span class="nav-text">Bulk Operations</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showReports()">
+                        <span class="nav-icon">📋</span>
+                        <span class="nav-text">Reports</span>
+                    </a>
+                </div>
+                <div class="nav-section">
                     <div class="nav-section-title">System</div>
+                    <a href="#" class="nav-item" onclick="showSystemHealth()">
+                        <span class="nav-icon">❤️</span>
+                        <span class="nav-text">System Health</span>
+                    </a>
+                    <a href="#" class="nav-item" onclick="showSystemLogs()">
+                        <span class="nav-icon">📜</span>
+                        <span class="nav-text">Audit Logs</span>
+                    </a>
                     <a href="/admin/settings" class="nav-item">
                         <span class="nav-icon">⚙️</span>
                         <span class="nav-text">Settings</span>
@@ -555,7 +593,6 @@
                     const data = await res.json();
                     document.getElementById('totalUsers').textContent = (data.users || 0).toLocaleString();
                     document.getElementById('totalDownloads').textContent = (data.downloads || 0).toLocaleString();
-                    document.getElementById('totalRevenue').textContent = '$' + (data.revenue || 0).toLocaleString();
                     document.getElementById('activeLicenses').textContent = (data.licenses || 0).toLocaleString();
                     document.getElementById('activeGiveaways').textContent = (data.active_giveaways || 0).toLocaleString();
                 }
@@ -566,6 +603,425 @@
 
         async function refreshData() {
             await loadDashboardData();
+        }
+
+        function showModal(title, content) {
+            const existingModal = document.getElementById('adminModal');
+            if (existingModal) existingModal.remove();
+            
+            const modal = document.createElement('div');
+            modal.id = 'adminModal';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:2000;padding:2rem;';
+            modal.innerHTML = `
+                <div style="background:var(--bg-card);border-radius:16px;width:100%;max-width:900px;max-height:90vh;overflow:hidden;border:1px solid var(--border);">
+                    <div style="padding:1.25rem 1.5rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                        <h3 style="font-size:1.25rem;font-weight:600;">${title}</h3>
+                        <button onclick="closeModal()" style="background:none;border:none;color:var(--text-secondary);font-size:1.5rem;cursor:pointer;">&times;</button>
+                    </div>
+                    <div style="padding:1.5rem;overflow-y:auto;max-height:calc(90vh - 70px);">${content}</div>
+                </div>
+            `;
+            modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+            document.body.appendChild(modal);
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('adminModal');
+            if (modal) modal.remove();
+        }
+
+        async function showAnalytics(type) {
+            try {
+                let endpoint = '';
+                let title = '';
+                
+                if (type === 'sales') {
+                    endpoint = '/analytics/sales?period=month';
+                    title = 'Sales Analytics (Last 30 Days)';
+                } else if (type === 'editions') {
+                    endpoint = '/analytics/editions';
+                    title = 'Edition Breakdown';
+                } else if (type === 'trends') {
+                    endpoint = '/analytics/trends?days=30';
+                    title = 'License Trends (30 Days)';
+                }
+                
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    let content = '<div style="font-family:monospace;background:var(--bg-dark);padding:1rem;border-radius:8px;overflow-x:auto;"><pre style="margin:0;white-space:pre-wrap;">' + JSON.stringify(data, null, 2) + '</pre></div>';
+                    
+                    if (type === 'sales') {
+                        content = `
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
+                                <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;text-align:center;">
+                                    <div style="font-size:2rem;font-weight:700;color:var(--success);">$${(data.total_revenue || 0).toLocaleString()}</div>
+                                    <div style="color:var(--text-secondary);font-size:0.875rem;">Total Revenue</div>
+                                </div>
+                                <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;text-align:center;">
+                                    <div style="font-size:2rem;font-weight:700;color:var(--primary);">${data.total_licenses || 0}</div>
+                                    <div style="color:var(--text-secondary);font-size:0.875rem;">Licenses Sold</div>
+                                </div>
+                                <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;text-align:center;">
+                                    <div style="font-size:2rem;font-weight:700;color:var(--accent);">${data.period || 'month'}</div>
+                                    <div style="color:var(--text-secondary);font-size:0.875rem;">Period</div>
+                                </div>
+                            </div>
+                            <h4 style="margin-bottom:1rem;">Revenue by Edition</h4>
+                            <div style="background:var(--bg-dark);padding:1rem;border-radius:8px;">
+                                ${Object.entries(data.edition_revenue || {}).map(([ed, rev]) => `
+                                    <div style="display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border);">
+                                        <span style="text-transform:capitalize;">${ed}</span>
+                                        <span style="color:var(--success);">$${rev.toLocaleString()}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    } else if (type === 'editions') {
+                        content = `
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;">
+                                ${Object.entries(data.edition_breakdown || {}).map(([ed, info]) => `
+                                    <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                        <div style="font-weight:600;text-transform:capitalize;margin-bottom:0.5rem;">${ed}</div>
+                                        <div style="font-size:0.875rem;color:var(--text-secondary);">
+                                            <div>Total: ${info.total}</div>
+                                            <div>Active: <span style="color:var(--success);">${info.active}</span></div>
+                                            <div>Revenue: <span style="color:var(--warning);">$${(info.revenue || 0).toFixed(2)}</span></div>
+                                            <div>Lifetime: ${info.lifetime} | Annual: ${info.annual}</div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    } else if (type === 'trends') {
+                        content = `
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+                                <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;text-align:center;">
+                                    <div style="font-size:2rem;font-weight:700;color:var(--primary);">${data.total_licenses || 0}</div>
+                                    <div style="color:var(--text-secondary);font-size:0.875rem;">Total Licenses (${data.period_days} days)</div>
+                                </div>
+                                <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;text-align:center;">
+                                    <div style="font-size:2rem;font-weight:700;color:var(--success);">${data.average_daily || 0}</div>
+                                    <div style="color:var(--text-secondary);font-size:0.875rem;">Daily Average</div>
+                                </div>
+                            </div>
+                            <h4 style="margin-bottom:1rem;">Daily Breakdown</h4>
+                            <div style="background:var(--bg-dark);padding:1rem;border-radius:8px;max-height:300px;overflow-y:auto;">
+                                ${Object.entries(data.daily_trend || {}).sort((a,b) => b[0].localeCompare(a[0])).map(([day, count]) => `
+                                    <div style="display:flex;justify-content:space-between;padding:0.25rem 0;">
+                                        <span>${day}</span>
+                                        <span style="color:var(--primary);">${count} license(s)</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `;
+                    }
+                    
+                    showModal(title, content);
+                } else {
+                    showModal('Error', '<p style="color:var(--error);">Failed to load analytics data</p>');
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showUsers() {
+            try {
+                const res = await fetch(`${API_BASE}/users?per_page=50`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const content = `
+                        <div style="margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;">
+                            <span>Total: ${data.pagination?.total || 0} users</span>
+                        </div>
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:var(--bg-dark);">
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">ID</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Email</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Name</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Licenses</th>
+                                    <th style="padding:0.75rem;text-align:left;border-bottom:1px solid var(--border);">Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(data.users || []).map(user => `
+                                    <tr style="border-bottom:1px solid var(--border);">
+                                        <td style="padding:0.75rem;">${user.id}</td>
+                                        <td style="padding:0.75rem;">${user.email || '-'}</td>
+                                        <td style="padding:0.75rem;">${user.name || '-'}</td>
+                                        <td style="padding:0.75rem;">${user.license_count || 0}</td>
+                                        <td style="padding:0.75rem;">${user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                    showModal('User Management', content);
+                } else {
+                    showModal('Error', '<p style="color:var(--error);">Failed to load users</p>');
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showSystemHealth() {
+            try {
+                const res = await fetch(`${API_BASE}/system/health`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const statusColor = data.status === 'healthy' ? 'var(--success)' : data.status === 'degraded' ? 'var(--warning)' : 'var(--error)';
+                    
+                    const content = `
+                        <div style="text-align:center;margin-bottom:1.5rem;">
+                            <div style="font-size:3rem;margin-bottom:0.5rem;">${data.status === 'healthy' ? '✅' : data.status === 'degraded' ? '⚠️' : '❌'}</div>
+                            <div style="font-size:1.5rem;font-weight:700;color:${statusColor};text-transform:uppercase;">${data.status}</div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;">
+                            <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-weight:600;margin-bottom:0.5rem;">💾 Database</div>
+                                <div style="color:${data.checks?.database?.status === 'healthy' ? 'var(--success)' : 'var(--error)'};">${data.checks?.database?.status || 'unknown'}</div>
+                            </div>
+                            <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-weight:600;margin-bottom:0.5rem;">💽 Disk</div>
+                                <div>${data.checks?.disk?.usage_percent || 0}% used</div>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);">${data.checks?.disk?.free_gb || 0} GB free</div>
+                            </div>
+                            <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-weight:600;margin-bottom:0.5rem;">🧠 Memory</div>
+                                <div>${data.checks?.memory?.usage_percent || 0}% used</div>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);">${data.checks?.memory?.free_mb || 0} MB free</div>
+                            </div>
+                            <div style="background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-weight:600;margin-bottom:0.5rem;">🔧 App</div>
+                                <div>v${data.checks?.application?.version || '?'}</div>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);">${data.checks?.application?.active_admin_sessions || 0} active sessions</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:1.5rem;background:var(--bg-dark);padding:1rem;border-radius:8px;">
+                            <div style="font-weight:600;margin-bottom:0.5rem;">Database Records</div>
+                            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;font-size:0.875rem;">
+                                <div>Users: ${data.checks?.tables?.users || 0}</div>
+                                <div>Licenses: ${data.checks?.tables?.licenses || 0}</div>
+                                <div>Giveaways: ${data.checks?.tables?.giveaways || 0}</div>
+                                <div>Admins: ${data.checks?.tables?.admin_users || 0}</div>
+                            </div>
+                        </div>
+                    `;
+                    showModal('System Health', content);
+                } else {
+                    showModal('Error', '<p style="color:var(--error);">Failed to load system health</p>');
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showSystemLogs() {
+            try {
+                const res = await fetch(`${API_BASE}/system/logs?limit=50`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const content = `
+                        <div style="margin-bottom:1rem;">Showing ${data.returned} of ${data.total_available} logs</div>
+                        <div style="background:var(--bg-dark);border-radius:8px;max-height:500px;overflow-y:auto;">
+                            ${(data.logs || []).reverse().map(log => `
+                                <div style="padding:0.75rem;border-bottom:1px solid var(--border);font-size:0.875rem;">
+                                    <div style="display:flex;justify-content:space-between;margin-bottom:0.25rem;">
+                                        <span style="font-weight:600;">${log.action || '-'}</span>
+                                        <span style="color:${log.severity === 'HIGH' || log.severity === 'CRITICAL' ? 'var(--error)' : log.severity === 'WARNING' ? 'var(--warning)' : 'var(--text-secondary)'};">${log.severity || 'INFO'}</span>
+                                    </div>
+                                    <div style="color:var(--text-secondary);font-size:0.75rem;">${log.timestamp || '-'}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    showModal('Audit Logs', content);
+                } else {
+                    showModal('Error', '<p style="color:var(--error);">Failed to load logs</p>');
+                }
+            } catch (err) {
+                showModal('Error', `<p style="color:var(--error);">Error: ${err.message}</p>`);
+            }
+        }
+
+        async function showBulkOperations() {
+            const content = `
+                <div style="display:grid;gap:1.5rem;">
+                    <div style="background:var(--bg-hover);padding:1.5rem;border-radius:8px;">
+                        <h4 style="margin-bottom:1rem;">📦 Bulk Create Licenses</h4>
+                        <div style="display:grid;gap:0.75rem;">
+                            <div>
+                                <label style="display:block;font-size:0.875rem;margin-bottom:0.25rem;">Count (1-100)</label>
+                                <input type="number" id="bulkCount" value="5" min="1" max="100" style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-dark);color:var(--text-primary);">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.875rem;margin-bottom:0.25rem;">Edition</label>
+                                <select id="bulkEdition" style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-dark);color:var(--text-primary);">
+                                    <option value="basic">Basic</option>
+                                    <option value="gamer">Gamer</option>
+                                    <option value="ai-dev">AI-Dev</option>
+                                    <option value="server">Server</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.875rem;margin-bottom:0.25rem;">Type</label>
+                                <select id="bulkType" style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-dark);color:var(--text-primary);">
+                                    <option value="lifetime">Lifetime</option>
+                                    <option value="annual">Annual</option>
+                                </select>
+                            </div>
+                            <button onclick="createBulkLicenses()" class="btn btn-primary" style="margin-top:0.5rem;">Create Licenses</button>
+                        </div>
+                    </div>
+                    <div style="background:var(--bg-hover);padding:1.5rem;border-radius:8px;">
+                        <h4 style="margin-bottom:1rem;">📧 Bulk Email</h4>
+                        <div style="display:grid;gap:0.75rem;">
+                            <div>
+                                <label style="display:block;font-size:0.875rem;margin-bottom:0.25rem;">Subject</label>
+                                <input type="text" id="emailSubject" placeholder="Email subject" style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-dark);color:var(--text-primary);">
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:0.875rem;margin-bottom:0.25rem;">Content</label>
+                                <textarea id="emailContent" placeholder="Email content" rows="3" style="width:100%;padding:0.5rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-dark);color:var(--text-primary);resize:vertical;"></textarea>
+                            </div>
+                            <button onclick="sendBulkEmails()" class="btn btn-primary" style="margin-top:0.5rem;">Send Emails</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="bulkResult" style="margin-top:1rem;"></div>
+            `;
+            showModal('Bulk Operations', content);
+        }
+
+        async function createBulkLicenses() {
+            const count = parseInt(document.getElementById('bulkCount').value);
+            const edition = document.getElementById('bulkEdition').value;
+            const type = document.getElementById('bulkType').value;
+            
+            try {
+                const res = await fetch(`${API_BASE}/licenses/bulk`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ count, edition, type })
+                });
+                
+                const data = await res.json();
+                document.getElementById('bulkResult').innerHTML = res.ok 
+                    ? `<div style="background:rgba(16,185,129,0.2);color:var(--success);padding:1rem;border-radius:8px;">Created ${data.count} licenses!</div>`
+                    : `<div style="background:rgba(239,68,68,0.2);color:var(--error);padding:1rem;border-radius:8px;">Error: ${data.error}</div>`;
+            } catch (err) {
+                document.getElementById('bulkResult').innerHTML = `<div style="background:rgba(239,68,68,0.2);color:var(--error);padding:1rem;border-radius:8px;">Error: ${err.message}</div>`;
+            }
+        }
+
+        async function sendBulkEmails() {
+            const subject = document.getElementById('emailSubject').value;
+            const content = document.getElementById('emailContent').value;
+            
+            if (!subject || !content) {
+                document.getElementById('bulkResult').innerHTML = `<div style="background:rgba(239,68,68,0.2);color:var(--error);padding:1rem;border-radius:8px;">Subject and content required</div>`;
+                return;
+            }
+            
+            try {
+                const res = await fetch(`${API_BASE}/emails/bulk`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subject, content })
+                });
+                
+                const data = await res.json();
+                document.getElementById('bulkResult').innerHTML = res.ok 
+                    ? `<div style="background:rgba(16,185,129,0.2);color:var(--success);padding:1rem;border-radius:8px;">Sent to ${data.total_recipients} recipients (${data.sent} sent, ${data.failed} failed)</div>`
+                    : `<div style="background:rgba(239,68,68,0.2);color:var(--error);padding:1rem;border-radius:8px;">Error: ${data.error}</div>`;
+            } catch (err) {
+                document.getElementById('bulkResult').innerHTML = `<div style="background:rgba(239,68,68,0.2);color:var(--error);padding:1rem;border-radius:8px;">Error: ${err.message}</div>`;
+            }
+        }
+
+        async function showReports() {
+            const content = `
+                <div style="display:grid;gap:1rem;">
+                    <div style="background:var(--bg-hover);padding:1.25rem;border-radius:8px;cursor:pointer;" onclick="loadMonthlyReport()">
+                        <div style="display:flex;align-items:center;gap:1rem;">
+                            <div style="font-size:2rem;">📊</div>
+                            <div>
+                                <div style="font-weight:600;">Monthly Report</div>
+                                <div style="font-size:0.875rem;color:var(--text-secondary);">View sales and license summary for current month</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="background:var(--bg-hover);padding:1.25rem;border-radius:8px;cursor:pointer;" onclick="exportData()">
+                        <div style="display:flex;align-items:center;gap:1rem;">
+                            <div style="font-size:2rem;">📥</div>
+                            <div>
+                                <div style="font-weight:600;">Export All Data</div>
+                                <div style="font-size:0.875rem;color:var(--text-secondary);">Download complete data export as JSON</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="reportResult" style="margin-top:1.5rem;"></div>
+            `;
+            showModal('Reports', content);
+        }
+
+        async function loadMonthlyReport() {
+            try {
+                const res = await fetch(`${API_BASE}/reports/monthly`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    const r = data.report;
+                    document.getElementById('reportResult').innerHTML = `
+                        <div style="background:var(--bg-dark);padding:1.5rem;border-radius:8px;">
+                            <h4 style="margin-bottom:1rem;">Report: ${r.period}</h4>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1rem;">
+                                <div style="text-align:center;">
+                                    <div style="font-size:1.5rem;font-weight:700;color:var(--primary);">${r.summary?.total_licenses || 0}</div>
+                                    <div style="font-size:0.75rem;color:var(--text-secondary);">Licenses</div>
+                                </div>
+                                <div style="text-align:center;">
+                                    <div style="font-size:1.5rem;font-weight:700;color:var(--success);">$${(r.summary?.total_revenue || 0).toFixed(2)}</div>
+                                    <div style="font-size:0.75rem;color:var(--text-secondary);">Revenue</div>
+                                </div>
+                                <div style="text-align:center;">
+                                    <div style="font-size:1.5rem;font-weight:700;color:var(--accent);">${r.summary?.new_users || 0}</div>
+                                    <div style="font-size:0.75rem;color:var(--text-secondary);">New Users</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                document.getElementById('reportResult').innerHTML = `<div style="color:var(--error);">Error loading report</div>`;
+            }
+        }
+
+        async function exportData() {
+            try {
+                window.open(`${API_BASE}/reports/export?users=true&licenses=true&giveaways=true`, '_blank');
+                document.getElementById('reportResult').innerHTML = `<div style="background:rgba(16,185,129,0.2);color:var(--success);padding:1rem;border-radius:8px;">Export started! Check your downloads.</div>`;
+            } catch (err) {
+                document.getElementById('reportResult').innerHTML = `<div style="color:var(--error);">Error exporting data</div>`;
+            }
         }
 
         (async () => {
