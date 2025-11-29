@@ -331,13 +331,16 @@ Sub RefreshDrives()
                     sizeGB = FormatNumber(disk.Size / 1073741824, 1)
                     partCount = disk.Partitions
                     busType = disk.InterfaceType
-                    If busType = "" Then busType = "USB"
+                    If IsNull(busType) Or busType = "" Then busType = "USB"
+                    Dim modelName
+                    modelName = disk.Model
+                    If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive"
                     ReDim Preserve drives(driveCount)
                     drives(driveCount) = disk.Index
                     html = html & "<div class='drive-item' onclick='SelectDrive " & driveCount & "'>"
                     html = html & "<div class='drive-icon'>USB</div>"
                     html = html & "<div class='drive-info'>"
-                    html = html & "<div class='drive-name'>" & disk.Model & "</div>"
+                    html = html & "<div class='drive-name'>" & modelName & "</div>"
                     html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
                     html = html & "<div class='drive-details'>" & partCount & " partition(s) | " & busType & "</div>"
                     html = html & "</div></div>"

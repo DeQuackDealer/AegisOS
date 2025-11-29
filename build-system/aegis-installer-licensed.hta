@@ -451,13 +451,16 @@ Sub RefreshDrives()
                     sizeGB = FormatNumber(disk.Size / 1073741824, 1)
                     partCount = disk.Partitions
                     busType = disk.InterfaceType
-                    If busType = "" Then busType = "USB"
+                    If IsNull(busType) Or busType = "" Then busType = "USB"
+                    Dim modelName
+                    modelName = disk.Model
+                    If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive"
                     ReDim Preserve drives(driveCount)
                     drives(driveCount) = disk.Index
                     html = html & "<div class='drive-item' onclick='SelectDrive " & driveCount & "'>"
                     html = html & "<div class='drive-icon'>USB</div>"
                     html = html & "<div class='drive-info'>"
-                    html = html & "<div class='drive-name'>" & disk.Model & "</div>"
+                    html = html & "<div class='drive-name'>" & modelName & "</div>"
                     html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
                     html = html & "<div class='drive-details'>" & partCount & " partition(s) | " & busType & "</div>"
                     html = html & "</div></div>"
@@ -524,8 +527,14 @@ Sub SetSecureBoot()
     On Error Goto 0
 End Sub
 
-Sub SetBootTheme(theme)
-    bootTheme = theme
+Sub SetBootTheme()
+    Dim sel
+    On Error Resume Next
+    Set sel = document.getElementById("selBootTheme")
+    If Not sel Is Nothing Then
+        bootTheme = sel.value
+    End If
+    On Error Goto 0
 End Sub
 
 Sub SetUnattended()
@@ -538,8 +547,14 @@ Sub SetUnattended()
     On Error Goto 0
 End Sub
 
-Sub SetNetworkPreset(preset)
-    networkPreset = preset
+Sub SetNetworkPreset()
+    Dim sel
+    On Error Resume Next
+    Set sel = document.getElementById("selNetworkPreset")
+    If Not sel Is Nothing Then
+        networkPreset = sel.value
+    End If
+    On Error Goto 0
 End Sub
 
 Sub GoToStep(stepNum)
@@ -914,7 +929,7 @@ End Sub
                 <div class="advanced-grid">
                     <div>
                         <label class="form-label">Boot Theme</label>
-                        <select class="select-input" onchange="SetBootTheme this.value">
+                        <select id="selBootTheme" class="select-input" onchange="SetBootTheme">
                             <option value="Default">Default</option>
                             <option value="Dark">Dark</option>
                             <option value="Light">Light</option>
@@ -922,7 +937,7 @@ End Sub
                     </div>
                     <div>
                         <label class="form-label">Network Preset</label>
-                        <select class="select-input" onchange="SetNetworkPreset this.value">
+                        <select id="selNetworkPreset" class="select-input" onchange="SetNetworkPreset">
                             <option value="DHCP">DHCP (Auto)</option>
                             <option value="Static">Static IP</option>
                             <option value="None">No Config</option>

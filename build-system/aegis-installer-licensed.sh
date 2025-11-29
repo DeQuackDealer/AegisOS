@@ -19,7 +19,6 @@ NC='\033[0m'
 VERSION="2.6"
 LICENSE_KEY=""
 EDITION_NAME=""
-BASE_ISO_URL="https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
 BASE_ISO_NAME="Linux Lite 7.2"
 BASE_ISO_SIZE="2.1 GB"
 BASE_ISO_SHA256=""
@@ -31,6 +30,14 @@ SECURE_BOOT=false
 NETWORK_PRESET="DHCP"
 UNATTENDED_MODE=false
 MAX_RETRIES=3
+
+# Mirror list for reliable downloads
+MIRRORS=(
+    "https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
+    "https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso"
+    "https://mirrors.xtom.com/osdn/storage/g/l/li/linuxlite/7.2/linux-lite-7.2-64bit.iso"
+    "https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
+)
 
 clear_screen() {
     clear
@@ -533,8 +540,23 @@ download_iso() {
     echo -e "${YELLOW}Estimated time: 5-20 minutes (depends on connection speed)${NC}"
     echo ""
     
-    if ! download_with_retry "$BASE_ISO_URL" "$iso_path"; then
-        echo -e "${RED}Download failed after $MAX_RETRIES attempts.${NC}"
+    local download_success=false
+    local mirror_num=1
+    
+    for mirror_url in "${MIRRORS[@]}"; do
+        echo -e "${DIM}Trying mirror $mirror_num of ${#MIRRORS[@]}...${NC}"
+        
+        if download_with_retry "$mirror_url" "$iso_path"; then
+            download_success=true
+            break
+        fi
+        
+        echo -e "${YELLOW}Mirror $mirror_num failed, trying next...${NC}"
+        mirror_num=$((mirror_num + 1))
+    done
+    
+    if [[ "$download_success" != true ]]; then
+        echo -e "${RED}All mirrors failed. Check your internet connection.${NC}"
         return 1
     fi
     
