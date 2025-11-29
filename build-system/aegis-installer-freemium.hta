@@ -252,8 +252,7 @@ Sub RefreshDrives()
 End Sub
 
 Sub SelectDrive(index)
-    On Error Resume Next
-    Dim items, i, btnNext
+    Dim items, i
     Set items = document.getElementsByClassName("drive-item")
     For i = 0 To items.length - 1
         items(i).className = "drive-item"
@@ -262,26 +261,17 @@ Sub SelectDrive(index)
     
     selectedDriveNumber = drives(index)
     selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
-    
-    Set btnNext = document.getElementById("btnNext1")
-    btnNext.disabled = False
-    btnNext.removeAttribute "disabled"
-    On Error Goto 0
+    document.getElementById("btnNext1").disabled = False
 End Sub
 
 Sub GoToStep(stepNum)
-    On Error Resume Next
-    Dim panels, steps, i, stepEl
+    Dim panels, steps, i
     
     Set panels = document.getElementsByClassName("panel")
     For i = 0 To panels.length - 1
         panels(i).className = "panel"
     Next
-    
-    Set stepEl = document.getElementById("step" & stepNum)
-    If Not stepEl Is Nothing Then
-        stepEl.className = "panel active"
-    End If
+    document.getElementById("step" & stepNum).className = "panel active"
     
     Set steps = document.getElementsByClassName("step-item")
     For i = 0 To steps.length - 1
@@ -301,7 +291,6 @@ Sub GoToStep(stepNum)
     If stepNum = 3 Then
         document.getElementById("progressBar").className = "progress-bar-fill animated"
     End If
-    On Error Goto 0
 End Sub
 
 Sub StartCreation()

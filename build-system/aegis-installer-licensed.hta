@@ -238,31 +238,26 @@ Function ValidateLicense(key)
 End Function
 
 Sub CheckLicense()
-    On Error Resume Next
-    Dim key, edition, statusEl, btnNext
+    Dim key, edition
     key = document.getElementById("licenseInput").value
-    Set statusEl = document.getElementById("licenseStatus")
-    Set btnNext = document.getElementById("btnNext1")
     edition = ValidateLicense(key)
     If edition <> "" Then
-        statusEl.innerHTML = "<span style='color:#10b981'>&#10003;</span> Valid: <strong>" & edition & " Edition</strong>"
-        statusEl.className = "license-valid"
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> Valid: <strong>" & edition & " Edition</strong>"
+        document.getElementById("licenseStatus").className = "license-valid"
         licenseKey = UCase(Trim(key))
         detectedEdition = edition
-        btnNext.disabled = False
-        btnNext.removeAttribute "disabled"
+        document.getElementById("btnNext1").disabled = False
     Else
         If Len(Trim(key)) > 0 Then
-            statusEl.innerHTML = "Enter a valid license key (e.g., BSIC-XXXX-XXXX-XXXX)"
+            document.getElementById("licenseStatus").innerHTML = "Enter a valid license key (e.g., BSIC-XXXX-XXXX-XXXX)"
         Else
-            statusEl.innerHTML = ""
+            document.getElementById("licenseStatus").innerHTML = ""
         End If
-        statusEl.className = "license-invalid"
+        document.getElementById("licenseStatus").className = "license-invalid"
         licenseKey = ""
         detectedEdition = ""
-        btnNext.disabled = True
+        document.getElementById("btnNext1").disabled = True
     End If
-    On Error Goto 0
 End Sub
 
 Sub RefreshDrives()
@@ -313,18 +308,13 @@ Sub SelectDrive(index)
 End Sub
 
 Sub GoToStep(stepNum)
-    On Error Resume Next
-    Dim panels, steps, i, stepEl
+    Dim panels, steps, i
     
     Set panels = document.getElementsByClassName("panel")
     For i = 0 To panels.length - 1
         panels(i).className = "panel"
     Next
-    
-    Set stepEl = document.getElementById("step" & stepNum)
-    If Not stepEl Is Nothing Then
-        stepEl.className = "panel active"
-    End If
+    document.getElementById("step" & stepNum).className = "panel active"
     
     Set steps = document.getElementsByClassName("step-item")
     For i = 0 To steps.length - 1
@@ -347,7 +337,6 @@ Sub GoToStep(stepNum)
         document.getElementById("progressBar").className = "progress-bar-fill animated"
         smoothProgress = 0
     End If
-    On Error Goto 0
 End Sub
 
 Sub StartCreation()
@@ -668,7 +657,7 @@ End Sub
 
             <div class="form-group">
                 <label class="form-label">License Key</label>
-                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" oninput="CheckLicense()" onkeyup="CheckLicense()" onchange="CheckLicense()" maxlength="30">
+                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" onkeyup="CheckLicense()" maxlength="30">
                 <div id="licenseStatus" style="margin-top:8px"></div>
             </div>
             <div class="info-box">
