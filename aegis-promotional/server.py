@@ -672,6 +672,332 @@ def tiers_comparison():
         }
     }), 200
 
+# ============= SECURITY FEATURES ENDPOINTS =============
+
+@app.route('/api/v1/tier/freemium/security')
+@rate_limit(limit=500)
+def freemium_security():
+    """Freemium tier security features"""
+    return jsonify({
+        'tier': 'freemium',
+        'security': {
+            'features': [
+                'Secure update notarization',
+                'Hardened firewall presets',
+                'Privacy onboarding wizard',
+                'Basic malware scanning'
+            ],
+            'protection_level': 'Basic',
+            'updates': 'Community-maintained'
+        }
+    }), 200
+
+@app.route('/api/v1/tier/basic/security')
+@rate_limit(limit=500)
+def basic_security():
+    """Basic tier security features"""
+    return jsonify({
+        'tier': 'basic',
+        'security': {
+            'features': [
+                'Behavior-based anti-ransomware with telemetry',
+                'MFA enforcement for Aegis Sync',
+                'Secure vault with YubiKey/WebAuthn support',
+                'Phishing protection browser extension',
+                'Secure boot verification',
+                'Encrypted credential storage',
+                'ClamAV antivirus engine',
+                'UFW/Gufw firewall',
+                'fail2ban brute force protection',
+                'WireGuard VPN client'
+            ],
+            'protection_level': 'Enhanced',
+            'compliance': ['SOC2-lite ready'],
+            'updates': 'Priority security patches'
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer/security')
+@rate_limit(limit=500)
+def gamer_security():
+    """Gamer tier security features"""
+    return jsonify({
+        'tier': 'gamer',
+        'security': {
+            'features': [
+                'Real-time anti-cheat integrity monitor',
+                'Firmware guard (BIOS/UEFI hash verification)',
+                'Network ping shield (DDoS protection)',
+                'Gaming account credential manager',
+                'Stream key protection vault',
+                'Anti-swatting privacy tools'
+            ],
+            'protection_level': 'Gaming-optimized',
+            'gaming_specific': True
+        }
+    }), 200
+
+@app.route('/api/v1/tier/ai-dev/security')
+@rate_limit(limit=500)
+def ai_dev_security():
+    """AI Developer tier security features"""
+    return jsonify({
+        'tier': 'ai-dev',
+        'security': {
+            'features': [
+                'Model supply-chain scanner',
+                'Secrets scanning for notebooks',
+                'Secure MLOps pipelines',
+                'Signed model registry',
+                'Policy engine for AI governance',
+                'Container vulnerability scanning',
+                'Secure training data vault',
+                'AI model integrity verification'
+            ],
+            'protection_level': 'ML-Security focused',
+            'compliance': ['ML-Sec best practices']
+        }
+    }), 200
+
+@app.route('/api/v1/tier/server/security')
+@rate_limit(limit=500)
+def server_security():
+    """Server tier security features"""
+    return jsonify({
+        'tier': 'server',
+        'security': {
+            'features': [
+                'Full XDR (Extended Detection & Response) integration',
+                'eBPF-based threat detection',
+                'Hardware root-of-trust onboarding',
+                'Zero-trust network architecture',
+                'Runtime application self-protection (RASP)',
+                'Security Information and Event Management (SIEM)',
+                'Privileged access management (PAM)',
+                'Network segmentation automation',
+                'Threat intelligence feeds integration'
+            ],
+            'compliance': ['PCI-DSS', 'HIPAA', 'FedRAMP', 'SOC2'],
+            'protection_level': 'Enterprise',
+            'sla_security': '24/7 security monitoring'
+        }
+    }), 200
+
+# ============= PERFORMANCE OPTIMIZATION ENDPOINTS =============
+
+@app.route('/api/v1/tier/freemium/optimizations')
+@rate_limit(limit=500)
+def freemium_optimizations():
+    """Freemium tier performance optimizations"""
+    return jsonify({
+        'tier': 'freemium',
+        'optimizations': {
+            'features': [
+                'Lightweight boot service gating',
+                'Memory-efficient mode',
+                'Basic startup optimizer',
+                'Resource-aware background tasks'
+            ],
+            'boot_time': '35 seconds',
+            'idle_memory': '512MB'
+        }
+    }), 200
+
+@app.route('/api/v1/tier/basic/optimizations')
+@rate_limit(limit=500)
+def basic_optimizations():
+    """Basic tier performance optimizations"""
+    return jsonify({
+        'tier': 'basic',
+        'optimizations': {
+            'features': [
+                'Adaptive power/performance governor',
+                'Scheduled patch windows',
+                'SSD TRIM automation',
+                'Memory compression (zram/zswap)',
+                'Preload frequently used apps',
+                'Smart disk caching',
+                'Background process throttling',
+                'Boot time optimization suite'
+            ],
+            'boot_time': '32 seconds',
+            'idle_memory': '800MB',
+            'uptime': '99%+'
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer/optimizations')
+@rate_limit(limit=500)
+def gamer_optimizations():
+    """Gamer tier performance optimizations"""
+    return jsonify({
+        'tier': 'gamer',
+        'optimizations': {
+            'features': [
+                'Auto-detect DLSS/FSR with optimal settings',
+                'Latency pipeline tuning',
+                'Per-title performance presets (1000+ games)',
+                'CPU core parking for games',
+                'GPU memory optimization',
+                'Shader cache management',
+                'Frame pacing optimization',
+                'Input polling rate maximization',
+                'Background process suspension during games',
+                'SSD game load time optimizer'
+            ],
+            'input_latency': '<3ms',
+            'frame_timing': 'Consistent',
+            'gaming_mode': True
+        }
+    }), 200
+
+@app.route('/api/v1/tier/ai-dev/optimizations')
+@rate_limit(limit=500)
+def ai_dev_optimizations():
+    """AI Developer tier performance optimizations"""
+    return jsonify({
+        'tier': 'ai-dev',
+        'optimizations': {
+            'features': [
+                'Multi-GPU orchestration (NCCL tuning)',
+                'MIG (Multi-Instance GPU) profiles',
+                'Dataset caching tiers (RAM/SSD/HDD)',
+                'Batch processing scheduler',
+                'GPU memory pool management',
+                'Tensor core utilization optimizer',
+                'Mixed precision auto-tuning',
+                'Distributed training optimization',
+                'Model compilation cache',
+                'Jupyter kernel resource limits'
+            ],
+            'gpu_utilization': '95%+',
+            'training_efficiency': 'Optimized',
+            'multi_gpu': True
+        }
+    }), 200
+
+@app.route('/api/v1/tier/server/optimizations')
+@rate_limit(limit=500)
+def server_optimizations():
+    """Server tier performance optimizations"""
+    return jsonify({
+        'tier': 'server',
+        'optimizations': {
+            'features': [
+                'Adaptive kernel tuning',
+                'IRQ balancing optimization',
+                'TCP BBRv3 congestion control',
+                'Smart autoscaling templates',
+                'Live patch windows (kernel updates without reboot)',
+                'NUMA-aware workload placement',
+                'Network card offloading',
+                'Disk I/O scheduler optimization',
+                'Container density optimization',
+                'Database query caching',
+                'Hot/cold data tiering',
+                'CDN cache warming'
+            ],
+            'throughput': '100K+ RPS',
+            'latency': 'sub-millisecond',
+            'uptime': '99.99%'
+        }
+    }), 200
+
+# ============= AI FEATURES ENDPOINTS =============
+
+@app.route('/api/v1/tier/gamer/ai-features')
+@rate_limit(limit=500)
+def gamer_ai_features():
+    """Gamer tier AI features"""
+    return jsonify({
+        'tier': 'gamer',
+        'ai_features': {
+            'upscaling': [
+                'NVIDIA DLSS 3.5 with Frame Generation',
+                'AMD FSR 3.0 with Fluid Motion',
+                'Intel XeSS upscaling',
+                'AI-powered 2x/4x/8x upscaling'
+            ],
+            'enhancements': [
+                'AI denoising for ray tracing',
+                'AI anti-aliasing (DLAA)',
+                'Neural network game optimization',
+                'AI-based game settings predictor',
+                'Smart resolution scaling',
+                'AI frame interpolation'
+            ]
+        }
+    }), 200
+
+@app.route('/api/v1/tier/ai-dev/ai-tools')
+@rate_limit(limit=500)
+def ai_dev_tools():
+    """AI Developer tier AI tools"""
+    return jsonify({
+        'tier': 'ai-dev',
+        'ai_tools': {
+            'frameworks': [
+                'PyTorch 2.2 with CUDA 12.3',
+                'TensorFlow 2.15 with GPU support',
+                'JAX with TPU/GPU backends',
+                'Hugging Face Transformers',
+                'LangChain & LlamaIndex',
+                'OpenAI API integration',
+                'Anthropic Claude SDK',
+                'Ollama for local LLMs'
+            ],
+            'computer_vision': [
+                'OpenCV 4.9 with CUDA',
+                'YOLO v8/v9 support',
+                'Stable Diffusion (local)',
+                'Real-ESRGAN upscaling',
+                'Segment Anything (SAM)'
+            ],
+            'nlp_tools': [
+                'spaCy with GPU',
+                'NLTK complete',
+                'Sentence Transformers',
+                'WhisperAI transcription'
+            ],
+            'ai_security': [
+                'Model adversarial testing',
+                'Bias detection tools',
+                'Explainability frameworks (SHAP, LIME)',
+                'Differential privacy tools'
+            ]
+        }
+    }), 200
+
+@app.route('/api/v1/tier/server/ai-infrastructure')
+@rate_limit(limit=500)
+def server_ai_infrastructure():
+    """Server tier AI infrastructure"""
+    return jsonify({
+        'tier': 'server',
+        'ai_infrastructure': {
+            'deployment': [
+                'NVIDIA Triton Inference Server',
+                'TensorFlow Serving',
+                'TorchServe',
+                'BentoML',
+                'KServe (Kubernetes)',
+                'vLLM for LLM serving'
+            ],
+            'orchestration': [
+                'Kubeflow pipelines',
+                'MLflow model registry',
+                'Apache Airflow for ML workflows',
+                'Ray for distributed computing'
+            ],
+            'ai_security': [
+                'AI threat detection (anomaly-based)',
+                'ML-powered log analysis',
+                'Predictive security alerts',
+                'Behavioral analytics engine'
+            ]
+        }
+    }), 200
+
 @app.route('/api/v1/admin/stats')
 @require_api_key
 @rate_limit(limit=100)
