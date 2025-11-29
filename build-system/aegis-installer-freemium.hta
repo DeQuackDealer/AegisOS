@@ -213,32 +213,48 @@ Sub RefreshDrives()
     
     On Error Resume Next
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    If Err.Number <> 0 Then
+        Err.Clear
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br><br>Try running as Administrator.</div>"
+        document.getElementById("btnNext1").disabled = True
+        Exit Sub
+    End If
+    
     Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
-    On Error Goto 0
+    If Err.Number <> 0 Then
+        Err.Clear
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.<br><br>Try running as Administrator.</div>"
+        document.getElementById("btnNext1").disabled = True
+        Exit Sub
+    End If
     
     ReDim drives(0)
     driveCount = 0
     html = ""
     
     For Each disk In diskDrives
-        If disk.Size > 0 Then
-            If InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
-                sizeGB = FormatNumber(disk.Size / 1073741824, 1)
-                
-                ReDim Preserve drives(driveCount)
-                drives(driveCount) = disk.Index
-                
-                html = html & "<div class='drive-item' onclick='SelectDrive(" & driveCount & ")'>"
-                html = html & "<div class='drive-icon'>USB</div>"
-                html = html & "<div class='drive-info'>"
-                html = html & "<div class='drive-name'>" & disk.Model & "</div>"
-                html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
-                html = html & "</div></div>"
-                
-                driveCount = driveCount + 1
+        If Err.Number <> 0 Then Exit For
+        If IsObject(disk) Then
+            If disk.Size > 0 Then
+                If InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
+                    sizeGB = FormatNumber(disk.Size / 1073741824, 1)
+                    
+                    ReDim Preserve drives(driveCount)
+                    drives(driveCount) = disk.Index
+                    
+                    html = html & "<div class='drive-item' onclick='SelectDrive(" & driveCount & ")'>"
+                    html = html & "<div class='drive-icon'>USB</div>"
+                    html = html & "<div class='drive-info'>"
+                    html = html & "<div class='drive-name'>" & disk.Model & "</div>"
+                    html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
+                    html = html & "</div></div>"
+                    
+                    driveCount = driveCount + 1
+                End If
             End If
         End If
     Next
+    On Error Goto 0
     
     If driveCount = 0 Then
         html = "<div class='no-drives'>No USB drives detected.<br><br>Insert a USB drive (4GB+) and click Refresh.</div>"
@@ -252,7 +268,11 @@ End Sub
 
 Sub SelectDrive(index)
     Dim items, i
+    On Error Resume Next
     Set items = document.getElementsByClassName("drive-item")
+    If items.length = 0 Then Exit Sub
+    If index < 0 Or index >= items.length Then Exit Sub
+    
     For i = 0 To items.length - 1
         items(i).className = "drive-item"
     Next
@@ -261,16 +281,22 @@ Sub SelectDrive(index)
     selectedDriveNumber = drives(index)
     selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
     document.getElementById("btnNext1").disabled = False
+    On Error Goto 0
 End Sub
 
 Sub GoToStep(stepNum)
-    Dim panels, steps, i
+    Dim panels, steps, i, stepEl
     
+    On Error Resume Next
     Set panels = document.getElementsByClassName("panel")
     For i = 0 To panels.length - 1
         panels(i).className = "panel"
     Next
-    document.getElementById("step" & stepNum).className = "panel active"
+    
+    Set stepEl = document.getElementById("step" & stepNum)
+    If Not stepEl Is Nothing Then
+        stepEl.className = "panel active"
+    End If
     
     Set steps = document.getElementsByClassName("step-item")
     For i = 0 To steps.length - 1
@@ -290,6 +316,7 @@ Sub GoToStep(stepNum)
     If stepNum = 3 Then
         document.getElementById("progressBar").className = "progress-bar-fill animated"
     End If
+    On Error Goto 0
 End Sub
 
 Sub StartCreation()
