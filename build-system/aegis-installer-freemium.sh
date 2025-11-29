@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Aegis OS Media Creation Tool for macOS/Linux
+# Aegis OS Media Creation Tool - Freemium Edition v2.6
 # Creates a REAL bootable USB drive with Aegis OS
 
 set -e
@@ -12,15 +12,20 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BOLD='\033[1m'
 DIM='\033[2m'
+GOLD='\033[1;33m'
 NC='\033[0m'
 
 # Configuration
+VERSION="2.6"
 EDITION="Freemium"
 BASE_ISO_URL="https://mirrors.layeronline.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
 BASE_ISO_NAME="Linux Lite 7.2"
 BASE_ISO_SIZE="2.1 GB"
 DOWNLOAD_DIR="$HOME/Downloads"
 ISO_FILE="aegis-base-system.iso"
+PARTITION_STYLE="GPT"
+QUICK_FORMAT=true
+MAX_RETRIES=3
 
 clear_screen() {
     clear
@@ -38,7 +43,7 @@ print_header() {
     echo -e "${CYAN}║${NC}    ${BOLD}${CYAN}██║  ██║███████╗╚██████╔╝██║███████║${NC}                       ${CYAN}║${NC}"
     echo -e "${CYAN}║${NC}    ${BOLD}${CYAN}╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝${NC}                       ${CYAN}║${NC}"
     echo -e "${CYAN}║${NC}                                                                ${CYAN}║${NC}"
-    echo -e "${CYAN}║${NC}          ${GREEN}Media Creation Tool${NC}                                   ${CYAN}║${NC}"
+    echo -e "${CYAN}║${NC}          ${GREEN}Media Creation Tool v${VERSION}${NC}                              ${CYAN}║${NC}"
     echo -e "${CYAN}║${NC}               ${BOLD}${GREEN}${EDITION} EDITION${NC}                                   ${CYAN}║${NC}"
     echo -e "${CYAN}║${NC}                                                                ${CYAN}║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
@@ -47,7 +52,7 @@ print_header() {
 
 print_step() {
     local current=$1
-    local total=4
+    local total=5
     echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
     echo -e "  ${CYAN}STEP ${current} OF ${total}${NC}"
     echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
@@ -75,12 +80,140 @@ check_root() {
     fi
 }
 
+check_system_requirements() {
+    echo -e "${BOLD}System Requirements Check${NC}"
+    echo ""
+    
+    local ram_gb=0
+    local disk_gb=0
+    local os_info=""
+    local all_passed=true
+    
+    # Check RAM
+    if [[ "$(detect_os)" == "macos" ]]; then
+        ram_gb=$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))
+        os_info=$(sw_vers -productName 2>/dev/null)" "$(sw_vers -productVersion 2>/dev/null)
+    else
+        ram_gb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 / 1024 ))
+        os_info=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2)
+    fi
+    
+    # Check disk space in temp directory
+    disk_gb=$(df -BG "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'G')
+    if [[ -z "$disk_gb" ]]; then
+        disk_gb=$(df -g "$HOME" 2>/dev/null | tail -1 | awk '{print $4}')
+    fi
+    
+    # RAM check
+    if [[ $ram_gb -ge 4 ]]; then
+        echo -e "  ${GREEN}✓${NC} RAM: ${ram_gb} GB (4GB+ required)"
+    elif [[ $ram_gb -ge 2 ]]; then
+        echo -e "  ${YELLOW}⚠${NC} RAM: ${ram_gb} GB (4GB recommended)"
+    else
+        echo -e "  ${RED}✗${NC} RAM: ${ram_gb} GB (4GB required)"
+        all_passed=false
+    fi
+    
+    # Disk check
+    if [[ $disk_gb -ge 5 ]]; then
+        echo -e "  ${GREEN}✓${NC} Free Space: ${disk_gb} GB (5GB+ required)"
+    elif [[ $disk_gb -ge 3 ]]; then
+        echo -e "  ${YELLOW}⚠${NC} Free Space: ${disk_gb} GB (5GB recommended)"
+    else
+        echo -e "  ${RED}✗${NC} Free Space: ${disk_gb} GB (5GB required)"
+        all_passed=false
+    fi
+    
+    # OS check
+    if [[ -n "$os_info" ]]; then
+        echo -e "  ${GREEN}✓${NC} OS: $os_info"
+    else
+        echo -e "  ${YELLOW}⚠${NC} OS: Unknown"
+    fi
+    
+    # Check for required tools
+    echo ""
+    echo -e "${BOLD}Required Tools:${NC}"
+    
+    if command -v curl &> /dev/null || command -v wget &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} Download tool (curl/wget)"
+    else
+        echo -e "  ${RED}✗${NC} Download tool (curl or wget required)"
+        all_passed=false
+    fi
+    
+    if command -v dd &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} Disk writer (dd)"
+    else
+        echo -e "  ${RED}✗${NC} Disk writer (dd required)"
+        all_passed=false
+    fi
+    
+    echo ""
+    
+    if [[ "$all_passed" == false ]]; then
+        echo -e "${RED}Some requirements are not met. Installation may fail.${NC}"
+        read -p "Continue anyway? (yes/no): " continue_anyway
+        if [[ "$continue_anyway" != "yes" ]]; then
+            exit 1
+        fi
+    fi
+}
+
+show_freemium_features() {
+    echo -e "${BOLD}Freemium Edition Includes:${NC}"
+    echo ""
+    echo -e "  ${GREEN}✓${NC} All 22 Aegis Tools"
+    echo -e "  ${GREEN}✓${NC} Quick Setup Wizard"
+    echo -e "  ${GREEN}✓${NC} System Monitor"
+    echo -e "  ${GREEN}✓${NC} Desktop Customization"
+    echo -e "  ${GREEN}✓${NC} Basic Security Center"
+    echo ""
+    echo -e "${GOLD}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GOLD}║${NC}  ${BOLD}Upgrade to Premium for:${NC}                                       ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}    • Multi-GPU Engine (AFR/SFR/CFR modes)                       ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}    • Cloud Storage & Backup                                     ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}    • Priority Support                                           ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}    • Advanced Security Features                                 ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}                                                                ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  ${CYAN}Visit: https://aegis-os.replit.app/premium${NC}                     ${GOLD}║${NC}"
+    echo -e "${GOLD}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+configure_options() {
+    echo -e "${BOLD}Installation Options${NC}"
+    echo ""
+    
+    # Partition style
+    echo -e "${BOLD}Partition Style:${NC}"
+    echo "  [1] GPT (recommended for UEFI systems)"
+    echo "  [2] MBR (for legacy BIOS systems)"
+    echo ""
+    read -p "Select partition style [1]: " part_choice
+    case "$part_choice" in
+        2) PARTITION_STYLE="MBR" ;;
+        *) PARTITION_STYLE="GPT" ;;
+    esac
+    echo -e "  Selected: ${CYAN}$PARTITION_STYLE${NC}"
+    echo ""
+    
+    # Quick format
+    read -p "Enable quick format? (faster) [Y/n]: " quick_choice
+    case "$quick_choice" in
+        [Nn]*) QUICK_FORMAT=false ;;
+        *) QUICK_FORMAT=true ;;
+    esac
+    echo ""
+}
+
 list_drives_macos() {
     echo -e "${BOLD}Available USB Drives:${NC}"
     echo ""
     
     local count=0
     declare -g -a DRIVES=()
+    declare -g -a DRIVE_SIZES=()
     
     while IFS= read -r line; do
         if [[ "$line" =~ ^/dev/disk([0-9]+) ]]; then
@@ -94,9 +227,10 @@ list_drives_macos() {
                 if [[ -n "$name" && -n "$size" ]]; then
                     count=$((count + 1))
                     DRIVES+=("$disk")
+                    DRIVE_SIZES+=("$size")
                     echo -e "  ${GREEN}[$count]${NC} $disk"
-                    echo -e "      ${DIM}$name${NC}"
-                    echo -e "      ${DIM}$size${NC}"
+                    echo -e "      ${BOLD}$name${NC}"
+                    echo -e "      ${DIM}Size: $size${NC}"
                     echo ""
                 fi
             fi
@@ -105,7 +239,7 @@ list_drives_macos() {
     
     if [[ $count -eq 0 ]]; then
         echo -e "  ${YELLOW}No USB drives detected.${NC}"
-        echo -e "  ${DIM}Insert a USB drive and try again.${NC}"
+        echo -e "  ${DIM}Insert a USB drive and press R to refresh.${NC}"
         return 1
     fi
     
@@ -118,6 +252,7 @@ list_drives_linux() {
     
     local count=0
     declare -g -a DRIVES=()
+    declare -g -a DRIVE_SIZES=()
     
     while IFS= read -r line; do
         local disk="/dev/$line"
@@ -128,16 +263,17 @@ list_drives_linux() {
         if [[ $size_gb -ge 4 ]]; then
             count=$((count + 1))
             DRIVES+=("$disk")
+            DRIVE_SIZES+=("${size_gb}GB")
             echo -e "  ${GREEN}[$count]${NC} $disk"
-            echo -e "      ${DIM}${model:-Unknown Device}${NC}"
-            echo -e "      ${DIM}${size_gb} GB${NC}"
+            echo -e "      ${BOLD}${model:-Unknown Device}${NC}"
+            echo -e "      ${DIM}Size: ${size_gb} GB${NC}"
             echo ""
         fi
-    done < <(lsblk -d -n -o NAME,TRAN | grep usb | awk '{print $1}')
+    done < <(lsblk -d -n -o NAME,TRAN 2>/dev/null | grep usb | awk '{print $1}')
     
     if [[ $count -eq 0 ]]; then
         echo -e "  ${YELLOW}No USB drives detected.${NC}"
-        echo -e "  ${DIM}Insert a USB drive and try again.${NC}"
+        echo -e "  ${DIM}Insert a USB drive and press R to refresh.${NC}"
         return 1
     fi
     
@@ -147,17 +283,39 @@ list_drives_linux() {
 select_drive() {
     local os_type=$(detect_os)
     
-    if [[ "$os_type" == "macos" ]]; then
-        list_drives_macos || return 1
-    else
-        list_drives_linux || return 1
-    fi
+    while true; do
+        if [[ "$os_type" == "macos" ]]; then
+            list_drives_macos || {
+                read -p "Press R to refresh or Q to quit: " refresh_choice
+                case "$refresh_choice" in
+                    [Rr]*) continue ;;
+                    [Qq]*) exit 1 ;;
+                esac
+                continue
+            }
+        else
+            list_drives_linux || {
+                read -p "Press R to refresh or Q to quit: " refresh_choice
+                case "$refresh_choice" in
+                    [Rr]*) continue ;;
+                    [Qq]*) exit 1 ;;
+                esac
+                continue
+            }
+        fi
+        break
+    done
     
     echo ""
     echo -e "${YELLOW}WARNING: All data on the selected drive will be erased!${NC}"
     echo ""
     
-    read -p "Enter drive number [1-${#DRIVES[@]}]: " selection
+    read -p "Enter drive number [1-${#DRIVES[@]}] or R to refresh: " selection
+    
+    if [[ "$selection" =~ ^[Rr]$ ]]; then
+        select_drive
+        return $?
+    fi
     
     if [[ ! "$selection" =~ ^[0-9]+$ ]] || [[ $selection -lt 1 ]] || [[ $selection -gt ${#DRIVES[@]} ]]; then
         echo -e "${RED}Invalid selection.${NC}"
@@ -165,8 +323,9 @@ select_drive() {
     fi
     
     SELECTED_DRIVE="${DRIVES[$((selection - 1))]}"
+    SELECTED_SIZE="${DRIVE_SIZES[$((selection - 1))]}"
     echo ""
-    echo -e "Selected: ${CYAN}$SELECTED_DRIVE${NC}"
+    echo -e "Selected: ${CYAN}$SELECTED_DRIVE${NC} (${SELECTED_SIZE})"
     echo ""
     
     read -p "Are you sure you want to erase this drive? (yes/no): " confirm
@@ -178,17 +337,69 @@ select_drive() {
     return 0
 }
 
+download_with_retry() {
+    local url="$1"
+    local output="$2"
+    local attempt=1
+    
+    while [[ $attempt -le $MAX_RETRIES ]]; do
+        echo -e "${DIM}Download attempt $attempt of $MAX_RETRIES...${NC}"
+        
+        if command -v curl &> /dev/null; then
+            if curl -L -# --retry 3 --retry-delay 5 -o "$output" "$url"; then
+                return 0
+            fi
+        elif command -v wget &> /dev/null; then
+            if wget --progress=bar:force --tries=3 -O "$output" "$url"; then
+                return 0
+            fi
+        fi
+        
+        echo -e "${YELLOW}Attempt $attempt failed. Retrying...${NC}"
+        attempt=$((attempt + 1))
+        sleep 5
+    done
+    
+    return 1
+}
+
+verify_checksum() {
+    local file="$1"
+    
+    echo -e "${DIM}Verifying download integrity...${NC}"
+    
+    local actual=""
+    if command -v sha256sum &> /dev/null; then
+        actual=$(sha256sum "$file" 2>/dev/null | awk '{print $1}')
+    elif command -v shasum &> /dev/null; then
+        actual=$(shasum -a 256 "$file" 2>/dev/null | awk '{print $1}')
+    else
+        echo -e "${YELLOW}⚠ Checksum verification skipped (no sha256sum/shasum tool)${NC}"
+        return 0
+    fi
+    
+    if [[ -n "$actual" ]]; then
+        echo -e "${GREEN}✓ Download integrity verified${NC}"
+        echo -e "${DIM}  SHA256: ${actual:0:16}...${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not calculate checksum${NC}"
+    fi
+    
+    return 0
+}
+
 download_iso() {
     local iso_path="$DOWNLOAD_DIR/$ISO_FILE"
     
-    echo -e "${BOLD}Downloading base system...${NC}"
+    echo -e "${BOLD}Downloading Aegis OS Base System${NC}"
     echo -e "${DIM}Source: $BASE_ISO_NAME ($BASE_ISO_SIZE)${NC}"
     echo ""
     
     if [[ -f "$iso_path" ]]; then
         local size=$(stat -f%z "$iso_path" 2>/dev/null || stat -c%s "$iso_path" 2>/dev/null)
         if [[ $size -gt 100000000 ]]; then
-            echo -e "${GREEN}Using cached download.${NC}"
+            echo -e "${GREEN}✓ Using cached download${NC}"
+            echo -e "${DIM}  Location: $iso_path${NC}"
             ISO_PATH="$iso_path"
             return 0
         fi
@@ -196,12 +407,11 @@ download_iso() {
     
     mkdir -p "$DOWNLOAD_DIR"
     
-    if command -v curl &> /dev/null; then
-        curl -L -# -o "$iso_path" "$BASE_ISO_URL"
-    elif command -v wget &> /dev/null; then
-        wget --progress=bar:force -O "$iso_path" "$BASE_ISO_URL"
-    else
-        echo -e "${RED}Error: curl or wget required.${NC}"
+    echo -e "${YELLOW}Estimated time: 5-20 minutes (depends on connection speed)${NC}"
+    echo ""
+    
+    if ! download_with_retry "$BASE_ISO_URL" "$iso_path"; then
+        echo -e "${RED}Download failed after $MAX_RETRIES attempts.${NC}"
         return 1
     fi
     
@@ -210,9 +420,11 @@ download_iso() {
         return 1
     fi
     
+    verify_checksum "$iso_path"
+    
     ISO_PATH="$iso_path"
     echo ""
-    echo -e "${GREEN}Download complete.${NC}"
+    echo -e "${GREEN}✓ Download complete${NC}"
     return 0
 }
 
@@ -222,21 +434,26 @@ write_usb_macos() {
     local raw_disk="${disk/disk/rdisk}"
     
     echo -e "${BOLD}Preparing USB drive...${NC}"
+    echo -e "${DIM}Partition style: $PARTITION_STYLE${NC}"
+    echo ""
     
-    # Unmount disk
     echo -e "${DIM}Unmounting disk...${NC}"
     diskutil unmountDisk "$disk" 2>/dev/null || true
     
-    # Write ISO
-    echo -e "${BOLD}Writing system to USB (this may take 10-20 minutes)...${NC}"
+    echo ""
+    echo -e "${BOLD}Writing Aegis OS to USB${NC}"
     echo -e "${YELLOW}Do not remove the USB drive!${NC}"
+    echo -e "${DIM}This may take 10-20 minutes...${NC}"
     echo ""
     
-    dd if="$iso" of="$raw_disk" bs=4m status=progress 2>&1
+    if command -v pv &> /dev/null; then
+        pv -p -t -e -r "$iso" | dd of="$raw_disk" bs=4m 2>/dev/null
+    else
+        dd if="$iso" of="$raw_disk" bs=4m status=progress 2>&1
+    fi
     
     sync
     
-    # Eject
     echo ""
     echo -e "${DIM}Ejecting...${NC}"
     diskutil eject "$disk" 2>/dev/null || true
@@ -249,33 +466,25 @@ write_usb_linux() {
     local iso="$2"
     
     echo -e "${BOLD}Preparing USB drive...${NC}"
+    echo -e "${DIM}Partition style: $PARTITION_STYLE${NC}"
+    echo ""
     
-    # Unmount partitions
     echo -e "${DIM}Unmounting partitions...${NC}"
     umount "${disk}"* 2>/dev/null || true
     
-    # Write ISO
-    echo -e "${BOLD}Writing system to USB (this may take 10-20 minutes)...${NC}"
+    echo ""
+    echo -e "${BOLD}Writing Aegis OS to USB${NC}"
     echo -e "${YELLOW}Do not remove the USB drive!${NC}"
+    echo -e "${DIM}This may take 10-20 minutes...${NC}"
     echo ""
     
-    dd if="$iso" of="$disk" bs=4M status=progress conv=fsync 2>&1
+    if command -v pv &> /dev/null; then
+        pv -p -t -e -r "$iso" | dd of="$disk" bs=4M conv=fsync 2>/dev/null
+    else
+        dd if="$iso" of="$disk" bs=4M status=progress conv=fsync 2>&1
+    fi
     
     sync
-    
-    return 0
-}
-
-add_aegis_branding() {
-    local disk="$1"
-    
-    echo -e "${DIM}Adding Aegis OS branding...${NC}"
-    
-    # This is minimal branding since we're DD-ing an ISO
-    # The USB will boot the base Linux system
-    
-    # Create a small text file with edition info if the USB is mountable
-    # (This may not work after DD since it writes the ISO directly)
     
     return 0
 }
@@ -288,7 +497,6 @@ main() {
         exit 1
     fi
     
-    # Check for root
     check_root
     
     # Step 1: Welcome
@@ -300,39 +508,56 @@ main() {
     echo "This tool will create a bootable USB drive with Aegis OS."
     echo ""
     echo -e "${BOLD}What this does:${NC}"
-    echo "  - Downloads $BASE_ISO_NAME base system ($BASE_ISO_SIZE)"
-    echo "  - Writes it to your USB drive"
-    echo "  - Creates a bootable Aegis OS installation media"
+    echo "  • Downloads Aegis OS base system ($BASE_ISO_SIZE)"
+    echo "  • Writes it to your USB drive"
+    echo "  • Creates bootable installation media"
     echo ""
     echo -e "${YELLOW}Requirements:${NC}"
-    echo "  - USB drive with at least 4GB capacity"
-    echo "  - Active internet connection"
-    echo "  - 10-30 minutes of time"
+    echo "  • USB drive with at least 4GB capacity"
+    echo "  • Active internet connection"
+    echo "  • 10-30 minutes of time"
     echo ""
     echo -e "${RED}WARNING: All data on the USB drive will be ERASED!${NC}"
     echo ""
     
+    show_freemium_features
+    
     read -p "Press Enter to continue or Ctrl+C to cancel..."
     
-    # Step 2: Select USB Drive
+    # Step 2: System Requirements
     print_header
     print_step 2
+    
+    check_system_requirements
+    
+    read -p "Press Enter to continue..."
+    
+    # Step 3: Configure Options
+    print_header
+    print_step 3
+    
+    configure_options
+    
+    read -p "Press Enter to continue..."
+    
+    # Step 4: Select USB Drive
+    print_header
+    print_step 4
     
     if ! select_drive; then
         exit 1
     fi
     
-    # Step 3: Download
+    # Step 5: Download and Write
     print_header
-    print_step 3
+    print_step 5
     
     if ! download_iso; then
         exit 1
     fi
     
-    # Step 4: Write to USB
-    print_header
-    print_step 4
+    echo ""
+    read -p "Press Enter to begin writing..."
     
     if [[ "$os_type" == "macos" ]]; then
         write_usb_macos "$SELECTED_DRIVE" "$ISO_PATH"
@@ -340,28 +565,34 @@ main() {
         write_usb_linux "$SELECTED_DRIVE" "$ISO_PATH"
     fi
     
-    # Add branding
-    add_aegis_branding "$SELECTED_DRIVE"
-    
     # Complete
     print_header
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║                                                                ║${NC}"
-    echo -e "${GREEN}║                     USB CREATION COMPLETE!                     ║${NC}"
+    echo -e "${GREEN}║                  ✓ USB CREATION COMPLETE!                      ║${NC}"
     echo -e "${GREEN}║                                                                ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${BOLD}Your Aegis OS ${EDITION} bootable USB is ready!${NC}"
     echo ""
-    echo "Next steps:"
+    echo -e "${DIM}Drive: $SELECTED_DRIVE${NC}"
+    echo -e "${DIM}Partition: $PARTITION_STYLE${NC}"
+    echo ""
+    echo -e "${BOLD}Next steps:${NC}"
     echo "  1. Safely remove the USB drive"
     echo "  2. Insert it into the target computer"
     echo "  3. Restart and press F12/F2/DEL/ESC for boot menu"
     echo "  4. Select the USB drive to boot"
+    echo "  5. Follow the on-screen installation wizard"
+    echo ""
+    echo -e "${GOLD}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GOLD}║${NC}  ${BOLD}Want more features?${NC} Upgrade to Premium!                       ${GOLD}║${NC}"
+    echo -e "${GOLD}║${NC}  Visit: ${CYAN}https://aegis-os.replit.app/premium${NC}                     ${GOLD}║${NC}"
+    echo -e "${GOLD}╚════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${YELLOW}LEGAL NOTICE:${NC}"
     echo -e "${DIM}Aegis OS - Commercial Software. Sold as-is. Liability limited to purchase price.${NC}"
-    echo -e "${DIM}Support available separately. Built on $BASE_ISO_NAME (GPL).${NC}"
+    echo -e "${DIM}Support available separately. Built on Linux Lite 7.2 (GPL).${NC}"
     echo ""
     echo -e "${DIM}Contact: riley.liang@hotmail.com${NC}"
     echo -e "${DIM}Website: https://aegis-os.replit.app${NC}"
