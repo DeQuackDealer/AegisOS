@@ -194,46 +194,48 @@ show_edition_features() {
     
     case "$EDITION_NAME" in
         "Basic")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Cloud Storage Integration"
-            echo "  • Automatic Backup System"
-            echo "  • Restore Points"
-            echo "  • Priority Email Support"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Cloud Storage Integration (5GB)"
+            echo -e "  ${GREEN}•${NC} Auto-Backup & Restore Points"
+            echo -e "  ${GREEN}•${NC} Full productivity suite"
+            echo -e "  ${GREEN}•${NC} Priority email support"
             ;;
         "Workplace")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Remote Desktop Access"
-            echo "  • Multi-User Management"
-            echo "  • Office Suite Integration"
-            echo "  • Business Priority Support"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Remote Desktop Access"
+            echo -e "  ${GREEN}•${NC} Multi-User Management"
+            echo -e "  ${GREEN}•${NC} Active Directory & SSO Integration"
+            echo -e "  ${GREEN}•${NC} Business priority support"
             ;;
         "Gamer")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Multi-GPU Engine (AFR/SFR/CFR)"
-            echo "  • Game Library Manager"
-            echo "  • Gaming Optimizer"
-            echo "  • RGB Control Center"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Multi-GPU Engine (AFR/SFR/CFR)"
+            echo -e "  ${GREEN}•${NC} Steam/Lutris/Heroic pre-configured"
+            echo -e "  ${GREEN}•${NC} Low-latency kernel & GameMode"
+            echo -e "  ${GREEN}•${NC} RGB Sync Hub for all peripherals"
             ;;
         "AI Developer")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Multi-GPU Compute Engine"
-            echo "  • CUDA/ROCm Optimization"
-            echo "  • AI Workload Balancer"
-            echo "  • Development Tools Suite"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Multi-GPU Compute Engine"
+            echo -e "  ${GREEN}•${NC} CUDA/ROCm pre-configured"
+            echo -e "  ${GREEN}•${NC} PyTorch, TensorFlow, JAX pre-installed"
+            echo -e "  ${GREEN}•${NC} AI Workload Balancer"
             ;;
         "Gamer + AI")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Full Multi-GPU Engine"
-            echo "  • Gaming + AI Features Combined"
-            echo "  • Ultimate Performance Mode"
-            echo "  • Premium Support"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Full Multi-GPU Engine (Gaming + Compute)"
+            echo -e "  ${GREEN}•${NC} Hybrid GPU scheduling"
+            echo -e "  ${GREEN}•${NC} Streaming & content creation tools"
+            echo -e "  ${GREEN}•${NC} Ultimate Performance Mode"
             ;;
         "Server")
-            echo "  • All 22 Aegis Tools included"
-            echo "  • Multi-GPU Virtualization"
-            echo "  • Enterprise Management"
-            echo "  • 24/7 Priority Support"
-            echo "  • Dedicated Account Manager"
+            echo -e "  ${GREEN}•${NC} All 22 Aegis Tools included"
+            echo -e "  ${GREEN}•${NC} Multi-GPU Virtualization"
+            echo -e "  ${GREEN}•${NC} Docker & Kubernetes ready"
+            echo -e "  ${GREEN}•${NC} Enterprise management console"
+            echo -e "  ${GREEN}•${NC} 24/7 priority support + SLA"
+            echo -e "  ${GREEN}•${NC} Unlimited resources"
+            echo -e "  ${GREEN}•${NC} Dedicated account manager"
             ;;
     esac
     echo ""
