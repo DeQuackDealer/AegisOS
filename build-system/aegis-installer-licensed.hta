@@ -206,7 +206,7 @@ Sub Window_OnLoad()
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
     smoothProgress = 0
-    CheckAdminStatus()
+    CheckAdminStatus
 End Sub
 
 Sub CheckAdminStatus()
@@ -238,17 +238,24 @@ Function ValidateLicense(key)
 End Function
 
 Sub CheckLicense()
-    Dim key, edition
-    key = document.getElementById("licenseInput").value
+    Dim key, edition, inputEl
+    On Error Resume Next
+    
+    Set inputEl = document.getElementById("licenseInput")
+    If inputEl Is Nothing Then Exit Sub
+    key = inputEl.value
+    If IsNull(key) Then key = ""
+    
     edition = ValidateLicense(key)
-    If edition <> "" Then
+    
+    If Len(edition) > 0 Then
         document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> Valid: <strong>" & edition & " Edition</strong>"
         document.getElementById("licenseStatus").className = "license-valid"
         licenseKey = UCase(Trim(key))
         detectedEdition = edition
         document.getElementById("btnNext1").disabled = False
     Else
-        If Len(Trim(key)) > 0 Then
+        If Len(Trim(key & "")) > 0 Then
             document.getElementById("licenseStatus").innerHTML = "Enter a valid license key (e.g., BSIC-XXXX-XXXX-XXXX)"
         Else
             document.getElementById("licenseStatus").innerHTML = ""
@@ -258,6 +265,7 @@ Sub CheckLicense()
         detectedEdition = ""
         document.getElementById("btnNext1").disabled = True
     End If
+    On Error Goto 0
 End Sub
 
 Sub RefreshDrives()
@@ -355,7 +363,7 @@ Sub GoToStep(stepNum)
     Next
     
     If stepNum = 2 Then
-        RefreshDrives()
+        RefreshDrives
         document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
     ElseIf stepNum = 3 Then
         document.getElementById("confirmDrive").innerText = selectedDrive
@@ -368,8 +376,8 @@ Sub GoToStep(stepNum)
 End Sub
 
 Sub StartCreation()
-    GoToStep(4)
-    CreateUSB()
+    GoToStep 4
+    CreateUSB
 End Sub
 
 Sub CreateUSB()
@@ -538,7 +546,7 @@ Sub CheckProgress()
                 
                 If pct = -1 Then
                     window.clearInterval(progressTimer)
-                    ShowError(status, detail)
+                    ShowError status, detail
                 ElseIf pct = 100 Then
                     window.clearInterval(progressTimer)
                     document.getElementById("progressBar").className = "progress-bar-fill"
@@ -554,7 +562,7 @@ Sub CheckProgress()
 End Sub
 
 Sub GoToStepFive()
-    GoToStep(5)
+    GoToStep 5
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
