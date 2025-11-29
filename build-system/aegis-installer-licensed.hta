@@ -522,43 +522,51 @@ End Function
 
 Sub CheckProgress()
     Dim progressFile, ts, line, parts, pct, status, detail, speed, eta, size
+    On Error Resume Next
     progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
     If fso.FileExists(progressFile) Then
-        On Error Resume Next
         Set ts = fso.OpenTextFile(progressFile, 1)
-        If Err.Number = 0 Then
+        If Err.Number = 0 And Not ts Is Nothing Then
             line = ts.ReadLine()
             ts.Close
-            parts = Split(line, "|")
-            If UBound(parts) >= 0 Then
-                pct = CInt(parts(0))
-                status = ""
-                detail = ""
-                speed = ""
-                eta = ""
-                size = ""
-                
-                If UBound(parts) >= 1 Then status = parts(1)
-                If UBound(parts) >= 2 Then detail = parts(2)
-                If UBound(parts) >= 3 Then speed = parts(3)
-                If UBound(parts) >= 4 Then eta = parts(4)
-                If UBound(parts) >= 5 Then size = parts(5)
-                
-                If pct = -1 Then
-                    window.clearInterval(progressTimer)
-                    ShowError status, detail
-                ElseIf pct = 100 Then
-                    window.clearInterval(progressTimer)
-                    document.getElementById("progressBar").className = "progress-bar-fill"
-                    UpdateProgress 100, status, detail, "", "", ""
-                    window.setTimeout GetRef("GoToStepFive"), 1500
-                Else
-                    UpdateProgressSmooth pct, status, detail, speed, eta, size
+            If Err.Number = 0 And Len(line) > 0 Then
+                parts = Split(line, "|")
+                If UBound(parts) >= 0 Then
+                    If IsNumeric(parts(0)) Then
+                        pct = CInt(parts(0))
+                    Else
+                        pct = 0
+                    End If
+                    status = ""
+                    detail = ""
+                    speed = ""
+                    eta = ""
+                    size = ""
+                    
+                    If UBound(parts) >= 1 Then status = parts(1)
+                    If UBound(parts) >= 2 Then detail = parts(2)
+                    If UBound(parts) >= 3 Then speed = parts(3)
+                    If UBound(parts) >= 4 Then eta = parts(4)
+                    If UBound(parts) >= 5 Then size = parts(5)
+                    
+                    If pct = -1 Then
+                        window.clearInterval progressTimer
+                        ShowError status, detail
+                    ElseIf pct = 100 Then
+                        window.clearInterval progressTimer
+                        document.getElementById("progressBar").className = "progress-bar-fill"
+                        UpdateProgress 100, status, detail, "", "", ""
+                        window.setTimeout GetRef("GoToStepFive"), 1500
+                    Else
+                        UpdateProgressSmooth pct, status, detail, speed, eta, size
+                    End If
                 End If
             End If
+        Else
+            Err.Clear
         End If
-        On Error Goto 0
     End If
+    On Error Goto 0
 End Sub
 
 Sub GoToStepFive()
@@ -693,7 +701,7 @@ End Sub
 
             <div class="form-group">
                 <label class="form-label">License Key</label>
-                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" onkeyup="CheckLicense()" maxlength="30">
+                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" onkeyup="CheckLicense" maxlength="30">
                 <div id="licenseStatus" style="margin-top:8px"></div>
             </div>
             <div class="info-box">
@@ -715,7 +723,7 @@ End Sub
             <div class="section-desc">Installing: <span id="editionDisplay">-</span></div>
             <div id="driveList" class="drive-list"><div class="no-drives">Click Refresh to scan...</div></div>
             <div class="btn-row">
-                <button class="btn btn-refresh" onclick="RefreshDrives()">Refresh</button>
+                <button class="btn btn-refresh" onclick="RefreshDrives">Refresh</button>
                 <button class="btn btn-secondary" onclick="GoToStep(1)">Back</button>
                 <div style="flex:1"></div>
                 <button id="btnNext2" class="btn btn-primary" disabled onclick="GoToStep(3)">Next</button>
@@ -737,7 +745,7 @@ End Sub
             <div class="btn-row">
                 <button class="btn btn-secondary" onclick="GoToStep(2)">Back</button>
                 <div style="flex:1"></div>
-                <button class="btn btn-primary" onclick="StartCreation()">Create USB</button>
+                <button class="btn btn-primary" onclick="StartCreation">Create USB</button>
             </div>
         </div>
 
@@ -790,7 +798,7 @@ End Sub
                     </ol>
                 </div>
                 <div class="btn-row" style="justify-content:center;margin-top:20px">
-                    <button class="btn btn-primary" onclick="CloseApp()">Finish</button>
+                    <button class="btn btn-primary" onclick="CloseApp">Finish</button>
                 </div>
             </div>
         </div>
