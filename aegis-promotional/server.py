@@ -126,7 +126,7 @@ def tamper_protected_audit_log(action: str, details: dict, severity: str = "INFO
     timestamp = datetime.now().isoformat()
     event = {
         "timestamp": timestamp,
-        "action": action,
+        "action": action, 
         "details": details,
         "severity": severity,
         "user_ip": request.remote_addr,
