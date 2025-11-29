@@ -261,7 +261,7 @@ Sub CheckLicense()
 End Sub
 
 Sub RefreshDrives()
-    Dim wmi, diskDrives, disk, html, i
+    Dim wmi, diskDrives, disk, html, sizeGB
     On Error Resume Next
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
     Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
@@ -272,7 +272,6 @@ Sub RefreshDrives()
     For Each disk In diskDrives
         If disk.Size > 0 Then
             If InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
-                Dim sizeGB
                 sizeGB = FormatNumber(disk.Size / 1073741824, 1)
                 ReDim Preserve drives(driveCount)
                 drives(driveCount) = disk.Index
