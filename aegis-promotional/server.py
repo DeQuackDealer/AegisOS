@@ -1115,6 +1115,211 @@ def gamer_ai_tier_features():
         }
     }), 200
 
+# ============= MULTI-GPU ENDPOINTS =============
+
+@app.route('/api/v1/tier/gamer/multi-gpu')
+@rate_limit(limit=500)
+def gamer_multi_gpu():
+    """Gamer tier multi-GPU features"""
+    return jsonify({
+        'tier': 'gamer',
+        'multi_gpu': {
+            'name': 'Aegis Multi-GPU Engine',
+            'description': 'Software-based multi-GPU rendering - works without SLI bridges',
+            'rendering_modes': [
+                'AFR (Alternate Frame Rendering) - GPU 1 renders odd frames, GPU 2 renders even',
+                'SFR Horizontal - Top half GPU 1, bottom half GPU 2',
+                'SFR Vertical - Left half GPU 1, right half GPU 2',
+                'CFR (Checkerboard) - Tile-based rendering in alternating pattern',
+                'Custom Region - Center on primary GPU, edges on secondary',
+                'Adaptive Split - AI automatically adjusts split based on scene complexity'
+            ],
+            'features': [
+                'Works with any 2+ GPUs (mixed vendors supported)',
+                'No SLI/NVLink bridge required',
+                'Vulkan/OpenGL multi-GPU composition',
+                'Dynamic load balancing per frame',
+                'Per-game profile presets',
+                'Real-time split line visualization',
+                'Latency-optimized SFR mode (<1ms overhead)',
+                'Support for up to 4 GPUs',
+                'Automatic driver detection and optimization'
+            ],
+            'performance_gains': {
+                'afr_dual_gpu': '+70-95% FPS (best scaling)',
+                'sfr_dual_gpu': '+40-60% FPS (lower latency)',
+                'cfr_dual_gpu': '+50-70% FPS (balanced)',
+                'custom_region': '+45-65% FPS (optimized for complex scenes)'
+            },
+            'compatible_gpus': [
+                'NVIDIA GeForce GTX 900+',
+                'NVIDIA GeForce RTX 20/30/40 series',
+                'AMD Radeon RX 400+ series',
+                'Intel Arc A-series',
+                'Mixed vendor combinations'
+            ]
+        }
+    }), 200
+
+@app.route('/api/v1/tier/ai-dev/multi-gpu')
+@rate_limit(limit=500)
+def ai_dev_multi_gpu():
+    """AI Developer tier multi-GPU compute features"""
+    return jsonify({
+        'tier': 'ai-dev',
+        'multi_gpu': {
+            'name': 'Aegis Multi-GPU Compute Engine',
+            'description': 'Multi-GPU compute orchestration for ML/AI workloads',
+            'compute_modes': [
+                'Data Parallel - Split batch across GPUs',
+                'Model Parallel - Split model layers across GPUs',
+                'Pipeline Parallel - Different stages on different GPUs',
+                'Hybrid Parallel - Combination of above methods'
+            ],
+            'features': [
+                'NCCL 2.x optimized communication',
+                'NVLink/PCIe automatic detection',
+                'PyTorch DistributedDataParallel',
+                'TensorFlow MirroredStrategy',
+                'Gradient synchronization optimization',
+                'Memory-efficient model sharding',
+                'Mixed-precision multi-GPU training',
+                'Automatic batch size scaling',
+                'GPU topology-aware placement',
+                'Fault-tolerant training (GPU failure recovery)'
+            ],
+            'performance_gains': {
+                'dual_gpu_training': '+85-95% throughput',
+                'quad_gpu_training': '+3.2-3.6x throughput',
+                'inference_scaling': 'Linear to GPU count'
+            }
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer-ai/multi-gpu')
+@rate_limit(limit=500)
+def gamer_ai_multi_gpu():
+    """Gamer+AI tier hybrid multi-GPU features"""
+    return jsonify({
+        'tier': 'gamer-ai',
+        'multi_gpu': {
+            'name': 'Aegis Hybrid Multi-GPU Engine',
+            'description': 'Ultimate multi-GPU with gaming + AI workload switching',
+            'gaming_modes': [
+                'AFR (Alternate Frame Rendering)',
+                'SFR (Split Frame Rendering)',
+                'CFR (Checkerboard Frame Rendering)',
+                'Custom Region Rendering',
+                'Adaptive AI Split'
+            ],
+            'compute_modes': [
+                'Data Parallel Training',
+                'Model Parallel Training',
+                'Inference Scaling'
+            ],
+            'hybrid_modes': [
+                'Gaming + Background AI - Primary GPU games, secondary trains',
+                'AI-Assisted Gaming - One GPU handles AI upscaling, one renders',
+                'Dynamic Switching - Auto-switch based on active workload',
+                'Frame Generation - Secondary GPU generates interpolated frames'
+            ],
+            'features': [
+                'All Gamer Multi-GPU features',
+                'All AI-Dev Multi-GPU features',
+                'Smart GPU allocation between gaming and AI',
+                'DLSS/FSR on dedicated AI GPU',
+                'Real-time style transfer on secondary GPU',
+                'AI upscaling while gaming at native',
+                'Frame generation on secondary GPU'
+            ],
+            'performance_gains': {
+                'gaming_plus_ai': '+100-120% perceived FPS with AI frame gen',
+                'ai_assisted_upscaling': '+80% FPS at 4K with AI on secondary'
+            }
+        }
+    }), 200
+
+@app.route('/api/v1/tier/server/multi-gpu')
+@rate_limit(limit=500)
+def server_multi_gpu():
+    """Server tier enterprise multi-GPU features"""
+    return jsonify({
+        'tier': 'server',
+        'multi_gpu': {
+            'name': 'Aegis Enterprise Multi-GPU',
+            'description': 'Enterprise-grade multi-GPU for servers and workstations',
+            'modes': [
+                'Render Farm Distribution',
+                'AI Inference Cluster',
+                'Virtual GPU (vGPU) Partitioning',
+                'Container GPU Orchestration'
+            ],
+            'features': [
+                'Support for 8+ GPUs per node',
+                'Kubernetes GPU scheduling',
+                'NVIDIA MIG integration',
+                'AMD MxGPU support',
+                'GPU resource quotas',
+                'Multi-tenant GPU sharing',
+                'High-bandwidth GPU interconnect',
+                'PCIe topology optimization',
+                'Power and thermal management',
+                'GPU health monitoring and alerts'
+            ],
+            'enterprise_features': [
+                'Centralized GPU fleet management',
+                'Usage analytics and billing',
+                'Priority GPU allocation',
+                'SLA-backed GPU availability',
+                'Live GPU migration (vGPU)'
+            ]
+        }
+    }), 200
+
+@app.route('/api/v1/multi-gpu/modes')
+@rate_limit(limit=500)
+def multi_gpu_modes():
+    """Get all multi-GPU rendering modes and their details"""
+    return jsonify({
+        'rendering_modes': {
+            'AFR': {
+                'name': 'Alternate Frame Rendering',
+                'description': 'GPU 1 renders frame N, GPU 2 renders frame N+1',
+                'pros': ['Best FPS scaling (+70-95%)', 'Simple implementation', 'Works with most games'],
+                'cons': ['Adds 1 frame of latency', 'Potential micro-stuttering'],
+                'best_for': 'Maximum FPS, benchmarks, non-competitive gaming'
+            },
+            'SFR': {
+                'name': 'Split Frame Rendering',
+                'description': 'Screen divided horizontally or vertically between GPUs',
+                'pros': ['No additional latency', 'Smooth frame delivery'],
+                'cons': ['Lower scaling (+40-60%)', 'Uneven load with complex scenes'],
+                'best_for': 'Competitive gaming, VR, latency-sensitive applications'
+            },
+            'CFR': {
+                'name': 'Checkerboard Frame Rendering',
+                'description': 'Tile-based rendering in alternating pattern',
+                'pros': ['Balanced scaling (+50-70%)', 'Good load distribution'],
+                'cons': ['Moderate complexity', 'Some games incompatible'],
+                'best_for': 'General gaming, balanced performance and latency'
+            },
+            'Custom_Region': {
+                'name': 'Custom Region Rendering',
+                'description': 'Primary GPU renders center, secondary renders edges',
+                'pros': ['Optimized for typical game scenes', 'Reduced edge artifacts'],
+                'cons': ['Scene-dependent performance'],
+                'best_for': 'First-person games, racing games, cinematic experiences'
+            },
+            'Adaptive': {
+                'name': 'AI Adaptive Split',
+                'description': 'AI dynamically adjusts GPU workload based on scene complexity',
+                'pros': ['Optimal performance per scene', 'Self-tuning'],
+                'cons': ['Requires Gamer+AI edition', 'Small AI overhead'],
+                'best_for': 'Users who want set-and-forget optimization'
+            }
+        }
+    }), 200
+
 @app.route('/api/v1/admin/stats')
 @require_api_key
 @rate_limit(limit=100)

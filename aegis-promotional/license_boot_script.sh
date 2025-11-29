@@ -103,6 +103,13 @@ apply_tier_features() {
             echo "✓ AMD FSR 3.0 with Fluid Motion"
             echo "✓ Intel XeSS Upscaling"
             echo "✓ AI Frame Interpolation"
+            echo "=== Multi-GPU Engine ==="
+            echo "✓ AFR (Alternate Frame Rendering)"
+            echo "✓ SFR (Split Frame Rendering)"
+            echo "✓ CFR (Checkerboard Rendering)"
+            echo "✓ Custom Region Rendering"
+            echo "✓ No SLI Bridge Required"
+            echo "✓ Mixed GPU Vendor Support"
             echo "=== Performance Features ==="
             echo "✓ Per-Title Presets (1000+ games)"
             echo "✓ CPU Core Parking"
@@ -113,6 +120,7 @@ apply_tier_features() {
             systemctl enable aegis-gaming.service 2>/dev/null || true
             systemctl enable aegis-ai-upscaler.service 2>/dev/null || true
             systemctl enable aegis-game-optimizer.service 2>/dev/null || true
+            systemctl enable aegis-multi-gpu.service 2>/dev/null || true
             echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
             ;;
             
@@ -130,6 +138,12 @@ apply_tier_features() {
             echo "✓ Hugging Face Transformers"
             echo "✓ LangChain & LlamaIndex"
             echo "✓ Ollama for Local LLMs"
+            echo "=== Multi-GPU Compute Engine ==="
+            echo "✓ Data Parallel Training"
+            echo "✓ Model Parallel Training"
+            echo "✓ Pipeline Parallel Training"
+            echo "✓ NCCL Optimized Communication"
+            echo "✓ Fault-Tolerant Training"
             echo "=== Performance Features ==="
             echo "✓ Multi-GPU Orchestration (NCCL)"
             echo "✓ MIG (Multi-Instance GPU) Profiles"
@@ -141,6 +155,7 @@ apply_tier_features() {
             systemctl enable jupyter.service 2>/dev/null || true
             systemctl enable aegis-ml-security.service 2>/dev/null || true
             systemctl enable aegis-gpu-optimizer.service 2>/dev/null || true
+            systemctl enable aegis-multi-gpu-compute.service 2>/dev/null || true
             ;;
             
         "gamer-ai")
@@ -155,6 +170,12 @@ apply_tier_features() {
             echo "✓ AI Thumbnail Generation"
             echo "✓ Automatic Highlight Detection"
             echo "✓ Voice Cloning for Content"
+            echo "=== Hybrid Multi-GPU Engine ==="
+            echo "✓ All Gamer Multi-GPU Modes"
+            echo "✓ Gaming + Background AI Training"
+            echo "✓ AI-Assisted Frame Generation"
+            echo "✓ Dedicated GPU for DLSS/FSR"
+            echo "✓ Dynamic Workload Switching"
             echo "=== Performance Features ==="
             echo "✓ Hybrid GPU Scheduling"
             echo "✓ Smart VRAM Prefetch"
@@ -165,6 +186,7 @@ apply_tier_features() {
             systemctl enable aegis-ai-upscaler.service 2>/dev/null || true
             systemctl enable aegis-hybrid-gpu.service 2>/dev/null || true
             systemctl enable aegis-content-ai.service 2>/dev/null || true
+            systemctl enable aegis-multi-gpu-hybrid.service 2>/dev/null || true
             echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
             ;;
             
@@ -202,6 +224,13 @@ apply_tier_features() {
             echo "✓ TensorFlow/TorchServe"
             echo "✓ Kubeflow Pipelines"
             echo "✓ ML-Powered Log Analysis"
+            echo "=== Enterprise Multi-GPU ==="
+            echo "✓ Support for 8+ GPUs per node"
+            echo "✓ Kubernetes GPU Scheduling"
+            echo "✓ NVIDIA MIG Integration"
+            echo "✓ vGPU Partitioning"
+            echo "✓ Multi-Tenant GPU Sharing"
+            echo "✓ GPU Fleet Management"
             echo "=== Performance Features ==="
             echo "✓ Adaptive Kernel Tuning"
             echo "✓ TCP BBRv3 Congestion Control"
@@ -214,6 +243,7 @@ apply_tier_features() {
             systemctl enable aegis-xdr.service 2>/dev/null || true
             systemctl enable aegis-siem.service 2>/dev/null || true
             systemctl enable aegis-ml-inference.service 2>/dev/null || true
+            systemctl enable aegis-enterprise-gpu.service 2>/dev/null || true
             sysctl -w net.core.somaxconn=65535 2>/dev/null || true
             sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
             ;;
