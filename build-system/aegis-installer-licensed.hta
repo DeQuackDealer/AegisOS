@@ -220,11 +220,12 @@ Sub CheckAdminStatus()
 End Sub
 
 Function ValidateLicense(key)
-    Dim prefix, parts
-    key = UCase(Trim(key))
-    If Len(key) < 15 Then ValidateLicense = "": Exit Function
-    parts = Split(key, "-")
-    If UBound(parts) < 1 Then ValidateLicense = "": Exit Function
+    Dim prefix, parts, cleanKey
+    cleanKey = UCase(Trim(key))
+    ValidateLicense = ""
+    If Len(cleanKey) < 10 Then Exit Function
+    parts = Split(cleanKey, "-")
+    If UBound(parts) < 0 Then Exit Function
     prefix = parts(0)
     Select Case prefix
         Case "BSIC": ValidateLicense = "Basic"
@@ -233,28 +234,35 @@ Function ValidateLicense(key)
         Case "AIDV": ValidateLicense = "AI Developer"
         Case "GMAI": ValidateLicense = "Gamer + AI"
         Case "SERV": ValidateLicense = "Server"
-        Case Else: ValidateLicense = ""
     End Select
 End Function
 
 Sub CheckLicense()
-    Dim key, edition, statusEl
+    On Error Resume Next
+    Dim key, edition, statusEl, btnNext
     key = document.getElementById("licenseInput").value
     Set statusEl = document.getElementById("licenseStatus")
+    Set btnNext = document.getElementById("btnNext1")
     edition = ValidateLicense(key)
     If edition <> "" Then
         statusEl.innerHTML = "<span style='color:#10b981'>&#10003;</span> Valid: <strong>" & edition & " Edition</strong>"
         statusEl.className = "license-valid"
         licenseKey = UCase(Trim(key))
         detectedEdition = edition
-        document.getElementById("btnNext1").disabled = False
+        btnNext.disabled = False
+        btnNext.removeAttribute "disabled"
     Else
-        statusEl.innerHTML = "Invalid license format"
+        If Len(Trim(key)) > 0 Then
+            statusEl.innerHTML = "Enter a valid license key (e.g., BSIC-XXXX-XXXX-XXXX)"
+        Else
+            statusEl.innerHTML = ""
+        End If
         statusEl.className = "license-invalid"
         licenseKey = ""
         detectedEdition = ""
-        document.getElementById("btnNext1").disabled = True
+        btnNext.disabled = True
     End If
+    On Error Goto 0
 End Sub
 
 Sub RefreshDrives()
@@ -305,12 +313,19 @@ Sub SelectDrive(index)
 End Sub
 
 Sub GoToStep(stepNum)
-    Dim panels, steps, i
+    On Error Resume Next
+    Dim panels, steps, i, stepEl
+    
     Set panels = document.getElementsByClassName("panel")
     For i = 0 To panels.length - 1
         panels(i).className = "panel"
     Next
-    document.getElementById("step" & stepNum).className = "panel active"
+    
+    Set stepEl = document.getElementById("step" & stepNum)
+    If Not stepEl Is Nothing Then
+        stepEl.className = "panel active"
+    End If
+    
     Set steps = document.getElementsByClassName("step-item")
     For i = 0 To steps.length - 1
         If i + 1 < stepNum Then
@@ -321,6 +336,7 @@ Sub GoToStep(stepNum)
             steps(i).className = "step-item"
         End If
     Next
+    
     If stepNum = 2 Then
         RefreshDrives()
         document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
@@ -331,6 +347,7 @@ Sub GoToStep(stepNum)
         document.getElementById("progressBar").className = "progress-bar-fill animated"
         smoothProgress = 0
     End If
+    On Error Goto 0
 End Sub
 
 Sub StartCreation()
@@ -651,7 +668,7 @@ End Sub
 
             <div class="form-group">
                 <label class="form-label">License Key</label>
-                <input type="text" id="licenseInput" class="form-input" placeholder="XXXX-XXXX-XXXX-XXXX" onkeyup="CheckLicense()" maxlength="30">
+                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" oninput="CheckLicense()" onkeyup="CheckLicense()" onchange="CheckLicense()" maxlength="30">
                 <div id="licenseStatus" style="margin-top:8px"></div>
             </div>
             <div class="info-box">

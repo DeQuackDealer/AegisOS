@@ -3666,14 +3666,6 @@ def payment_success():
             .steps li {{
                 margin: 8px 0;
             }}
-            .test-mode {{
-                background: #fef3c7;
-                color: #92400e;
-                padding: 10px;
-                border-radius: 8px;
-                margin-bottom: 1rem;
-                font-size: 0.85rem;
-            }}
             .footer-link {{
                 display: inline-block;
                 color: #6366f1;
@@ -3697,7 +3689,6 @@ def payment_success():
                 <h1>Payment Successful!</h1>
             </div>
 
-            {'<div class="test-mode">TEST MODE - No real charge was made</div>' if os.getenv('REPLIT_DEPLOYMENT') != '1' else ''}
 
             <div class="edition-badge">Aegis OS {tier_names.get(tier, tier.capitalize())} Edition</div>
 
