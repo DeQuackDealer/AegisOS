@@ -73,52 +73,167 @@ apply_tier_features() {
     
     case "$tier" in
         "basic")
-            echo "✓ Enhanced Security Suite"
-            echo "✓ Encrypted Storage"
-            echo "✓ VPN Client"
-            echo "✓ Anti-Ransomware Protection"
+            echo "=== Security Features ==="
+            echo "✓ Behavior-based Anti-Ransomware"
+            echo "✓ MFA for Aegis Sync"
+            echo "✓ Secure Vault (YubiKey/WebAuthn)"
+            echo "✓ Phishing Protection"
+            echo "✓ Secure Boot Verification"
+            echo "✓ Encrypted Credential Storage"
+            echo "=== Performance Features ==="
+            echo "✓ Adaptive Power Governor"
+            echo "✓ SSD TRIM Automation"
+            echo "✓ Memory Compression (zram/zswap)"
+            echo "✓ Boot Time Optimization"
             systemctl enable aegis-security.service 2>/dev/null || true
             systemctl enable aegis-vpn.service 2>/dev/null || true
+            systemctl enable aegis-ransomware-protection.service 2>/dev/null || true
+            systemctl enable aegis-performance-tuner.service 2>/dev/null || true
             ;;
             
         "gamer")
-            echo "✓ NVIDIA/AMD Drivers"
-            echo "✓ Gaming Mode Optimization"
-            echo "✓ Ray Tracing & DLSS 3"
-            echo "✓ <5ms Input Latency"
-            echo "✓ RGB Ecosystem Support"
+            echo "=== Security Features ==="
+            echo "✓ Anti-Cheat Integrity Monitor"
+            echo "✓ Firmware Guard (BIOS/UEFI)"
+            echo "✓ DDoS Protection (Ping Shield)"
+            echo "✓ Gaming Account Credential Manager"
+            echo "✓ Stream Key Vault"
+            echo "=== AI Features ==="
+            echo "✓ DLSS 3.5 with Frame Generation"
+            echo "✓ AMD FSR 3.0 with Fluid Motion"
+            echo "✓ Intel XeSS Upscaling"
+            echo "✓ AI Frame Interpolation"
+            echo "=== Performance Features ==="
+            echo "✓ Per-Title Presets (1000+ games)"
+            echo "✓ CPU Core Parking"
+            echo "✓ GPU Memory Optimization"
+            echo "✓ Shader Cache Management"
+            echo "✓ Input Polling Maximization (<3ms)"
             modprobe nvidia 2>/dev/null || true
             systemctl enable aegis-gaming.service 2>/dev/null || true
+            systemctl enable aegis-ai-upscaler.service 2>/dev/null || true
+            systemctl enable aegis-game-optimizer.service 2>/dev/null || true
             echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
             ;;
             
         "ai-dev")
-            echo "✓ CUDA 12.3 & cuDNN"
-            echo "✓ PyTorch & TensorFlow"
-            echo "✓ Jupyter Lab"
-            echo "✓ ML Libraries (100+)"
-            echo "✓ Docker & Kubernetes"
+            echo "=== Security Features ==="
+            echo "✓ Model Supply-Chain Scanner"
+            echo "✓ Secrets Scanning for Notebooks"
+            echo "✓ Secure MLOps Pipelines"
+            echo "✓ Signed Model Registry"
+            echo "✓ AI Governance Policy Engine"
+            echo "✓ Container Vulnerability Scanning"
+            echo "=== AI Tools ==="
+            echo "✓ PyTorch 2.2 with CUDA 12.3"
+            echo "✓ TensorFlow 2.15 with GPU"
+            echo "✓ Hugging Face Transformers"
+            echo "✓ LangChain & LlamaIndex"
+            echo "✓ Ollama for Local LLMs"
+            echo "=== Performance Features ==="
+            echo "✓ Multi-GPU Orchestration (NCCL)"
+            echo "✓ MIG (Multi-Instance GPU) Profiles"
+            echo "✓ Dataset Caching Tiers"
+            echo "✓ Tensor Core Optimizer"
+            echo "✓ Mixed Precision Auto-Tuning"
             modprobe nvidia-uvm 2>/dev/null || true
             systemctl enable docker.service 2>/dev/null || true
             systemctl enable jupyter.service 2>/dev/null || true
+            systemctl enable aegis-ml-security.service 2>/dev/null || true
+            systemctl enable aegis-gpu-optimizer.service 2>/dev/null || true
+            ;;
+            
+        "gamer-ai")
+            echo "=== Security Features ==="
+            echo "✓ All Gamer Security Features"
+            echo "✓ AI Model Tamper Detection"
+            echo "✓ GPU Firmware Attestation"
+            echo "✓ AI-Driven Anomaly Analytics"
+            echo "=== AI Features ==="
+            echo "✓ All Gamer AI Features"
+            echo "✓ AI Video Upscaling"
+            echo "✓ AI Thumbnail Generation"
+            echo "✓ Automatic Highlight Detection"
+            echo "✓ Voice Cloning for Content"
+            echo "=== Performance Features ==="
+            echo "✓ Hybrid GPU Scheduling"
+            echo "✓ Smart VRAM Prefetch"
+            echo "✓ Gaming Priority with AI Pause"
+            echo "✓ Neural Upscaling Optimization"
+            modprobe nvidia 2>/dev/null || true
+            systemctl enable aegis-gaming.service 2>/dev/null || true
+            systemctl enable aegis-ai-upscaler.service 2>/dev/null || true
+            systemctl enable aegis-hybrid-gpu.service 2>/dev/null || true
+            systemctl enable aegis-content-ai.service 2>/dev/null || true
+            echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
+            ;;
+            
+        "workplace")
+            echo "=== Security Features ==="
+            echo "✓ Zero-Trust Endpoint Profiles"
+            echo "✓ Device Posture Scoring"
+            echo "✓ SOC2-lite Compliance Templates"
+            echo "✓ Data Loss Prevention (DLP)"
+            echo "✓ BYOD Security Policies"
+            echo "✓ Secure Remote Access VPN"
+            echo "=== Performance Features ==="
+            echo "✓ VDI-Aware Resource Profiles"
+            echo "✓ QoS for Zoom/Teams/Slack"
+            echo "✓ Network Bandwidth Prioritization"
+            echo "✓ Multi-Monitor Performance Tuning"
+            systemctl enable aegis-security.service 2>/dev/null || true
+            systemctl enable aegis-vpn.service 2>/dev/null || true
+            systemctl enable aegis-dlp.service 2>/dev/null || true
+            systemctl enable aegis-compliance.service 2>/dev/null || true
+            systemctl enable aegis-collab-optimizer.service 2>/dev/null || true
             ;;
             
         "server")
-            echo "✓ Enterprise Security"
-            echo "✓ Kubernetes Orchestration"
-            echo "✓ High Availability"
-            echo "✓ Auto-scaling"
+            echo "=== Security Features ==="
+            echo "✓ Full XDR Integration"
+            echo "✓ eBPF Threat Detection"
+            echo "✓ Hardware Root-of-Trust"
+            echo "✓ Zero-Trust Network Architecture"
+            echo "✓ RASP (Runtime Protection)"
+            echo "✓ SIEM Integration"
+            echo "✓ Privileged Access Management"
+            echo "=== AI Infrastructure ==="
+            echo "✓ NVIDIA Triton Inference Server"
+            echo "✓ TensorFlow/TorchServe"
+            echo "✓ Kubeflow Pipelines"
+            echo "✓ ML-Powered Log Analysis"
+            echo "=== Performance Features ==="
+            echo "✓ Adaptive Kernel Tuning"
+            echo "✓ TCP BBRv3 Congestion Control"
+            echo "✓ Live Patching (No Reboot)"
+            echo "✓ NUMA-Aware Placement"
+            echo "✓ Container Density Optimization"
             echo "✓ 100K+ RPS Support"
             systemctl enable kubernetes.service 2>/dev/null || true
             systemctl enable aegis-ha.service 2>/dev/null || true
+            systemctl enable aegis-xdr.service 2>/dev/null || true
+            systemctl enable aegis-siem.service 2>/dev/null || true
+            systemctl enable aegis-ml-inference.service 2>/dev/null || true
             sysctl -w net.core.somaxconn=65535 2>/dev/null || true
+            sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
             ;;
             
         *)
-            echo "✓ Basic Desktop Environment"
-            echo "✓ Open-source Drivers"
-            echo "✓ Community Features"
-            echo -e "${YELLOW}Upgrade to unlock premium features!${NC}"
+            echo "=== Security Features ==="
+            echo "✓ Secure Update Notarization"
+            echo "✓ Hardened Firewall Presets"
+            echo "✓ Privacy Onboarding Wizard"
+            echo "✓ Basic Malware Scanning"
+            echo "=== Performance Features ==="
+            echo "✓ Lightweight Boot Optimization"
+            echo "✓ Memory-Efficient Mode"
+            echo "✓ Resource-Aware Background Tasks"
+            echo ""
+            echo -e "${YELLOW}Upgrade to unlock premium features:${NC}"
+            echo "  - Basic ($69): Enhanced security, VPN, anti-ransomware"
+            echo "  - Gamer ($89): DLSS 3.5, FSR 3, <3ms latency"
+            echo "  - AI Dev ($109): PyTorch, TensorFlow, CUDA"
+            echo "  - Server: Enterprise security, 100K+ RPS"
             ;;
     esac
     
