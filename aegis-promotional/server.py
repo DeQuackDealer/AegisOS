@@ -783,6 +783,48 @@ def server_security():
         }
     }), 200
 
+@app.route('/api/v1/tier/workplace/security')
+@rate_limit(limit=500)
+def workplace_security():
+    """Workplace tier security features"""
+    return jsonify({
+        'tier': 'workplace',
+        'security': {
+            'features': [
+                'Zero-trust endpoint profiles',
+                'Device posture scoring',
+                'Automated compliance templates (SOC2-lite)',
+                'Data Loss Prevention (DLP) for Aegis Cloud',
+                'BYOD security policies',
+                'Endpoint threat detection',
+                'Secure remote access VPN',
+                'Email security gateway integration'
+            ],
+            'protection_level': 'Business',
+            'compliance': ['SOC2-lite', 'GDPR basics']
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer-ai/security')
+@rate_limit(limit=500)
+def gamer_ai_security():
+    """Gamer+AI tier security features"""
+    return jsonify({
+        'tier': 'gamer-ai',
+        'security': {
+            'features': [
+                'All Gamer security features',
+                'AI model tamper detection',
+                'GPU firmware attestation',
+                'AI-driven cheat/anomaly analytics',
+                'Neural network integrity checks',
+                'Secure model deployment'
+            ],
+            'protection_level': 'Gaming + AI hybrid',
+            'includes': 'Full Gamer security stack'
+        }
+    }), 200
+
 # ============= PERFORMANCE OPTIMIZATION ENDPOINTS =============
 
 @app.route('/api/v1/tier/freemium/optimizations')
@@ -903,6 +945,50 @@ def server_optimizations():
         }
     }), 200
 
+@app.route('/api/v1/tier/workplace/optimizations')
+@rate_limit(limit=500)
+def workplace_optimizations():
+    """Workplace tier performance optimizations"""
+    return jsonify({
+        'tier': 'workplace',
+        'optimizations': {
+            'features': [
+                'VDI-aware resource profiles',
+                'QoS for collaboration apps (Zoom, Teams, Slack)',
+                'Network bandwidth prioritization',
+                'Print job optimization',
+                'Document caching for cloud files',
+                'Meeting app auto-optimization',
+                'Multi-monitor performance tuning'
+            ],
+            'collaboration_latency': '<50ms',
+            'video_quality': 'HD',
+            'print_speed': 'Optimized'
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer-ai/optimizations')
+@rate_limit(limit=500)
+def gamer_ai_optimizations():
+    """Gamer+AI tier performance optimizations"""
+    return jsonify({
+        'tier': 'gamer-ai',
+        'optimizations': {
+            'features': [
+                'Hybrid GPU scheduling (gaming + AI workloads)',
+                'Smart VRAM prefetch',
+                'AI workload background scheduling',
+                'Gaming priority mode with AI pause',
+                'Neural upscaling optimization',
+                'Frame generation timing',
+                'Adaptive render resolution'
+            ],
+            'input_latency': '<3ms',
+            'ai_fps_boost': '+30-40%',
+            'hybrid_mode': True
+        }
+    }), 200
+
 # ============= AI FEATURES ENDPOINTS =============
 
 @app.route('/api/v1/tier/gamer/ai-features')
@@ -994,6 +1080,37 @@ def server_ai_infrastructure():
                 'ML-powered log analysis',
                 'Predictive security alerts',
                 'Behavioral analytics engine'
+            ]
+        }
+    }), 200
+
+@app.route('/api/v1/tier/gamer-ai/ai-features')
+@rate_limit(limit=500)
+def gamer_ai_tier_features():
+    """Gamer+AI tier AI features"""
+    return jsonify({
+        'tier': 'gamer-ai',
+        'ai_features': {
+            'gaming_ai': [
+                'All Gamer AI features',
+                'Custom DLSS/FSR profiles per game',
+                'AI game preset learning',
+                'Real-time performance prediction'
+            ],
+            'creation_ai': [
+                'AI video upscaling (Real-ESRGAN)',
+                'AI audio enhancement',
+                'AI thumbnail generation',
+                'Automatic highlight detection',
+                'AI-powered video editing suggestions',
+                'Voice cloning for content',
+                'AI chat moderator for streams'
+            ],
+            'optimization': [
+                'AI-based system monitoring',
+                'Predictive performance tuning',
+                'Smart resource allocation',
+                'AI thermal management'
             ]
         }
     }), 200
