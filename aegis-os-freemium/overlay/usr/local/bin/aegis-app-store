@@ -22,6 +22,9 @@ try:
 except ImportError:
     TKINTER_AVAILABLE = False
 
+TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
+FREEMIUM_MONTHLY_INSTALL_LIMIT = 5  # Maximum app installs per month for freemium tier
+
 
 def is_root() -> bool:
     """Check if the current user is root"""
@@ -177,6 +180,36 @@ class AegisAppStore:
         with open(self.history_file, 'w') as f:
             json.dump(history, f, indent=2)
     
+    def get_monthly_install_count(self) -> int:
+        """Get the number of installs this month (for freemium limit)"""
+        try:
+            with open(self.history_file, 'r') as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return 0
+        
+        current_month = datetime.now().strftime("%Y-%m")
+        install_count = 0
+        for entry in history:
+            if entry.get("action") == "install" and entry.get("success"):
+                try:
+                    entry_date = datetime.fromisoformat(entry.get("timestamp", ""))
+                    if entry_date.strftime("%Y-%m") == current_month:
+                        install_count += 1
+                except (ValueError, TypeError):
+                    pass
+        return install_count
+    
+    def check_freemium_install_limit(self) -> Tuple[bool, str]:
+        """Check if freemium install limit has been reached"""
+        if TIER_LIMIT != "freemium":
+            return True, ""
+        
+        install_count = self.get_monthly_install_count()
+        if install_count >= FREEMIUM_MONTHLY_INSTALL_LIMIT:
+            return False, f"⚠️ Monthly install limit reached ({install_count}/{FREEMIUM_MONTHLY_INSTALL_LIMIT}). Upgrade to Full Edition for unlimited installs."
+        return True, f"{FREEMIUM_MONTHLY_INSTALL_LIMIT - install_count} installs remaining this month"
+    
     def get_categories(self) -> List[str]:
         """Get list of available categories"""
         return self.catalog.get("categories", [])
@@ -306,6 +339,14 @@ class AegisAppStore:
         app = self.get_app(app_id)
         if not app:
             return {"success": False, "error": f"App '{app_id}' not found in catalog"}
+        
+        if TIER_LIMIT == "freemium":
+            can_install, limit_msg = self.check_freemium_install_limit()
+            if not can_install:
+                self.logger.warning(f"Freemium install limit reached")
+                if callback:
+                    callback(limit_msg)
+                return {"success": False, "error": limit_msg, "tier_restricted": True}
         
         is_inst, _ = self.is_installed(app_id)
         if is_inst:

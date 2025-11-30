@@ -12,7 +12,7 @@
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="2.7"
+    VERSION="2.8"
     SCROLL="yes"
     INNERBORDER="no"
 />
@@ -43,13 +43,13 @@ body {
 .header-text h1 { font-size: 16px; font-weight: 600; }
 .header-text p { font-size: 11px; opacity: 0.9; }
 .content { flex: 1; padding: 15px 20px; overflow-y: auto; min-height: 0; }
-.step-nav { display: flex; justify-content: center; gap: 10px; margin-bottom: 15px; }
+.step-nav { display: flex; justify-content: center; gap: 8px; margin-bottom: 15px; }
 .step-item { text-align: center; position: relative; }
 .step-num {
-    width: 28px; height: 28px; border-radius: 50%;
+    width: 26px; height: 26px; border-radius: 50%;
     background: #2a2a4a; border: 2px solid #444;
     display: flex; align-items: center; justify-content: center;
-    margin: 0 auto 3px; font-weight: 600; font-size: 11px;
+    margin: 0 auto 3px; font-weight: 600; font-size: 10px;
     transition: all 0.3s ease;
 }
 .step-item.active .step-num { 
@@ -61,12 +61,12 @@ body {
     background: linear-gradient(135deg, #10b981, #34d399); 
     border-color: #34d399;
 }
-.step-label { font-size: 9px; color: #888; }
+.step-label { font-size: 8px; color: #888; }
 .step-item.active .step-label { color: #f59e0b; font-weight: 500; }
 .step-item.done .step-label { color: #34d399; }
 .step-connector {
-    position: absolute; top: 14px; left: 50%; width: 24px; height: 2px;
-    background: #333; margin-left: 14px;
+    position: absolute; top: 13px; left: 50%; width: 20px; height: 2px;
+    background: #333; margin-left: 13px;
 }
 .step-item.done .step-connector { background: #34d399; }
 .panel { display: none; }
@@ -120,6 +120,7 @@ body {
 .btn-primary:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn-secondary { background: #2a2a4a; color: #aaa; border: 1px solid #444; }
 .btn-refresh { background: #1e1e3a; color: #f59e0b; padding: 5px 10px; font-size: 10px; }
+.btn-small { padding: 4px 10px; font-size: 10px; }
 .btn-row { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; align-items: center; }
 .progress-container { background: #1e1e3a; border-radius: 6px; padding: 15px; text-align: center; }
 .progress-bar-bg { 
@@ -223,6 +224,25 @@ body {
 .feature-list { font-size: 10px; color: #ccc; }
 .feature-list li { margin-bottom: 3px; }
 .est-time { font-size: 10px; color: #f59e0b; margin-top: 5px; font-style: italic; }
+.feature-section { margin-bottom: 12px; }
+.feature-section-title { font-size: 11px; color: #f59e0b; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+.feature-section-title .icon { font-size: 12px; }
+.core-features { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px; margin-bottom: 10px; }
+.core-feature-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 10px; color: #aaa; }
+.core-feature-item .icon { color: #10b981; font-size: 11px; }
+.optional-features { background: #1e1e3a; border: 1px solid #333; border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; }
+.feature-card { display: flex; align-items: flex-start; gap: 8px; padding: 6px; border-bottom: 1px solid #333; transition: background 0.2s; }
+.feature-card:last-child { border-bottom: none; }
+.feature-card:hover { background: rgba(180, 83, 9, 0.1); }
+.feature-card input { margin-top: 2px; accent-color: #f59e0b; width: 14px; height: 14px; flex-shrink: 0; }
+.feature-card-content { flex: 1; min-width: 0; }
+.feature-card-name { font-size: 11px; font-weight: 500; color: #fff; }
+.feature-card-desc { font-size: 9px; color: #888; margin-top: 1px; }
+.feature-card-badge { font-size: 8px; background: rgba(180, 83, 9, 0.3); color: #f59e0b; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
+.feature-actions { display: flex; gap: 6px; margin-bottom: 8px; }
+.edition-features { display: none; }
+.edition-features.visible { display: block; }
+.feature-count { font-size: 10px; color: #888; margin-top: 6px; }
 </style>
 <script language="VBScript">
 Dim selectedDrive, selectedDriveNumber, drives(), driveCount
@@ -231,9 +251,10 @@ Dim progressTimer, shell, fso, wmi
 Dim lastProgress, smoothProgress
 Dim partitionStyle, quickFormat, secureBootEnabled, bootTheme, unattendedMode, networkPreset
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
+Dim selectedFeatures
 
 Sub Window_OnLoad()
-    window.resizeTo 680, 850
+    window.resizeTo 680, 880
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
@@ -245,6 +266,7 @@ Sub Window_OnLoad()
     unattendedMode = False
     networkPreset = "DHCP"
     sysReqPassed = False
+    selectedFeatures = "wallpaper,stream,security,backup"
     CheckAdminStatus
     CheckSystemRequirements
 End Sub
@@ -423,6 +445,113 @@ Sub UpdateFeatureShowcase(edition)
     document.getElementById("featureShowcase").style.display = "block"
 End Sub
 
+Sub SetupFeatureSelection()
+    Dim gamerFeatures, aiFeatures, serverFeatures
+    On Error Resume Next
+    Set gamerFeatures = document.getElementById("gamerFeatures")
+    Set aiFeatures = document.getElementById("aiFeatures")
+    Set serverFeatures = document.getElementById("serverFeatures")
+    If Not gamerFeatures Is Nothing Then gamerFeatures.className = "edition-features"
+    If Not aiFeatures Is Nothing Then aiFeatures.className = "edition-features"
+    If Not serverFeatures Is Nothing Then serverFeatures.className = "edition-features"
+    If detectedEdition = "Gamer" Or detectedEdition = "Gamer + AI" Then
+        If Not gamerFeatures Is Nothing Then gamerFeatures.className = "edition-features visible"
+    End If
+    If detectedEdition = "AI Developer" Or detectedEdition = "Gamer + AI" Then
+        If Not aiFeatures Is Nothing Then aiFeatures.className = "edition-features visible"
+    End If
+    If detectedEdition = "Server" Then
+        If Not serverFeatures Is Nothing Then serverFeatures.className = "edition-features visible"
+    End If
+    document.getElementById("featureEditionLabel").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
+    selectedFeatures = "wallpaper,stream,security,backup"
+    If detectedEdition = "Gamer" Or detectedEdition = "Gamer + AI" Then
+        selectedFeatures = selectedFeatures & ",gaming"
+    End If
+    If detectedEdition = "AI Developer" Or detectedEdition = "Gamer + AI" Then
+        selectedFeatures = selectedFeatures & ",ai"
+    End If
+    If detectedEdition = "Server" Then
+        selectedFeatures = selectedFeatures & ",server"
+    End If
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub ToggleFeature(featureId)
+    Dim chk, features, i, newFeatures, found
+    On Error Resume Next
+    Set chk = document.getElementById("chk_" & featureId)
+    If chk Is Nothing Then Exit Sub
+    features = Split(selectedFeatures, ",")
+    newFeatures = ""
+    found = False
+    For i = 0 To UBound(features)
+        If features(i) = featureId Then
+            found = True
+            If chk.checked Then
+                If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+                newFeatures = newFeatures & featureId
+            End If
+        Else
+            If Len(features(i)) > 0 Then
+                If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+                newFeatures = newFeatures & features(i)
+            End If
+        End If
+    Next
+    If Not found And chk.checked Then
+        If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+        newFeatures = newFeatures & featureId
+    End If
+    selectedFeatures = newFeatures
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub SelectAllFeatures()
+    Dim checkboxes, i
+    On Error Resume Next
+    Set checkboxes = document.querySelectorAll(".optional-features input[type='checkbox']")
+    selectedFeatures = ""
+    For i = 0 To checkboxes.length - 1
+        If checkboxes(i).style.display <> "none" Then
+            checkboxes(i).checked = True
+            Dim fid
+            fid = Replace(checkboxes(i).id, "chk_", "")
+            If Len(selectedFeatures) > 0 Then selectedFeatures = selectedFeatures & ","
+            selectedFeatures = selectedFeatures & fid
+        End If
+    Next
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub DeselectAllFeatures()
+    Dim checkboxes, i
+    On Error Resume Next
+    Set checkboxes = document.querySelectorAll(".optional-features input[type='checkbox']")
+    For i = 0 To checkboxes.length - 1
+        checkboxes(i).checked = False
+    Next
+    selectedFeatures = ""
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub UpdateFeatureCount()
+    Dim count, features
+    On Error Resume Next
+    features = Split(selectedFeatures, ",")
+    count = 0
+    Dim i
+    For i = 0 To UBound(features)
+        If Len(features(i)) > 0 Then count = count + 1
+    Next
+    document.getElementById("featureCount").innerText = "3 core + " & count & " optional features selected"
+    On Error Goto 0
+End Sub
+
 Sub RefreshDrives()
     Dim diskDrives, disk, html, sizeGB, partCount, fsType, busType
     On Error Resume Next
@@ -432,14 +561,14 @@ Sub RefreshDrives()
     If Err.Number <> 0 Then
         Err.Clear
         document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext2").disabled = True
+        document.getElementById("btnNext3").disabled = True
         Exit Sub
     End If
     Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
     If Err.Number <> 0 Then
         Err.Clear
         document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext2").disabled = True
+        document.getElementById("btnNext3").disabled = True
         Exit Sub
     End If
     ReDim drives(0)
@@ -478,7 +607,7 @@ Sub RefreshDrives()
     document.getElementById("driveList").innerHTML = html
     selectedDrive = ""
     selectedDriveNumber = -1
-    document.getElementById("btnNext2").disabled = True
+    document.getElementById("btnNext3").disabled = True
     UpdateEstimatedTime
 End Sub
 
@@ -494,7 +623,7 @@ Sub SelectDrive(index)
     items(index).className = "drive-item selected"
     selectedDriveNumber = drives(index)
     selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
-    document.getElementById("btnNext2").disabled = False
+    document.getElementById("btnNext3").disabled = False
     UpdateEstimatedTime
     On Error Goto 0
 End Sub
@@ -581,26 +710,39 @@ Sub GoToStep(stepNum)
         End If
     Next
     If stepNum = 2 Then
+        SetupFeatureSelection
+    ElseIf stepNum = 3 Then
         RefreshDrives
         document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
-    ElseIf stepNum = 3 Then
+    ElseIf stepNum = 4 Then
         document.getElementById("confirmDrive").innerText = selectedDrive
         document.getElementById("confirmEdition").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
         document.getElementById("confirmPartStyle").innerText = partitionStyle
         document.getElementById("confirmQuickFmt").innerText = IIf(quickFormat, "Yes", "No")
-    ElseIf stepNum = 4 Then
+        document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
+    ElseIf stepNum = 5 Then
         document.getElementById("progressBar").className = "progress-bar-fill animated"
         smoothProgress = 0
     End If
     On Error Goto 0
 End Sub
 
+Function GetFeatureCountText()
+    Dim features, count, i
+    features = Split(selectedFeatures, ",")
+    count = 0
+    For i = 0 To UBound(features)
+        If Len(features(i)) > 0 Then count = count + 1
+    Next
+    GetFeatureCountText = "3 core + " & count & " optional"
+End Function
+
 Function IIf(cond, trueVal, falseVal)
     If cond Then IIf = trueVal Else IIf = falseVal
 End Function
 
 Sub StartCreation()
-    GoToStep 4
+    GoToStep 5
     CreateUSB
 End Sub
 
@@ -615,14 +757,14 @@ Sub CreateUSB()
     ts.Write psCode
     ts.Close
     Dim cmd
-    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & detectedEdition & """ -LicenseKey """ & licenseKey & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & detectedEdition & """ -LicenseKey """ & licenseKey & """ -Features """ & selectedFeatures & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
     shell.Run cmd, 0, False
     progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
 End Sub
 
 Function GetPowerShellCode()
     Dim code
-    code = "param([int]$DiskNumber, [string]$Edition, [string]$LicenseKey, [string]$PartitionStyle, [bool]$QuickFormat, [string]$ProgressFile)" & vbCrLf
+    code = "param([int]$DiskNumber, [string]$Edition, [string]$LicenseKey, [string]$Features, [string]$PartitionStyle, [bool]$QuickFormat, [string]$ProgressFile)" & vbCrLf
     code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
     code = code & "$global:startTime = $null; $global:lastBytes = 0; $global:lastTime = $null" & vbCrLf
     code = code & "function Write-P { param([int]$P, [string]$S, [string]$D='', [string]$Speed='', [string]$ETA='', [string]$Size=''); " & vbCrLf
@@ -658,7 +800,7 @@ Function GetPowerShellCode()
     code = code & "  try {" & vbCrLf
     code = code & "    if ($mirrorIndex -gt 0 -or $retryCount -gt 0) { Write-P 6 ""Mirror $($mirrorIndex+1), Attempt $($retryCount+1)..."" }" & vbCrLf
     code = code & "    $webRequest = [System.Net.HttpWebRequest]::Create($isoUrl)" & vbCrLf
-    code = code & "    $webRequest.UserAgent = 'AegisOS/2.6 Pro'; $webRequest.Timeout = 30000" & vbCrLf
+    code = code & "    $webRequest.UserAgent = 'AegisOS/2.8 Pro'; $webRequest.Timeout = 30000" & vbCrLf
     code = code & "    $response = $webRequest.GetResponse(); $totalBytes = $response.ContentLength" & vbCrLf
     code = code & "    $responseStream = $response.GetResponseStream(); $fileStream = [System.IO.File]::Create($isoPath)" & vbCrLf
     code = code & "    $buffer = New-Object byte[] 8MB; $downloadedBytes = 0" & vbCrLf
@@ -748,7 +890,7 @@ Sub CheckProgress()
                         window.clearInterval progressTimer
                         document.getElementById("progressBar").className = "progress-bar-fill"
                         UpdateProgress 100, status, detail, "", "", ""
-                        window.setTimeout GetRef("GoToStepFive"), 1500
+                        window.setTimeout GetRef("GoToStepSix"), 1500
                     Else
                         UpdateProgressSmooth pct, status, detail, speed, eta, size
                     End If
@@ -761,8 +903,8 @@ Sub CheckProgress()
     On Error Goto 0
 End Sub
 
-Sub GoToStepFive()
-    GoToStep 5
+Sub GoToStepSix()
+    GoToStep 6
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
@@ -848,21 +990,26 @@ End Sub
             </div>
             <div class="step-item">
                 <div class="step-num">2</div>
-                <div class="step-label">USB</div>
+                <div class="step-label">Features</div>
                 <div class="step-connector"></div>
             </div>
             <div class="step-item">
                 <div class="step-num">3</div>
-                <div class="step-label">Confirm</div>
+                <div class="step-label">USB</div>
                 <div class="step-connector"></div>
             </div>
             <div class="step-item">
                 <div class="step-num">4</div>
-                <div class="step-label">Create</div>
+                <div class="step-label">Confirm</div>
                 <div class="step-connector"></div>
             </div>
             <div class="step-item">
                 <div class="step-num">5</div>
+                <div class="step-label">Create</div>
+                <div class="step-connector"></div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">6</div>
                 <div class="step-label">Done</div>
             </div>
         </div>
@@ -907,6 +1054,92 @@ End Sub
         </div>
 
         <div id="step2" class="panel">
+            <div class="section-title">Select Features</div>
+            <div class="section-desc">Choose which Aegis tools to install: <span id="featureEditionLabel"></span></div>
+
+            <div class="feature-section">
+                <div class="feature-section-title"><span class="icon">&#128274;</span> Core Features (Always Installed)</div>
+                <div class="core-features">
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Control Center - Central management hub</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis System Monitor - Real-time performance tracking</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Update Manager - Automatic system updates</div>
+                </div>
+            </div>
+
+            <div class="feature-section">
+                <div class="feature-section-title"><span class="icon">&#9881;</span> Optional Features</div>
+                <div class="feature-actions">
+                    <button class="btn btn-secondary btn-small" onclick="SelectAllFeatures">Select All</button>
+                    <button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures">Deselect All</button>
+                </div>
+                <div class="optional-features">
+                    <div class="feature-card">
+                        <input type="checkbox" id="chk_wallpaper" checked onclick="ToggleFeature 'wallpaper'">
+                        <div class="feature-card-content">
+                            <div class="feature-card-name">Aegis Wallpaper Engine</div>
+                            <div class="feature-card-desc">Animated wallpapers with AI generation support</div>
+                        </div>
+                    </div>
+                    <div class="feature-card">
+                        <input type="checkbox" id="chk_stream" checked onclick="ToggleFeature 'stream'">
+                        <div class="feature-card-content">
+                            <div class="feature-card-name">Aegis Stream</div>
+                            <div class="feature-card-desc">Local game streaming to other devices</div>
+                        </div>
+                    </div>
+                    <div class="feature-card">
+                        <input type="checkbox" id="chk_security" checked onclick="ToggleFeature 'security'">
+                        <div class="feature-card-content">
+                            <div class="feature-card-name">Aegis Security Center</div>
+                            <div class="feature-card-desc">Firewall, antivirus and threat protection</div>
+                        </div>
+                    </div>
+                    <div class="feature-card">
+                        <input type="checkbox" id="chk_backup" checked onclick="ToggleFeature 'backup'">
+                        <div class="feature-card-content">
+                            <div class="feature-card-name">Aegis Backup Pro</div>
+                            <div class="feature-card-desc">Scheduled backups with cloud integration</div>
+                        </div>
+                    </div>
+                    <div id="gamerFeatures" class="edition-features">
+                        <div class="feature-card">
+                            <input type="checkbox" id="chk_gaming" checked onclick="ToggleFeature 'gaming'">
+                            <div class="feature-card-content">
+                                <div class="feature-card-name">Aegis Gaming Optimizer <span class="feature-card-badge">Gamer</span></div>
+                                <div class="feature-card-desc">Game performance tweaks, FPS boost, latency reduction</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="aiFeatures" class="edition-features">
+                        <div class="feature-card">
+                            <input type="checkbox" id="chk_ai" checked onclick="ToggleFeature 'ai'">
+                            <div class="feature-card-content">
+                                <div class="feature-card-name">Aegis AI Toolkit <span class="feature-card-badge">AI Dev</span></div>
+                                <div class="feature-card-desc">Model training, GPU compute management, ML frameworks</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="serverFeatures" class="edition-features">
+                        <div class="feature-card">
+                            <input type="checkbox" id="chk_server" checked onclick="ToggleFeature 'server'">
+                            <div class="feature-card-content">
+                                <div class="feature-card-name">Aegis Server Tools <span class="feature-card-badge">Server</span></div>
+                                <div class="feature-card-desc">Docker, Kubernetes, VM management, monitoring</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="feature-count" id="featureCount">3 core + 4 optional features selected</div>
+            </div>
+
+            <div class="btn-row">
+                <button class="btn btn-secondary" onclick="GoToStep 1">Back</button>
+                <div style="flex:1"></div>
+                <button class="btn btn-primary" onclick="GoToStep 3">Next</button>
+            </div>
+        </div>
+
+        <div id="step3" class="panel">
             <div class="section-title">Select USB Drive</div>
             <div class="section-desc">Installing: <span id="editionDisplay">-</span></div>
             
@@ -956,13 +1189,13 @@ End Sub
 
             <div class="btn-row">
                 <button class="btn btn-refresh" onclick="RefreshDrives">Refresh</button>
-                <button class="btn btn-secondary" onclick="GoToStep 1">Back</button>
+                <button class="btn btn-secondary" onclick="GoToStep 2">Back</button>
                 <div style="flex:1"></div>
-                <button id="btnNext2" class="btn btn-primary" disabled onclick="GoToStep 3">Next</button>
+                <button id="btnNext3" class="btn btn-primary" disabled onclick="GoToStep 4">Next</button>
             </div>
         </div>
 
-        <div id="step3" class="panel">
+        <div id="step4" class="panel">
             <div class="section-title">Confirm</div>
             <div class="warning-box"><strong>Warning:</strong> All data on USB will be erased!</div>
             <div class="info-box">
@@ -972,19 +1205,21 @@ End Sub
                     <li>Drive: <strong id="confirmDrive" style="color:#fff">-</strong></li>
                     <li>Partition: <strong id="confirmPartStyle" style="color:#fff">GPT</strong></li>
                     <li>Quick Format: <strong id="confirmQuickFmt" style="color:#fff">Yes</strong></li>
+                    <li>Features: <strong id="confirmFeatures" style="color:#fff">-</strong></li>
                     <li>SHA256 verification included</li>
                 </ul>
             </div>
             <div class="btn-row">
-                <button class="btn btn-secondary" onclick="GoToStep 2">Back</button>
+                <button class="btn btn-secondary" onclick="GoToStep 3">Back</button>
                 <div style="flex:1"></div>
                 <button class="btn btn-primary" onclick="StartCreation">Create USB</button>
             </div>
         </div>
 
-        <div id="step4" class="panel">
-            <div class="section-title">Creating USB</div>
-            <div class="section-desc">Do not remove the USB drive.</div>
+        <div id="step5" class="panel">
+            <div class="section-title">Creating Bootable USB</div>
+            <div class="section-desc">Please wait while we create your installation media.</div>
+
             <div id="progressContainer" class="progress-container">
                 <div class="progress-percent" id="progressPercent">0%</div>
                 <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div>
@@ -1005,29 +1240,37 @@ End Sub
                     </div>
                 </div>
             </div>
+
+            <div class="warning-box" style="margin-top:12px">
+                <strong>Do not remove the USB drive</strong> until complete.
+            </div>
         </div>
 
-        <div id="step5" class="panel">
+        <div id="step6" class="panel">
             <div class="success-container">
                 <svg class="logo-svg" style="width:48px;height:48px;margin-bottom:12px" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <circle cx="24" cy="24" r="20" fill="#10b981" stroke="#34d399" stroke-width="2"/>
                     <path d="M15 24l7 7 11-14" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <div class="success-title">Complete!</div>
-                <div class="success-desc">Your Aegis OS USB is ready.</div>
+                <div class="success-title">USB Creation Complete!</div>
+                <div class="success-desc">Your Aegis OS bootable USB is ready.</div>
+
                 <div class="verification-box">
                     <div class="verification-title">&#10003; Download Verified</div>
                     <div class="verification-hash">SHA256 checksum passed</div>
                 </div>
+
                 <div class="success-steps">
                     <h3>Next Steps:</h3>
                     <ol>
-                        <li>Safely eject the USB</li>
-                        <li>Insert into target PC</li>
+                        <li>Safely eject the USB drive</li>
+                        <li>Insert into target computer</li>
                         <li>Restart and press F12/F2/DEL/ESC</li>
-                        <li>Boot from USB</li>
+                        <li>Select USB to boot</li>
+                        <li>Choose "Try" or "Install"</li>
                     </ol>
                 </div>
+
                 <div class="btn-row" style="justify-content:center">
                     <button class="btn btn-primary" onclick="CloseApp">Finish</button>
                 </div>
@@ -1036,7 +1279,7 @@ End Sub
     </div>
 
     <div class="footer">
-        Aegis OS v2.6 Pro - Commercial Software. Liability limited to purchase price.
+        Aegis OS v2.8 - Commercial Software. Liability limited to purchase price.
     </div>
 </div>
 </body>

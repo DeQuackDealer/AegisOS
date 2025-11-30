@@ -9,6 +9,8 @@ import subprocess
 import json
 import logging
 
+TIER_LIMIT = "full"  # "freemium" or "full" - controls feature availability
+
 class AegisGamingOptimizer:
     def __init__(self):
         self.config_file = "/etc/aegis/gaming-config.json"
@@ -128,28 +130,65 @@ class AegisGamingOptimizer:
         except Exception as e:
             logging.error(f"Wine setup failed: {e}")
     
+    def apply_custom_profile(self, game_name: str):
+        """Apply per-game optimization profile"""
+        if TIER_LIMIT == "freemium":
+            logging.warning("Per-game profiles require full edition")
+            print("⚠️ Per-game custom profiles are a premium feature.")
+            print("   Upgrade to unlock per-game optimization profiles.")
+            return False
+        
+        logging.info(f"Applying custom profile for: {game_name}")
+        return True
+    
+    def apply_overclocking(self, settings: dict):
+        """Apply GPU/CPU overclocking settings"""
+        if TIER_LIMIT == "freemium":
+            logging.warning("Overclocking features require full edition")
+            print("⚠️ Overclocking is a premium feature.")
+            print("   Upgrade to unlock GPU/CPU overclocking controls.")
+            return False
+        
+        logging.info("Applying overclocking settings")
+        return True
+    
     def apply_optimizations(self):
         """Apply all gaming optimizations"""
-        logging.info("Starting Aegis Gaming Optimizer - Freemium Edition")
+        if TIER_LIMIT == "freemium":
+            logging.info("Starting Aegis Gaming Optimizer - Freemium Edition")
+            print("🎮 Aegis Gaming Optimizer - Freemium Edition")
+        else:
+            logging.info("Starting Aegis Gaming Optimizer - Full Edition")
+            print("🎮 Aegis Gaming Optimizer - Full Edition")
         
         config = self.load_config()
         
-        # Apply CPU optimization
+        # Apply CPU optimization (basic - available in freemium)
         self.set_cpu_governor(config["cpu_governor"])
         
-        # Apply memory optimization
+        # Apply memory optimization (basic - available in freemium)
         self.optimize_memory(config["swappiness"], config["dirty_ratio"])
         
-        # Setup gaming compatibility layers
+        # Setup gaming compatibility layers (basic - available in freemium)
         if config["proton_enabled"]:
             self.setup_proton()
             
         self.setup_wine()
         
         logging.info("Gaming optimizations applied successfully")
-        print("🎮 Aegis Gaming Optimizer - Freemium Edition")
         print("✅ Basic gaming optimizations applied")
-        print("ℹ️  Upgrade to Gamer Edition for AI-powered optimizations")
+        
+        if TIER_LIMIT == "freemium":
+            print("")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("🔒 PREMIUM FEATURES (Upgrade to unlock):")
+            print("   • Per-game custom optimization profiles")
+            print("   • GPU/CPU overclocking controls")
+            print("   • AI-powered performance tuning")
+            print("   • Advanced latency optimizations")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        else:
+            print("✅ All premium features available")
 
 if __name__ == "__main__":
     optimizer = AegisGamingOptimizer()

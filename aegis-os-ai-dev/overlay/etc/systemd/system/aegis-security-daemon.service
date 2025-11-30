@@ -1,0 +1,44 @@
+[Unit]
+Description=Aegis OS Security Daemon
+Documentation=man:aegis-security-daemon(8)
+After=network.target local-fs.target
+Before=multi-user.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-security-daemon --foreground
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+
+User=root
+Group=root
+
+RuntimeDirectory=aegis
+RuntimeDirectoryMode=0755
+StateDirectory=aegis/security
+StateDirectoryMode=0750
+LogsDirectory=aegis
+LogsDirectoryMode=0750
+ConfigurationDirectory=aegis
+ConfigurationDirectoryMode=0755
+
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/aegis /var/log/aegis /var/run/aegis /etc/aegis
+
+PrivateTmp=true
+NoNewPrivileges=false
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_ADMIN CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+
+LimitNOFILE=65536
+LimitNPROC=512
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-security-daemon
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,1036 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Security Daemon - Background Security Service
+Monitors file integrity, watches for suspicious processes, rate limits auth attempts,
+and provides secure IPC for communication with other Aegis tools.
+"""
+
+import os
+import sys
+import json
+import signal
+import socket
+import hashlib
+import logging
+import threading
+import tempfile
+import stat
+import time
+import re
+import subprocess
+import grp
+import pwd
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Callable
+from collections import defaultdict
+
+TIER_LIMIT = "full"  # "freemium" or "full" - controls feature availability
+
+DAEMON_VERSION = "1.0.0"
+SUBPROCESS_TIMEOUT = 10
+FILE_CHECK_INTERVAL = 300  # 5 minutes
+PROCESS_CHECK_INTERVAL = 60  # 1 minute
+AUTH_RATE_LIMIT_WINDOW = 300  # 5 minutes
+AUTH_MAX_FAILURES = 5
+IPC_SOCKET_PATH = "/var/run/aegis/security.sock"
+PID_FILE = "/var/run/aegis/security-daemon.pid"
+SECURITY_LOG_FILE = "/var/log/aegis/security.log"
+
+MONITORED_PATHS = [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/group",
+    "/etc/sudoers",
+    "/etc/ssh/sshd_config",
+    "/etc/aegis",
+]
+
+SUSPICIOUS_PROCESS_PATTERNS = [
+    r"nc\s+-[el]",  # Netcat listening
+    r"ncat\s+-[el]",
+    r"socat\s+",
+    r"reverse.*shell",
+    r"bind.*shell",
+    r"/dev/tcp/",
+    r"bash\s+-i",
+    r"python.*-c.*socket",
+    r"perl.*socket",
+    r"php.*fsockopen",
+]
+
+
+class SecureAuditLogger:
+    """Secure audit logging with tamper detection"""
+    
+    def __init__(self, log_file: Path):
+        self.log_file = log_file
+        self.log_lock = threading.Lock()
+        self._setup_logger()
+    
+    def _setup_logger(self):
+        """Setup secure logging"""
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            file_handler = logging.FileHandler(self.log_file)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+            ))
+            handlers.append(file_handler)
+            
+            try:
+                os.chmod(self.log_file, stat.S_IRUSR | stat.S_IWUSR)
+            except (OSError, PermissionError):
+                pass
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisSecurityDaemon")
+    
+    def log_event(self, event_type: str, message: str, severity: str = "INFO",
+                  details: Optional[Dict] = None):
+        """Log a security event with structured data"""
+        with self.log_lock:
+            event = {
+                "timestamp": datetime.now().isoformat(),
+                "type": event_type,
+                "severity": severity,
+                "message": message,
+                "pid": os.getpid(),
+                "uid": os.getuid(),
+            }
+            if details:
+                event["details"] = details
+            
+            event_hash = hashlib.sha256(
+                json.dumps(event, sort_keys=True).encode()
+            ).hexdigest()[:16]
+            event["integrity"] = event_hash
+            
+            log_level = getattr(logging, severity.upper(), logging.INFO)
+            self.logger.log(log_level, f"[{event_type}] {message} | {json.dumps(event)}")
+
+
+class FileIntegrityMonitor:
+    """Monitor critical files for unauthorized changes"""
+    
+    def __init__(self, audit_logger: SecureAuditLogger, paths: List[str]):
+        self.audit_logger = audit_logger
+        self.paths = paths
+        self.baseline: Dict[str, Dict] = {}
+        self.baseline_file = Path("/var/lib/aegis/security/file-baseline.json")
+        self._load_baseline()
+    
+    def _load_baseline(self):
+        """Load file baseline from disk"""
+        try:
+            if self.baseline_file.exists():
+                with open(self.baseline_file, 'r') as f:
+                    self.baseline = json.load(f)
+        except (json.JSONDecodeError, OSError, PermissionError):
+            self.baseline = {}
+    
+    def _save_baseline(self):
+        """Save file baseline to disk"""
+        try:
+            self.baseline_file.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode='w', dir=str(self.baseline_file.parent),
+                delete=False, suffix='.tmp'
+            ) as f:
+                json.dump(self.baseline, f, indent=2)
+                temp_path = f.name
+            os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
+            os.rename(temp_path, self.baseline_file)
+        except (OSError, PermissionError) as e:
+            self.audit_logger.log_event(
+                "BASELINE_SAVE_ERROR", f"Failed to save baseline: {e}",
+                severity="WARNING"
+            )
+    
+    def _compute_file_hash(self, path: str) -> Optional[str]:
+        """Compute SHA256 hash of a file"""
+        try:
+            with open(path, 'rb') as f:
+                hasher = hashlib.sha256()
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+                return hasher.hexdigest()
+        except (OSError, PermissionError):
+            return None
+    
+    def _get_file_info(self, path: str) -> Optional[Dict]:
+        """Get file metadata"""
+        try:
+            stat_info = os.stat(path)
+            return {
+                "hash": self._compute_file_hash(path),
+                "mode": stat.S_IMODE(stat_info.st_mode),
+                "uid": stat_info.st_uid,
+                "gid": stat_info.st_gid,
+                "mtime": stat_info.st_mtime,
+                "size": stat_info.st_size
+            }
+        except (OSError, PermissionError):
+            return None
+    
+    def update_baseline(self, path: Optional[str] = None):
+        """Update baseline for specified path or all paths"""
+        paths_to_check = [path] if path else self.paths
+        
+        for p in paths_to_check:
+            path_obj = Path(p)
+            if path_obj.is_file():
+                info = self._get_file_info(p)
+                if info:
+                    self.baseline[p] = info
+            elif path_obj.is_dir():
+                try:
+                    for item in path_obj.rglob('*'):
+                        if item.is_file():
+                            info = self._get_file_info(str(item))
+                            if info:
+                                self.baseline[str(item)] = info
+                except (OSError, PermissionError):
+                    pass
+        
+        self._save_baseline()
+        self.audit_logger.log_event(
+            "BASELINE_UPDATED", f"Updated baseline for {len(self.baseline)} files",
+            severity="INFO"
+        )
+    
+    def check_integrity(self) -> List[Dict]:
+        """Check file integrity against baseline"""
+        changes = []
+        
+        for path, baseline_info in self.baseline.items():
+            current_info = self._get_file_info(path)
+            
+            if current_info is None:
+                changes.append({
+                    "path": path,
+                    "change": "deleted",
+                    "severity": "HIGH"
+                })
+                continue
+            
+            if current_info["hash"] != baseline_info["hash"]:
+                changes.append({
+                    "path": path,
+                    "change": "content_modified",
+                    "severity": "HIGH",
+                    "old_hash": baseline_info["hash"][:16],
+                    "new_hash": current_info["hash"][:16]
+                })
+            
+            if current_info["mode"] != baseline_info["mode"]:
+                changes.append({
+                    "path": path,
+                    "change": "permissions_changed",
+                    "severity": "MEDIUM",
+                    "old_mode": oct(baseline_info["mode"]),
+                    "new_mode": oct(current_info["mode"])
+                })
+            
+            if current_info["uid"] != baseline_info["uid"] or \
+               current_info["gid"] != baseline_info["gid"]:
+                changes.append({
+                    "path": path,
+                    "change": "ownership_changed",
+                    "severity": "MEDIUM",
+                    "old_owner": f"{baseline_info['uid']}:{baseline_info['gid']}",
+                    "new_owner": f"{current_info['uid']}:{current_info['gid']}"
+                })
+        
+        for path in self.paths:
+            path_obj = Path(path)
+            if path_obj.is_dir():
+                try:
+                    for item in path_obj.rglob('*'):
+                        if item.is_file() and str(item) not in self.baseline:
+                            changes.append({
+                                "path": str(item),
+                                "change": "new_file",
+                                "severity": "MEDIUM"
+                            })
+                except (OSError, PermissionError):
+                    pass
+        
+        for change in changes:
+            self.audit_logger.log_event(
+                "FILE_INTEGRITY_VIOLATION",
+                f"{change['change']} detected: {change['path']}",
+                severity="WARNING",
+                details=change
+            )
+        
+        return changes
+
+
+class ProcessMonitor:
+    """Monitor for suspicious processes"""
+    
+    def __init__(self, audit_logger: SecureAuditLogger, patterns: List[str]):
+        self.audit_logger = audit_logger
+        self.patterns = [re.compile(p, re.IGNORECASE) for p in patterns]
+        self.known_suspicious: Set[int] = set()
+    
+    def _get_process_cmdline(self, pid: int) -> Optional[str]:
+        """Get command line for a process"""
+        try:
+            cmdline_path = Path(f"/proc/{pid}/cmdline")
+            if cmdline_path.exists():
+                cmdline = cmdline_path.read_bytes().decode('utf-8', errors='replace')
+                return cmdline.replace('\x00', ' ').strip()
+        except (OSError, PermissionError):
+            pass
+        return None
+    
+    def _get_process_info(self, pid: int) -> Optional[Dict]:
+        """Get detailed process information"""
+        try:
+            status_path = Path(f"/proc/{pid}/status")
+            if not status_path.exists():
+                return None
+            
+            info = {"pid": pid}
+            content = status_path.read_text()
+            
+            for line in content.split('\n'):
+                if line.startswith('Name:'):
+                    info['name'] = line.split(':')[1].strip()
+                elif line.startswith('Uid:'):
+                    info['uid'] = int(line.split()[1])
+                elif line.startswith('Gid:'):
+                    info['gid'] = int(line.split()[1])
+                elif line.startswith('PPid:'):
+                    info['ppid'] = int(line.split()[1])
+            
+            info['cmdline'] = self._get_process_cmdline(pid)
+            return info
+        except (OSError, PermissionError, ValueError):
+            return None
+    
+    def scan_processes(self) -> List[Dict]:
+        """Scan for suspicious processes"""
+        suspicious = []
+        
+        try:
+            for entry in Path('/proc').iterdir():
+                if not entry.name.isdigit():
+                    continue
+                
+                pid = int(entry.name)
+                if pid in self.known_suspicious:
+                    continue
+                
+                cmdline = self._get_process_cmdline(pid)
+                if not cmdline:
+                    continue
+                
+                for pattern in self.patterns:
+                    if pattern.search(cmdline):
+                        proc_info = self._get_process_info(pid)
+                        if proc_info:
+                            suspicious.append({
+                                "pid": pid,
+                                "cmdline": cmdline[:200],
+                                "pattern": pattern.pattern,
+                                "info": proc_info
+                            })
+                            self.known_suspicious.add(pid)
+                        break
+        except (OSError, PermissionError):
+            pass
+        
+        for proc in suspicious:
+            self.audit_logger.log_event(
+                "SUSPICIOUS_PROCESS",
+                f"Suspicious process detected: PID {proc['pid']}",
+                severity="WARNING",
+                details=proc
+            )
+        
+        return suspicious
+    
+    def cleanup_known(self):
+        """Remove non-existent PIDs from known set"""
+        existing = set()
+        for pid in self.known_suspicious:
+            if Path(f"/proc/{pid}").exists():
+                existing.add(pid)
+        self.known_suspicious = existing
+
+
+class AuthRateLimiter:
+    """Rate limit failed authentication attempts"""
+    
+    def __init__(self, audit_logger: SecureAuditLogger,
+                 window_seconds: int = AUTH_RATE_LIMIT_WINDOW,
+                 max_failures: int = AUTH_MAX_FAILURES):
+        self.audit_logger = audit_logger
+        self.window_seconds = window_seconds
+        self.max_failures = max_failures
+        self.failures: Dict[str, List[datetime]] = defaultdict(list)
+        self.blocked: Dict[str, datetime] = {}
+        self.lock = threading.Lock()
+    
+    def record_failure(self, source: str, username: Optional[str] = None) -> bool:
+        """Record an auth failure, return True if source should be blocked"""
+        with self.lock:
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
+            
+            self.failures[source] = [
+                t for t in self.failures[source] if t > cutoff
+            ]
+            
+            self.failures[source].append(now)
+            
+            if len(self.failures[source]) >= self.max_failures:
+                self.blocked[source] = now + timedelta(seconds=self.window_seconds)
+                self.audit_logger.log_event(
+                    "AUTH_RATE_LIMIT",
+                    f"Blocked source due to excessive auth failures: {source}",
+                    severity="WARNING",
+                    details={
+                        "source": source,
+                        "username": username,
+                        "failures": len(self.failures[source]),
+                        "blocked_until": self.blocked[source].isoformat()
+                    }
+                )
+                return True
+        
+        return False
+    
+    def is_blocked(self, source: str) -> bool:
+        """Check if a source is currently blocked"""
+        with self.lock:
+            if source in self.blocked:
+                if datetime.now() < self.blocked[source]:
+                    return True
+                del self.blocked[source]
+        return False
+    
+    def parse_auth_log(self):
+        """Parse auth log for failed attempts (basic freemium feature)"""
+        auth_log = Path("/var/log/auth.log")
+        if not auth_log.exists():
+            return
+        
+        try:
+            result = subprocess.run(
+                ["tail", "-n", "100", str(auth_log)],
+                capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            
+            failure_pattern = re.compile(
+                r'(\w+\s+\d+\s+[\d:]+).*(?:Failed password|authentication failure).*'
+                r'(?:from\s+|rhost=)([\d.]+)'
+            )
+            
+            for line in result.stdout.split('\n'):
+                match = failure_pattern.search(line)
+                if match:
+                    source_ip = match.group(2)
+                    self.record_failure(source_ip)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    
+    def get_status(self) -> Dict:
+        """Get rate limiter status"""
+        with self.lock:
+            return {
+                "tracked_sources": len(self.failures),
+                "blocked_sources": len(self.blocked),
+                "blocked_list": list(self.blocked.keys())
+            }
+
+
+class SecureIPC:
+    """Secure IPC server for communication with other Aegis tools"""
+    
+    def __init__(self, audit_logger: SecureAuditLogger, socket_path: str = IPC_SOCKET_PATH):
+        self.audit_logger = audit_logger
+        self.socket_path = socket_path
+        self.socket = None
+        self.handlers: Dict[str, Callable] = {}
+        self.running = False
+        self.allowed_uids: Set[int] = {0}  # Only root by default
+        self.thread = None
+    
+    def register_handler(self, command: str, handler: Callable):
+        """Register a command handler"""
+        self.handlers[command] = handler
+    
+    def _validate_client(self, conn: socket.socket) -> bool:
+        """Validate client credentials using SO_PEERCRED"""
+        try:
+            creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            pid, uid, gid = \
+                int.from_bytes(creds[0:4], 'little'), \
+                int.from_bytes(creds[4:8], 'little'), \
+                int.from_bytes(creds[8:12], 'little')
+            
+            aegis_gid = None
+            try:
+                aegis_gid = grp.getgrnam('aegis').gr_gid
+            except KeyError:
+                pass
+            
+            if uid == 0 or uid in self.allowed_uids:
+                return True
+            
+            if aegis_gid and gid == aegis_gid:
+                return True
+            
+            self.audit_logger.log_event(
+                "IPC_AUTH_DENIED",
+                f"Unauthorized IPC connection attempt",
+                severity="WARNING",
+                details={"pid": pid, "uid": uid, "gid": gid}
+            )
+            return False
+        except (OSError, struct.error):
+            return False
+    
+    def _handle_client(self, conn: socket.socket, addr):
+        """Handle a client connection"""
+        try:
+            if not self._validate_client(conn):
+                conn.close()
+                return
+            
+            conn.settimeout(5.0)
+            data = conn.recv(4096).decode('utf-8', errors='replace')
+            
+            if not data:
+                conn.close()
+                return
+            
+            try:
+                request = json.loads(data)
+            except json.JSONDecodeError:
+                response = {"error": "Invalid JSON"}
+                conn.send(json.dumps(response).encode())
+                conn.close()
+                return
+            
+            command = request.get("command")
+            if not command or command not in self.handlers:
+                response = {"error": "Unknown command"}
+            else:
+                try:
+                    result = self.handlers[command](request.get("args", {}))
+                    response = {"success": True, "result": result}
+                except Exception as e:
+                    response = {"error": str(e)}
+            
+            conn.send(json.dumps(response).encode())
+            
+        except (socket.timeout, OSError) as e:
+            self.audit_logger.log_event(
+                "IPC_ERROR", f"Client handling error: {e}",
+                severity="DEBUG"
+            )
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+    
+    def start(self):
+        """Start the IPC server"""
+        socket_dir = Path(self.socket_path).parent
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        
+        if Path(self.socket_path).exists():
+            os.unlink(self.socket_path)
+        
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.bind(self.socket_path)
+        
+        os.chmod(self.socket_path, stat.S_IRUSR | stat.S_IWUSR | 
+                 stat.S_IRGRP | stat.S_IWGRP)
+        
+        self.socket.listen(5)
+        self.running = True
+        
+        self.thread = threading.Thread(target=self._server_loop, daemon=True)
+        self.thread.start()
+        
+        self.audit_logger.log_event(
+            "IPC_STARTED", f"Secure IPC server started at {self.socket_path}",
+            severity="INFO"
+        )
+    
+    def _server_loop(self):
+        """Main server loop"""
+        while self.running:
+            try:
+                self.socket.settimeout(1.0)
+                try:
+                    conn, addr = self.socket.accept()
+                    threading.Thread(
+                        target=self._handle_client, args=(conn, addr), daemon=True
+                    ).start()
+                except socket.timeout:
+                    continue
+            except OSError:
+                if self.running:
+                    time.sleep(0.1)
+    
+    def stop(self):
+        """Stop the IPC server"""
+        self.running = False
+        if self.socket:
+            try:
+                self.socket.close()
+            except OSError:
+                pass
+        if Path(self.socket_path).exists():
+            try:
+                os.unlink(self.socket_path)
+            except OSError:
+                pass
+
+
+class PrivilegeSeparation:
+    """Handle privilege separation after startup"""
+    
+    def __init__(self, audit_logger: SecureAuditLogger):
+        self.audit_logger = audit_logger
+        self.original_uid = os.getuid()
+        self.original_gid = os.getgid()
+        self.dropped = False
+    
+    def drop_privileges(self, target_user: str = "aegis",
+                       target_group: str = "aegis") -> bool:
+        """Drop root privileges to specified user/group"""
+        if os.getuid() != 0:
+            self.audit_logger.log_event(
+                "PRIV_SEP", "Not running as root, no privileges to drop",
+                severity="INFO"
+            )
+            return True
+        
+        try:
+            target_gid = grp.getgrnam(target_group).gr_gid
+        except KeyError:
+            try:
+                target_gid = grp.getgrnam("nogroup").gr_gid
+            except KeyError:
+                target_gid = 65534
+        
+        try:
+            target_uid = pwd.getpwnam(target_user).pw_uid
+        except KeyError:
+            try:
+                target_uid = pwd.getpwnam("nobody").pw_uid
+            except KeyError:
+                target_uid = 65534
+        
+        try:
+            os.setgroups([])
+            os.setgid(target_gid)
+            os.setuid(target_uid)
+            
+            try:
+                os.setuid(0)
+                self.audit_logger.log_event(
+                    "PRIV_SEP_FAILED",
+                    "Privilege drop verification failed - could regain root",
+                    severity="CRITICAL"
+                )
+                return False
+            except OSError:
+                pass
+            
+            self.dropped = True
+            self.audit_logger.log_event(
+                "PRIV_SEP_SUCCESS",
+                f"Dropped privileges to {target_user}:{target_group}",
+                severity="INFO",
+                details={"uid": target_uid, "gid": target_gid}
+            )
+            return True
+            
+        except OSError as e:
+            self.audit_logger.log_event(
+                "PRIV_SEP_FAILED", f"Failed to drop privileges: {e}",
+                severity="ERROR"
+            )
+            return False
+
+
+class AegisSecurityDaemon:
+    """Main security daemon class"""
+    
+    def __init__(self):
+        self.version = DAEMON_VERSION
+        self.running = False
+        self.config = self._load_config()
+        
+        Path("/var/lib/aegis/security").mkdir(parents=True, exist_ok=True)
+        Path("/var/log/aegis").mkdir(parents=True, exist_ok=True)
+        Path("/var/run/aegis").mkdir(parents=True, exist_ok=True)
+        
+        self.audit_logger = SecureAuditLogger(Path(SECURITY_LOG_FILE))
+        
+        self.file_monitor = FileIntegrityMonitor(
+            self.audit_logger, MONITORED_PATHS
+        )
+        self.process_monitor = ProcessMonitor(
+            self.audit_logger, SUSPICIOUS_PROCESS_PATTERNS
+        )
+        self.rate_limiter = AuthRateLimiter(self.audit_logger)
+        self.ipc = SecureIPC(self.audit_logger)
+        self.priv_sep = PrivilegeSeparation(self.audit_logger)
+        
+        self._setup_ipc_handlers()
+        self._setup_signals()
+    
+    def _load_config(self) -> Dict:
+        """Load daemon configuration"""
+        config_file = Path("/etc/aegis/security-daemon.json")
+        default_config = {
+            "file_check_interval": FILE_CHECK_INTERVAL,
+            "process_check_interval": PROCESS_CHECK_INTERVAL,
+            "drop_privileges": True,
+            "target_user": "aegis",
+            "target_group": "aegis",
+            "monitored_paths": MONITORED_PATHS,
+            "enable_file_monitor": True,
+            "enable_process_monitor": True,
+            "enable_rate_limiter": True,
+        }
+        
+        try:
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    loaded = json.load(f)
+                    default_config.update(loaded)
+        except (json.JSONDecodeError, OSError, PermissionError):
+            pass
+        
+        return default_config
+    
+    def _setup_ipc_handlers(self):
+        """Setup IPC command handlers"""
+        self.ipc.register_handler("status", self._handle_status)
+        self.ipc.register_handler("check_integrity", self._handle_check_integrity)
+        self.ipc.register_handler("update_baseline", self._handle_update_baseline)
+        self.ipc.register_handler("scan_processes", self._handle_scan_processes)
+        self.ipc.register_handler("rate_limit_status", self._handle_rate_limit_status)
+        self.ipc.register_handler("check_blocked", self._handle_check_blocked)
+    
+    def _handle_status(self, args: Dict) -> Dict:
+        """Handle status request"""
+        return {
+            "version": self.version,
+            "running": self.running,
+            "tier": TIER_LIMIT,
+            "uptime": time.time() - self.start_time if hasattr(self, 'start_time') else 0,
+            "file_monitor": self.config.get("enable_file_monitor", True),
+            "process_monitor": self.config.get("enable_process_monitor", True),
+            "rate_limiter": self.config.get("enable_rate_limiter", True),
+            "privileges_dropped": self.priv_sep.dropped
+        }
+    
+    def _handle_check_integrity(self, args: Dict) -> Dict:
+        """Handle file integrity check request"""
+        if TIER_LIMIT == "freemium":
+            return {
+                "tier_restricted": True,
+                "message": "Real-time integrity checking requires full edition"
+            }
+        changes = self.file_monitor.check_integrity()
+        return {"changes": changes, "count": len(changes)}
+    
+    def _handle_update_baseline(self, args: Dict) -> Dict:
+        """Handle baseline update request"""
+        path = args.get("path")
+        self.file_monitor.update_baseline(path)
+        return {"success": True, "files": len(self.file_monitor.baseline)}
+    
+    def _handle_scan_processes(self, args: Dict) -> Dict:
+        """Handle process scan request"""
+        suspicious = self.process_monitor.scan_processes()
+        return {"suspicious": suspicious, "count": len(suspicious)}
+    
+    def _handle_rate_limit_status(self, args: Dict) -> Dict:
+        """Handle rate limit status request"""
+        return self.rate_limiter.get_status()
+    
+    def _handle_check_blocked(self, args: Dict) -> Dict:
+        """Handle blocked check request"""
+        source = args.get("source")
+        if not source:
+            return {"error": "source required"}
+        return {"blocked": self.rate_limiter.is_blocked(source), "source": source}
+    
+    def _setup_signals(self):
+        """Setup signal handlers"""
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGHUP, self._handle_reload)
+    
+    def _handle_shutdown(self, signum, frame):
+        """Handle shutdown signal"""
+        self.audit_logger.log_event(
+            "DAEMON_SHUTDOWN", f"Received signal {signum}, shutting down",
+            severity="INFO"
+        )
+        self.running = False
+    
+    def _handle_reload(self, signum, frame):
+        """Handle reload signal"""
+        self.audit_logger.log_event(
+            "DAEMON_RELOAD", "Reloading configuration",
+            severity="INFO"
+        )
+        self.config = self._load_config()
+    
+    def _write_pid_file(self):
+        """Write PID file"""
+        try:
+            Path(PID_FILE).parent.mkdir(parents=True, exist_ok=True)
+            with open(PID_FILE, 'w') as f:
+                f.write(str(os.getpid()))
+            os.chmod(PID_FILE, stat.S_IRUSR | stat.S_IWUSR)
+        except (OSError, PermissionError) as e:
+            self.audit_logger.log_event(
+                "PID_FILE_ERROR", f"Failed to write PID file: {e}",
+                severity="WARNING"
+            )
+    
+    def _remove_pid_file(self):
+        """Remove PID file"""
+        try:
+            if Path(PID_FILE).exists():
+                os.unlink(PID_FILE)
+        except OSError:
+            pass
+    
+    def _file_monitor_loop(self):
+        """File integrity monitor loop"""
+        interval = self.config.get("file_check_interval", FILE_CHECK_INTERVAL)
+        while self.running:
+            try:
+                if self.config.get("enable_file_monitor", True):
+                    if TIER_LIMIT == "full":
+                        changes = self.file_monitor.check_integrity()
+                        if changes:
+                            self.audit_logger.log_event(
+                                "INTEGRITY_CHECK",
+                                f"Found {len(changes)} file integrity violations",
+                                severity="WARNING"
+                            )
+            except Exception as e:
+                self.audit_logger.log_event(
+                    "FILE_MONITOR_ERROR", str(e), severity="ERROR"
+                )
+            
+            for _ in range(interval):
+                if not self.running:
+                    break
+                time.sleep(1)
+    
+    def _process_monitor_loop(self):
+        """Process monitor loop"""
+        interval = self.config.get("process_check_interval", PROCESS_CHECK_INTERVAL)
+        while self.running:
+            try:
+                if self.config.get("enable_process_monitor", True):
+                    self.process_monitor.scan_processes()
+                    self.process_monitor.cleanup_known()
+            except Exception as e:
+                self.audit_logger.log_event(
+                    "PROCESS_MONITOR_ERROR", str(e), severity="ERROR"
+                )
+            
+            for _ in range(interval):
+                if not self.running:
+                    break
+                time.sleep(1)
+    
+    def _rate_limiter_loop(self):
+        """Auth rate limiter loop"""
+        while self.running:
+            try:
+                if self.config.get("enable_rate_limiter", True):
+                    self.rate_limiter.parse_auth_log()
+            except Exception as e:
+                self.audit_logger.log_event(
+                    "RATE_LIMITER_ERROR", str(e), severity="ERROR"
+                )
+            
+            for _ in range(60):
+                if not self.running:
+                    break
+                time.sleep(1)
+    
+    def run(self, foreground: bool = False):
+        """Run the security daemon"""
+        self.audit_logger.log_event(
+            "DAEMON_START", f"Aegis Security Daemon v{self.version} starting",
+            severity="INFO",
+            details={"tier": TIER_LIMIT, "pid": os.getpid()}
+        )
+        
+        if not self.file_monitor.baseline:
+            self.audit_logger.log_event(
+                "BASELINE_INIT", "Initializing file integrity baseline",
+                severity="INFO"
+            )
+            self.file_monitor.update_baseline()
+        
+        self._write_pid_file()
+        
+        self.ipc.start()
+        
+        if self.config.get("drop_privileges", True) and os.getuid() == 0:
+            self.priv_sep.drop_privileges(
+                self.config.get("target_user", "aegis"),
+                self.config.get("target_group", "aegis")
+            )
+        
+        self.running = True
+        self.start_time = time.time()
+        
+        threads = []
+        
+        if self.config.get("enable_file_monitor", True):
+            t = threading.Thread(target=self._file_monitor_loop, daemon=True)
+            t.start()
+            threads.append(t)
+        
+        if self.config.get("enable_process_monitor", True):
+            t = threading.Thread(target=self._process_monitor_loop, daemon=True)
+            t.start()
+            threads.append(t)
+        
+        if self.config.get("enable_rate_limiter", True):
+            t = threading.Thread(target=self._rate_limiter_loop, daemon=True)
+            t.start()
+            threads.append(t)
+        
+        self.audit_logger.log_event(
+            "DAEMON_READY", "Security daemon fully initialized and running",
+            severity="INFO"
+        )
+        
+        try:
+            while self.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        
+        self.ipc.stop()
+        self._remove_pid_file()
+        
+        self.audit_logger.log_event(
+            "DAEMON_STOPPED", "Security daemon stopped",
+            severity="INFO"
+        )
+
+
+def send_ipc_command(command: str, args: Optional[Dict] = None) -> Dict:
+    """Send command to the daemon via IPC"""
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(5.0)
+        sock.connect(IPC_SOCKET_PATH)
+        
+        request = {"command": command, "args": args or {}}
+        sock.send(json.dumps(request).encode())
+        
+        response = sock.recv(4096).decode('utf-8')
+        sock.close()
+        
+        return json.loads(response)
+    except (socket.error, json.JSONDecodeError) as e:
+        return {"error": str(e)}
+
+
+def main():
+    """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Aegis OS Security Daemon"
+    )
+    parser.add_argument(
+        "--foreground", "-f", action="store_true",
+        help="Run in foreground (don't daemonize)"
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Get daemon status"
+    )
+    parser.add_argument(
+        "--check-integrity", action="store_true",
+        help="Request file integrity check"
+    )
+    parser.add_argument(
+        "--update-baseline", action="store_true",
+        help="Update file integrity baseline"
+    )
+    parser.add_argument(
+        "--scan-processes", action="store_true",
+        help="Scan for suspicious processes"
+    )
+    parser.add_argument(
+        "--version", action="store_true",
+        help="Show version"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.version:
+        print(f"Aegis Security Daemon v{DAEMON_VERSION}")
+        print(f"Tier: {TIER_LIMIT}")
+        return 0
+    
+    if args.status:
+        result = send_ipc_command("status")
+        if "error" in result:
+            print(f"Daemon not running or error: {result['error']}")
+            return 1
+        print(json.dumps(result.get("result", result), indent=2))
+        return 0
+    
+    if args.check_integrity:
+        result = send_ipc_command("check_integrity")
+        print(json.dumps(result.get("result", result), indent=2))
+        return 0
+    
+    if args.update_baseline:
+        result = send_ipc_command("update_baseline")
+        print(json.dumps(result.get("result", result), indent=2))
+        return 0
+    
+    if args.scan_processes:
+        result = send_ipc_command("scan_processes")
+        print(json.dumps(result.get("result", result), indent=2))
+        return 0
+    
+    daemon = AegisSecurityDaemon()
+    daemon.run(foreground=args.foreground)
+    return 0
+
+
+if __name__ == "__main__":
+    import struct
+    sys.exit(main())

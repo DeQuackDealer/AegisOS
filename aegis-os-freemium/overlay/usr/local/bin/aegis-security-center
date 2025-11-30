@@ -20,6 +20,8 @@ try:
 except ImportError:
     TKINTER_AVAILABLE = False
 
+TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
+
 SUBPROCESS_TIMEOUT_SHORT = 10
 SUBPROCESS_TIMEOUT_MEDIUM = 30
 SCAN_TIMEOUT_QUICK = 300
@@ -349,6 +351,19 @@ class AegisSecurityCenter:
     
     def run_quick_scan(self, path="/home", timeout=None):
         """Run a quick antivirus scan with proper error handling and timeout"""
+        if TIER_LIMIT == "freemium":
+            self.log_event("scan", "Antivirus scanning requires full edition", "warning")
+            return {
+                "status": "tier_restricted",
+                "path": path,
+                "files_scanned": 0,
+                "threats_found": 0,
+                "threats": [],
+                "duration": 0,
+                "timestamp": datetime.now().isoformat(),
+                "error": "⚠️ Antivirus scanning is a premium feature. Upgrade to unlock ClamAV scanning, real-time protection, and threat detection."
+            }
+        
         self.log_event("scan", f"Starting quick scan of {path}", "info")
         
         if timeout is None:
@@ -454,6 +469,10 @@ class AegisSecurityCenter:
     
     def enable_firewall(self):
         """Enable the firewall with proper error handling"""
+        if TIER_LIMIT == "freemium":
+            self.log_event("firewall", "Firewall control requires full edition", "warning")
+            return False
+        
         ufw_available = shutil.which("ufw") is not None
         
         if ufw_available:
@@ -528,6 +547,10 @@ class AegisSecurityCenter:
     
     def disable_firewall(self):
         """Disable the firewall with proper error handling"""
+        if TIER_LIMIT == "freemium":
+            self.log_event("firewall", "Firewall control requires full edition", "warning")
+            return False
+        
         ufw_available = shutil.which("ufw") is not None
         
         if ufw_available:

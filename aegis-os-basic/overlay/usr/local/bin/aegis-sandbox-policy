@@ -1,0 +1,831 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Sandbox Policy Manager
+Manages AppArmor/Firejail profiles for Aegis tools with secure sandboxing.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import tempfile
+import stat
+import shutil
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+TIER_LIMIT = "full"  # "freemium" or "full" - controls feature availability
+
+SANDBOX_VERSION = "1.0.0"
+SUBPROCESS_TIMEOUT = 30
+
+APPARMOR_PROFILES_DIR = Path("/etc/apparmor.d")
+FIREJAIL_PROFILES_DIR = Path("/etc/firejail")
+AEGIS_POLICY_DIR = Path("/etc/aegis/sandbox")
+LOG_DIR = Path("/var/log/aegis")
+
+AEGIS_TOOLS = [
+    "aegis-app-store",
+    "aegis-backup-pro",
+    "aegis-desklink",
+    "aegis-desktop-effects",
+    "aegis-disk-cleaner",
+    "aegis-driver-manager",
+    "aegis-game-library",
+    "aegis-gaming-optimizer",
+    "aegis-kernel-interface",
+    "aegis-license-manager",
+    "aegis-mobile-link",
+    "aegis-nouveau-optimizer",
+    "aegis-nvidia-info",
+    "aegis-performance-tuner",
+    "aegis-security-center",
+    "aegis-security-daemon",
+    "aegis-stream",
+    "aegis-system-info",
+    "aegis-system-monitor",
+    "aegis-taskbar-manager",
+    "aegis-update-manager",
+    "aegis-vm-optimizer",
+    "aegis-wallpaper-engine",
+    "aegis-welcome",
+]
+
+DEFAULT_ALLOWED_PATHS = [
+    "/etc/aegis/**",
+    "/var/lib/aegis/**",
+    "/var/log/aegis/**",
+    "/usr/local/bin/aegis-*",
+    "/usr/share/aegis/**",
+    "/tmp/aegis-*",
+]
+
+RESTRICTED_PATHS = [
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/root/**",
+    "/home/*/.ssh/**",
+    "/home/*/.gnupg/**",
+]
+
+
+class SecureLogger:
+    """Secure audit logging for sandbox operations"""
+    
+    def __init__(self, log_file: Path):
+        self.log_file = log_file
+        self._setup()
+    
+    def _setup(self):
+        """Setup secure logging"""
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            pass
+        
+        handlers = [logging.StreamHandler()]
+        
+        try:
+            if LOG_DIR.exists() and os.access(str(LOG_DIR), os.W_OK):
+                handlers.append(logging.FileHandler(self.log_file))
+        except (OSError, PermissionError):
+            pass
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [%(levelname)s] %(message)s',
+            handlers=handlers
+        )
+        self.logger = logging.getLogger("AegisSandbox")
+    
+    def log(self, message: str, level: str = "INFO"):
+        """Log a message"""
+        log_level = getattr(logging, level.upper(), logging.INFO)
+        self.logger.log(log_level, message)
+
+
+class InputValidator:
+    """Input validation utilities"""
+    
+    @staticmethod
+    def validate_tool_name(name: str) -> bool:
+        """Validate an Aegis tool name"""
+        if not name:
+            return False
+        if not re.match(r'^aegis-[a-z0-9-]+$', name):
+            return False
+        return name in AEGIS_TOOLS
+    
+    @staticmethod
+    def validate_path(path: str) -> bool:
+        """Validate a file path (no traversal attacks)"""
+        if not path:
+            return False
+        if ".." in path:
+            return False
+        if "\x00" in path:
+            return False
+        try:
+            Path(path).resolve()
+            return True
+        except (ValueError, OSError):
+            return False
+    
+    @staticmethod
+    def sanitize_string(s: str, max_length: int = 256) -> str:
+        """Sanitize a string for safe use"""
+        if not s:
+            return ""
+        sanitized = re.sub(r'[^\w\s\-./]', '', s)
+        return sanitized[:max_length]
+
+
+class SecureTempFile:
+    """Secure temporary file handling"""
+    
+    def __init__(self, suffix: str = "", prefix: str = "aegis-", 
+                 dir: Optional[str] = None, mode: int = 0o600):
+        self.suffix = suffix
+        self.prefix = prefix
+        self.dir = dir or tempfile.gettempdir()
+        self.mode = mode
+        self.path = None
+        self._fd = None
+    
+    def __enter__(self):
+        self._fd, self.path = tempfile.mkstemp(
+            suffix=self.suffix, prefix=self.prefix, dir=self.dir
+        )
+        os.fchmod(self._fd, self.mode)
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup()
+    
+    def write(self, data: str):
+        """Write data to temp file"""
+        if self._fd is not None:
+            os.write(self._fd, data.encode() if isinstance(data, str) else data)
+    
+    def cleanup(self):
+        """Securely cleanup temp file"""
+        if self._fd is not None:
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
+        
+        if self.path and Path(self.path).exists():
+            try:
+                with open(self.path, 'wb') as f:
+                    f.write(b'\x00' * Path(self.path).stat().st_size)
+                os.unlink(self.path)
+            except (OSError, PermissionError):
+                try:
+                    os.unlink(self.path)
+                except OSError:
+                    pass
+
+
+class AppArmorManager:
+    """Manage AppArmor profiles for Aegis tools"""
+    
+    def __init__(self, logger: SecureLogger):
+        self.logger = logger
+        self.available = self._check_available()
+    
+    def _check_available(self) -> bool:
+        """Check if AppArmor is available"""
+        try:
+            result = subprocess.run(
+                ["aa-status", "--enabled"],
+                capture_output=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+    def _generate_profile(self, tool_name: str, 
+                         network_access: bool = False,
+                         extra_paths: Optional[List[str]] = None) -> str:
+        """Generate an AppArmor profile for an Aegis tool"""
+        if not InputValidator.validate_tool_name(tool_name):
+            raise ValueError(f"Invalid tool name: {tool_name}")
+        
+        tool_path = f"/usr/local/bin/{tool_name}"
+        
+        allowed_paths = DEFAULT_ALLOWED_PATHS.copy()
+        if extra_paths:
+            for p in extra_paths:
+                if InputValidator.validate_path(p):
+                    allowed_paths.append(p)
+        
+        profile = f"""# AppArmor profile for {tool_name}
+# Auto-generated by Aegis Sandbox Policy Manager
+
+#include <tunables/global>
+
+profile {tool_name} {tool_path} flags=(complain) {{
+  #include <abstractions/base>
+  #include <abstractions/python>
+  #include <abstractions/nameservice>
+  
+  # Binary execution
+  {tool_path} mr,
+  /usr/bin/python3* ix,
+  /usr/bin/env ix,
+  
+  # Standard library access
+  /usr/lib/** r,
+  /usr/share/** r,
+  /lib/** r,
+  /lib64/** r,
+  
+  # Aegis common paths
+"""
+        for path in allowed_paths:
+            profile += f"  {path} rw,\n"
+        
+        profile += """
+  # Deny sensitive paths
+"""
+        for path in RESTRICTED_PATHS:
+            profile += f"  deny {path} rwx,\n"
+        
+        if network_access:
+            profile += """
+  # Network access (required for this tool)
+  network inet stream,
+  network inet dgram,
+  network inet6 stream,
+  network inet6 dgram,
+"""
+        else:
+            profile += """
+  # Network access denied
+  deny network inet,
+  deny network inet6,
+"""
+        
+        profile += """
+  # Logging
+  /var/log/aegis/** w,
+  
+  # Temporary files (secure)
+  owner /tmp/aegis-* rw,
+  owner /var/tmp/aegis-* rw,
+}
+"""
+        return profile
+    
+    def install_profile(self, tool_name: str, 
+                       network_access: bool = False,
+                       extra_paths: Optional[List[str]] = None) -> bool:
+        """Install an AppArmor profile for a tool"""
+        if not self.available:
+            self.logger.log("AppArmor not available", "WARNING")
+            return False
+        
+        if TIER_LIMIT == "freemium":
+            self.logger.log("AppArmor profiles require full edition", "WARNING")
+            return False
+        
+        try:
+            profile_content = self._generate_profile(
+                tool_name, network_access, extra_paths
+            )
+            
+            profile_path = APPARMOR_PROFILES_DIR / f"aegis.{tool_name}"
+            
+            with SecureTempFile(prefix="apparmor-") as tmp:
+                tmp.write(profile_content)
+                
+                result = subprocess.run(
+                    ["sudo", "cp", tmp.path, str(profile_path)],
+                    capture_output=True, timeout=SUBPROCESS_TIMEOUT
+                )
+                if result.returncode != 0:
+                    self.logger.log(f"Failed to install profile: {result.stderr}", "ERROR")
+                    return False
+            
+            result = subprocess.run(
+                ["sudo", "apparmor_parser", "-r", str(profile_path)],
+                capture_output=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            
+            if result.returncode == 0:
+                self.logger.log(f"Installed AppArmor profile for {tool_name}")
+                return True
+            else:
+                self.logger.log(f"Failed to load profile: {result.stderr}", "ERROR")
+                return False
+            
+        except Exception as e:
+            self.logger.log(f"Profile installation error: {e}", "ERROR")
+            return False
+    
+    def remove_profile(self, tool_name: str) -> bool:
+        """Remove an AppArmor profile"""
+        if not self.available:
+            return False
+        
+        if not InputValidator.validate_tool_name(tool_name):
+            return False
+        
+        profile_path = APPARMOR_PROFILES_DIR / f"aegis.{tool_name}"
+        
+        try:
+            result = subprocess.run(
+                ["sudo", "apparmor_parser", "-R", str(profile_path)],
+                capture_output=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            
+            if profile_path.exists():
+                subprocess.run(
+                    ["sudo", "rm", str(profile_path)],
+                    capture_output=True, timeout=SUBPROCESS_TIMEOUT
+                )
+            
+            self.logger.log(f"Removed AppArmor profile for {tool_name}")
+            return True
+        except Exception as e:
+            self.logger.log(f"Profile removal error: {e}", "ERROR")
+            return False
+    
+    def get_status(self, tool_name: str) -> Dict:
+        """Get profile status for a tool"""
+        if not self.available:
+            return {"available": False, "loaded": False, "mode": "none"}
+        
+        if not InputValidator.validate_tool_name(tool_name):
+            return {"error": "Invalid tool name"}
+        
+        try:
+            result = subprocess.run(
+                ["aa-status", "--json"],
+                capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            if result.returncode == 0:
+                status = json.loads(result.stdout)
+                profile_name = tool_name
+                
+                for mode in ["enforce", "complain"]:
+                    if profile_name in status.get("profiles", {}).get(mode, []):
+                        return {"available": True, "loaded": True, "mode": mode}
+                
+                return {"available": True, "loaded": False, "mode": "none"}
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            pass
+        
+        return {"available": True, "loaded": False, "mode": "unknown"}
+
+
+class FirejailManager:
+    """Manage Firejail profiles for Aegis tools"""
+    
+    def __init__(self, logger: SecureLogger):
+        self.logger = logger
+        self.available = self._check_available()
+    
+    def _check_available(self) -> bool:
+        """Check if Firejail is available"""
+        return shutil.which("firejail") is not None
+    
+    def _generate_profile(self, tool_name: str,
+                         network_access: bool = False,
+                         extra_paths: Optional[List[str]] = None) -> str:
+        """Generate a Firejail profile for an Aegis tool"""
+        if not InputValidator.validate_tool_name(tool_name):
+            raise ValueError(f"Invalid tool name: {tool_name}")
+        
+        profile = f"""# Firejail profile for {tool_name}
+# Auto-generated by Aegis Sandbox Policy Manager
+
+# Basic security
+caps.drop all
+noroot
+seccomp
+nonewprivs
+nogroups
+
+# Filesystem restrictions
+private-dev
+private-tmp
+
+# Aegis directories
+whitelist /etc/aegis
+whitelist /var/lib/aegis
+whitelist /var/log/aegis
+whitelist /usr/local/bin/aegis-*
+whitelist /usr/share/aegis
+
+# Block sensitive files
+blacklist /etc/shadow
+blacklist /etc/gshadow
+blacklist /root
+blacklist ~/.ssh
+blacklist ~/.gnupg
+blacklist ~/.bash_history
+
+"""
+        
+        if extra_paths:
+            for p in extra_paths:
+                if InputValidator.validate_path(p):
+                    profile += f"whitelist {p}\n"
+        
+        if not network_access:
+            profile += """
+# No network access
+net none
+"""
+        
+        profile += """
+# Memory protection
+memory-deny-write-execute
+
+# Disable dangerous features
+no3d
+nodvd
+notv
+novideo
+"""
+        return profile
+    
+    def install_profile(self, tool_name: str,
+                       network_access: bool = False,
+                       extra_paths: Optional[List[str]] = None) -> bool:
+        """Install a Firejail profile for a tool"""
+        if not self.available:
+            self.logger.log("Firejail not available", "WARNING")
+            return False
+        
+        try:
+            profile_content = self._generate_profile(
+                tool_name, network_access, extra_paths
+            )
+            
+            profile_path = FIREJAIL_PROFILES_DIR / f"{tool_name}.profile"
+            
+            with SecureTempFile(prefix="firejail-") as tmp:
+                tmp.write(profile_content)
+                
+                result = subprocess.run(
+                    ["sudo", "cp", tmp.path, str(profile_path)],
+                    capture_output=True, timeout=SUBPROCESS_TIMEOUT
+                )
+                if result.returncode != 0:
+                    self.logger.log(f"Failed to install profile: {result.stderr}", "ERROR")
+                    return False
+            
+            subprocess.run(
+                ["sudo", "chmod", "644", str(profile_path)],
+                capture_output=True, timeout=SUBPROCESS_TIMEOUT
+            )
+            
+            self.logger.log(f"Installed Firejail profile for {tool_name}")
+            return True
+            
+        except Exception as e:
+            self.logger.log(f"Profile installation error: {e}", "ERROR")
+            return False
+    
+    def remove_profile(self, tool_name: str) -> bool:
+        """Remove a Firejail profile"""
+        if not InputValidator.validate_tool_name(tool_name):
+            return False
+        
+        profile_path = FIREJAIL_PROFILES_DIR / f"{tool_name}.profile"
+        
+        try:
+            if profile_path.exists():
+                subprocess.run(
+                    ["sudo", "rm", str(profile_path)],
+                    capture_output=True, timeout=SUBPROCESS_TIMEOUT
+                )
+            self.logger.log(f"Removed Firejail profile for {tool_name}")
+            return True
+        except Exception as e:
+            self.logger.log(f"Profile removal error: {e}", "ERROR")
+            return False
+    
+    def run_sandboxed(self, tool_name: str, args: Optional[List[str]] = None) -> int:
+        """Run a tool in Firejail sandbox"""
+        if not self.available:
+            self.logger.log("Firejail not available, running unsandboxed", "WARNING")
+            tool_path = f"/usr/local/bin/{tool_name}"
+            cmd = [tool_path] + (args or [])
+            return subprocess.call(cmd)
+        
+        if not InputValidator.validate_tool_name(tool_name):
+            return 1
+        
+        tool_path = f"/usr/local/bin/{tool_name}"
+        profile_path = FIREJAIL_PROFILES_DIR / f"{tool_name}.profile"
+        
+        cmd = ["firejail"]
+        if profile_path.exists():
+            cmd.extend([f"--profile={profile_path}"])
+        
+        cmd.append(tool_path)
+        if args:
+            cmd.extend(args)
+        
+        self.logger.log(f"Running {tool_name} in Firejail sandbox")
+        return subprocess.call(cmd)
+
+
+class AegisSandboxPolicy:
+    """Main sandbox policy manager"""
+    
+    def __init__(self):
+        self.version = SANDBOX_VERSION
+        self.logger = SecureLogger(LOG_DIR / "sandbox.log")
+        self.apparmor = AppArmorManager(self.logger)
+        self.firejail = FirejailManager(self.logger)
+        
+        self._ensure_dirs()
+        self._load_config()
+    
+    def _ensure_dirs(self):
+        """Create required directories"""
+        for d in [AEGIS_POLICY_DIR, LOG_DIR]:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except (OSError, PermissionError):
+                pass
+    
+    def _load_config(self):
+        """Load sandbox configuration"""
+        config_file = AEGIS_POLICY_DIR / "config.json"
+        
+        self.config = {
+            "use_apparmor": True,
+            "use_firejail": True,
+            "default_network": False,
+            "tool_policies": {}
+        }
+        
+        try:
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    loaded = json.load(f)
+                    self.config.update(loaded)
+        except (json.JSONDecodeError, OSError):
+            pass
+    
+    def _save_config(self):
+        """Save sandbox configuration"""
+        config_file = AEGIS_POLICY_DIR / "config.json"
+        
+        try:
+            with SecureTempFile(prefix="sandbox-config-") as tmp:
+                tmp.write(json.dumps(self.config, indent=2))
+                shutil.copy(tmp.path, config_file)
+                os.chmod(config_file, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+        except (OSError, PermissionError) as e:
+            self.logger.log(f"Failed to save config: {e}", "ERROR")
+    
+    def get_sandbox_status(self) -> Dict:
+        """Get overall sandbox status"""
+        return {
+            "version": self.version,
+            "tier": TIER_LIMIT,
+            "apparmor": {
+                "available": self.apparmor.available,
+                "enabled": self.config.get("use_apparmor", True)
+            },
+            "firejail": {
+                "available": self.firejail.available,
+                "enabled": self.config.get("use_firejail", True)
+            },
+            "tools_configured": len(self.config.get("tool_policies", {}))
+        }
+    
+    def apply_policy(self, tool_name: str, 
+                    network_access: bool = False,
+                    extra_paths: Optional[List[str]] = None) -> Dict:
+        """Apply sandbox policy to a tool"""
+        result = {
+            "tool": tool_name,
+            "success": False,
+            "apparmor": None,
+            "firejail": None,
+            "message": ""
+        }
+        
+        if not InputValidator.validate_tool_name(tool_name):
+            result["message"] = "Invalid tool name"
+            return result
+        
+        if self.config.get("use_apparmor", True) and self.apparmor.available:
+            result["apparmor"] = self.apparmor.install_profile(
+                tool_name, network_access, extra_paths
+            )
+        
+        if self.config.get("use_firejail", True) and self.firejail.available:
+            result["firejail"] = self.firejail.install_profile(
+                tool_name, network_access, extra_paths
+            )
+        
+        self.config.setdefault("tool_policies", {})[tool_name] = {
+            "network_access": network_access,
+            "extra_paths": extra_paths or [],
+            "applied": datetime.now().isoformat()
+        }
+        self._save_config()
+        
+        result["success"] = result["apparmor"] or result["firejail"]
+        if result["success"]:
+            result["message"] = f"Applied sandbox policy to {tool_name}"
+        else:
+            result["message"] = "No sandbox backend available or tier restricted"
+        
+        self.logger.log(result["message"])
+        return result
+    
+    def remove_policy(self, tool_name: str) -> Dict:
+        """Remove sandbox policy from a tool"""
+        result = {
+            "tool": tool_name,
+            "success": False,
+            "message": ""
+        }
+        
+        if not InputValidator.validate_tool_name(tool_name):
+            result["message"] = "Invalid tool name"
+            return result
+        
+        apparmor_removed = self.apparmor.remove_profile(tool_name)
+        firejail_removed = self.firejail.remove_profile(tool_name)
+        
+        if tool_name in self.config.get("tool_policies", {}):
+            del self.config["tool_policies"][tool_name]
+            self._save_config()
+        
+        result["success"] = apparmor_removed or firejail_removed
+        result["message"] = f"Removed sandbox policy from {tool_name}"
+        self.logger.log(result["message"])
+        return result
+    
+    def apply_all_policies(self) -> Dict:
+        """Apply sandbox policies to all Aegis tools"""
+        results = {"applied": [], "failed": [], "skipped": []}
+        
+        network_tools = {
+            "aegis-app-store",
+            "aegis-update-manager",
+            "aegis-stream",
+            "aegis-mobile-link",
+            "aegis-desklink",
+            "aegis-license-manager",
+        }
+        
+        for tool in AEGIS_TOOLS:
+            network = tool in network_tools
+            result = self.apply_policy(tool, network_access=network)
+            
+            if result["success"]:
+                results["applied"].append(tool)
+            elif TIER_LIMIT == "freemium" and tool not in network_tools:
+                results["skipped"].append(tool)
+            else:
+                results["failed"].append(tool)
+        
+        return results
+    
+    def get_tool_status(self, tool_name: str) -> Dict:
+        """Get sandbox status for a specific tool"""
+        if not InputValidator.validate_tool_name(tool_name):
+            return {"error": "Invalid tool name"}
+        
+        return {
+            "tool": tool_name,
+            "apparmor": self.apparmor.get_status(tool_name),
+            "firejail": {
+                "profile_exists": (
+                    FIREJAIL_PROFILES_DIR / f"{tool_name}.profile"
+                ).exists()
+            },
+            "policy": self.config.get("tool_policies", {}).get(tool_name)
+        }
+    
+    def run_sandboxed(self, tool_name: str, args: Optional[List[str]] = None) -> int:
+        """Run a tool in sandbox"""
+        if not InputValidator.validate_tool_name(tool_name):
+            print(f"Error: Invalid tool name: {tool_name}", file=sys.stderr)
+            return 1
+        
+        if self.config.get("use_firejail", True) and self.firejail.available:
+            return self.firejail.run_sandboxed(tool_name, args)
+        else:
+            tool_path = f"/usr/local/bin/{tool_name}"
+            cmd = [tool_path] + (args or [])
+            return subprocess.call(cmd)
+
+
+def main():
+    """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Aegis OS Sandbox Policy Manager"
+    )
+    parser.add_argument(
+        "--version", action="store_true",
+        help="Show version"
+    )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Show sandbox status"
+    )
+    parser.add_argument(
+        "--apply", metavar="TOOL",
+        help="Apply sandbox policy to a tool"
+    )
+    parser.add_argument(
+        "--apply-all", action="store_true",
+        help="Apply sandbox policies to all Aegis tools"
+    )
+    parser.add_argument(
+        "--remove", metavar="TOOL",
+        help="Remove sandbox policy from a tool"
+    )
+    parser.add_argument(
+        "--tool-status", metavar="TOOL",
+        help="Get sandbox status for a tool"
+    )
+    parser.add_argument(
+        "--run", metavar="TOOL",
+        help="Run a tool in sandbox"
+    )
+    parser.add_argument(
+        "--network", action="store_true",
+        help="Allow network access (with --apply)"
+    )
+    parser.add_argument(
+        "--list-tools", action="store_true",
+        help="List all Aegis tools"
+    )
+    parser.add_argument(
+        "extra_args", nargs="*",
+        help="Extra arguments for --run"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.version:
+        print(f"Aegis Sandbox Policy Manager v{SANDBOX_VERSION}")
+        print(f"Tier: {TIER_LIMIT}")
+        return 0
+    
+    manager = AegisSandboxPolicy()
+    
+    if args.status:
+        status = manager.get_sandbox_status()
+        print(json.dumps(status, indent=2))
+        return 0
+    
+    if args.list_tools:
+        print("Aegis Tools:")
+        for tool in AEGIS_TOOLS:
+            status = manager.get_tool_status(tool)
+            sandboxed = status.get("firejail", {}).get("profile_exists", False) or \
+                       status.get("apparmor", {}).get("loaded", False)
+            marker = "✓" if sandboxed else "○"
+            print(f"  {marker} {tool}")
+        return 0
+    
+    if args.apply:
+        result = manager.apply_policy(args.apply, network_access=args.network)
+        print(json.dumps(result, indent=2))
+        return 0 if result["success"] else 1
+    
+    if args.apply_all:
+        results = manager.apply_all_policies()
+        print(json.dumps(results, indent=2))
+        return 0
+    
+    if args.remove:
+        result = manager.remove_policy(args.remove)
+        print(json.dumps(result, indent=2))
+        return 0 if result["success"] else 1
+    
+    if args.tool_status:
+        status = manager.get_tool_status(args.tool_status)
+        print(json.dumps(status, indent=2))
+        return 0
+    
+    if args.run:
+        return manager.run_sandboxed(args.run, args.extra_args)
+    
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

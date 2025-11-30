@@ -7,6 +7,8 @@ import os
 import json
 import subprocess
 
+TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
+
 class AegisDesktopEffects:
     def __init__(self):
         self.config_file = "/etc/aegis/desktop-effects.json"
@@ -39,25 +41,32 @@ class AegisDesktopEffects:
     
     def setup_compositor(self):
         """Setup compositor for advanced visual effects"""
-        # Configure XFCE compositor for Windows 11 style effects
-        compositor_settings = [
-            ('/general/use_compositing', 'true'),
-            ('/general/frame_rate', '60'),
-            ('/general/synchronize_drawing', 'true'),
-            ('/general/present_windows', 'true'),
-            ('/general/show_frame_extents', 'false'),
-            ('/general/show_popup_shadow', 'true'),
-            ('/general/show_dock_shadow', 'true'),
-            ('/general/show_workspace_names', 'true'),
-        ]
+        if TIER_LIMIT == "freemium":
+            compositor_settings = [
+                ('/general/use_compositing', 'true'),
+                ('/general/frame_rate', '60'),
+                ('/general/synchronize_drawing', 'true'),
+            ]
+            print("✅ Basic compositor configured (Freemium)")
+            print("   🔒 Advanced compositing effects require upgrade")
+        else:
+            compositor_settings = [
+                ('/general/use_compositing', 'true'),
+                ('/general/frame_rate', '60'),
+                ('/general/synchronize_drawing', 'true'),
+                ('/general/present_windows', 'true'),
+                ('/general/show_frame_extents', 'false'),
+                ('/general/show_popup_shadow', 'true'),
+                ('/general/show_dock_shadow', 'true'),
+                ('/general/show_workspace_names', 'true'),
+            ]
+            print("✅ Compositor configured for advanced effects")
         
         for setting, value in compositor_settings:
             subprocess.run([
                 'xfconf-query', '-c', 'xfwm4',
                 '-p', setting, '-s', value
             ])
-        
-        print("✅ Compositor configured for advanced effects")
     
     def apply_window_effects(self):
         """Apply Windows 11 style window effects"""
@@ -112,10 +121,14 @@ title_vertical_offset_inactive=1
     
     def setup_animations(self):
         """Configure smooth animations"""
+        if TIER_LIMIT == "freemium":
+            print("🔒 Smooth animations are a premium feature")
+            print("   Upgrade to unlock window animations and transitions")
+            return
+        
         if not self.config["animations_enabled"]:
             return
             
-        # Enable window animations
         animation_settings = [
             ('/general/cycle_draw_frame', 'true'),
             ('/general/cycle_ghost', 'true'),
@@ -135,19 +148,52 @@ title_vertical_offset_inactive=1
         
         print("✅ Smooth animations configured")
     
+    def setup_blur(self):
+        """Setup blur effects"""
+        if TIER_LIMIT == "freemium":
+            print("🔒 Blur effects are a premium feature")
+            print("   Upgrade to unlock blur and acrylic effects")
+            return False
+        
+        if not self.config.get("blur_enabled", True):
+            return False
+            
+        print("✅ Blur effects enabled")
+        return True
+    
     def apply_all_effects(self):
         """Apply all desktop effects"""
-        print("🎨 Applying Aegis OS Desktop Effects - Windows 11 Style...")
+        if TIER_LIMIT == "freemium":
+            print("🎨 Applying Aegis OS Desktop Effects - Freemium Edition...")
+        else:
+            print("🎨 Applying Aegis OS Desktop Effects - Windows 11 Style...")
         
         self.setup_compositor()
         self.create_window_theme()
         self.apply_window_effects()
-        self.setup_animations()
         
-        # Restart window manager
+        if TIER_LIMIT == "full":
+            self.setup_blur()
+            self.setup_animations()
+        else:
+            self.setup_blur()
+            self.setup_animations()
+        
         subprocess.run(['xfwm4', '--replace'], capture_output=True)
         
-        print("✅ Windows 11 style desktop effects applied!")
+        if TIER_LIMIT == "freemium":
+            print("")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("✅ Basic transparency effects applied")
+            print("")
+            print("🔒 PREMIUM FEATURES (Upgrade to unlock):")
+            print("   • Blur and acrylic effects")
+            print("   • Smooth window animations")
+            print("   • Advanced compositing")
+            print("   • Custom visual themes")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        else:
+            print("✅ Windows 11 style desktop effects applied!")
 
 if __name__ == "__main__":
     effects = AegisDesktopEffects()

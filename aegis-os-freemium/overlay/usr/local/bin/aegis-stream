@@ -1,0 +1,1803 @@
+#!/usr/bin/env python3
+"""
+Aegis Stream v1.0 - Local Game & Desktop Streaming Solution
+Advanced low-latency streaming similar to Sunshine/Moonlight but fully custom
+Supports: PipeWire/X11 capture, VAAPI/NVENC/Software encoding, WebRTC/HTTP streaming
+"""
+
+import os
+import sys
+import json
+import socket
+import struct
+import subprocess
+import threading
+import time
+import signal
+import hashlib
+import secrets
+import base64
+from pathlib import Path
+from datetime import datetime
+from collections import deque
+from typing import Optional, Dict, List, Tuple
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, simpledialog
+    TK_AVAILABLE = True
+except ImportError:
+    TK_AVAILABLE = False
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+TIER_LIMIT = "freemium"
+
+APP_NAME = "Aegis Stream"
+APP_VERSION = "1.0.0"
+
+QUALITY_PRESETS = {
+    "ultra": {
+        "name": "Ultra (4K60)",
+        "resolution": (3840, 2160),
+        "fps": 60,
+        "bitrate": 50000,
+        "encoder_preset": "fast",
+        "tier_required": "full"
+    },
+    "high": {
+        "name": "High (1080p60)",
+        "resolution": (1920, 1080),
+        "fps": 60,
+        "bitrate": 20000,
+        "encoder_preset": "fast",
+        "tier_required": "full"
+    },
+    "medium": {
+        "name": "Medium (1080p30)",
+        "resolution": (1920, 1080),
+        "fps": 30,
+        "bitrate": 10000,
+        "encoder_preset": "medium",
+        "tier_required": "full"
+    },
+    "low": {
+        "name": "Low (720p30)",
+        "resolution": (1280, 720),
+        "fps": 30,
+        "bitrate": 5000,
+        "encoder_preset": "medium",
+        "tier_required": "freemium"
+    },
+    "potato": {
+        "name": "Potato (480p30)",
+        "resolution": (854, 480),
+        "fps": 30,
+        "bitrate": 2000,
+        "encoder_preset": "ultrafast",
+        "tier_required": "freemium"
+    }
+}
+
+STREAM_PORT = 47989
+CONTROL_PORT = 47990
+DISCOVERY_PORT = 47991
+INPUT_PORT = 47992
+
+DARK_BG = "#1a1a2e"
+DARK_FG = "#eaeaea"
+ACCENT_COLOR = "#4a9eff"
+DARK_ENTRY = "#16213e"
+DARK_BUTTON = "#0f3460"
+SUCCESS_COLOR = "#00d26a"
+WARNING_COLOR = "#ffc107"
+ERROR_COLOR = "#ff4757"
+
+
+class NetworkDiscovery:
+    """LAN host discovery using UDP broadcast"""
+    
+    def __init__(self, callback=None):
+        self.callback = callback
+        self.running = False
+        self.discovered_hosts = {}
+        self.broadcast_thread = None
+        self.listen_thread = None
+        self.host_info = {}
+        
+    def start_broadcasting(self, host_info: Dict):
+        """Start broadcasting host presence on LAN"""
+        self.host_info = host_info
+        self.running = True
+        self.broadcast_thread = threading.Thread(target=self._broadcast_loop, daemon=True)
+        self.broadcast_thread.start()
+        
+    def start_listening(self):
+        """Start listening for host broadcasts"""
+        self.running = True
+        self.listen_thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.listen_thread.start()
+        
+    def stop(self):
+        """Stop discovery"""
+        self.running = False
+        
+    def _broadcast_loop(self):
+        """Broadcast host presence periodically"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(1)
+            
+            while self.running:
+                try:
+                    message = json.dumps({
+                        "type": "aegis_stream_host",
+                        "version": APP_VERSION,
+                        "hostname": self.host_info.get("hostname", socket.gethostname()),
+                        "port": STREAM_PORT,
+                        "paired": self.host_info.get("paired", False),
+                        "quality": self.host_info.get("quality", "high"),
+                        "timestamp": time.time()
+                    }).encode()
+                    
+                    sock.sendto(message, ('<broadcast>', DISCOVERY_PORT))
+                except:
+                    pass
+                    
+                time.sleep(2)
+                
+        except Exception as e:
+            print(f"Broadcast error: {e}")
+        finally:
+            sock.close()
+            
+    def _listen_loop(self):
+        """Listen for host broadcasts"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('', DISCOVERY_PORT))
+            sock.settimeout(1)
+            
+            while self.running:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    message = json.loads(data.decode())
+                    
+                    if message.get("type") == "aegis_stream_host":
+                        host_id = f"{addr[0]}:{message.get('port', STREAM_PORT)}"
+                        self.discovered_hosts[host_id] = {
+                            "ip": addr[0],
+                            "port": message.get("port", STREAM_PORT),
+                            "hostname": message.get("hostname", "Unknown"),
+                            "quality": message.get("quality", "unknown"),
+                            "paired": message.get("paired", False),
+                            "last_seen": time.time()
+                        }
+                        
+                        if self.callback:
+                            self.callback(self.discovered_hosts)
+                except socket.timeout:
+                    pass
+                except:
+                    pass
+                    
+                current_time = time.time()
+                self.discovered_hosts = {
+                    k: v for k, v in self.discovered_hosts.items()
+                    if current_time - v.get("last_seen", 0) < 10
+                }
+                
+        except Exception as e:
+            print(f"Listen error: {e}")
+        finally:
+            sock.close()
+            
+    def get_hosts(self):
+        """Get list of discovered hosts"""
+        return list(self.discovered_hosts.values())
+
+
+class ScreenCapture:
+    """Screen capture using PipeWire, X11, or FFmpeg"""
+    
+    def __init__(self):
+        self.capture_method = self._detect_capture_method()
+        self.process = None
+        
+    def _detect_capture_method(self):
+        """Detect available capture method"""
+        if self._check_command("pw-cat"):
+            return "pipewire"
+        elif self._check_command("xdpyinfo"):
+            return "x11"
+        else:
+            return "ffmpeg"
+            
+    def _check_command(self, cmd):
+        """Check if command exists"""
+        try:
+            result = subprocess.run(["which", cmd], capture_output=True, timeout=5)
+            return result.returncode == 0
+        except:
+            return False
+            
+    def get_screen_info(self, display=":0"):
+        """Get screen resolution"""
+        try:
+            env = os.environ.copy()
+            env['DISPLAY'] = display
+            result = subprocess.run(
+                ['xrandr', '--query'],
+                capture_output=True, text=True, timeout=5, env=env
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if ' connected' in line and 'x' in line:
+                        for part in line.split():
+                            if 'x' in part and part[0].isdigit():
+                                res = part.split('+')[0]
+                                w, h = res.split('x')
+                                return int(w), int(h)
+        except:
+            pass
+        return 1920, 1080
+        
+    def get_capture_source(self, display=":0"):
+        """Get FFmpeg capture source based on method"""
+        if self.capture_method == "pipewire":
+            return "-f", "pipewire", "-i", "default"
+        else:
+            return "-f", "x11grab", "-i", display
+
+
+class HardwareEncoder:
+    """Hardware/software video encoder detection and configuration"""
+    
+    def __init__(self):
+        self.available_encoders = self._detect_encoders()
+        self.current_encoder = self._select_best_encoder()
+        
+    def _detect_encoders(self):
+        """Detect available hardware encoders"""
+        encoders = {"software": True}
+        
+        try:
+            result = subprocess.run(
+                ['ffmpeg', '-encoders'],
+                capture_output=True, text=True, timeout=10
+            )
+            output = result.stdout + result.stderr
+            
+            if 'h264_nvenc' in output:
+                encoders['nvenc'] = True
+            if 'h264_vaapi' in output:
+                encoders['vaapi'] = True
+            if 'h264_qsv' in output:
+                encoders['qsv'] = True
+            if 'h264_amf' in output:
+                encoders['amf'] = True
+                
+        except:
+            pass
+            
+        return encoders
+        
+    def _select_best_encoder(self):
+        """Select best available encoder"""
+        priority = ['nvenc', 'vaapi', 'qsv', 'amf', 'software']
+        for enc in priority:
+            if self.available_encoders.get(enc):
+                return enc
+        return 'software'
+        
+    def get_encoder_settings(self, encoder=None, preset="medium", bitrate=10000):
+        """Get FFmpeg encoder settings"""
+        encoder = encoder or self.current_encoder
+        
+        settings = {
+            'nvenc': [
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4' if preset == 'fast' else 'p6',
+                '-tune', 'll',
+                '-zerolatency', '1',
+                '-b:v', f'{bitrate}k',
+                '-maxrate', f'{int(bitrate * 1.5)}k',
+                '-bufsize', f'{bitrate}k',
+                '-profile:v', 'high',
+                '-rc', 'cbr'
+            ],
+            'vaapi': [
+                '-vaapi_device', '/dev/dri/renderD128',
+                '-c:v', 'h264_vaapi',
+                '-b:v', f'{bitrate}k',
+                '-maxrate', f'{int(bitrate * 1.5)}k',
+                '-bufsize', f'{bitrate}k',
+                '-profile:v', '100',
+                '-level', '41'
+            ],
+            'qsv': [
+                '-c:v', 'h264_qsv',
+                '-preset', 'veryfast' if preset == 'fast' else 'medium',
+                '-b:v', f'{bitrate}k',
+                '-maxrate', f'{int(bitrate * 1.5)}k',
+                '-bufsize', f'{bitrate}k',
+                '-look_ahead', '0'
+            ],
+            'amf': [
+                '-c:v', 'h264_amf',
+                '-usage', 'ultralowlatency',
+                '-b:v', f'{bitrate}k',
+                '-maxrate', f'{int(bitrate * 1.5)}k',
+                '-bufsize', f'{bitrate}k',
+                '-quality', 'speed' if preset == 'fast' else 'balanced'
+            ],
+            'software': [
+                '-c:v', 'libx264',
+                '-preset', 'ultrafast' if preset == 'fast' else preset,
+                '-tune', 'zerolatency',
+                '-b:v', f'{bitrate}k',
+                '-maxrate', f'{int(bitrate * 1.5)}k',
+                '-bufsize', f'{bitrate}k',
+                '-profile:v', 'high',
+                '-level', '4.1'
+            ]
+        }
+        
+        return settings.get(encoder, settings['software'])
+        
+    def get_available_encoders(self):
+        """Get list of available encoders"""
+        return [k for k, v in self.available_encoders.items() if v]
+
+
+class AudioCapture:
+    """Audio capture using PulseAudio/PipeWire"""
+    
+    def __init__(self):
+        self.audio_available = self._check_audio()
+        
+    def _check_audio(self):
+        """Check if audio capture is available"""
+        try:
+            result = subprocess.run(['pactl', 'info'], capture_output=True, timeout=5)
+            return result.returncode == 0
+        except:
+            return False
+            
+    def get_audio_source(self):
+        """Get FFmpeg audio source"""
+        if self.audio_available:
+            return ['-f', 'pulse', '-i', 'default']
+        return []
+        
+    def get_audio_encoder(self, bitrate=128):
+        """Get audio encoder settings"""
+        return ['-c:a', 'aac', '-b:a', f'{bitrate}k', '-ar', '48000']
+
+
+class InputForwarder:
+    """Forward keyboard/mouse/controller input from client to host"""
+    
+    def __init__(self):
+        self.running = False
+        self.server_socket = None
+        self.clients = []
+        
+    def start_server(self, port=INPUT_PORT):
+        """Start input forwarding server (host side)"""
+        self.running = True
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(('0.0.0.0', port))
+        self.server_socket.listen(5)
+        self.server_socket.settimeout(1)
+        
+        threading.Thread(target=self._accept_clients, daemon=True).start()
+        
+    def _accept_clients(self):
+        """Accept input forwarding clients"""
+        while self.running:
+            try:
+                client, addr = self.server_socket.accept()
+                self.clients.append(client)
+                threading.Thread(
+                    target=self._handle_client_input,
+                    args=(client, addr),
+                    daemon=True
+                ).start()
+            except socket.timeout:
+                pass
+            except:
+                break
+                
+    def _handle_client_input(self, client, addr):
+        """Handle input from client"""
+        try:
+            while self.running:
+                data = client.recv(4096)
+                if not data:
+                    break
+                    
+                try:
+                    event = json.loads(data.decode())
+                    self._process_input_event(event)
+                except:
+                    pass
+        except:
+            pass
+        finally:
+            if client in self.clients:
+                self.clients.remove(client)
+            client.close()
+            
+    def _process_input_event(self, event):
+        """Process and inject input event"""
+        event_type = event.get("type")
+        
+        if event_type == "mouse_move":
+            x, y = event.get("x", 0), event.get("y", 0)
+            self._inject_mouse_move(x, y)
+        elif event_type == "mouse_click":
+            button = event.get("button", 1)
+            pressed = event.get("pressed", True)
+            self._inject_mouse_click(button, pressed)
+        elif event_type == "key":
+            key = event.get("key", "")
+            pressed = event.get("pressed", True)
+            self._inject_key(key, pressed)
+        elif event_type == "scroll":
+            dx, dy = event.get("dx", 0), event.get("dy", 0)
+            self._inject_scroll(dx, dy)
+            
+    def _inject_mouse_move(self, x, y):
+        """Inject mouse movement using xdotool"""
+        try:
+            subprocess.run(['xdotool', 'mousemove', str(x), str(y)], 
+                         capture_output=True, timeout=0.1)
+        except:
+            pass
+            
+    def _inject_mouse_click(self, button, pressed):
+        """Inject mouse click"""
+        try:
+            action = 'mousedown' if pressed else 'mouseup'
+            subprocess.run(['xdotool', action, str(button)],
+                         capture_output=True, timeout=0.1)
+        except:
+            pass
+            
+    def _inject_key(self, key, pressed):
+        """Inject keyboard event"""
+        try:
+            action = 'keydown' if pressed else 'keyup'
+            subprocess.run(['xdotool', action, key],
+                         capture_output=True, timeout=0.1)
+        except:
+            pass
+            
+    def _inject_scroll(self, dx, dy):
+        """Inject scroll event"""
+        try:
+            if dy > 0:
+                subprocess.run(['xdotool', 'click', '4'],
+                             capture_output=True, timeout=0.1)
+            elif dy < 0:
+                subprocess.run(['xdotool', 'click', '5'],
+                             capture_output=True, timeout=0.1)
+        except:
+            pass
+            
+    def stop(self):
+        """Stop input forwarding"""
+        self.running = False
+        for client in self.clients:
+            try:
+                client.close()
+            except:
+                pass
+        if self.server_socket:
+            self.server_socket.close()
+
+
+class InputSender:
+    """Send input events to host (client side)"""
+    
+    def __init__(self):
+        self.socket = None
+        self.connected = False
+        
+    def connect(self, host, port=INPUT_PORT):
+        """Connect to host input server"""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(5)
+            self.socket.connect((host, port))
+            self.connected = True
+            return True
+        except Exception as e:
+            print(f"Failed to connect to input server: {e}")
+            return False
+            
+    def send_mouse_move(self, x, y):
+        """Send mouse move event"""
+        self._send_event({"type": "mouse_move", "x": x, "y": y})
+        
+    def send_mouse_click(self, button, pressed):
+        """Send mouse click event"""
+        self._send_event({"type": "mouse_click", "button": button, "pressed": pressed})
+        
+    def send_key(self, key, pressed):
+        """Send key event"""
+        self._send_event({"type": "key", "key": key, "pressed": pressed})
+        
+    def send_scroll(self, dx, dy):
+        """Send scroll event"""
+        self._send_event({"type": "scroll", "dx": dx, "dy": dy})
+        
+    def _send_event(self, event):
+        """Send event to host"""
+        if not self.connected or not self.socket:
+            return
+            
+        try:
+            data = json.dumps(event).encode()
+            self.socket.send(data)
+        except:
+            self.connected = False
+            
+    def disconnect(self):
+        """Disconnect from host"""
+        self.connected = False
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+
+
+class PairingManager:
+    """PIN-based pairing between host and clients"""
+    
+    def __init__(self, config_path=None):
+        self.config_path = config_path or Path.home() / ".config/aegis/stream-pairing.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.paired_clients = self._load_paired()
+        self.current_pin = None
+        self.pin_expiry = 0
+        
+    def _load_paired(self):
+        """Load paired clients"""
+        try:
+            with open(self.config_path, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+            
+    def _save_paired(self):
+        """Save paired clients"""
+        try:
+            with open(self.config_path, 'w') as f:
+                json.dump(self.paired_clients, f, indent=2)
+        except:
+            pass
+            
+    def generate_pin(self, duration=300):
+        """Generate a new 4-digit pairing PIN"""
+        self.current_pin = f"{secrets.randbelow(10000):04d}"
+        self.pin_expiry = time.time() + duration
+        return self.current_pin
+        
+    def verify_pin(self, pin, client_id):
+        """Verify PIN and pair client"""
+        if not self.current_pin or time.time() > self.pin_expiry:
+            return False, "PIN expired"
+            
+        if pin != self.current_pin:
+            return False, "Invalid PIN"
+            
+        token = secrets.token_hex(32)
+        self.paired_clients[client_id] = {
+            "token": token,
+            "paired_at": datetime.now().isoformat(),
+            "last_seen": datetime.now().isoformat()
+        }
+        self._save_paired()
+        
+        self.current_pin = None
+        
+        return True, token
+        
+    def is_paired(self, client_id, token=None):
+        """Check if client is paired"""
+        if client_id not in self.paired_clients:
+            return False
+            
+        if token and self.paired_clients[client_id].get("token") != token:
+            return False
+            
+        return True
+        
+    def unpair(self, client_id):
+        """Unpair a client"""
+        if client_id in self.paired_clients:
+            del self.paired_clients[client_id]
+            self._save_paired()
+            return True
+        return False
+        
+    def get_paired_clients(self):
+        """Get list of paired clients"""
+        return list(self.paired_clients.keys())
+
+
+class StreamServer:
+    """HTTP-based stream server"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.running = False
+        self.server_socket = None
+        self.clients = []
+        self.ffmpeg_process = None
+        self.stats = {
+            "connected_clients": 0,
+            "bytes_sent": 0,
+            "start_time": None,
+            "fps": 0,
+            "bitrate": 0
+        }
+        
+    def start(self, port=STREAM_PORT):
+        """Start stream server"""
+        self.running = True
+        self.stats["start_time"] = time.time()
+        
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(('0.0.0.0', port))
+        self.server_socket.listen(10 if TIER_LIMIT == "full" else 1)
+        self.server_socket.settimeout(1)
+        
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._start_capture, daemon=True).start()
+        
+    def _accept_loop(self):
+        """Accept client connections"""
+        while self.running:
+            try:
+                client, addr = self.server_socket.accept()
+                
+                if TIER_LIMIT == "freemium" and len(self.clients) >= 1:
+                    client.send(b"HTTP/1.1 503 Service Unavailable\r\n\r\nFreemium: Single client limit")
+                    client.close()
+                    continue
+                    
+                self.clients.append({
+                    "socket": client,
+                    "address": addr,
+                    "connected_at": time.time()
+                })
+                self.stats["connected_clients"] = len(self.clients)
+                
+                threading.Thread(
+                    target=self._handle_client,
+                    args=(client, addr),
+                    daemon=True
+                ).start()
+                
+            except socket.timeout:
+                pass
+            except:
+                break
+                
+    def _handle_client(self, client, addr):
+        """Handle client connection"""
+        try:
+            request = client.recv(4096).decode()
+            
+            response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: video/mp4\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Connection: keep-alive\r\n"
+                "Access-Control-Allow-Origin: *\r\n"
+                "\r\n"
+            )
+            client.send(response.encode())
+            
+            while self.running and client in [c["socket"] for c in self.clients]:
+                time.sleep(0.1)
+                
+        except:
+            pass
+        finally:
+            self._remove_client(client)
+            
+    def _remove_client(self, client):
+        """Remove client from list"""
+        self.clients = [c for c in self.clients if c["socket"] != client]
+        self.stats["connected_clients"] = len(self.clients)
+        try:
+            client.close()
+        except:
+            pass
+            
+    def _start_capture(self):
+        """Start FFmpeg capture and encoding"""
+        quality = self.engine.quality_preset
+        preset = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["medium"])
+        
+        if TIER_LIMIT == "freemium":
+            max_res = QUALITY_PRESETS["low"]["resolution"]
+            if preset["resolution"][0] > max_res[0]:
+                preset = QUALITY_PRESETS["low"]
+                
+        screen_capture = ScreenCapture()
+        encoder = HardwareEncoder()
+        audio_capture = AudioCapture()
+        
+        capture_src = screen_capture.get_capture_source()
+        encoder_settings = encoder.get_encoder_settings(
+            preset=preset["encoder_preset"],
+            bitrate=preset["bitrate"]
+        )
+        
+        width, height = preset["resolution"]
+        fps = preset["fps"]
+        
+        cmd = ['ffmpeg', '-y']
+        cmd.extend(['-framerate', str(fps)])
+        cmd.extend(list(capture_src))
+        
+        if TIER_LIMIT == "full" and self.engine.audio_enabled:
+            audio_src = audio_capture.get_audio_source()
+            if audio_src:
+                cmd.extend(audio_src)
+                
+        cmd.extend(['-s', f'{width}x{height}'])
+        cmd.extend(['-pix_fmt', 'yuv420p'])
+        cmd.extend(encoder_settings)
+        
+        if TIER_LIMIT == "full" and self.engine.audio_enabled:
+            cmd.extend(audio_capture.get_audio_encoder())
+        else:
+            cmd.extend(['-an'])
+            
+        cmd.extend([
+            '-f', 'mpegts',
+            '-flush_packets', '1',
+            f'udp://127.0.0.1:{STREAM_PORT + 1}?pkt_size=1316'
+        ])
+        
+        if TIER_LIMIT == "freemium":
+            cmd.extend([
+                '-vf', f"drawtext=text='AEGIS STREAM - UPGRADE FOR FULL FEATURES':"
+                       f"fontsize=20:fontcolor=white@0.7:x=10:y=10"
+            ])
+            
+        try:
+            self.ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            
+            self._relay_stream()
+            
+        except Exception as e:
+            print(f"FFmpeg error: {e}")
+            
+    def _relay_stream(self):
+        """Relay stream to connected clients"""
+        try:
+            relay_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            relay_socket.bind(('127.0.0.1', STREAM_PORT + 1))
+            relay_socket.settimeout(1)
+            
+            while self.running:
+                try:
+                    data, _ = relay_socket.recvfrom(65536)
+                    
+                    for client_info in self.clients[:]:
+                        try:
+                            client_info["socket"].send(data)
+                            self.stats["bytes_sent"] += len(data)
+                        except:
+                            self._remove_client(client_info["socket"])
+                            
+                except socket.timeout:
+                    pass
+                    
+        except:
+            pass
+        finally:
+            relay_socket.close()
+            
+    def stop(self):
+        """Stop stream server"""
+        self.running = False
+        
+        if self.ffmpeg_process:
+            try:
+                self.ffmpeg_process.terminate()
+                self.ffmpeg_process.wait(timeout=5)
+            except:
+                try:
+                    self.ffmpeg_process.kill()
+                except:
+                    pass
+                    
+        for client_info in self.clients:
+            try:
+                client_info["socket"].close()
+            except:
+                pass
+                
+        self.clients = []
+        
+        if self.server_socket:
+            self.server_socket.close()
+            
+    def get_stats(self):
+        """Get streaming statistics"""
+        if self.stats["start_time"]:
+            duration = time.time() - self.stats["start_time"]
+            if duration > 0:
+                self.stats["bitrate"] = int(self.stats["bytes_sent"] * 8 / duration / 1000)
+        return self.stats
+
+
+class StreamClient:
+    """Stream client for receiving and playing stream"""
+    
+    def __init__(self):
+        self.connected = False
+        self.host = None
+        self.port = None
+        self.mpv_process = None
+        self.input_sender = InputSender()
+        self.stats = {
+            "latency": 0,
+            "fps": 0,
+            "bitrate": 0,
+            "connected": False
+        }
+        
+    def connect(self, host, port=STREAM_PORT):
+        """Connect to stream host"""
+        self.host = host
+        self.port = port
+        
+        if self.input_sender.connect(host, INPUT_PORT):
+            self.connected = True
+            self.stats["connected"] = True
+            return True
+        return False
+        
+    def start_playback(self, fullscreen=False):
+        """Start video playback using MPV"""
+        if not self.host:
+            return False
+            
+        stream_url = f"http://{self.host}:{self.port}"
+        
+        cmd = [
+            'mpv',
+            '--no-cache',
+            '--untimed',
+            '--no-demuxer-thread',
+            '--video-sync=audio',
+            '--vd-lavc-threads=1',
+            '--cache=no',
+            '--cache-pause=no',
+            '--demuxer-lavf-buffersize=1024',
+            '--demuxer-lavf-analyzeduration=0.1',
+            '--demuxer-lavf-probescore=10',
+            '--framedrop=vo',
+            '--profile=low-latency',
+            '--interpolation=no',
+            '--video-latency-hacks=yes',
+        ]
+        
+        if fullscreen:
+            cmd.append('--fullscreen')
+            
+        cmd.append(stream_url)
+        
+        try:
+            self.mpv_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return True
+        except:
+            return False
+            
+    def stop(self):
+        """Stop playback and disconnect"""
+        self.connected = False
+        self.stats["connected"] = False
+        
+        if self.mpv_process:
+            try:
+                self.mpv_process.terminate()
+                self.mpv_process.wait(timeout=5)
+            except:
+                try:
+                    self.mpv_process.kill()
+                except:
+                    pass
+                    
+        self.input_sender.disconnect()
+        
+    def get_stats(self):
+        """Get client statistics"""
+        return self.stats
+
+
+class ControlServer:
+    """Control server for pairing and management"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.running = False
+        self.server_socket = None
+        
+    def start(self, port=CONTROL_PORT):
+        """Start control server"""
+        self.running = True
+        
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(('0.0.0.0', port))
+        self.server_socket.listen(5)
+        self.server_socket.settimeout(1)
+        
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+        
+    def _accept_loop(self):
+        """Accept control connections"""
+        while self.running:
+            try:
+                client, addr = self.server_socket.accept()
+                threading.Thread(
+                    target=self._handle_client,
+                    args=(client, addr),
+                    daemon=True
+                ).start()
+            except socket.timeout:
+                pass
+            except:
+                break
+                
+    def _handle_client(self, client, addr):
+        """Handle control connection"""
+        try:
+            client.settimeout(30)
+            data = client.recv(4096).decode()
+            
+            try:
+                request = json.loads(data)
+                response = self._process_request(request, addr)
+            except:
+                response = {"error": "Invalid request"}
+                
+            client.send(json.dumps(response).encode())
+            
+        except:
+            pass
+        finally:
+            client.close()
+            
+    def _process_request(self, request, addr):
+        """Process control request"""
+        action = request.get("action")
+        
+        if action == "pair":
+            pin = request.get("pin")
+            client_id = request.get("client_id", f"{addr[0]}:{addr[1]}")
+            success, result = self.engine.pairing.verify_pin(pin, client_id)
+            return {"success": success, "token": result if success else None, "error": result if not success else None}
+            
+        elif action == "get_info":
+            return {
+                "hostname": socket.gethostname(),
+                "version": APP_VERSION,
+                "quality": self.engine.quality_preset,
+                "tier": TIER_LIMIT,
+                "streaming": self.engine.streaming
+            }
+            
+        elif action == "verify_pairing":
+            client_id = request.get("client_id")
+            token = request.get("token")
+            return {"paired": self.engine.pairing.is_paired(client_id, token)}
+            
+        return {"error": "Unknown action"}
+        
+    def stop(self):
+        """Stop control server"""
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+
+
+class AegisStreamEngine:
+    """Main Aegis Stream Engine"""
+    
+    def __init__(self):
+        self.config_dir = Path.home() / ".config/aegis"
+        self.config_file = self.config_dir / "stream-config.json"
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.mode = "host"
+        self.streaming = False
+        self.quality_preset = "high" if TIER_LIMIT == "full" else "low"
+        self.audio_enabled = TIER_LIMIT == "full"
+        self.encryption_enabled = False
+        
+        self.pairing = PairingManager()
+        self.discovery = NetworkDiscovery()
+        self.input_forwarder = InputForwarder()
+        self.stream_server = None
+        self.control_server = None
+        self.stream_client = None
+        
+        self.load_config()
+        
+    def load_config(self):
+        """Load configuration"""
+        try:
+            with open(self.config_file, 'r') as f:
+                config = json.load(f)
+                self.quality_preset = config.get("quality", self.quality_preset)
+                self.audio_enabled = config.get("audio", self.audio_enabled) and TIER_LIMIT == "full"
+                self.encryption_enabled = config.get("encryption", False)
+        except:
+            pass
+            
+    def save_config(self):
+        """Save configuration"""
+        config = {
+            "quality": self.quality_preset,
+            "audio": self.audio_enabled,
+            "encryption": self.encryption_enabled
+        }
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+        except:
+            pass
+            
+    def start_host(self):
+        """Start streaming as host"""
+        if self.streaming:
+            return False
+            
+        self.mode = "host"
+        
+        self.stream_server = StreamServer(self)
+        self.control_server = ControlServer(self)
+        
+        self.stream_server.start()
+        self.control_server.start()
+        self.input_forwarder.start_server()
+        
+        host_info = {
+            "hostname": socket.gethostname(),
+            "quality": self.quality_preset,
+            "paired": len(self.pairing.get_paired_clients()) > 0
+        }
+        self.discovery.start_broadcasting(host_info)
+        
+        self.streaming = True
+        return True
+        
+    def stop_host(self):
+        """Stop hosting"""
+        if not self.streaming:
+            return
+            
+        self.streaming = False
+        
+        if self.stream_server:
+            self.stream_server.stop()
+        if self.control_server:
+            self.control_server.stop()
+            
+        self.input_forwarder.stop()
+        self.discovery.stop()
+        
+    def start_client(self, host, port=STREAM_PORT):
+        """Start as client and connect to host"""
+        self.mode = "client"
+        
+        self.stream_client = StreamClient()
+        
+        if self.stream_client.connect(host, port):
+            self.stream_client.start_playback()
+            self.streaming = True
+            return True
+        return False
+        
+    def stop_client(self):
+        """Stop client"""
+        if self.stream_client:
+            self.stream_client.stop()
+        self.streaming = False
+        
+    def set_quality(self, quality):
+        """Set stream quality"""
+        if quality not in QUALITY_PRESETS:
+            return False
+            
+        preset = QUALITY_PRESETS[quality]
+        
+        if TIER_LIMIT == "freemium" and preset["tier_required"] == "full":
+            return False
+            
+        self.quality_preset = quality
+        self.save_config()
+        return True
+        
+    def generate_pairing_pin(self):
+        """Generate pairing PIN"""
+        return self.pairing.generate_pin()
+        
+    def get_stats(self):
+        """Get current stats"""
+        if self.mode == "host" and self.stream_server:
+            return self.stream_server.get_stats()
+        elif self.mode == "client" and self.stream_client:
+            return self.stream_client.get_stats()
+        return {}
+
+
+class AegisStreamGUI:
+    """Aegis Stream GUI"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.root = None
+        self.discovered_hosts = {}
+        self.stats_update_id = None
+        
+    def run(self):
+        """Run the GUI"""
+        if not TK_AVAILABLE:
+            print("Error: tkinter not available")
+            return
+            
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{APP_VERSION}")
+        self.root.geometry("800x600")
+        self.root.configure(bg=DARK_BG)
+        self.root.minsize(700, 500)
+        
+        self._apply_dark_theme()
+        self._create_ui()
+        
+        self.engine.discovery.callback = self._on_hosts_discovered
+        self.engine.discovery.start_listening()
+        
+        self._update_stats()
+        
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.mainloop()
+        
+    def _apply_dark_theme(self):
+        """Apply dark theme to ttk widgets"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure(".", background=DARK_BG, foreground=DARK_FG,
+                       fieldbackground=DARK_ENTRY, font=('Segoe UI', 10))
+        style.configure("TFrame", background=DARK_BG)
+        style.configure("TLabel", background=DARK_BG, foreground=DARK_FG)
+        style.configure("TButton", background=DARK_BUTTON, foreground=DARK_FG,
+                       borderwidth=0, focuscolor=ACCENT_COLOR, padding=10)
+        style.map("TButton",
+                 background=[('active', ACCENT_COLOR), ('pressed', DARK_BUTTON)])
+        style.configure("Accent.TButton", background=ACCENT_COLOR, foreground="white")
+        style.map("Accent.TButton",
+                 background=[('active', '#3a8eef'), ('pressed', '#2a7edf')])
+        style.configure("TEntry", fieldbackground=DARK_ENTRY, foreground=DARK_FG,
+                       insertcolor=DARK_FG)
+        style.configure("TCombobox", fieldbackground=DARK_ENTRY, foreground=DARK_FG)
+        style.configure("TNotebook", background=DARK_BG)
+        style.configure("TNotebook.Tab", background=DARK_BUTTON, foreground=DARK_FG,
+                       padding=[15, 8])
+        style.map("TNotebook.Tab",
+                 background=[('selected', ACCENT_COLOR)])
+        style.configure("Treeview", background=DARK_ENTRY, foreground=DARK_FG,
+                       fieldbackground=DARK_ENTRY, borderwidth=0)
+        style.configure("Treeview.Heading", background=DARK_BUTTON, foreground=DARK_FG)
+        style.map("Treeview", background=[('selected', ACCENT_COLOR)])
+        style.configure("TProgressbar", background=ACCENT_COLOR, troughcolor=DARK_ENTRY)
+        style.configure("TScale", background=DARK_BG, troughcolor=DARK_ENTRY)
+        
+    def _create_ui(self):
+        """Create main UI"""
+        header = ttk.Frame(self.root)
+        header.pack(fill='x', padx=20, pady=15)
+        
+        title_frame = ttk.Frame(header)
+        title_frame.pack(side='left')
+        
+        title = ttk.Label(title_frame, text="⚡ Aegis Stream",
+                         font=('Segoe UI', 20, 'bold'))
+        title.pack(side='left')
+        
+        tier_text = "FREEMIUM" if TIER_LIMIT == "freemium" else "FULL"
+        tier_color = WARNING_COLOR if TIER_LIMIT == "freemium" else SUCCESS_COLOR
+        tier_label = tk.Label(title_frame, text=f"  [{tier_text}]",
+                             font=('Segoe UI', 12, 'bold'),
+                             fg=tier_color, bg=DARK_BG)
+        tier_label.pack(side='left', padx=10)
+        
+        self.status_label = ttk.Label(header, text="● Idle",
+                                      font=('Segoe UI', 11))
+        self.status_label.pack(side='right')
+        
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        host_frame = ttk.Frame(notebook)
+        client_frame = ttk.Frame(notebook)
+        settings_frame = ttk.Frame(notebook)
+        
+        notebook.add(host_frame, text="  🖥️ Host  ")
+        notebook.add(client_frame, text="  📺 Client  ")
+        notebook.add(settings_frame, text="  ⚙️ Settings  ")
+        
+        self._create_host_tab(host_frame)
+        self._create_client_tab(client_frame)
+        self._create_settings_tab(settings_frame)
+        
+        if TIER_LIMIT == "freemium":
+            upgrade_frame = ttk.Frame(self.root)
+            upgrade_frame.pack(fill='x', padx=20, pady=10)
+            
+            upgrade_label = tk.Label(upgrade_frame,
+                                    text="⚠️ Freemium: 720p30 max, single client, no audio. Upgrade for full features!",
+                                    font=('Segoe UI', 10),
+                                    fg=WARNING_COLOR, bg=DARK_BG)
+            upgrade_label.pack(side='left')
+            
+            upgrade_btn = ttk.Button(upgrade_frame, text="Upgrade",
+                                    style="Accent.TButton",
+                                    command=self._show_upgrade)
+            upgrade_btn.pack(side='right')
+            
+    def _create_host_tab(self, parent):
+        """Create host mode tab"""
+        controls_frame = ttk.Frame(parent)
+        controls_frame.pack(fill='x', padx=20, pady=20)
+        
+        self.start_host_btn = ttk.Button(controls_frame, text="▶️ Start Streaming",
+                                         style="Accent.TButton",
+                                         command=self._toggle_host)
+        self.start_host_btn.pack(side='left', padx=5)
+        
+        pair_btn = ttk.Button(controls_frame, text="🔗 Generate Pairing PIN",
+                             command=self._generate_pin)
+        pair_btn.pack(side='left', padx=5)
+        
+        quality_frame = ttk.Frame(controls_frame)
+        quality_frame.pack(side='right')
+        
+        ttk.Label(quality_frame, text="Quality:").pack(side='left', padx=5)
+        
+        available_qualities = []
+        for key, preset in QUALITY_PRESETS.items():
+            if TIER_LIMIT == "full" or preset["tier_required"] == "freemium":
+                available_qualities.append(f"{preset['name']}")
+                
+        self.quality_var = tk.StringVar()
+        current_preset = QUALITY_PRESETS.get(self.engine.quality_preset, QUALITY_PRESETS["medium"])
+        self.quality_var.set(current_preset["name"])
+        
+        quality_combo = ttk.Combobox(quality_frame, textvariable=self.quality_var,
+                                    values=available_qualities, state='readonly', width=20)
+        quality_combo.pack(side='left')
+        quality_combo.bind('<<ComboboxSelected>>', self._on_quality_change)
+        
+        info_frame = ttk.LabelFrame(parent, text="Stream Information")
+        info_frame.pack(fill='x', padx=20, pady=10)
+        
+        info_grid = ttk.Frame(info_frame)
+        info_grid.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(info_grid, text="Hostname:").grid(row=0, column=0, sticky='w', pady=3)
+        self.hostname_label = ttk.Label(info_grid, text=socket.gethostname(),
+                                        font=('Segoe UI', 10, 'bold'))
+        self.hostname_label.grid(row=0, column=1, sticky='w', padx=10, pady=3)
+        
+        ttk.Label(info_grid, text="Local IP:").grid(row=1, column=0, sticky='w', pady=3)
+        self.ip_label = ttk.Label(info_grid, text=self._get_local_ip(),
+                                  font=('Segoe UI', 10, 'bold'))
+        self.ip_label.grid(row=1, column=1, sticky='w', padx=10, pady=3)
+        
+        ttk.Label(info_grid, text="Stream Port:").grid(row=2, column=0, sticky='w', pady=3)
+        ttk.Label(info_grid, text=str(STREAM_PORT),
+                 font=('Segoe UI', 10, 'bold')).grid(row=2, column=1, sticky='w', padx=10, pady=3)
+        
+        ttk.Label(info_grid, text="Encoder:").grid(row=0, column=2, sticky='w', padx=30, pady=3)
+        encoder = HardwareEncoder()
+        encoder_text = encoder.current_encoder.upper()
+        self.encoder_label = ttk.Label(info_grid, text=encoder_text,
+                                       font=('Segoe UI', 10, 'bold'))
+        self.encoder_label.grid(row=0, column=3, sticky='w', padx=10, pady=3)
+        
+        clients_frame = ttk.LabelFrame(parent, text="Connected Clients")
+        clients_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        columns = ('address', 'connected', 'data_sent')
+        self.clients_tree = ttk.Treeview(clients_frame, columns=columns, show='headings', height=6)
+        self.clients_tree.heading('address', text='Client Address')
+        self.clients_tree.heading('connected', text='Connected')
+        self.clients_tree.heading('data_sent', text='Data Sent')
+        self.clients_tree.column('address', width=200)
+        self.clients_tree.column('connected', width=150)
+        self.clients_tree.column('data_sent', width=100)
+        self.clients_tree.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        stats_frame = ttk.Frame(parent)
+        stats_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.host_bitrate_label = ttk.Label(stats_frame, text="Bitrate: -- Kbps")
+        self.host_bitrate_label.pack(side='left', padx=20)
+        
+        self.host_clients_label = ttk.Label(stats_frame, text="Clients: 0")
+        self.host_clients_label.pack(side='left', padx=20)
+        
+        self.host_uptime_label = ttk.Label(stats_frame, text="Uptime: --:--:--")
+        self.host_uptime_label.pack(side='left', padx=20)
+        
+    def _create_client_tab(self, parent):
+        """Create client mode tab"""
+        connect_frame = ttk.Frame(parent)
+        connect_frame.pack(fill='x', padx=20, pady=20)
+        
+        ttk.Label(connect_frame, text="Host Address:").pack(side='left', padx=5)
+        
+        self.host_entry = ttk.Entry(connect_frame, width=30)
+        self.host_entry.pack(side='left', padx=5)
+        self.host_entry.insert(0, "192.168.1.100")
+        
+        self.connect_btn = ttk.Button(connect_frame, text="🔌 Connect",
+                                      style="Accent.TButton",
+                                      command=self._toggle_client)
+        self.connect_btn.pack(side='left', padx=10)
+        
+        pair_frame = ttk.Frame(connect_frame)
+        pair_frame.pack(side='right')
+        
+        ttk.Label(pair_frame, text="PIN:").pack(side='left', padx=5)
+        self.pin_entry = ttk.Entry(pair_frame, width=6)
+        self.pin_entry.pack(side='left', padx=5)
+        
+        pair_btn = ttk.Button(pair_frame, text="Pair", command=self._pair_with_host)
+        pair_btn.pack(side='left', padx=5)
+        
+        discovery_frame = ttk.LabelFrame(parent, text="Discovered Hosts on LAN")
+        discovery_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        
+        columns = ('hostname', 'ip', 'quality', 'status')
+        self.hosts_tree = ttk.Treeview(discovery_frame, columns=columns, show='headings', height=8)
+        self.hosts_tree.heading('hostname', text='Hostname')
+        self.hosts_tree.heading('ip', text='IP Address')
+        self.hosts_tree.heading('quality', text='Quality')
+        self.hosts_tree.heading('status', text='Status')
+        self.hosts_tree.column('hostname', width=150)
+        self.hosts_tree.column('ip', width=150)
+        self.hosts_tree.column('quality', width=100)
+        self.hosts_tree.column('status', width=100)
+        self.hosts_tree.pack(fill='both', expand=True, padx=10, pady=10)
+        self.hosts_tree.bind('<Double-1>', self._on_host_double_click)
+        
+        refresh_btn = ttk.Button(discovery_frame, text="🔄 Refresh",
+                                command=self._refresh_hosts)
+        refresh_btn.pack(pady=5)
+        
+        client_stats_frame = ttk.Frame(parent)
+        client_stats_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.client_latency_label = ttk.Label(client_stats_frame, text="Latency: -- ms")
+        self.client_latency_label.pack(side='left', padx=20)
+        
+        self.client_fps_label = ttk.Label(client_stats_frame, text="FPS: --")
+        self.client_fps_label.pack(side='left', padx=20)
+        
+        self.client_bitrate_label = ttk.Label(client_stats_frame, text="Bitrate: -- Kbps")
+        self.client_bitrate_label.pack(side='left', padx=20)
+        
+    def _create_settings_tab(self, parent):
+        """Create settings tab"""
+        encoder_frame = ttk.LabelFrame(parent, text="Encoder Settings")
+        encoder_frame.pack(fill='x', padx=20, pady=10)
+        
+        encoder_grid = ttk.Frame(encoder_frame)
+        encoder_grid.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(encoder_grid, text="Preferred Encoder:").grid(row=0, column=0, sticky='w', pady=5)
+        
+        encoder = HardwareEncoder()
+        available_encoders = encoder.get_available_encoders()
+        encoder_names = [e.upper() for e in available_encoders]
+        
+        self.encoder_var = tk.StringVar(value=encoder.current_encoder.upper())
+        encoder_combo = ttk.Combobox(encoder_grid, textvariable=self.encoder_var,
+                                    values=encoder_names, state='readonly', width=15)
+        encoder_combo.grid(row=0, column=1, sticky='w', padx=10, pady=5)
+        
+        audio_frame = ttk.LabelFrame(parent, text="Audio Settings")
+        audio_frame.pack(fill='x', padx=20, pady=10)
+        
+        audio_grid = ttk.Frame(audio_frame)
+        audio_grid.pack(fill='x', padx=10, pady=10)
+        
+        self.audio_var = tk.BooleanVar(value=self.engine.audio_enabled)
+        audio_check = ttk.Checkbutton(audio_grid, text="Enable Audio Streaming",
+                                      variable=self.audio_var,
+                                      command=self._on_audio_toggle)
+        audio_check.grid(row=0, column=0, sticky='w', pady=5)
+        
+        if TIER_LIMIT == "freemium":
+            audio_check.configure(state='disabled')
+            ttk.Label(audio_grid, text="(Requires Full Version)",
+                     foreground=WARNING_COLOR).grid(row=0, column=1, padx=10)
+                     
+        network_frame = ttk.LabelFrame(parent, text="Network Settings")
+        network_frame.pack(fill='x', padx=20, pady=10)
+        
+        network_grid = ttk.Frame(network_frame)
+        network_grid.pack(fill='x', padx=10, pady=10)
+        
+        self.encryption_var = tk.BooleanVar(value=self.engine.encryption_enabled)
+        encrypt_check = ttk.Checkbutton(network_grid, text="Enable Stream Encryption (TLS)",
+                                        variable=self.encryption_var,
+                                        command=self._on_encryption_toggle)
+        encrypt_check.grid(row=0, column=0, sticky='w', pady=5)
+        
+        self.local_only_var = tk.BooleanVar(value=True)
+        local_check = ttk.Checkbutton(network_grid, text="Local Network Only",
+                                      variable=self.local_only_var)
+        local_check.grid(row=1, column=0, sticky='w', pady=5)
+        
+        input_frame = ttk.LabelFrame(parent, text="Input Settings")
+        input_frame.pack(fill='x', padx=20, pady=10)
+        
+        input_grid = ttk.Frame(input_frame)
+        input_grid.pack(fill='x', padx=10, pady=10)
+        
+        self.input_enabled_var = tk.BooleanVar(value=True)
+        input_check = ttk.Checkbutton(input_grid, text="Enable Input Forwarding",
+                                      variable=self.input_enabled_var)
+        input_check.grid(row=0, column=0, sticky='w', pady=5)
+        
+        self.mouse_var = tk.BooleanVar(value=True)
+        mouse_check = ttk.Checkbutton(input_grid, text="Forward Mouse",
+                                      variable=self.mouse_var)
+        mouse_check.grid(row=1, column=0, sticky='w', pady=5, padx=20)
+        
+        self.keyboard_var = tk.BooleanVar(value=True)
+        keyboard_check = ttk.Checkbutton(input_grid, text="Forward Keyboard",
+                                         variable=self.keyboard_var)
+        keyboard_check.grid(row=2, column=0, sticky='w', pady=5, padx=20)
+        
+        about_frame = ttk.LabelFrame(parent, text="About")
+        about_frame.pack(fill='x', padx=20, pady=10)
+        
+        about_text = f"""
+{APP_NAME} v{APP_VERSION}
+Local Game & Desktop Streaming Solution
+
+Part of Aegis OS - The Ultimate Linux Gaming Distribution
+
+Tier: {'Freemium (Limited)' if TIER_LIMIT == 'freemium' else 'Full Version'}
+"""
+        ttk.Label(about_frame, text=about_text, justify='left').pack(padx=10, pady=10)
+        
+    def _toggle_host(self):
+        """Toggle host streaming"""
+        if self.engine.streaming and self.engine.mode == "host":
+            self.engine.stop_host()
+            self.start_host_btn.configure(text="▶️ Start Streaming")
+            self.status_label.configure(text="● Idle")
+        else:
+            if self.engine.start_host():
+                self.start_host_btn.configure(text="⏹️ Stop Streaming")
+                self.status_label.configure(text="● Streaming")
+            else:
+                messagebox.showerror("Error", "Failed to start streaming")
+                
+    def _toggle_client(self):
+        """Toggle client connection"""
+        if self.engine.streaming and self.engine.mode == "client":
+            self.engine.stop_client()
+            self.connect_btn.configure(text="🔌 Connect")
+            self.status_label.configure(text="● Idle")
+        else:
+            host = self.host_entry.get().strip()
+            if not host:
+                messagebox.showerror("Error", "Please enter host address")
+                return
+                
+            if self.engine.start_client(host):
+                self.connect_btn.configure(text="🔌 Disconnect")
+                self.status_label.configure(text="● Connected")
+            else:
+                messagebox.showerror("Error", "Failed to connect to host")
+                
+    def _generate_pin(self):
+        """Generate and display pairing PIN"""
+        pin = self.engine.generate_pairing_pin()
+        messagebox.showinfo("Pairing PIN",
+                           f"Pairing PIN: {pin}\n\nThis PIN will expire in 5 minutes.\n"
+                           f"Enter this PIN on the client to pair.")
+                           
+    def _pair_with_host(self):
+        """Pair with host using PIN"""
+        host = self.host_entry.get().strip()
+        pin = self.pin_entry.get().strip()
+        
+        if not host or not pin:
+            messagebox.showerror("Error", "Please enter host address and PIN")
+            return
+            
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            sock.connect((host, CONTROL_PORT))
+            
+            request = json.dumps({
+                "action": "pair",
+                "pin": pin,
+                "client_id": socket.gethostname()
+            })
+            sock.send(request.encode())
+            
+            response = json.loads(sock.recv(4096).decode())
+            sock.close()
+            
+            if response.get("success"):
+                messagebox.showinfo("Success", "Successfully paired with host!")
+            else:
+                messagebox.showerror("Error", response.get("error", "Pairing failed"))
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to pair: {e}")
+            
+    def _on_quality_change(self, event):
+        """Handle quality preset change"""
+        selected = self.quality_var.get()
+        
+        for key, preset in QUALITY_PRESETS.items():
+            if preset["name"] == selected:
+                self.engine.set_quality(key)
+                break
+                
+    def _on_audio_toggle(self):
+        """Handle audio toggle"""
+        self.engine.audio_enabled = self.audio_var.get()
+        self.engine.save_config()
+        
+    def _on_encryption_toggle(self):
+        """Handle encryption toggle"""
+        self.engine.encryption_enabled = self.encryption_var.get()
+        self.engine.save_config()
+        
+    def _on_hosts_discovered(self, hosts):
+        """Called when hosts are discovered"""
+        self.discovered_hosts = hosts
+        self.root.after(0, self._update_hosts_tree)
+        
+    def _update_hosts_tree(self):
+        """Update hosts treeview"""
+        for item in self.hosts_tree.get_children():
+            self.hosts_tree.delete(item)
+            
+        for host_id, host in self.discovered_hosts.items():
+            status = "Paired" if host.get("paired") else "Available"
+            self.hosts_tree.insert('', 'end', values=(
+                host.get("hostname", "Unknown"),
+                host.get("ip", ""),
+                host.get("quality", "unknown").upper(),
+                status
+            ))
+            
+    def _on_host_double_click(self, event):
+        """Handle double-click on host"""
+        selection = self.hosts_tree.selection()
+        if selection:
+            item = self.hosts_tree.item(selection[0])
+            ip = item['values'][1]
+            self.host_entry.delete(0, tk.END)
+            self.host_entry.insert(0, ip)
+            
+    def _refresh_hosts(self):
+        """Refresh host discovery"""
+        self.discovered_hosts = {}
+        self._update_hosts_tree()
+        
+    def _update_stats(self):
+        """Update statistics displays"""
+        if self.engine.streaming:
+            stats = self.engine.get_stats()
+            
+            if self.engine.mode == "host":
+                self.host_bitrate_label.configure(
+                    text=f"Bitrate: {stats.get('bitrate', 0)} Kbps")
+                self.host_clients_label.configure(
+                    text=f"Clients: {stats.get('connected_clients', 0)}")
+                    
+                if stats.get('start_time'):
+                    uptime = int(time.time() - stats['start_time'])
+                    hours, remainder = divmod(uptime, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    self.host_uptime_label.configure(
+                        text=f"Uptime: {hours:02d}:{minutes:02d}:{seconds:02d}")
+                        
+                self._update_clients_tree()
+                
+            elif self.engine.mode == "client":
+                self.client_latency_label.configure(
+                    text=f"Latency: {stats.get('latency', '--')} ms")
+                self.client_fps_label.configure(
+                    text=f"FPS: {stats.get('fps', '--')}")
+                self.client_bitrate_label.configure(
+                    text=f"Bitrate: {stats.get('bitrate', '--')} Kbps")
+                    
+        self.stats_update_id = self.root.after(1000, self._update_stats)
+        
+    def _update_clients_tree(self):
+        """Update connected clients tree"""
+        for item in self.clients_tree.get_children():
+            self.clients_tree.delete(item)
+            
+        if self.engine.stream_server:
+            for client in self.engine.stream_server.clients:
+                addr = f"{client['address'][0]}:{client['address'][1]}"
+                connected = datetime.fromtimestamp(client['connected_at']).strftime('%H:%M:%S')
+                self.clients_tree.insert('', 'end', values=(addr, connected, '--'))
+                
+    def _get_local_ip(self):
+        """Get local IP address"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "127.0.0.1"
+            
+    def _show_upgrade(self):
+        """Show upgrade information"""
+        messagebox.showinfo("Upgrade to Full Version",
+                           "Upgrade to a paid Aegis OS edition to unlock:\n\n"
+                           "✓ 4K60 Ultra Quality Streaming\n"
+                           "✓ Multi-client Support (up to 10)\n"
+                           "✓ Audio Streaming\n"
+                           "✓ No Watermark\n"
+                           "✓ Priority Support\n\n"
+                           "Visit: https://aegis-os.example.com/upgrade")
+                           
+    def _on_close(self):
+        """Handle window close"""
+        if self.engine.streaming:
+            if self.engine.mode == "host":
+                self.engine.stop_host()
+            else:
+                self.engine.stop_client()
+                
+        self.engine.discovery.stop()
+        
+        if self.stats_update_id:
+            self.root.after_cancel(self.stats_update_id)
+            
+        self.root.destroy()
+
+
+def run_cli():
+    """Run in CLI mode"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Local Game Streaming")
+    parser.add_argument('mode', choices=['host', 'client', 'info'],
+                       help='Operation mode')
+    parser.add_argument('--host', '-H', help='Host address (for client mode)')
+    parser.add_argument('--quality', '-q', choices=list(QUALITY_PRESETS.keys()),
+                       default='high', help='Stream quality preset')
+    parser.add_argument('--no-audio', action='store_true', help='Disable audio')
+    parser.add_argument('--pin', '-p', help='Pairing PIN (for client mode)')
+    
+    args = parser.parse_args()
+    
+    engine = AegisStreamEngine()
+    
+    if args.mode == 'info':
+        print(f"\n{APP_NAME} v{APP_VERSION}")
+        print(f"Tier: {TIER_LIMIT.upper()}")
+        print(f"\nAvailable Encoders:")
+        encoder = HardwareEncoder()
+        for enc in encoder.get_available_encoders():
+            marker = " (selected)" if enc == encoder.current_encoder else ""
+            print(f"  - {enc.upper()}{marker}")
+        print(f"\nQuality Presets:")
+        for key, preset in QUALITY_PRESETS.items():
+            available = "✓" if TIER_LIMIT == "full" or preset["tier_required"] == "freemium" else "✗"
+            print(f"  [{available}] {preset['name']}")
+        return
+        
+    elif args.mode == 'host':
+        engine.set_quality(args.quality)
+        engine.audio_enabled = not args.no_audio and TIER_LIMIT == "full"
+        
+        print(f"Starting stream host on port {STREAM_PORT}...")
+        print(f"Quality: {QUALITY_PRESETS[args.quality]['name']}")
+        print(f"Audio: {'Enabled' if engine.audio_enabled else 'Disabled'}")
+        
+        if engine.start_host():
+            pin = engine.generate_pairing_pin()
+            print(f"\n✓ Streaming started!")
+            print(f"Local IP: {socket.gethostbyname(socket.gethostname())}")
+            print(f"Pairing PIN: {pin}")
+            print("\nPress Ctrl+C to stop...")
+            
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nStopping stream...")
+                engine.stop_host()
+        else:
+            print("✗ Failed to start streaming")
+            
+    elif args.mode == 'client':
+        if not args.host:
+            print("Error: --host required for client mode")
+            return
+            
+        print(f"Connecting to {args.host}...")
+        
+        if engine.start_client(args.host):
+            print("✓ Connected! Starting playback...")
+            print("Press Ctrl+C to disconnect...")
+            
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nDisconnecting...")
+                engine.stop_client()
+        else:
+            print("✗ Failed to connect")
+
+
+def main():
+    """Main entry point"""
+    if len(sys.argv) > 1 and sys.argv[1] not in ['--gui', '-g']:
+        run_cli()
+    else:
+        if not TK_AVAILABLE:
+            print("GUI not available. Running in CLI mode.")
+            print("Usage: aegis-stream <mode> [options]")
+            print("       aegis-stream info")
+            return
+            
+        engine = AegisStreamEngine()
+        gui = AegisStreamGUI(engine)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()

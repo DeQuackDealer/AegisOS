@@ -25,6 +25,10 @@ try:
 except ImportError:
     TKINTER_AVAILABLE = False
 
+TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
+FREEMIUM_MAX_BACKUP_SIZE_GB = 5  # Maximum backup size in GB for freemium tier
+FREEMIUM_MAX_PROFILES = 1  # Maximum backup profiles for freemium tier
+
 class AegisBackupPro:
     def __init__(self):
         self.version = "1.0.0"
@@ -147,6 +151,12 @@ class AegisBackupPro:
                       retention: int = 7, incremental: bool = True,
                       verify: bool = True) -> bool:
         """Create a new backup profile"""
+        if TIER_LIMIT == "freemium":
+            if len(self.profiles["profiles"]) >= FREEMIUM_MAX_PROFILES:
+                self.logger.warning(f"Freemium tier limited to {FREEMIUM_MAX_PROFILES} backup profile(s). Upgrade for unlimited profiles.")
+                return False
+            schedule = "manual"
+        
         if profile_id in self.profiles["profiles"]:
             self.logger.error(f"Profile '{profile_id}' already exists")
             return False
@@ -156,7 +166,7 @@ class AegisBackupPro:
             "source": source,
             "destination": destination,
             "exclude": exclude or [],
-            "schedule": schedule,
+            "schedule": schedule if TIER_LIMIT == "full" else "manual",
             "retention": retention,
             "incremental": incremental,
             "verify": verify,
@@ -285,6 +295,27 @@ class AegisBackupPro:
         except:
             return ""
     
+    def check_freemium_size_limit(self, source_path: str) -> Tuple[bool, str]:
+        """Check if source size exceeds freemium tier limit"""
+        if TIER_LIMIT != "freemium":
+            return True, ""
+        
+        try:
+            total_size = 0
+            for root, dirs, files in os.walk(source_path):
+                for file in files:
+                    try:
+                        total_size += os.path.getsize(os.path.join(root, file))
+                    except (OSError, IOError):
+                        pass
+            
+            size_gb = total_size / (1024 ** 3)
+            if size_gb > FREEMIUM_MAX_BACKUP_SIZE_GB:
+                return False, f"⚠️ Source size ({size_gb:.1f} GB) exceeds freemium limit ({FREEMIUM_MAX_BACKUP_SIZE_GB} GB). Upgrade for unlimited backup size."
+            return True, ""
+        except Exception as e:
+            return True, ""
+    
     def run_backup(self, profile_id: str, callback=None) -> Dict:
         """Run a backup for the specified profile"""
         if profile_id not in self.profiles["profiles"]:
@@ -294,6 +325,14 @@ class AegisBackupPro:
         
         if not profile.get("enabled", True):
             return {"status": "skipped", "message": "Profile is disabled"}
+        
+        if TIER_LIMIT == "freemium":
+            size_ok, size_msg = self.check_freemium_size_limit(profile["source"])
+            if not size_ok:
+                return {"status": "tier_restricted", "message": size_msg}
+            
+            if "cloud" in profile.get("destination", "").lower() or profile.get("destination", "").startswith("s3://") or profile.get("destination", "").startswith("gs://"):
+                return {"status": "tier_restricted", "message": "⚠️ Cloud backup is a premium feature. Upgrade to unlock cloud storage integration."}
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_name = f"backup_{timestamp}"

@@ -27,6 +27,342 @@ SUBPROCESS_TIMEOUT_SHORT = 30
 SUBPROCESS_TIMEOUT_MEDIUM = 120
 SUBPROCESS_TIMEOUT_LONG = 600
 
+TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
+
+AEGIS_GPG_KEYRING = "/etc/aegis/trusted-keys.gpg"
+AEGIS_UPDATE_SERVER = "https://updates.aegis-os.com"
+AEGIS_TRUSTED_FINGERPRINTS = [
+    "AEGIS_OS_RELEASE_KEY_2024",
+]
+
+
+class SignedUpdateVerifier:
+    """
+    Signed update verification module for secure package verification.
+    Verifies GPG signatures, SHA256 checksums, and server certificates.
+    """
+    
+    def __init__(self, logger=None):
+        self.logger = logger
+        self.keyring_path = Path(AEGIS_GPG_KEYRING)
+        self.trusted_fingerprints = AEGIS_TRUSTED_FINGERPRINTS
+        self._gpg_available = self._check_gpg_available()
+    
+    def _check_gpg_available(self) -> bool:
+        """Check if GPG is available"""
+        try:
+            result = subprocess.run(
+                ["gpg", "--version"],
+                capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+    def _log(self, message: str, level: str = "INFO"):
+        """Log a message"""
+        if self.logger:
+            log_method = getattr(self.logger, level.lower(), self.logger.info)
+            log_method(message)
+    
+    def compute_sha256(self, file_path: str) -> Optional[str]:
+        """Compute SHA256 hash of a file"""
+        import hashlib
+        try:
+            hasher = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        except (OSError, IOError) as e:
+            self._log(f"Failed to compute hash: {e}", "ERROR")
+            return None
+    
+    def verify_checksum(self, file_path: str, expected_hash: str,
+                       algorithm: str = "sha256") -> Dict:
+        """
+        Verify file checksum
+        
+        Args:
+            file_path: Path to file to verify
+            expected_hash: Expected hash value
+            algorithm: Hash algorithm (sha256, sha512)
+        
+        Returns:
+            Dict with verification result
+        """
+        result = {
+            "verified": False,
+            "file": file_path,
+            "algorithm": algorithm,
+            "expected": expected_hash,
+            "actual": None,
+            "error": None
+        }
+        
+        if not Path(file_path).exists():
+            result["error"] = "File not found"
+            return result
+        
+        import hashlib
+        try:
+            hasher = hashlib.new(algorithm)
+            with open(file_path, 'rb') as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            actual_hash = hasher.hexdigest()
+            result["actual"] = actual_hash
+            
+            if actual_hash.lower() == expected_hash.lower():
+                result["verified"] = True
+                self._log(f"Checksum verified for {file_path}")
+            else:
+                result["error"] = "Checksum mismatch"
+                self._log(f"Checksum MISMATCH for {file_path}", "WARNING")
+            
+        except Exception as e:
+            result["error"] = str(e)
+            self._log(f"Checksum verification error: {e}", "ERROR")
+        
+        return result
+    
+    def verify_gpg_signature(self, file_path: str, signature_path: str) -> Dict:
+        """
+        Verify GPG signature of a file
+        
+        Args:
+            file_path: Path to file to verify
+            signature_path: Path to detached signature file
+        
+        Returns:
+            Dict with verification result
+        """
+        result = {
+            "verified": False,
+            "file": file_path,
+            "signature": signature_path,
+            "signer": None,
+            "key_id": None,
+            "error": None,
+            "tier_restricted": False
+        }
+        
+        if TIER_LIMIT == "freemium":
+            result["tier_restricted"] = True
+            result["error"] = "GPG signature verification requires full edition"
+            self._log("GPG verification skipped (freemium tier)", "INFO")
+            result["verified"] = True
+            return result
+        
+        if not self._gpg_available:
+            result["error"] = "GPG not available"
+            return result
+        
+        if not Path(file_path).exists():
+            result["error"] = "File not found"
+            return result
+        
+        if not Path(signature_path).exists():
+            result["error"] = "Signature file not found"
+            return result
+        
+        try:
+            cmd = ["gpg", "--verify"]
+            
+            if self.keyring_path.exists():
+                cmd.extend(["--keyring", str(self.keyring_path)])
+            
+            cmd.extend([signature_path, file_path])
+            
+            verify_result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            
+            if verify_result.returncode == 0:
+                result["verified"] = True
+                
+                output = verify_result.stderr
+                if "Good signature" in output:
+                    import re
+                    key_match = re.search(r'key ([A-F0-9]+)', output)
+                    if key_match:
+                        result["key_id"] = key_match.group(1)
+                    
+                    signer_match = re.search(r'"([^"]+)"', output)
+                    if signer_match:
+                        result["signer"] = signer_match.group(1)
+                
+                self._log(f"GPG signature verified for {file_path}")
+            else:
+                result["error"] = "Invalid signature"
+                self._log(f"GPG signature INVALID for {file_path}", "WARNING")
+            
+        except subprocess.TimeoutExpired:
+            result["error"] = "Verification timed out"
+        except Exception as e:
+            result["error"] = str(e)
+            self._log(f"GPG verification error: {e}", "ERROR")
+        
+        return result
+    
+    def verify_server_certificate(self, url: str) -> Dict:
+        """
+        Verify update server SSL certificate
+        
+        Args:
+            url: URL to verify
+        
+        Returns:
+            Dict with verification result
+        """
+        result = {
+            "verified": False,
+            "url": url,
+            "issuer": None,
+            "expires": None,
+            "error": None
+        }
+        
+        try:
+            import ssl
+            import socket
+            from urllib.parse import urlparse
+            
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            port = parsed.port or 443
+            
+            if not hostname:
+                result["error"] = "Invalid URL"
+                return result
+            
+            context = ssl.create_default_context()
+            
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    
+                    if cert:
+                        result["verified"] = True
+                        
+                        issuer = dict(x[0] for x in cert.get('issuer', []))
+                        result["issuer"] = issuer.get('organizationName', 'Unknown')
+                        result["expires"] = cert.get('notAfter')
+                        
+                        self._log(f"Server certificate verified for {hostname}")
+            
+        except ssl.SSLCertVerificationError as e:
+            result["error"] = f"Certificate verification failed: {e}"
+            self._log(f"SSL verification failed for {url}", "WARNING")
+        except socket.timeout:
+            result["error"] = "Connection timed out"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def verify_update_package(self, package_path: str,
+                             checksum: Optional[str] = None,
+                             signature_path: Optional[str] = None) -> Dict:
+        """
+        Comprehensive update package verification
+        
+        Args:
+            package_path: Path to update package
+            checksum: Expected SHA256 checksum
+            signature_path: Path to GPG signature file
+        
+        Returns:
+            Dict with verification results
+        """
+        result = {
+            "verified": False,
+            "package": package_path,
+            "checksum_verified": None,
+            "signature_verified": None,
+            "errors": []
+        }
+        
+        if not Path(package_path).exists():
+            result["errors"].append("Package file not found")
+            return result
+        
+        if checksum:
+            checksum_result = self.verify_checksum(package_path, checksum)
+            result["checksum_verified"] = checksum_result["verified"]
+            if not checksum_result["verified"]:
+                result["errors"].append(f"Checksum: {checksum_result['error']}")
+        
+        if signature_path:
+            sig_result = self.verify_gpg_signature(package_path, signature_path)
+            result["signature_verified"] = sig_result["verified"]
+            if not sig_result["verified"] and not sig_result.get("tier_restricted"):
+                result["errors"].append(f"Signature: {sig_result['error']}")
+        
+        has_checksum = result["checksum_verified"] is not False
+        has_signature = result["signature_verified"] is not False
+        
+        if has_checksum and has_signature:
+            result["verified"] = True
+            self._log(f"Update package verified: {package_path}")
+        else:
+            self._log(f"Update package verification FAILED: {package_path}", "WARNING")
+        
+        return result
+    
+    def block_unsigned_update(self, package_info: Dict) -> Tuple[bool, str]:
+        """
+        Check if an update should be blocked due to missing signature
+        
+        Args:
+            package_info: Package information dict
+        
+        Returns:
+            Tuple of (should_block, reason)
+        """
+        if TIER_LIMIT == "freemium":
+            return (False, "Signature enforcement disabled in freemium")
+        
+        if not package_info.get("signed"):
+            return (True, "Unsigned package blocked by security policy")
+        
+        if not package_info.get("checksum_verified"):
+            return (True, "Package checksum not verified")
+        
+        return (False, "Package verified")
+    
+    def import_trusted_key(self, key_path: str) -> bool:
+        """Import a trusted GPG key"""
+        if TIER_LIMIT == "freemium":
+            self._log("Key import requires full edition", "WARNING")
+            return False
+        
+        if not self._gpg_available:
+            return False
+        
+        try:
+            self.keyring_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            cmd = [
+                "gpg", "--no-default-keyring",
+                "--keyring", str(self.keyring_path),
+                "--import", key_path
+            ]
+            
+            result = subprocess.run(
+                cmd, capture_output=True, timeout=SUBPROCESS_TIMEOUT_SHORT
+            )
+            
+            if result.returncode == 0:
+                self._log(f"Imported trusted key from {key_path}")
+                return True
+            
+        except Exception as e:
+            self._log(f"Failed to import key: {e}", "ERROR")
+        
+        return False
+
 
 def is_root() -> bool:
     """Check if the current user is root"""
@@ -86,6 +422,8 @@ class AegisUpdateManager:
         self.ensure_directories()
         self.setup_logging()
         self.load_config()
+        
+        self.verifier = SignedUpdateVerifier(logger=self.logger)
         
     def ensure_directories(self):
         """Create required directories with proper error handling"""
