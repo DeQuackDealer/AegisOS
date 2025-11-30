@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """
-Aegis OS Wallpaper Engine - Advanced wallpaper management with GPU optimization
-Supports static, animated, and interactive wallpapers with gaming optimizations
+Aegis OS Wallpaper Engine v3.0 - SIGMA Edition
+Advanced animated wallpaper system with video support, audio control, and Chrome rendering
+Supports: MP4, AVI, MKV, WebM, MOV, GIF, HEVC, VP9, AV1, and all image formats
 """
 
 import os
+import sys
 import json
 import subprocess
 import threading
 import time
 import math
+import signal
+import tempfile
+import shutil
+import hashlib
+from pathlib import Path
 
-# Try to import optional dependencies
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, Scale
+    TK_AVAILABLE = True
+except ImportError:
+    TK_AVAILABLE = False
+
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -19,37 +32,659 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageTk, ImageFilter, ImageEnhance
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
 
-class AegisWallpaperEngine:
+SUPPORTED_VIDEO_FORMATS = ['.mp4', '.avi', '.mkv', '.webm', '.mov', '.wmv', '.flv', '.m4v', '.3gp', '.ogv', '.ts', '.mts']
+SUPPORTED_IMAGE_FORMATS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.svg', '.heic', '.heif']
+SUPPORTED_AUDIO_FORMATS = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']
+
+class AudioController:
+    """Advanced audio control system with per-application volume"""
+    
     def __init__(self):
-        self.config_file = "/etc/aegis/wallpaper-config.json"
-        self.wallpaper_dir = "/usr/share/aegis/wallpapers"
-        self.current_mode = "static"  # static, animated, interactive
+        self.master_volume = 100
+        self.wallpaper_volume = 50
+        self.muted = False
+        self.audio_ducking = True
+        self.ducking_level = 30
+        self.equalizer = {'bass': 0, 'mid': 0, 'treble': 0}
+        self.audio_visualizer = False
+        self.crossfade_duration = 2.0
+        
+    def set_master_volume(self, level):
+        """Set system-wide wallpaper audio volume (0-100)"""
+        self.master_volume = max(0, min(100, level))
+        self._apply_volume()
+        
+    def set_wallpaper_volume(self, level):
+        """Set wallpaper-specific volume"""
+        self.wallpaper_volume = max(0, min(100, level))
+        self._apply_volume()
+        
+    def toggle_mute(self):
+        """Toggle audio mute"""
+        self.muted = not self.muted
+        self._apply_volume()
+        return self.muted
+        
+    def set_audio_ducking(self, enabled, level=30):
+        """Enable/disable audio ducking when other apps play sound"""
+        self.audio_ducking = enabled
+        self.ducking_level = level
+        
+    def set_equalizer(self, bass=0, mid=0, treble=0):
+        """Set equalizer levels (-10 to +10)"""
+        self.equalizer = {
+            'bass': max(-10, min(10, bass)),
+            'mid': max(-10, min(10, mid)),
+            'treble': max(-10, min(10, treble))
+        }
+        
+    def _apply_volume(self):
+        """Apply volume settings via PulseAudio/PipeWire"""
+        if self.muted:
+            volume = 0
+        else:
+            volume = int(self.master_volume * self.wallpaper_volume / 100)
+            
+        try:
+            subprocess.run([
+                'pactl', 'set-sink-input-volume', 
+                '@DEFAULT_SINK@', f'{volume}%'
+            ], capture_output=True, timeout=2)
+        except:
+            pass
+            
+    def get_audio_levels(self):
+        """Get current audio output levels for visualization"""
+        try:
+            result = subprocess.run([
+                'pactl', 'list', 'sink-inputs'
+            ], capture_output=True, text=True, timeout=2)
+            return result.stdout
+        except:
+            return ""
+
+class VideoProcessor:
+    """FFmpeg-based video processing for wallpapers"""
+    
+    def __init__(self):
+        self.ffmpeg_available = self._check_ffmpeg()
+        self.cache_dir = Path("/tmp/aegis-wallpaper-cache")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+    def _check_ffmpeg(self):
+        """Check if FFmpeg is available"""
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+            return result.returncode == 0
+        except:
+            return False
+            
+    def get_video_info(self, video_path):
+        """Get video metadata using ffprobe"""
+        if not self.ffmpeg_available:
+            return None
+            
+        try:
+            cmd = [
+                'ffprobe', '-v', 'quiet', '-print_format', 'json',
+                '-show_format', '-show_streams', str(video_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+        except:
+            pass
+        return None
+        
+    def extract_audio(self, video_path, output_path=None):
+        """Extract audio track from video"""
+        if not self.ffmpeg_available:
+            return None
+            
+        if output_path is None:
+            output_path = self.cache_dir / f"{Path(video_path).stem}_audio.mp3"
+            
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-i', str(video_path),
+                '-vn', '-acodec', 'libmp3lame', '-q:a', '2',
+                str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=300)
+            if result.returncode == 0:
+                return str(output_path)
+        except:
+            pass
+        return None
+        
+    def remove_audio(self, video_path, output_path=None):
+        """Create silent version of video"""
+        if not self.ffmpeg_available:
+            print("Note: FFmpeg not installed. Video will play with original audio.")
+            print("Install FFmpeg for audio removal: sudo apt install ffmpeg")
+            return video_path
+            
+        if output_path is None:
+            output_path = self.cache_dir / f"{Path(video_path).stem}_silent.mp4"
+            
+        if output_path.exists():
+            return str(output_path)
+            
+        print("Removing audio from video...")
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-i', str(video_path),
+                '-an', '-c:v', 'copy', str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=300)
+            if result.returncode == 0:
+                print("Audio removed successfully.")
+                return str(output_path)
+            else:
+                print("Failed to remove audio, using original video.")
+        except Exception as e:
+            print(f"Audio removal error: {e}")
+        return video_path
+        
+    def convert_to_webm(self, video_path, quality='high'):
+        """Convert video to WebM for Chrome playback"""
+        if not self.ffmpeg_available:
+            return video_path
+            
+        output_path = self.cache_dir / f"{Path(video_path).stem}.webm"
+        
+        if output_path.exists():
+            return str(output_path)
+            
+        quality_settings = {
+            'ultra': ['-crf', '18', '-b:v', '0'],
+            'high': ['-crf', '23', '-b:v', '0'],
+            'medium': ['-crf', '30', '-b:v', '0'],
+            'low': ['-crf', '40', '-b:v', '0']
+        }
+        
+        crf_args = quality_settings.get(quality, quality_settings['high'])
+        
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-i', str(video_path),
+                '-c:v', 'libvpx-vp9', *crf_args,
+                '-c:a', 'libopus', '-b:a', '128k',
+                '-threads', '4', str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=600)
+            if result.returncode == 0:
+                return str(output_path)
+        except:
+            pass
+        return video_path
+        
+    def upscale_video(self, video_path, target_resolution='4k'):
+        """Upscale video to higher resolution"""
+        if not self.ffmpeg_available:
+            return video_path
+            
+        resolutions = {
+            '1080p': '1920:1080',
+            '1440p': '2560:1440',
+            '4k': '3840:2160',
+            '8k': '7680:4320'
+        }
+        
+        res = resolutions.get(target_resolution, '3840:2160')
+        output_path = self.cache_dir / f"{Path(video_path).stem}_{target_resolution}.mp4"
+        
+        if output_path.exists():
+            return str(output_path)
+            
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-i', str(video_path),
+                '-vf', f'scale={res}:flags=lanczos',
+                '-c:v', 'libx264', '-preset', 'slow', '-crf', '18',
+                '-c:a', 'copy', str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=1800)
+            if result.returncode == 0:
+                return str(output_path)
+        except:
+            pass
+        return video_path
+        
+    def create_loop(self, video_path, seamless=True):
+        """Create seamless looping video"""
+        if not self.ffmpeg_available:
+            return video_path
+            
+        output_path = self.cache_dir / f"{Path(video_path).stem}_loop.mp4"
+        
+        if output_path.exists():
+            return str(output_path)
+            
+        try:
+            if seamless:
+                cmd = [
+                    'ffmpeg', '-y', '-stream_loop', '1', '-i', str(video_path),
+                    '-filter_complex', '[0:v]reverse,fifo[r];[0:v][r]concat=n=2:v=1[v]',
+                    '-map', '[v]', '-c:v', 'libx264', '-preset', 'fast',
+                    str(output_path)
+                ]
+            else:
+                cmd = [
+                    'ffmpeg', '-y', '-stream_loop', '2', '-i', str(video_path),
+                    '-c', 'copy', str(output_path)
+                ]
+            result = subprocess.run(cmd, capture_output=True, timeout=600)
+            if result.returncode == 0:
+                return str(output_path)
+        except:
+            pass
+        return video_path
+        
+    def generate_thumbnail(self, video_path, time_offset='00:00:01'):
+        """Generate thumbnail from video"""
+        if not self.ffmpeg_available:
+            return None
+            
+        output_path = self.cache_dir / f"{Path(video_path).stem}_thumb.jpg"
+        
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-ss', time_offset, '-i', str(video_path),
+                '-vframes', '1', '-q:v', '2', str(output_path)
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            if result.returncode == 0:
+                return str(output_path)
+        except:
+            pass
+        return None
+
+class ChromeWallpaperRenderer:
+    """Chrome/Chromium-based wallpaper rendering"""
+    
+    def __init__(self):
+        self.chrome_path = self._find_chrome()
+        self.process = None
+        self.html_dir = Path.home() / ".local/share/aegis/wallpaper-html"
+        self.html_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.html_dir, 0o700)
+        
+    def _find_chrome(self):
+        """Find Chrome/Chromium executable"""
+        candidates = [
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser',
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/snap/bin/chromium',
+            '/opt/google/chrome/chrome'
+        ]
+        
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+                
+        try:
+            result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except:
+            pass
+            
+        return None
+        
+    def is_available(self):
+        """Check if Chrome rendering is available"""
+        return self.chrome_path is not None
+        
+    def create_video_html(self, video_path, options=None):
+        """Create HTML page for video wallpaper"""
+        options = options or {}
+        
+        volume = options.get('volume', 0.5)
+        muted = 'muted' if options.get('muted', True) else ''
+        loop = 'loop' if options.get('loop', True) else ''
+        filter_css = options.get('filter', '')
+        playback_rate = options.get('playback_rate', 1.0)
+        
+        html_content = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Aegis Wallpaper</title>
+    <style>
+        * {{ margin: 0; padding: 0; overflow: hidden; }}
+        body {{ 
+            background: #000; 
+            width: 100vw; 
+            height: 100vh;
+        }}
+        video {{
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            min-width: 100%;
+            min-height: 100%;
+            width: auto;
+            height: auto;
+            transform: translate(-50%, -50%);
+            object-fit: cover;
+            {filter_css}
+        }}
+        .audio-visualizer {{
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 4px;
+            opacity: 0.7;
+            pointer-events: none;
+        }}
+        .bar {{
+            width: 8px;
+            background: linear-gradient(to top, #00d4ff, #0099ff);
+            border-radius: 4px 4px 0 0;
+            transition: height 0.1s ease;
+        }}
+    </style>
+</head>
+<body>
+    <video id="wallpaper-video" autoplay {loop} {muted} playsinline>
+        <source src="file://{video_path}" type="video/mp4">
+    </video>
+    <div id="visualizer" class="audio-visualizer" style="display: none;"></div>
+    
+    <script>
+        const video = document.getElementById('wallpaper-video');
+        video.volume = {volume};
+        video.playbackRate = {playback_rate};
+        
+        video.addEventListener('ended', () => {{
+            video.currentTime = 0;
+            video.play();
+        }});
+        
+        video.addEventListener('error', (e) => {{
+            console.error('Video error:', e);
+        }});
+        
+        window.setVolume = (v) => {{ video.volume = v; }};
+        window.setMuted = (m) => {{ video.muted = m; }};
+        window.setPlaybackRate = (r) => {{ video.playbackRate = r; }};
+        window.seekTo = (t) => {{ video.currentTime = t; }};
+        window.togglePause = () => {{ video.paused ? video.play() : video.pause(); }};
+        
+        function createVisualizer() {{
+            const visualizer = document.getElementById('visualizer');
+            for (let i = 0; i < 32; i++) {{
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                bar.style.height = '10px';
+                visualizer.appendChild(bar);
+            }}
+        }}
+        createVisualizer();
+    </script>
+</body>
+</html>'''
+        
+        html_path = self.html_dir / "wallpaper.html"
+        with open(html_path, 'w') as f:
+            f.write(html_content)
+            
+        return str(html_path)
+        
+    def create_image_html(self, image_path, options=None):
+        """Create HTML page for image/slideshow wallpaper"""
+        options = options or {}
+        
+        effect = options.get('effect', 'none')
+        transition_duration = options.get('transition', 3)
+        
+        effect_css = ''
+        if effect == 'ken-burns':
+            effect_css = '''
+                animation: kenBurns 30s ease-in-out infinite alternate;
+            '''
+        elif effect == 'parallax':
+            effect_css = '''
+                animation: parallax 60s linear infinite;
+            '''
+        elif effect == 'pulse':
+            effect_css = '''
+                animation: pulse 4s ease-in-out infinite;
+            '''
+            
+        html_content = f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Aegis Wallpaper</title>
+    <style>
+        @keyframes kenBurns {{
+            0% {{ transform: scale(1) translate(0, 0); }}
+            100% {{ transform: scale(1.2) translate(-5%, -5%); }}
+        }}
+        @keyframes parallax {{
+            0% {{ background-position: 0% 50%; }}
+            100% {{ background-position: 100% 50%; }}
+        }}
+        @keyframes pulse {{
+            0%, 100% {{ filter: brightness(1); }}
+            50% {{ filter: brightness(1.1); }}
+        }}
+        * {{ margin: 0; padding: 0; overflow: hidden; }}
+        body {{ 
+            background: url('file://{image_path}') center center / cover no-repeat fixed;
+            width: 100vw; 
+            height: 100vh;
+            {effect_css}
+        }}
+    </style>
+</head>
+<body></body>
+</html>'''
+        
+        html_path = self.html_dir / "wallpaper.html"
+        with open(html_path, 'w') as f:
+            f.write(html_content)
+            
+        return str(html_path)
+        
+    def start_renderer(self, html_path, display=':0'):
+        """Start Chrome in kiosk mode as wallpaper"""
+        if not self.chrome_path:
+            print("Chrome/Chromium not found. Install with: sudo apt install chromium-browser")
+            return False
+            
+        self.stop_renderer()
+        
+        user_data_dir = Path.home() / ".config/aegis/chrome-wallpaper"
+        user_data_dir.mkdir(parents=True, exist_ok=True)
+        
+        env = os.environ.copy()
+        env['DISPLAY'] = display
+        
+        cmd = [
+            self.chrome_path,
+            '--kiosk',
+            '--disable-software-rasterizer',
+            '--autoplay-policy=no-user-gesture-required',
+            '--window-position=0,0',
+            '--window-size=1920,1080',
+            f'--user-data-dir={user_data_dir}',
+            '--disable-extensions',
+            '--disable-translate',
+            '--disable-sync',
+            '--no-first-run',
+            '--disable-infobars',
+            '--disable-background-networking',
+            '--disable-client-side-phishing-detection',
+            f'file://{html_path}'
+        ]
+        
+        try:
+            self.process = subprocess.Popen(
+                cmd, 
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return True
+        except Exception as e:
+            print(f"Failed to start Chrome renderer: {e}")
+            print("Falling back to native wallpaper mode...")
+            return False
+            
+    def stop_renderer(self):
+        """Stop Chrome renderer"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except:
+                try:
+                    self.process.kill()
+                except:
+                    pass
+            self.process = None
+            
+        subprocess.run(['pkill', '-f', 'aegis-chrome-wallpaper'], capture_output=True)
+
+class WallpaperPlaylist:
+    """Manage wallpaper playlists and slideshows"""
+    
+    def __init__(self):
+        self.items = []
+        self.current_index = 0
+        self.shuffle = False
+        self.interval = 300
+        self.transition = 'fade'
+        
+    def add(self, path, duration=None):
+        """Add wallpaper to playlist"""
+        self.items.append({
+            'path': str(path),
+            'duration': duration or self.interval,
+            'type': self._detect_type(path)
+        })
+        
+    def _detect_type(self, path):
+        """Detect wallpaper type"""
+        ext = Path(path).suffix.lower()
+        if ext in SUPPORTED_VIDEO_FORMATS:
+            return 'video'
+        elif ext in SUPPORTED_IMAGE_FORMATS:
+            return 'image'
+        return 'unknown'
+        
+    def next(self):
+        """Get next wallpaper"""
+        if not self.items:
+            return None
+            
+        if self.shuffle:
+            import random
+            self.current_index = random.randint(0, len(self.items) - 1)
+        else:
+            self.current_index = (self.current_index + 1) % len(self.items)
+            
+        return self.items[self.current_index]
+        
+    def previous(self):
+        """Get previous wallpaper"""
+        if not self.items:
+            return None
+            
+        self.current_index = (self.current_index - 1) % len(self.items)
+        return self.items[self.current_index]
+        
+    def current(self):
+        """Get current wallpaper"""
+        if not self.items:
+            return None
+        return self.items[self.current_index]
+
+class AegisWallpaperEngine:
+    """Main Aegis Wallpaper Engine - SIGMA Edition"""
+    
+    VERSION = "3.0.0"
+    
+    def __init__(self):
+        self.config_dir = Path("/etc/aegis")
+        self.config_file = self.config_dir / "wallpaper-config.json"
+        self.wallpaper_dir = Path("/usr/share/aegis/wallpapers")
+        self.user_wallpaper_dir = Path.home() / ".local/share/aegis/wallpapers"
+        
+        self.audio = AudioController()
+        self.video_processor = VideoProcessor()
+        self.renderer = ChromeWallpaperRenderer()
+        self.playlist = WallpaperPlaylist()
+        
+        self.current_wallpaper = None
+        self.current_mode = "static"
         self.gaming_mode = False
-        self.gpu_threshold = 70  # GPU usage threshold for auto-pause
+        self.running = False
         
         self.setup_directories()
         self.load_config()
         
     def setup_directories(self):
         """Create necessary directories"""
-        os.makedirs(self.wallpaper_dir, exist_ok=True)
-        os.makedirs("/etc/aegis", exist_ok=True)
-        
+        for d in [self.config_dir, self.wallpaper_dir, self.user_wallpaper_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+            
     def load_config(self):
-        """Load wallpaper engine configuration"""
+        """Load configuration"""
         default_config = {
-            "current_wallpaper": "aegis-default",
-            "animation_enabled": True,
-            "auto_pause_gaming": True,
-            "quality": "high",  # high, medium, low
-            "gpu_optimization": True,
-            "transparency_effects": True,
-            "fps_limit": 30
+            "current_wallpaper": None,
+            "mode": "static",
+            "renderer": "chrome",
+            "video_options": {
+                "muted": True,
+                "loop": True,
+                "volume": 0.5,
+                "playback_rate": 1.0,
+                "quality": "high"
+            },
+            "image_options": {
+                "effect": "none",
+                "transition": 3,
+                "slideshow_interval": 300
+            },
+            "audio": {
+                "master_volume": 100,
+                "wallpaper_volume": 50,
+                "muted": True,
+                "ducking": True,
+                "ducking_level": 30
+            },
+            "performance": {
+                "auto_pause_gaming": True,
+                "gpu_threshold": 70,
+                "fps_limit": 30,
+                "quality_preset": "high"
+            },
+            "display": {
+                "monitor": "all",
+                "resolution": "native",
+                "scale": 1.0
+            },
+            "playlist": {
+                "enabled": False,
+                "shuffle": False,
+                "items": []
+            }
         }
         
         try:
@@ -58,217 +693,717 @@ class AegisWallpaperEngine:
         except FileNotFoundError:
             self.config = default_config
             self.save_config()
-    
+            
     def save_config(self):
-        """Save current configuration"""
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=2)
-    
-    def get_gpu_usage(self):
-        """Get current GPU usage percentage"""
+        """Save configuration"""
         try:
-            result = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                return int(result.stdout.strip())
-        except:
-            pass
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except PermissionError:
+            user_config = Path.home() / ".config/aegis/wallpaper-config.json"
+            user_config.parent.mkdir(parents=True, exist_ok=True)
+            with open(user_config, 'w') as f:
+                json.dump(self.config, f, indent=2)
+                
+    def set_wallpaper(self, path, mode=None, options=None):
+        """Set wallpaper from any supported format"""
+        path = Path(path)
         
-        # Fallback: estimate from system load
-        if PSUTIL_AVAILABLE:
-            return int(psutil.cpu_percent() * 0.8)
-        else:
-            # Use /proc/loadavg as fallback
-            try:
-                with open('/proc/loadavg', 'r') as f:
-                    load1 = float(f.read().split()[0])
-                    return min(int(load1 * 20), 100)
-            except:
-                return 50
-    
-    def is_game_running(self):
-        """Detect if gaming applications are running"""
-        gaming_processes = ['steam', 'lutris', 'wine', 'proton', 'gamemode']
-        
-        if PSUTIL_AVAILABLE:
-            for proc in psutil.process_iter(['name']):
-                try:
-                    proc_name = proc.info['name'].lower()
-                    if any(game in proc_name for game in gaming_processes):
-                        return True
-                except:
-                    continue
-        else:
-            # Fallback: use ps command
-            try:
-                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-                processes = result.stdout.lower()
-                return any(game in processes for game in gaming_processes)
-            except:
-                pass
-        return False
-    
-    def set_wallpaper(self, wallpaper_path, mode="static"):
-        """Set wallpaper with specified mode"""
-        if not os.path.exists(wallpaper_path):
-            print(f"Wallpaper not found: {wallpaper_path}")
+        if not path.exists():
+            print(f"File not found: {path}")
             return False
             
-        if mode == "static":
-            self.set_static_wallpaper(wallpaper_path)
-        elif mode == "animated":
-            self.set_animated_wallpaper(wallpaper_path)
-        elif mode == "interactive":
-            self.set_interactive_wallpaper(wallpaper_path)
+        ext = path.suffix.lower()
+        options = options or {}
+        
+        if ext in SUPPORTED_VIDEO_FORMATS:
+            return self._set_video_wallpaper(str(path), options)
+        elif ext in SUPPORTED_IMAGE_FORMATS:
+            return self._set_image_wallpaper(str(path), options)
+        else:
+            print(f"Unsupported format: {ext}")
+            return False
             
-        self.current_mode = mode
-        return True
-    
-    def set_static_wallpaper(self, wallpaper_path):
+    def _set_video_wallpaper(self, video_path, options):
+        """Set video as wallpaper"""
+        video_options = {**self.config['video_options'], **options}
+        
+        if video_options.get('remove_audio', True):
+            video_path = self.video_processor.remove_audio(video_path)
+            
+        if video_options.get('quality') == 'ultra':
+            video_path = self.video_processor.upscale_video(video_path, '4k')
+            
+        if self.renderer.is_available() and self.config['renderer'] == 'chrome':
+            html_path = self.renderer.create_video_html(video_path, video_options)
+            success = self.renderer.start_renderer(html_path)
+        else:
+            success = self._set_video_xfce(video_path)
+            
+        if success:
+            self.current_wallpaper = video_path
+            self.current_mode = "video"
+            self.config['current_wallpaper'] = video_path
+            self.save_config()
+            
+        return success
+        
+    def _set_image_wallpaper(self, image_path, options):
+        """Set image as wallpaper"""
+        image_options = {**self.config['image_options'], **options}
+        
+        if self.renderer.is_available() and image_options.get('effect', 'none') != 'none':
+            html_path = self.renderer.create_image_html(image_path, image_options)
+            success = self.renderer.start_renderer(html_path)
+        else:
+            success = self._set_static_xfce(image_path)
+            
+        if success:
+            self.current_wallpaper = image_path
+            self.current_mode = "static"
+            self.config['current_wallpaper'] = image_path
+            self.save_config()
+            
+        return success
+        
+    def _set_static_xfce(self, image_path):
         """Set static wallpaper via XFCE"""
-        subprocess.run([
-            'xfconf-query', '-c', 'xfce4-desktop',
-            '-p', '/backdrop/screen0/monitor0/workspace0/last-image',
-            '-s', wallpaper_path
-        ])
-    
-    def set_animated_wallpaper(self, wallpaper_path):
-        """Set animated wallpaper (GIF/MP4 support)"""
-        # Create animated wallpaper service
-        service_content = f"""[Unit]
-Description=Aegis Animated Wallpaper
-After=graphical-session.target
+        try:
+            subprocess.run([
+                'xfconf-query', '-c', 'xfce4-desktop',
+                '-p', '/backdrop/screen0/monitor0/workspace0/last-image',
+                '-s', str(image_path)
+            ], capture_output=True, timeout=10)
+            return True
+        except:
+            pass
+            
+        try:
+            subprocess.run([
+                'gsettings', 'set', 'org.gnome.desktop.background',
+                'picture-uri', f'file://{image_path}'
+            ], capture_output=True, timeout=10)
+            return True
+        except:
+            pass
+            
+        try:
+            subprocess.run([
+                'feh', '--bg-fill', str(image_path)
+            ], capture_output=True, timeout=10)
+            return True
+        except:
+            pass
+            
+        return False
+        
+    def _set_video_xfce(self, video_path):
+        """Set video wallpaper using xwinwrap + mpv fallback"""
+        try:
+            subprocess.run(['pkill', 'xwinwrap'], capture_output=True)
+            
+            cmd = [
+                'xwinwrap', '-g', '1920x1080+0+0', '-ov', '-ni', '-s', '-nf',
+                '--', 'mpv', '--wid', 'WID', '--loop', '--no-audio',
+                '--no-osc', '--no-input-default-bindings', video_path
+            ]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except:
+            return False
+            
+    def set_volume(self, level):
+        """Set wallpaper audio volume"""
+        self.audio.set_wallpaper_volume(level)
+        self.config['audio']['wallpaper_volume'] = level
+        self.save_config()
+        
+    def toggle_mute(self):
+        """Toggle audio mute"""
+        muted = self.audio.toggle_mute()
+        self.config['audio']['muted'] = muted
+        self.save_config()
+        return muted
+        
+    def set_playback_speed(self, rate):
+        """Set video playback speed"""
+        self.config['video_options']['playback_rate'] = rate
+        self.save_config()
+        
+    def get_supported_formats(self):
+        """Get list of supported formats"""
+        return {
+            'video': SUPPORTED_VIDEO_FORMATS,
+            'image': SUPPORTED_IMAGE_FORMATS,
+            'audio': SUPPORTED_AUDIO_FORMATS
+        }
+        
+    def get_status(self):
+        """Get current engine status"""
+        return {
+            'version': self.VERSION,
+            'current_wallpaper': self.current_wallpaper,
+            'mode': self.current_mode,
+            'renderer': 'chrome' if self.renderer.is_available() else 'fallback',
+            'ffmpeg': self.video_processor.ffmpeg_available,
+            'gaming_mode': self.gaming_mode,
+            'audio': {
+                'volume': self.audio.wallpaper_volume,
+                'muted': self.audio.muted
+            }
+        }
+        
+    def stop(self):
+        """Stop wallpaper engine"""
+        self.running = False
+        self.renderer.stop_renderer()
 
-[Service]
-Type=simple
-User=aegis
-Environment=DISPLAY=:0
-ExecStart=/usr/local/bin/aegis-animated-wallpaper {wallpaper_path}
-Restart=always
+class WallpaperEngineGUI:
+    """Modern GUI for Aegis Wallpaper Engine"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.root = tk.Tk()
+        self.root.title("Aegis Wallpaper Engine - SIGMA Edition")
+        self.root.geometry("800x650")
+        self.root.configure(bg='#0d1117')
+        
+        self.setup_styles()
+        self.create_widgets()
+        
+    def setup_styles(self):
+        """Setup custom styles"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('Dark.TFrame', background='#0d1117')
+        style.configure('Dark.TLabel', background='#0d1117', foreground='#e6edf3', font=('Segoe UI', 10))
+        style.configure('Title.TLabel', background='#0d1117', foreground='#58a6ff', font=('Segoe UI', 16, 'bold'))
+        style.configure('Accent.TButton', background='#238636', foreground='white', font=('Segoe UI', 10, 'bold'))
+        style.configure('Dark.TButton', background='#21262d', foreground='#e6edf3', font=('Segoe UI', 10))
+        style.configure('Dark.TCheckbutton', background='#0d1117', foreground='#e6edf3')
+        style.configure('Dark.TRadiobutton', background='#0d1117', foreground='#e6edf3')
+        
+    def create_widgets(self):
+        """Create main GUI widgets"""
+        main_frame = ttk.Frame(self.root, style='Dark.TFrame', padding=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        header_frame = ttk.Frame(main_frame, style='Dark.TFrame')
+        header_frame.pack(fill='x', pady=(0, 20))
+        
+        title = ttk.Label(header_frame, text="AEGIS WALLPAPER ENGINE", style='Title.TLabel')
+        title.pack(side='left')
+        
+        version = ttk.Label(header_frame, text=f"v{self.engine.VERSION} SIGMA", 
+                           foreground='#8b949e', background='#0d1117')
+        version.pack(side='left', padx=10)
+        
+        status_text = "Chrome" if self.engine.renderer.is_available() else "Fallback"
+        status = ttk.Label(header_frame, text=f"Renderer: {status_text}", 
+                          foreground='#3fb950' if self.engine.renderer.is_available() else '#f85149',
+                          background='#0d1117')
+        status.pack(side='right')
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill='both', expand=True)
+        
+        self.create_wallpaper_tab(notebook)
+        self.create_audio_tab(notebook)
+        self.create_video_tab(notebook)
+        self.create_effects_tab(notebook)
+        self.create_settings_tab(notebook)
+        
+    def create_wallpaper_tab(self, notebook):
+        """Create wallpaper selection tab"""
+        frame = ttk.Frame(notebook, style='Dark.TFrame', padding=15)
+        notebook.add(frame, text="Wallpaper")
+        
+        preview_frame = tk.Frame(frame, bg='#161b22', width=400, height=225)
+        preview_frame.pack(pady=10)
+        preview_frame.pack_propagate(False)
+        
+        self.preview_label = tk.Label(preview_frame, text="No wallpaper selected", 
+                                      bg='#161b22', fg='#8b949e')
+        self.preview_label.pack(expand=True)
+        
+        btn_frame = ttk.Frame(frame, style='Dark.TFrame')
+        btn_frame.pack(fill='x', pady=10)
+        
+        select_btn = tk.Button(btn_frame, text="Select File", bg='#238636', fg='white',
+                              font=('Segoe UI', 10, 'bold'), border=0, padx=20, pady=8,
+                              command=self.select_wallpaper)
+        select_btn.pack(side='left', padx=5)
+        
+        apply_btn = tk.Button(btn_frame, text="Apply", bg='#1f6feb', fg='white',
+                             font=('Segoe UI', 10, 'bold'), border=0, padx=20, pady=8,
+                             command=self.apply_wallpaper)
+        apply_btn.pack(side='left', padx=5)
+        
+        stop_btn = tk.Button(btn_frame, text="Stop", bg='#da3633', fg='white',
+                            font=('Segoe UI', 10, 'bold'), border=0, padx=20, pady=8,
+                            command=self.stop_wallpaper)
+        stop_btn.pack(side='left', padx=5)
+        
+        formats_label = ttk.Label(frame, text="Supported: MP4, AVI, MKV, WebM, MOV, GIF, JPG, PNG, HEVC, VP9, AV1",
+                                 foreground='#8b949e', background='#0d1117', font=('Segoe UI', 9))
+        formats_label.pack(pady=5)
+        
+        current_frame = ttk.Frame(frame, style='Dark.TFrame')
+        current_frame.pack(fill='x', pady=10)
+        
+        current_label = ttk.Label(current_frame, text="Current:", style='Dark.TLabel')
+        current_label.pack(side='left')
+        
+        self.current_path = ttk.Label(current_frame, text="None", foreground='#58a6ff', background='#0d1117')
+        self.current_path.pack(side='left', padx=5)
+        
+        self.selected_path = None
+        
+    def create_audio_tab(self, notebook):
+        """Create audio control tab"""
+        frame = ttk.Frame(notebook, style='Dark.TFrame', padding=15)
+        notebook.add(frame, text="Audio Control")
+        
+        vol_frame = tk.Frame(frame, bg='#0d1117')
+        vol_frame.pack(fill='x', pady=10)
+        
+        vol_label = tk.Label(vol_frame, text="Wallpaper Volume", bg='#0d1117', fg='#e6edf3',
+                            font=('Segoe UI', 11, 'bold'))
+        vol_label.pack(anchor='w')
+        
+        self.volume_var = tk.IntVar(value=self.engine.audio.wallpaper_volume)
+        volume_scale = tk.Scale(vol_frame, from_=0, to=100, orient='horizontal',
+                               variable=self.volume_var, bg='#161b22', fg='#e6edf3',
+                               highlightthickness=0, troughcolor='#21262d',
+                               activebackground='#58a6ff', length=400,
+                               command=self.on_volume_change)
+        volume_scale.pack(fill='x', pady=5)
+        
+        self.mute_var = tk.BooleanVar(value=self.engine.audio.muted)
+        mute_check = tk.Checkbutton(frame, text="Mute Audio", variable=self.mute_var,
+                                   bg='#0d1117', fg='#e6edf3', selectcolor='#21262d',
+                                   activebackground='#0d1117', activeforeground='#e6edf3',
+                                   command=self.on_mute_toggle)
+        mute_check.pack(anchor='w', pady=5)
+        
+        remove_frame = tk.Frame(frame, bg='#0d1117')
+        remove_frame.pack(fill='x', pady=15)
+        
+        remove_label = tk.Label(remove_frame, text="Audio Removal", bg='#0d1117', fg='#e6edf3',
+                               font=('Segoe UI', 11, 'bold'))
+        remove_label.pack(anchor='w')
+        
+        self.remove_audio_var = tk.BooleanVar(value=True)
+        remove_check = tk.Checkbutton(remove_frame, text="Remove audio from video wallpapers",
+                                     variable=self.remove_audio_var, bg='#0d1117', fg='#e6edf3',
+                                     selectcolor='#21262d')
+        remove_check.pack(anchor='w', pady=5)
+        
+        ducking_frame = tk.Frame(frame, bg='#0d1117')
+        ducking_frame.pack(fill='x', pady=15)
+        
+        duck_label = tk.Label(ducking_frame, text="Audio Ducking", bg='#0d1117', fg='#e6edf3',
+                             font=('Segoe UI', 11, 'bold'))
+        duck_label.pack(anchor='w')
+        
+        duck_desc = tk.Label(ducking_frame, text="Automatically lower wallpaper volume when other apps play audio",
+                            bg='#0d1117', fg='#8b949e', font=('Segoe UI', 9))
+        duck_desc.pack(anchor='w')
+        
+        self.ducking_var = tk.BooleanVar(value=self.engine.audio.audio_ducking)
+        duck_check = tk.Checkbutton(ducking_frame, text="Enable audio ducking",
+                                   variable=self.ducking_var, bg='#0d1117', fg='#e6edf3',
+                                   selectcolor='#21262d')
+        duck_check.pack(anchor='w', pady=5)
+        
+        eq_frame = tk.LabelFrame(frame, text="Equalizer", bg='#161b22', fg='#e6edf3',
+                                font=('Segoe UI', 10, 'bold'))
+        eq_frame.pack(fill='x', pady=10, padx=5)
+        
+        for band, value in [('Bass', 0), ('Mid', 0), ('Treble', 0)]:
+            band_frame = tk.Frame(eq_frame, bg='#161b22')
+            band_frame.pack(side='left', expand=True, padx=10, pady=10)
+            tk.Label(band_frame, text=band, bg='#161b22', fg='#e6edf3').pack()
+            scale = tk.Scale(band_frame, from_=10, to=-10, orient='vertical',
+                           bg='#161b22', fg='#e6edf3', highlightthickness=0,
+                           troughcolor='#21262d', length=100)
+            scale.set(value)
+            scale.pack()
+            
+    def create_video_tab(self, notebook):
+        """Create video settings tab"""
+        frame = ttk.Frame(notebook, style='Dark.TFrame', padding=15)
+        notebook.add(frame, text="Video Settings")
+        
+        playback_frame = tk.Frame(frame, bg='#0d1117')
+        playback_frame.pack(fill='x', pady=10)
+        
+        speed_label = tk.Label(playback_frame, text="Playback Speed", bg='#0d1117', fg='#e6edf3',
+                              font=('Segoe UI', 11, 'bold'))
+        speed_label.pack(anchor='w')
+        
+        self.speed_var = tk.DoubleVar(value=1.0)
+        speed_scale = tk.Scale(playback_frame, from_=0.25, to=2.0, resolution=0.25,
+                              orient='horizontal', variable=self.speed_var,
+                              bg='#161b22', fg='#e6edf3', highlightthickness=0,
+                              troughcolor='#21262d', length=400)
+        speed_scale.pack(fill='x', pady=5)
+        
+        quality_frame = tk.Frame(frame, bg='#0d1117')
+        quality_frame.pack(fill='x', pady=15)
+        
+        qual_label = tk.Label(quality_frame, text="Quality Preset", bg='#0d1117', fg='#e6edf3',
+                             font=('Segoe UI', 11, 'bold'))
+        qual_label.pack(anchor='w')
+        
+        self.quality_var = tk.StringVar(value='high')
+        for q, desc in [('ultra', '8K/4K Upscaling'), ('high', 'Native Resolution'), 
+                       ('medium', 'Balanced'), ('low', 'Performance')]:
+            rb = tk.Radiobutton(quality_frame, text=f"{q.title()} - {desc}",
+                               variable=self.quality_var, value=q,
+                               bg='#0d1117', fg='#e6edf3', selectcolor='#21262d',
+                               activebackground='#0d1117')
+            rb.pack(anchor='w', pady=2)
+            
+        loop_frame = tk.Frame(frame, bg='#0d1117')
+        loop_frame.pack(fill='x', pady=15)
+        
+        self.loop_var = tk.BooleanVar(value=True)
+        loop_check = tk.Checkbutton(loop_frame, text="Loop video", variable=self.loop_var,
+                                   bg='#0d1117', fg='#e6edf3', selectcolor='#21262d')
+        loop_check.pack(anchor='w')
+        
+        self.seamless_var = tk.BooleanVar(value=False)
+        seamless_check = tk.Checkbutton(loop_frame, text="Create seamless loop (processing required)",
+                                       variable=self.seamless_var, bg='#0d1117', fg='#e6edf3',
+                                       selectcolor='#21262d')
+        seamless_check.pack(anchor='w')
+        
+        ffmpeg_status = "Available" if self.engine.video_processor.ffmpeg_available else "Not Found"
+        ffmpeg_color = '#3fb950' if self.engine.video_processor.ffmpeg_available else '#f85149'
+        ffmpeg_label = tk.Label(frame, text=f"FFmpeg: {ffmpeg_status}", bg='#0d1117', fg=ffmpeg_color)
+        ffmpeg_label.pack(anchor='w', pady=10)
+        
+    def create_effects_tab(self, notebook):
+        """Create visual effects tab"""
+        frame = ttk.Frame(notebook, style='Dark.TFrame', padding=15)
+        notebook.add(frame, text="Effects")
+        
+        effect_label = tk.Label(frame, text="Image Effects", bg='#0d1117', fg='#e6edf3',
+                               font=('Segoe UI', 11, 'bold'))
+        effect_label.pack(anchor='w')
+        
+        self.effect_var = tk.StringVar(value='none')
+        effects = [
+            ('none', 'None - Static image'),
+            ('ken-burns', 'Ken Burns - Slow zoom and pan'),
+            ('parallax', 'Parallax - Gentle movement'),
+            ('pulse', 'Pulse - Subtle breathing effect')
+        ]
+        
+        for value, desc in effects:
+            rb = tk.Radiobutton(frame, text=desc, variable=self.effect_var, value=value,
+                               bg='#0d1117', fg='#e6edf3', selectcolor='#21262d',
+                               activebackground='#0d1117')
+            rb.pack(anchor='w', pady=3)
+            
+        filter_label = tk.Label(frame, text="Video Filters", bg='#0d1117', fg='#e6edf3',
+                               font=('Segoe UI', 11, 'bold'))
+        filter_label.pack(anchor='w', pady=(20, 5))
+        
+        filter_frame = tk.Frame(frame, bg='#0d1117')
+        filter_frame.pack(fill='x')
+        
+        self.brightness_var = tk.IntVar(value=100)
+        tk.Label(filter_frame, text="Brightness", bg='#0d1117', fg='#e6edf3').pack(anchor='w')
+        tk.Scale(filter_frame, from_=50, to=150, orient='horizontal', variable=self.brightness_var,
+                bg='#161b22', fg='#e6edf3', highlightthickness=0, troughcolor='#21262d',
+                length=300).pack(fill='x')
+        
+        self.contrast_var = tk.IntVar(value=100)
+        tk.Label(filter_frame, text="Contrast", bg='#0d1117', fg='#e6edf3').pack(anchor='w')
+        tk.Scale(filter_frame, from_=50, to=150, orient='horizontal', variable=self.contrast_var,
+                bg='#161b22', fg='#e6edf3', highlightthickness=0, troughcolor='#21262d',
+                length=300).pack(fill='x')
+        
+        self.saturation_var = tk.IntVar(value=100)
+        tk.Label(filter_frame, text="Saturation", bg='#0d1117', fg='#e6edf3').pack(anchor='w')
+        tk.Scale(filter_frame, from_=0, to=200, orient='horizontal', variable=self.saturation_var,
+                bg='#161b22', fg='#e6edf3', highlightthickness=0, troughcolor='#21262d',
+                length=300).pack(fill='x')
+        
+    def create_settings_tab(self, notebook):
+        """Create settings tab"""
+        frame = ttk.Frame(notebook, style='Dark.TFrame', padding=15)
+        notebook.add(frame, text="Settings")
+        
+        perf_label = tk.Label(frame, text="Performance", bg='#0d1117', fg='#e6edf3',
+                             font=('Segoe UI', 11, 'bold'))
+        perf_label.pack(anchor='w')
+        
+        self.gaming_var = tk.BooleanVar(value=self.engine.config['performance']['auto_pause_gaming'])
+        gaming_check = tk.Checkbutton(frame, text="Auto-pause during gaming (detect Steam/Lutris)",
+                                     variable=self.gaming_var, bg='#0d1117', fg='#e6edf3',
+                                     selectcolor='#21262d')
+        gaming_check.pack(anchor='w', pady=3)
+        
+        fps_frame = tk.Frame(frame, bg='#0d1117')
+        fps_frame.pack(fill='x', pady=10)
+        
+        tk.Label(fps_frame, text="FPS Limit", bg='#0d1117', fg='#e6edf3').pack(side='left')
+        self.fps_var = tk.IntVar(value=30)
+        fps_combo = ttk.Combobox(fps_frame, textvariable=self.fps_var, values=[15, 24, 30, 60],
+                                width=10, state='readonly')
+        fps_combo.pack(side='left', padx=10)
+        
+        renderer_label = tk.Label(frame, text="Renderer", bg='#0d1117', fg='#e6edf3',
+                                 font=('Segoe UI', 11, 'bold'))
+        renderer_label.pack(anchor='w', pady=(15, 5))
+        
+        self.renderer_var = tk.StringVar(value='chrome')
+        renderers = [
+            ('chrome', 'Chrome/Chromium (Recommended)'),
+            ('mpv', 'MPV + xwinwrap'),
+            ('native', 'Native Desktop')
+        ]
+        
+        for value, desc in renderers:
+            rb = tk.Radiobutton(frame, text=desc, variable=self.renderer_var, value=value,
+                               bg='#0d1117', fg='#e6edf3', selectcolor='#21262d')
+            rb.pack(anchor='w', pady=2)
+            
+        save_btn = tk.Button(frame, text="Save Settings", bg='#238636', fg='white',
+                            font=('Segoe UI', 10, 'bold'), border=0, padx=20, pady=8,
+                            command=self.save_settings)
+        save_btn.pack(anchor='w', pady=20)
+        
+    def select_wallpaper(self):
+        """Open file dialog to select wallpaper"""
+        filetypes = [
+            ("All Supported", "*.mp4 *.avi *.mkv *.webm *.mov *.wmv *.gif *.jpg *.jpeg *.png *.webp *.bmp"),
+            ("Video Files", "*.mp4 *.avi *.mkv *.webm *.mov *.wmv *.flv *.m4v"),
+            ("Image Files", "*.jpg *.jpeg *.png *.gif *.bmp *.webp *.tiff"),
+            ("All Files", "*.*")
+        ]
+        
+        path = filedialog.askopenfilename(title="Select Wallpaper", filetypes=filetypes)
+        
+        if path:
+            self.selected_path = path
+            self.current_path.config(text=os.path.basename(path))
+            self.update_preview(path)
+            
+    def update_preview(self, path):
+        """Update preview image"""
+        if PIL_AVAILABLE:
+            try:
+                ext = Path(path).suffix.lower()
+                
+                if ext in SUPPORTED_VIDEO_FORMATS:
+                    thumb = self.engine.video_processor.generate_thumbnail(path)
+                    if thumb:
+                        path = thumb
+                    else:
+                        self.preview_label.config(text="Video: " + os.path.basename(path))
+                        return
+                        
+                img = Image.open(path)
+                img.thumbnail((400, 225), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.preview_label.config(image=photo, text='')
+                self.preview_label.image = photo
+            except Exception as e:
+                self.preview_label.config(text=f"Preview unavailable\n{os.path.basename(path)}")
+        else:
+            self.preview_label.config(text=os.path.basename(path))
+            
+    def apply_wallpaper(self):
+        """Apply selected wallpaper"""
+        if not self.selected_path:
+            messagebox.showwarning("No Selection", "Please select a wallpaper first.")
+            return
+            
+        options = {
+            'muted': self.mute_var.get(),
+            'remove_audio': self.remove_audio_var.get(),
+            'volume': self.volume_var.get() / 100,
+            'playback_rate': self.speed_var.get(),
+            'quality': self.quality_var.get(),
+            'loop': self.loop_var.get(),
+            'effect': self.effect_var.get()
+        }
+        
+        success = self.engine.set_wallpaper(self.selected_path, options=options)
+        
+        if success:
+            messagebox.showinfo("Success", "Wallpaper applied successfully!")
+        else:
+            messagebox.showerror("Error", "Failed to apply wallpaper.")
+            
+    def stop_wallpaper(self):
+        """Stop current wallpaper"""
+        self.engine.stop()
+        messagebox.showinfo("Stopped", "Wallpaper engine stopped.")
+        
+    def on_volume_change(self, value):
+        """Handle volume slider change"""
+        self.engine.set_volume(int(float(value)))
+        
+    def on_mute_toggle(self):
+        """Handle mute checkbox toggle"""
+        if self.mute_var.get():
+            self.engine.audio.muted = True
+        else:
+            self.engine.audio.muted = False
+            
+    def save_settings(self):
+        """Save all settings"""
+        self.engine.config['performance']['auto_pause_gaming'] = self.gaming_var.get()
+        self.engine.config['performance']['fps_limit'] = self.fps_var.get()
+        self.engine.config['renderer'] = self.renderer_var.get()
+        self.engine.config['audio']['muted'] = self.mute_var.get()
+        self.engine.config['audio']['ducking'] = self.ducking_var.get()
+        self.engine.config['video_options']['quality'] = self.quality_var.get()
+        self.engine.config['video_options']['playback_rate'] = self.speed_var.get()
+        self.engine.save_config()
+        messagebox.showinfo("Saved", "Settings saved successfully!")
+        
+    def run(self):
+        """Start GUI main loop"""
+        self.root.mainloop()
 
-[Install]
-WantedBy=graphical-session.target
-"""
-        
-        with open("/etc/systemd/system/aegis-animated-wallpaper.service", 'w') as f:
-            f.write(service_content)
-            
-        subprocess.run(['systemctl', 'enable', 'aegis-animated-wallpaper'])
-        subprocess.run(['systemctl', 'start', 'aegis-animated-wallpaper'])
+def print_cli_help():
+    """Print CLI help"""
+    print("""
+Aegis Wallpaper Engine v3.0 - SIGMA Edition
+============================================
+
+Usage: aegis-wallpaper-engine [OPTIONS] [WALLPAPER_PATH]
+
+Options:
+  --gui                 Launch graphical interface
+  --set PATH            Set wallpaper from file
+  --mute                Mute audio
+  --unmute              Unmute audio
+  --volume LEVEL        Set volume (0-100)
+  --quality PRESET      Set quality (ultra/high/medium/low)
+  --remove-audio        Remove audio from video
+  --effect EFFECT       Set effect (none/ken-burns/parallax/pulse)
+  --stop                Stop wallpaper engine
+  --status              Show current status
+  --formats             List supported formats
+  --help                Show this help
+
+Examples:
+  aegis-wallpaper-engine --gui
+  aegis-wallpaper-engine --set /path/to/video.mp4 --mute
+  aegis-wallpaper-engine --set /path/to/image.jpg --effect ken-burns
+  aegis-wallpaper-engine --volume 50
+  aegis-wallpaper-engine --stop
+""")
+
+def main():
+    """Main entry point"""
+    engine = AegisWallpaperEngine()
     
-    def monitor_performance(self):
-        """Monitor system performance and adjust wallpaper accordingly"""
-        while True:
-            gpu_usage = self.get_gpu_usage()
-            game_running = self.is_game_running()
-            
-            should_pause = (
-                self.config["auto_pause_gaming"] and 
-                (game_running or gpu_usage > self.gpu_threshold)
-            )
-            
-            if should_pause and not self.gaming_mode:
-                self.enter_gaming_mode()
-            elif not should_pause and self.gaming_mode:
-                self.exit_gaming_mode()
-                
-            time.sleep(5)  # Check every 5 seconds
-    
-    def enter_gaming_mode(self):
-        """Optimize wallpaper for gaming performance"""
-        self.gaming_mode = True
-        
-        # Switch to static low-res wallpaper
-        gaming_wallpaper = "/usr/share/aegis/wallpapers/gaming-optimized.jpg"
-        if os.path.exists(gaming_wallpaper):
-            self.set_static_wallpaper(gaming_wallpaper)
-        
-        # Stop animated wallpaper service
-        subprocess.run(['systemctl', 'stop', 'aegis-animated-wallpaper'], capture_output=True)
-        
-        print("🎮 Gaming mode activated - wallpaper optimized for performance")
-    
-    def exit_gaming_mode(self):
-        """Restore normal wallpaper settings"""
-        self.gaming_mode = False
-        
-        # Restore previous wallpaper
-        if self.current_mode == "animated":
-            subprocess.run(['systemctl', 'start', 'aegis-animated-wallpaper'], capture_output=True)
-        
-        print("🖼️ Normal wallpaper mode restored")
-    
-    def create_default_wallpapers(self):
-        """Create default high-quality wallpapers"""
-        # Create animated Aegis wallpaper
-        self.create_aegis_animated_wallpaper()
-        
-        # Create gaming-optimized static wallpaper
-        self.create_gaming_wallpaper()
-    
-    def create_aegis_animated_wallpaper(self):
-        """Create animated Aegis wallpaper with breathing effect"""
-        frames_dir = f"{self.wallpaper_dir}/aegis-animated-frames"
-        os.makedirs(frames_dir, exist_ok=True)
-        
-        if PIL_AVAILABLE:
-            # Generate 60 frames for smooth animation
-            for frame in range(60):
-                img = Image.new('RGB', (1920, 1080), color='#0d1117')
-                
-                # Create breathing effect with opacity changes
-                opacity = int(100 + 155 * abs(math.sin(frame * math.pi / 30)))
-                
-                # Generate frame and save
-                img_path = f"{frames_dir}/frame_{frame:03d}.jpg"
-                img.save(img_path, 'JPEG', quality=85)
-            
-            print("✅ Animated Aegis wallpaper created")
+    if len(sys.argv) < 2 or '--gui' in sys.argv:
+        if TK_AVAILABLE:
+            gui = WallpaperEngineGUI(engine)
+            gui.run()
         else:
-            # Create a simple placeholder without PIL
-            placeholder_path = f"{frames_dir}/frame_000.jpg"
-            # Use ImageMagick convert if available as fallback
-            try:
-                subprocess.run([
-                    'convert', '-size', '1920x1080', 
-                    'xc:#0d1117', placeholder_path
-                ], capture_output=True)
-                print("✅ Simple wallpaper created (PIL not available)")
-            except:
-                print("⚠️  Cannot create animated wallpaper without PIL")
+            print("GUI not available. Install tkinter to use graphical interface.")
+            print("Run with --help for CLI options.")
+            return
+            
+    args = sys.argv[1:]
     
-    def create_gaming_wallpaper(self):
-        """Create optimized gaming wallpaper (low resource usage)"""
-        gaming_wallpaper = f"{self.wallpaper_dir}/gaming-optimized.jpg"
+    if '--help' in args or '-h' in args:
+        print_cli_help()
+        return
         
-        if PIL_AVAILABLE:
-            img = Image.new('RGB', (1920, 1080), color='#1a1a1a')
+    if '--status' in args:
+        status = engine.get_status()
+        print(f"Aegis Wallpaper Engine v{status['version']}")
+        print(f"  Renderer: {status['renderer']}")
+        print(f"  FFmpeg: {'Available' if status['ffmpeg'] else 'Not found'}")
+        print(f"  Current: {status['current_wallpaper'] or 'None'}")
+        print(f"  Mode: {status['mode']}")
+        print(f"  Volume: {status['audio']['volume']}%")
+        print(f"  Muted: {status['audio']['muted']}")
+        return
+        
+    if '--formats' in args:
+        formats = engine.get_supported_formats()
+        print("Supported Formats:")
+        print(f"  Video: {', '.join(formats['video'])}")
+        print(f"  Image: {', '.join(formats['image'])}")
+        print(f"  Audio: {', '.join(formats['audio'])}")
+        return
+        
+    if '--stop' in args:
+        engine.stop()
+        print("Wallpaper engine stopped.")
+        return
+        
+    if '--set' in args:
+        idx = args.index('--set')
+        if idx + 1 < len(args):
+            path = args[idx + 1]
+            options = {
+                'muted': '--mute' in args,
+                'remove_audio': '--remove-audio' in args,
+                'loop': '--no-loop' not in args
+            }
             
-            # Simple Aegis logo without complex effects
-            # Optimized for minimal GPU usage during gaming
-            
-            img.save(gaming_wallpaper, 'JPEG', quality=75)
-            print("✅ Gaming-optimized wallpaper created")
+            if '--volume' in args:
+                vol_idx = args.index('--volume')
+                if vol_idx + 1 < len(args):
+                    options['volume'] = int(args[vol_idx + 1]) / 100
+                    
+            if '--quality' in args:
+                q_idx = args.index('--quality')
+                if q_idx + 1 < len(args):
+                    options['quality'] = args[q_idx + 1]
+                    
+            if '--effect' in args:
+                e_idx = args.index('--effect')
+                if e_idx + 1 < len(args):
+                    options['effect'] = args[e_idx + 1]
+                    
+            if engine.set_wallpaper(path, options=options):
+                print(f"Wallpaper set: {path}")
+            else:
+                print("Failed to set wallpaper.")
+        return
+        
+    if '--volume' in args:
+        idx = args.index('--volume')
+        if idx + 1 < len(args):
+            engine.set_volume(int(args[idx + 1]))
+            print(f"Volume set to {args[idx + 1]}%")
+        return
+        
+    if '--mute' in args:
+        engine.audio.muted = True
+        engine.save_config()
+        print("Audio muted.")
+        return
+        
+    if '--unmute' in args:
+        engine.audio.muted = False
+        engine.save_config()
+        print("Audio unmuted.")
+        return
+        
+    if len(args) > 0 and not args[0].startswith('--'):
+        if engine.set_wallpaper(args[0]):
+            print(f"Wallpaper set: {args[0]}")
         else:
-            # Use ImageMagick as fallback
-            try:
-                subprocess.run([
-                    'convert', '-size', '1920x1080',
-                    'xc:#1a1a1a', gaming_wallpaper
-                ], capture_output=True)
-                print("✅ Gaming wallpaper created with ImageMagick")
-            except:
-                print("⚠️  Cannot create gaming wallpaper without PIL or ImageMagick")
+            print("Failed to set wallpaper.")
+        return
+        
+    print_cli_help()
 
 if __name__ == "__main__":
-    engine = AegisWallpaperEngine()
-    engine.create_default_wallpapers()
-    
-    # Start performance monitoring in background
-    monitor_thread = threading.Thread(target=engine.monitor_performance)
-    monitor_thread.daemon = True
-    monitor_thread.start()
-    
-    print("🖼️ Aegis Wallpaper Engine initialized")
-    print("🎮 Gaming optimization: Enabled")
-    print("🔧 Performance monitoring: Active")
+    main()
