@@ -2385,6 +2385,48 @@ def download_freemium_installer():
         app.logger.error(f"Installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
+def generate_vbs_hash(key):
+    """Generate hash matching VBScript SimpleHash function"""
+    h = 0
+    for c in key.upper():
+        h = ((h * 31) + ord(c)) & 0x7FFFFFFF
+    return format(h, '016x')[:16]
+
+def generate_license_cache():
+    """Generate signed offline license cache with current licenses"""
+    cache_entries = []
+    build_date = datetime.now().strftime('%Y-%m-%d')
+    
+    # Add demo licenses
+    for key, data in DEMO_LICENSES.items():
+        key_hash = generate_vbs_hash(key)
+        cache_entries.append(f"{key_hash}:{data['edition']}:{data['tier']}")
+    
+    # Add recent database licenses (last 30 days)
+    try:
+        recent_date = datetime.now() - timedelta(days=30)
+        recent_licenses = License.query.filter(
+            License.created_at >= recent_date,
+            License.status == 'active'
+        ).limit(500).all()
+        
+        for lic in recent_licenses:
+            key_hash = generate_vbs_hash(lic.license_key)
+            cache_entries.append(f"{key_hash}:{lic.edition}:{lic.edition}")
+    except Exception as e:
+        app.logger.warning(f"Could not fetch recent licenses for cache: {e}")
+    
+    cache_data = '|'.join(cache_entries)
+    
+    # Create HMAC signature for verification
+    cache_signature = hmac.new(
+        JWT_SECRET.encode(),
+        f"{cache_data}:{build_date}".encode(),
+        hashlib.sha256
+    ).hexdigest()[:16]
+    
+    return cache_data, build_date, cache_signature
+
 @app.route('/download-installer-licensed')
 @app.route('/download-installer-licensed.hta')
 def download_licensed_installer():
@@ -2395,6 +2437,19 @@ def download_licensed_installer():
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
+            
+            # Generate dynamic license cache
+            cache_data, build_date, signature = generate_license_cache()
+            
+            # Inject dynamic cache into installer
+            script_content = script_content.replace(
+                'Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"',
+                f'Const LICENSE_CACHE = "{cache_data}"'
+            )
+            script_content = script_content.replace(
+                'Const CACHE_BUILD_DATE = "2025-11-30"',
+                f'Const CACHE_BUILD_DATE = "{build_date}"'
+            )
             
             return Response(
                 script_content,

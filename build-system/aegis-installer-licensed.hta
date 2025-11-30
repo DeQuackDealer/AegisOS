@@ -354,7 +354,70 @@ Sub CheckSystemRequirements()
         "<div class='sys-req-item'>" & osStatus & "</div>"
 End Sub
 
-Dim validationToken, serverUrl, isValidating
+Dim validationToken, serverUrl, isValidating, cachedLicenses, cacheExpiry
+
+' Local license cache - updated when installer is built/downloaded
+' Format: "HASH:EDITION:TIER" separated by |
+' Cache built: {{BUILD_DATE}} - Valid for 30 days offline
+Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"
+Const CACHE_BUILD_DATE = "2025-11-30"
+
+Function SimpleHash(str)
+    Dim i, h, c
+    h = 0
+    For i = 1 To Len(str)
+        c = Asc(Mid(str, i, 1))
+        h = ((h * 31) + c) And &H7FFFFFFF
+    Next
+    SimpleHash = Hex(h)
+    Do While Len(SimpleHash) < 16
+        SimpleHash = "0" & SimpleHash
+    Loop
+    SimpleHash = LCase(Left(SimpleHash, 16))
+End Function
+
+Function CheckLocalCache(key)
+    Dim cleanKey, keyHash, entries, entry, parts
+    CheckLocalCache = ""
+    cleanKey = UCase(Trim(key))
+    keyHash = SimpleHash(cleanKey)
+    
+    entries = Split(LICENSE_CACHE, "|")
+    For Each entry In entries
+        parts = Split(entry, ":")
+        If UBound(parts) >= 2 Then
+            If LCase(parts(0)) = keyHash Then
+                CheckLocalCache = parts(1)
+                Exit Function
+            End If
+        End If
+    Next
+End Function
+
+Function IsCacheValid()
+    Dim buildDate, today, daysDiff
+    IsCacheValid = False
+    On Error Resume Next
+    buildDate = CDate(CACHE_BUILD_DATE)
+    today = Date
+    daysDiff = DateDiff("d", buildDate, today)
+    If daysDiff <= 30 Then
+        IsCacheValid = True
+    End If
+    On Error Goto 0
+End Function
+
+Function GetCacheDaysLeft()
+    Dim buildDate, today, daysDiff
+    GetCacheDaysLeft = 0
+    On Error Resume Next
+    buildDate = CDate(CACHE_BUILD_DATE)
+    today = Date
+    daysDiff = 30 - DateDiff("d", buildDate, today)
+    If daysDiff < 0 Then daysDiff = 0
+    GetCacheDaysLeft = daysDiff
+    On Error Goto 0
+End Function
 
 Function GetEditionFromPrefix(prefix)
     GetEditionFromPrefix = ""
@@ -457,8 +520,30 @@ Sub ValidateLicenseWithServer(key)
         document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Too many attempts. Please wait and try again."
         document.getElementById("licenseStatus").className = "license-invalid"
     Else
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable. Check internet connection."
-        document.getElementById("licenseStatus").className = "license-invalid"
+        ' Server unavailable - try local cache fallback
+        Dim cachedEdition
+        cachedEdition = CheckLocalCache(cleanKey)
+        If Len(cachedEdition) > 0 And IsCacheValid() Then
+            Dim displayEdition2
+            displayEdition2 = GetEditionFromPrefix(Left(cleanKey, 4))
+            If Len(displayEdition2) = 0 Then displayEdition2 = cachedEdition
+            
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Offline Mode:</strong> " & displayEdition2 & " Edition" & _
+                "<div style='font-size:9px;color:#888;margin-top:2px'>Server unavailable. Using cached validation (expires in " & GetCacheDaysLeft() & " days)</div>"
+            document.getElementById("licenseStatus").className = "license-valid"
+            licenseKey = cleanKey
+            detectedEdition = displayEdition2
+            validationToken = "OFFLINE_" & SimpleHash(cleanKey)
+            document.getElementById("btnNext1").disabled = False
+            document.getElementById("btnNext1").style.display = "inline-block"
+            UpdateFeatureShowcase displayEdition2
+        ElseIf Len(cachedEdition) > 0 And Not IsCacheValid() Then
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Server unavailable and local cache expired. Please connect to internet."
+            document.getElementById("licenseStatus").className = "license-invalid"
+        Else
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable. Check internet connection or try again later."
+            document.getElementById("licenseStatus").className = "license-invalid"
+        End If
     End If
     
     document.getElementById("btnValidate").disabled = False
