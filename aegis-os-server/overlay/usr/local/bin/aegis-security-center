@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis OS Security Center - All-in-One Security Dashboard
-Provides antivirus, firewall, and system security monitoring
+Provides antivirus, firewall, AI security, and system security monitoring
 """
 
 import os
@@ -20,7 +20,14 @@ try:
 except ImportError:
     TKINTER_AVAILABLE = False
 
-TIER_LIMIT = "full"  # "freemium" or "full" - controls feature availability
+try:
+    sys.path.insert(0, '/usr/share/aegis/security')
+    from aegis_ai_security import AISecurityTier, AISecurityAnalyzer
+    AI_SECURITY_AVAILABLE = True
+except ImportError:
+    AI_SECURITY_AVAILABLE = False
+
+TIER_LIMIT = "server"  # "freemium" or "full" - controls feature availability
 
 SUBPROCESS_TIMEOUT_SHORT = 10
 SUBPROCESS_TIMEOUT_MEDIUM = 30
@@ -649,7 +656,7 @@ class AegisSecurityCenter:
     
     def get_full_status(self):
         """Get comprehensive security status"""
-        return {
+        status = {
             "antivirus": self.check_clamav_status(),
             "firewall": self.check_firewall_status(),
             "integrity": self.check_system_integrity(),
@@ -659,6 +666,102 @@ class AegisSecurityCenter:
             "threats_found": self.config.get("threats_found", 0),
             "security_score": self.get_security_score()
         }
+        status["ai_security"] = self.get_ai_security_status()
+        return status
+    
+    def get_ai_security_status(self):
+        """Get AI security tier and capabilities status"""
+        if not AI_SECURITY_AVAILABLE:
+            return {
+                "available": False,
+                "error": "AI Security module not loaded",
+                "tier_name": "Unknown",
+                "tier_level": 0,
+                "capabilities": [],
+                "capabilities_count": 0
+            }
+        
+        try:
+            tier = AISecurityTier(TIER_LIMIT)
+            return {
+                "available": True,
+                "tier_name": tier.get_tier_name(),
+                "tier_level": tier.get_tier_level(),
+                "description": tier.get_tier_description(),
+                "capabilities": tier.get_capabilities(),
+                "capabilities_count": len(tier.get_capabilities()),
+                "limits": tier.get_limits(),
+                "realtime_protection": tier.get_limits().get("realtime_protection", False),
+                "ai_analysis": tier.get_limits().get("ai_analysis", False)
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to get AI security status: {e}")
+            return {
+                "available": False,
+                "error": str(e),
+                "tier_name": "Error",
+                "tier_level": 0,
+                "capabilities": [],
+                "capabilities_count": 0
+            }
+    
+    def run_ai_heuristic_scan(self, path="/home"):
+        """Run AI-powered heuristic scan"""
+        if not AI_SECURITY_AVAILABLE:
+            return {
+                "status": "error",
+                "error": "AI Security module not available"
+            }
+        
+        try:
+            analyzer = AISecurityAnalyzer(AISecurityTier(TIER_LIMIT))
+            result = analyzer.heuristic_scan(path)
+            self.log_event("ai_scan", f"AI heuristic scan of {path}: {result.get('status', 'unknown')}", "info")
+            return result
+        except Exception as e:
+            self.logger.error(f"AI heuristic scan failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def run_ai_behavioral_analysis(self):
+        """Run AI behavioral analysis"""
+        if not AI_SECURITY_AVAILABLE:
+            return {
+                "status": "error",
+                "error": "AI Security module not available"
+            }
+        
+        try:
+            analyzer = AISecurityAnalyzer(AISecurityTier(TIER_LIMIT))
+            result = analyzer.behavioral_analysis()
+            self.log_event("ai_behavioral", f"Behavioral analysis: {result.get('risk_level', 'unknown')}", "info")
+            return result
+        except Exception as e:
+            self.logger.error(f"AI behavioral analysis failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def get_ai_security_summary(self):
+        """Get comprehensive AI security summary"""
+        if not AI_SECURITY_AVAILABLE:
+            return {
+                "available": False,
+                "error": "AI Security module not available"
+            }
+        
+        try:
+            analyzer = AISecurityAnalyzer(AISecurityTier(TIER_LIMIT))
+            return analyzer.get_security_summary()
+        except Exception as e:
+            self.logger.error(f"Failed to get AI security summary: {e}")
+            return {
+                "available": False,
+                "error": str(e)
+            }
 
 
 class SecurityCenterGUI:
@@ -743,6 +846,27 @@ class SecurityCenterGUI:
         ttk.Button(fw_buttons, text="Enable", command=self.enable_firewall).pack(side='left', padx=5)
         ttk.Button(fw_buttons, text="Disable", command=self.disable_firewall).pack(side='left', padx=5)
         
+        ai_frame = ttk.LabelFrame(left_panel, text="🤖 AI Security", padding=15)
+        ai_frame.pack(fill='x', pady=10)
+        
+        self.ai_tier_label = ttk.Label(ai_frame, text="Loading...", style='Status.TLabel')
+        self.ai_tier_label.pack(anchor='w')
+        
+        self.ai_level_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
+        self.ai_level_label.pack(anchor='w')
+        
+        self.ai_caps_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
+        self.ai_caps_label.pack(anchor='w')
+        
+        self.ai_realtime_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
+        self.ai_realtime_label.pack(anchor='w')
+        
+        ai_buttons = ttk.Frame(ai_frame)
+        ai_buttons.pack(fill='x', pady=10)
+        
+        ttk.Button(ai_buttons, text="AI Scan", command=self.run_ai_scan).pack(side='left', padx=5)
+        ttk.Button(ai_buttons, text="Behavioral", command=self.run_behavioral).pack(side='left', padx=5)
+        
         right_panel = ttk.Frame(main_frame)
         right_panel.pack(side='right', fill='both', expand=True, padx=(20, 0))
         
@@ -823,6 +947,27 @@ class SecurityCenterGUI:
             self.issues_text.insert(tk.END, "✅ No security issues detected")
             self.issues_text.config(fg='#00ff00')
         
+        ai = status.get("ai_security", {})
+        if ai.get("available", False):
+            tier_name = ai.get("tier_name", "Unknown")
+            tier_level = ai.get("tier_level", 0)
+            self.ai_tier_label.config(text=f"Tier: {tier_name}")
+            
+            level_bars = "█" * tier_level + "░" * (5 - tier_level)
+            self.ai_level_label.config(text=f"Level: [{level_bars}] {tier_level}/5")
+            
+            caps_count = ai.get("capabilities_count", 0)
+            self.ai_caps_label.config(text=f"Capabilities: {caps_count} active")
+            
+            realtime = "✅ Enabled" if ai.get("realtime_protection") else "❌ Disabled"
+            ai_analysis = "✅ Enabled" if ai.get("ai_analysis") else "❌ Disabled"
+            self.ai_realtime_label.config(text=f"RT: {realtime} | AI: {ai_analysis}")
+        else:
+            self.ai_tier_label.config(text="❌ AI Security unavailable")
+            self.ai_level_label.config(text=ai.get("error", "Module not loaded"))
+            self.ai_caps_label.config(text="")
+            self.ai_realtime_label.config(text="")
+        
     def run_scan(self, path="/home"):
         """Run antivirus scan with proper status handling"""
         self.av_status.config(text="🔄 Scanning...")
@@ -872,6 +1017,74 @@ class SecurityCenterGUI:
             else:
                 messagebox.showerror("Firewall", "❌ Failed to disable firewall")
             self.refresh_status()
+    
+    def run_ai_scan(self):
+        """Run AI-powered heuristic scan"""
+        self.ai_tier_label.config(text="🔄 Running AI scan...")
+        self.root.update()
+        
+        result = self.security.run_ai_heuristic_scan("/home")
+        status = result.get("status", "unknown")
+        
+        if status == "completed":
+            threats = result.get("threats_found", [])
+            risk = result.get("risk_score", 0)
+            files = result.get("files_scanned", 0)
+            remaining = result.get("scans_remaining", -1)
+            
+            if threats:
+                threat_list = "\n".join([f"• {t.get('pattern', 'Unknown')}: {t.get('file', 'Unknown')}" for t in threats[:5]])
+                if len(threats) > 5:
+                    threat_list += f"\n... and {len(threats) - 5} more"
+                messagebox.showwarning("AI Scan Complete",
+                    f"⚠️ Found {len(threats)} potential threat(s)!\n\n{threat_list}\n\nRisk Score: {risk}/10")
+            else:
+                msg = f"✅ AI Scan Complete\n\nFiles scanned: {files}\nThreats found: 0\nRisk Score: {risk}/10"
+                if remaining >= 0:
+                    msg += f"\n\nScans remaining today: {remaining}"
+                messagebox.showinfo("AI Scan Complete", msg)
+        elif status == "rate_limited":
+            messagebox.showwarning("Rate Limited", 
+                f"⚠️ {result.get('error', 'Daily scan limit exceeded')}\n\nUpgrade to unlock unlimited scans.")
+        elif status == "tier_restricted":
+            messagebox.showinfo("Tier Restricted",
+                f"ℹ️ {result.get('error', 'Feature not available')}\n\n{result.get('upgrade_hint', '')}")
+        else:
+            messagebox.showerror("AI Scan Error",
+                f"❌ {result.get('error', 'Unknown error occurred')}")
+        
+        self.refresh_status()
+    
+    def run_behavioral(self):
+        """Run behavioral analysis"""
+        self.ai_tier_label.config(text="🔄 Analyzing behavior...")
+        self.root.update()
+        
+        result = self.security.run_ai_behavioral_analysis()
+        status = result.get("status", "unknown")
+        
+        if status == "completed":
+            risk_level = result.get("risk_level", "unknown")
+            anomalies = result.get("anomalies", [])
+            model_type = result.get("model_type", "basic")
+            
+            risk_emoji = {"low": "✅", "medium": "⚠️", "high": "🔴"}.get(risk_level, "❓")
+            
+            if anomalies:
+                anomaly_list = "\n".join([f"• [{a.get('severity', 'N/A')}] {a.get('description', 'Unknown')}" for a in anomalies[:5]])
+                messagebox.showwarning("Behavioral Analysis",
+                    f"{risk_emoji} Risk Level: {risk_level.upper()}\n\nAnomalies detected:\n{anomaly_list}\n\nModel: {model_type}")
+            else:
+                messagebox.showinfo("Behavioral Analysis",
+                    f"{risk_emoji} Risk Level: {risk_level.upper()}\n\nNo anomalies detected\nModel: {model_type}")
+        elif status == "tier_restricted":
+            messagebox.showinfo("Tier Restricted",
+                f"ℹ️ {result.get('error', 'Feature not available')}\n\n{result.get('upgrade_hint', '')}")
+        else:
+            messagebox.showerror("Analysis Error",
+                f"❌ {result.get('error', 'Unknown error occurred')}")
+        
+        self.refresh_status()
         
     def run(self):
         """Run the GUI"""
@@ -923,6 +1136,32 @@ def show_cli_status(security=None):
     print(f"     Last Scan: {status['last_scan'] or 'Never'}")
     print(f"     Threats Found: {status['threats_found']}")
     
+    print("\n" + "─" * 60)
+    print("  🤖 AI SECURITY")
+    ai = status.get("ai_security", {})
+    if ai.get("available", False):
+        tier_name = ai.get("tier_name", "Unknown")
+        tier_level = ai.get("tier_level", 0)
+        level_bars = "█" * tier_level + "░" * (5 - tier_level)
+        print(f"     Tier: {tier_name}")
+        print(f"     Level: [{level_bars}] {tier_level}/5")
+        print(f"     Capabilities: {ai.get('capabilities_count', 0)} active")
+        realtime = "✅ Yes" if ai.get("realtime_protection") else "❌ No"
+        ai_analysis = "✅ Yes" if ai.get("ai_analysis") else "❌ No"
+        print(f"     Realtime Protection: {realtime}")
+        print(f"     AI Analysis: {ai_analysis}")
+        
+        caps = ai.get("capabilities", [])
+        if caps:
+            print("     Active Capabilities:")
+            for cap in caps[:6]:
+                print(f"       • {cap}")
+            if len(caps) > 6:
+                print(f"       ... and {len(caps) - 6} more")
+    else:
+        print(f"     Status: ❌ Unavailable")
+        print(f"     Error: {ai.get('error', 'Module not loaded')}")
+    
     if issues:
         print("\n" + "─" * 60)
         print("  ⚠️  SECURITY ISSUES:")
@@ -930,7 +1169,7 @@ def show_cli_status(security=None):
             print(f"     • {issue}")
     
     print("\n" + "═" * 60)
-    print("  Commands: aegis-security-center --scan | --enable-firewall | --help")
+    print("  Commands: aegis-security-center --scan | --ai-scan | --ai-status | --help")
     print("═" * 60 + "\n")
 
 
@@ -966,6 +1205,49 @@ def print_scan_results(results):
         return True
 
 
+def print_ai_scan_results(results):
+    """Print AI scan results in a formatted way"""
+    status = results.get("status", "unknown")
+    
+    if status == "error":
+        print(f"❌ AI Scan failed: {results.get('error', 'Unknown error')}")
+        return False
+    elif status == "rate_limited":
+        print(f"⚠️ Rate Limited: {results.get('error', 'Daily limit exceeded')}")
+        print("   Upgrade to unlock unlimited AI scans.")
+        return False
+    elif status == "tier_restricted":
+        print(f"ℹ️ Feature Restricted: {results.get('error', 'Not available')}")
+        if results.get('upgrade_hint'):
+            print(f"   {results.get('upgrade_hint')}")
+        return False
+    elif status == "completed":
+        threats = results.get('threats_found', [])
+        risk = results.get('risk_score', 0)
+        files = results.get('files_scanned', 0)
+        remaining = results.get('scans_remaining', -1)
+        
+        if threats:
+            print(f"⚠️ AI Scan complete: {files} files scanned, {len(threats)} threat(s) found!")
+            print(f"   Risk Score: {risk}/10")
+            print("\n  Threats detected:")
+            for threat in threats[:10]:
+                print(f"    • [{threat.get('severity', 'N/A')}] {threat.get('pattern', 'Unknown')}")
+                print(f"      File: {threat.get('file', 'Unknown')}")
+            if len(threats) > 10:
+                print(f"    ... and {len(threats) - 10} more")
+        else:
+            print(f"✅ AI Scan complete: {files} files scanned, no threats found")
+            print(f"   Risk Score: {risk}/10")
+        
+        if remaining >= 0:
+            print(f"\n   Scans remaining today: {remaining}")
+        return True
+    else:
+        print(f"⚠️ AI Scan completed with unknown status: {status}")
+        return True
+
+
 def main():
     """Main entry point"""
     if len(sys.argv) > 1:
@@ -981,12 +1263,23 @@ Usage:
   aegis-security-center --enable-fw  Enable firewall
   aegis-security-center --disable-fw Disable firewall
   aegis-security-center --events     Show recent security events
+  aegis-security-center --ai-status  Show AI security tier status
+  aegis-security-center --ai-scan [PATH] Run AI heuristic scan (default: /home)
+  aegis-security-center --ai-behavioral Run AI behavioral analysis
   aegis-security-center --help       Show this help
+
+AI Security Tiers:
+  Freemium (Level 1): Basic heuristics, simple firewall
+  Basic (Level 2):    + Realtime scanning, threat signatures, behavioral baseline
+  Gamer (Level 3):    + Behavioral AI, gaming integrity monitor
+  Workplace (Level 3): + Behavioral AI, endpoint protection, DLP
+  AI-Dev (Level 4):   + ML threat detection, model integrity, adversarial protection
+  Server (Level 5):   + Full XDR, eBPF detection, zero trust, SIEM, RASP
 
 Examples:
   aegis-security-center --scan /tmp     Scan the /tmp directory
-  aegis-security-center --scan          Scan /home directory
-  aegis-security-center --scan-full     Scan entire system
+  aegis-security-center --ai-scan       AI scan /home directory
+  aegis-security-center --ai-status     Show AI security capabilities
             """)
             return
         
@@ -1032,6 +1325,68 @@ Examples:
                     print(f"[{timestamp}] [{severity}] {message}")
             else:
                 print("\n📋 No security events recorded yet.\n")
+        elif sys.argv[1] == "--ai-status":
+            summary = security.get_ai_security_summary()
+            if summary.get("available", False) or "tier" in summary:
+                tier = summary.get("tier", summary)
+                print("\n🤖 AI Security Status")
+                print("=" * 50)
+                print(f"  Tier: {tier.get('tier_name', 'Unknown')}")
+                level = tier.get('tier_level', 0)
+                level_bars = "█" * level + "░" * (5 - level)
+                print(f"  Level: [{level_bars}] {level}/5")
+                print(f"  Description: {tier.get('description', 'N/A')}")
+                print(f"\n  Capabilities ({tier.get('capabilities_count', len(tier.get('capabilities', [])))} active):")
+                for cap in tier.get('capabilities', []):
+                    print(f"    ✓ {cap}")
+                limits = tier.get('limits', {})
+                print(f"\n  Limits:")
+                print(f"    Scans per day: {limits.get('max_scans_per_day', 'Unlimited') if limits.get('max_scans_per_day', -1) != -1 else 'Unlimited'}")
+                print(f"    Realtime Protection: {'✅ Yes' if limits.get('realtime_protection') else '❌ No'}")
+                print(f"    AI Analysis: {'✅ Yes' if limits.get('ai_analysis') else '❌ No'}")
+                
+                available = summary.get('available_analyses', [])
+                restricted = summary.get('restricted_analyses', [])
+                if available:
+                    print(f"\n  Available Analyses:")
+                    for a in available:
+                        print(f"    ✓ {a}")
+                if restricted:
+                    print(f"\n  Upgrade to unlock:")
+                    for a in restricted:
+                        print(f"    ✗ {a}")
+                print()
+            else:
+                print(f"\n❌ AI Security unavailable: {summary.get('error', 'Module not loaded')}\n")
+        elif sys.argv[1] == "--ai-scan":
+            scan_path = sys.argv[2] if len(sys.argv) > 2 else "/home"
+            print(f"🤖 Running AI heuristic scan of {scan_path}...")
+            results = security.run_ai_heuristic_scan(scan_path)
+            print_ai_scan_results(results)
+        elif sys.argv[1] == "--ai-behavioral":
+            print("🤖 Running AI behavioral analysis...")
+            result = security.run_ai_behavioral_analysis()
+            status = result.get("status", "unknown")
+            if status == "completed":
+                risk_level = result.get("risk_level", "unknown")
+                anomalies = result.get("anomalies", [])
+                risk_emoji = {"low": "✅", "medium": "⚠️", "high": "🔴"}.get(risk_level, "❓")
+                print(f"\n{risk_emoji} Behavioral Analysis Complete")
+                print(f"   Risk Level: {risk_level.upper()}")
+                print(f"   Model Type: {result.get('model_type', 'basic')}")
+                if anomalies:
+                    print(f"\n   Anomalies detected ({len(anomalies)}):")
+                    for a in anomalies:
+                        print(f"     • [{a.get('severity', 'N/A')}] {a.get('description', 'Unknown')}")
+                else:
+                    print("\n   No anomalies detected")
+                print()
+            elif status == "tier_restricted":
+                print(f"\nℹ️ {result.get('error', 'Feature not available')}")
+                if result.get('upgrade_hint'):
+                    print(f"   {result.get('upgrade_hint')}\n")
+            else:
+                print(f"\n❌ Analysis failed: {result.get('error', 'Unknown error')}\n")
         else:
             print(f"Unknown option: {sys.argv[1]}")
             print("Use --help for usage information")

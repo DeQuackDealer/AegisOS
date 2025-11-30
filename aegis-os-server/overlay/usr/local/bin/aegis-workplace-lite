@@ -1,0 +1,691 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Workplace Lite - Freemium Edition
+Simple meeting launcher, basic remote desktop viewer, expense tracking
+Limited features - upgrade for full workplace productivity suite
+"""
+
+import os
+import sys
+import subprocess
+import json
+import logging
+import argparse
+import re
+from datetime import datetime
+
+TIER_LIMIT = "lite"
+VERSION = "1.0.0"
+AEGIS_WEBSITE = "https://aegis-os.com/editions"
+MAX_EXPENSES = 10
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, simpledialog
+    import webbrowser
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+
+MEETING_PLATFORMS = {
+    "zoom": {
+        "name": "Zoom",
+        "pattern": r"(zoom\.us/j/|zoom\.us/my/)",
+        "icon": "📹",
+        "command": "xdg-open"
+    },
+    "teams": {
+        "name": "Microsoft Teams",
+        "pattern": r"(teams\.microsoft\.com|teams\.live\.com)",
+        "icon": "👥",
+        "command": "xdg-open"
+    },
+    "meet": {
+        "name": "Google Meet",
+        "pattern": r"meet\.google\.com",
+        "icon": "📺",
+        "command": "xdg-open"
+    },
+    "jitsi": {
+        "name": "Jitsi Meet",
+        "pattern": r"(meet\.jit\.si|jitsi)",
+        "icon": "🎦",
+        "command": "xdg-open"
+    },
+    "webex": {
+        "name": "Cisco Webex",
+        "pattern": r"webex\.com",
+        "icon": "💼",
+        "command": "xdg-open"
+    }
+}
+
+
+class AegisWorkplaceLite:
+    def __init__(self):
+        self.config_file = "/etc/aegis/workplace-lite-config.json"
+        self.data_file = os.path.expanduser("~/.aegis/workplace-lite-data.json")
+        self.log_file = "/var/log/aegis-workplace-lite.log"
+        self.setup_logging()
+        self.ensure_data_dir()
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(self.log_file, mode='a'),
+                    logging.StreamHandler()
+                ]
+            )
+        except:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+    
+    def ensure_data_dir(self):
+        """Ensure data directory exists"""
+        data_dir = os.path.dirname(self.data_file)
+        os.makedirs(data_dir, exist_ok=True)
+    
+    def load_data(self):
+        """Load stored data"""
+        default_data = {
+            "meeting_history": [],
+            "expenses": [],
+            "rdp_connections": []
+        }
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r') as f:
+                    data = json.load(f)
+                    return {**default_data, **data}
+        except:
+            pass
+        return default_data
+    
+    def save_data(self, data):
+        """Save data"""
+        try:
+            self.ensure_data_dir()
+            with open(self.data_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save data: {e}")
+    
+    def detect_meeting_platform(self, url):
+        """Detect meeting platform from URL"""
+        url_lower = url.lower()
+        for platform_id, platform in MEETING_PLATFORMS.items():
+            if re.search(platform["pattern"], url_lower):
+                return platform_id, platform
+        return None, None
+    
+    def launch_meeting(self, url):
+        """Launch a meeting from URL"""
+        platform_id, platform = self.detect_meeting_platform(url)
+        
+        if platform:
+            platform_name = platform["name"]
+            icon = platform["icon"]
+        else:
+            platform_name = "Unknown"
+            icon = "🔗"
+        
+        try:
+            subprocess.Popen(['xdg-open', url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            data = self.load_data()
+            data["meeting_history"].append({
+                "url": url,
+                "platform": platform_name,
+                "timestamp": datetime.now().isoformat()
+            })
+            data["meeting_history"] = data["meeting_history"][-20:]
+            self.save_data(data)
+            
+            logging.info(f"Launched {platform_name} meeting")
+            return {
+                "success": True,
+                "platform": platform_name,
+                "icon": icon,
+                "message": f"Opening {platform_name} meeting..."
+            }
+        except Exception as e:
+            logging.error(f"Failed to launch meeting: {e}")
+            return {
+                "success": False,
+                "message": f"Failed to open meeting: {e}"
+            }
+    
+    def get_meeting_history(self):
+        """Get meeting history"""
+        data = self.load_data()
+        return data.get("meeting_history", [])
+    
+    def launch_remote_desktop_viewer(self, host=None, port=5900):
+        """Launch basic remote desktop viewer (view-only mode)"""
+        if TIER_LIMIT == "lite":
+            viewers = ["vinagre", "remmina", "vncviewer", "xvnc4viewer"]
+            viewer_found = None
+            
+            for viewer in viewers:
+                try:
+                    result = subprocess.run(['which', viewer], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        viewer_found = viewer
+                        break
+                except:
+                    pass
+            
+            if not viewer_found:
+                return {
+                    "success": False,
+                    "message": "No VNC viewer found. Install vinagre or remmina.",
+                    "note": "Lite version supports view-only mode. Upgrade for full remote control."
+                }
+            
+            if host:
+                try:
+                    cmd = [viewer_found]
+                    if viewer_found == "vinagre":
+                        cmd.append(f"vnc://{host}:{port}")
+                    elif viewer_found == "remmina":
+                        cmd.extend(["-c", f"vnc://{host}:{port}"])
+                    else:
+                        cmd.append(f"{host}:{port}")
+                    
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    
+                    logging.info(f"Launched remote desktop viewer for {host}")
+                    return {
+                        "success": True,
+                        "viewer": viewer_found,
+                        "host": host,
+                        "note": "🔒 Lite: View-only mode. Upgrade for full remote control."
+                    }
+                except Exception as e:
+                    return {"success": False, "message": str(e)}
+            else:
+                try:
+                    subprocess.Popen([viewer_found], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return {
+                        "success": True,
+                        "viewer": viewer_found,
+                        "note": "🔒 Lite: View-only mode. Upgrade for full remote control."
+                    }
+                except Exception as e:
+                    return {"success": False, "message": str(e)}
+    
+    def get_expenses(self):
+        """Get expense entries"""
+        data = self.load_data()
+        return data.get("expenses", [])
+    
+    def add_expense(self, description, amount, category="General"):
+        """Add expense entry (max 10 in lite version)"""
+        if TIER_LIMIT == "lite":
+            data = self.load_data()
+            expenses = data.get("expenses", [])
+            
+            if len(expenses) >= MAX_EXPENSES:
+                return {
+                    "success": False,
+                    "message": f"🔒 Lite version limited to {MAX_EXPENSES} expenses. Delete old entries or upgrade.",
+                    "upgrade_url": AEGIS_WEBSITE
+                }
+            
+            expense = {
+                "id": len(expenses) + 1,
+                "description": description,
+                "amount": float(amount),
+                "category": category,
+                "date": datetime.now().isoformat(),
+                "created": datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
+            
+            expenses.append(expense)
+            data["expenses"] = expenses
+            self.save_data(data)
+            
+            logging.info(f"Added expense: {description} - ${amount}")
+            return {
+                "success": True,
+                "expense": expense,
+                "remaining": MAX_EXPENSES - len(expenses)
+            }
+    
+    def delete_expense(self, expense_id):
+        """Delete expense entry"""
+        data = self.load_data()
+        expenses = data.get("expenses", [])
+        
+        new_expenses = [e for e in expenses if e.get("id") != expense_id]
+        
+        if len(new_expenses) < len(expenses):
+            data["expenses"] = new_expenses
+            self.save_data(data)
+            return {"success": True, "message": "Expense deleted"}
+        
+        return {"success": False, "message": "Expense not found"}
+    
+    def get_expense_summary(self):
+        """Get expense summary"""
+        expenses = self.get_expenses()
+        total = sum(e.get("amount", 0) for e in expenses)
+        
+        by_category = {}
+        for e in expenses:
+            cat = e.get("category", "General")
+            by_category[cat] = by_category.get(cat, 0) + e.get("amount", 0)
+        
+        return {
+            "total": total,
+            "count": len(expenses),
+            "remaining_slots": MAX_EXPENSES - len(expenses),
+            "by_category": by_category
+        }
+    
+    def schedule_meeting(self, *args, **kwargs):
+        """Schedule meeting (blocked in lite version)"""
+        return {
+            "success": False,
+            "message": "🔒 Meeting scheduling is a Premium feature. Upgrade for calendar integration.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def remote_desktop_control(self, *args, **kwargs):
+        """Remote desktop control (blocked in lite version)"""
+        return {
+            "success": False,
+            "message": "🔒 Remote control is a Premium feature. Lite version is view-only.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def export_expenses(self, *args, **kwargs):
+        """Export expenses (blocked in lite version)"""
+        return {
+            "success": False,
+            "message": "🔒 Expense export is a Premium feature. Upgrade for CSV/PDF export.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def show_upgrade_prompt(self):
+        """Show upgrade prompt for premium features"""
+        return """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 PREMIUM WORKPLACE FEATURES (Upgrade to Aegis Workplace):
+
+   • Unlimited expense tracking with categories
+   • Full remote desktop control (not just viewing)
+   • Meeting scheduler with calendar integration
+   • Export expenses to CSV/PDF
+   • Team collaboration features
+   • Time tracking and invoicing
+   • Cloud sync across devices
+   • Video conferencing integration
+
+💎 Upgrade at: https://aegis-os.com/editions
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+
+class WorkplaceLiteGUI:
+    def __init__(self, workplace):
+        self.workplace = workplace
+        self.root = tk.Tk()
+        self.setup_window()
+        self.create_widgets()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis Workplace Lite")
+        self.root.geometry("700x600")
+        self.root.resizable(False, False)
+        
+        self.root.update_idletasks()
+        x = (self.root.winfo_screenwidth() // 2) - (700 // 2)
+        y = (self.root.winfo_screenheight() // 2) - (600 // 2)
+        self.root.geometry(f"700x600+{x}+{y}")
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        meeting_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(meeting_frame, text="📹 Meetings")
+        
+        header = ttk.Label(meeting_frame, text="💼 Aegis Workplace Lite", font=("Arial", 16, "bold"))
+        header.pack()
+        
+        lite_label = ttk.Label(meeting_frame, text="LITE VERSION", foreground="gray")
+        lite_label.pack()
+        
+        url_frame = ttk.LabelFrame(meeting_frame, text="Launch Meeting", padding=10)
+        url_frame.pack(fill="x", pady=10)
+        
+        url_label = ttk.Label(url_frame, text="Meeting URL (Zoom, Teams, Meet, Jitsi):")
+        url_label.pack(anchor="w")
+        
+        self.url_entry = ttk.Entry(url_frame, width=60)
+        self.url_entry.pack(fill="x", pady=5)
+        self.url_entry.insert(0, "https://zoom.us/j/123456789")
+        
+        launch_btn = ttk.Button(url_frame, text="🚀 Launch Meeting", command=self.launch_meeting)
+        launch_btn.pack(pady=5)
+        
+        self.meeting_status = ttk.Label(url_frame, text="")
+        self.meeting_status.pack()
+        
+        supported_label = ttk.Label(meeting_frame, text="Supported: 📹 Zoom | 👥 Teams | 📺 Google Meet | 🎦 Jitsi | 💼 Webex")
+        supported_label.pack(pady=5)
+        
+        rdp_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(rdp_frame, text="🖥 Remote Desktop")
+        
+        rdp_info = ttk.LabelFrame(rdp_frame, text="Remote Desktop Viewer (View-Only)", padding=10)
+        rdp_info.pack(fill="x", pady=10)
+        
+        host_frame = ttk.Frame(rdp_info)
+        host_frame.pack(fill="x")
+        
+        ttk.Label(host_frame, text="Host:").pack(side="left")
+        self.rdp_host = ttk.Entry(host_frame, width=30)
+        self.rdp_host.pack(side="left", padx=5)
+        self.rdp_host.insert(0, "192.168.1.100")
+        
+        ttk.Label(host_frame, text="Port:").pack(side="left", padx=(10, 0))
+        self.rdp_port = ttk.Entry(host_frame, width=8)
+        self.rdp_port.pack(side="left", padx=5)
+        self.rdp_port.insert(0, "5900")
+        
+        rdp_btn = ttk.Button(rdp_info, text="🖥 Connect (View Only)", command=self.connect_rdp)
+        rdp_btn.pack(pady=10)
+        
+        self.rdp_status = ttk.Label(rdp_info, text="🔒 Lite: View-only mode. Upgrade for full remote control.")
+        self.rdp_status.pack()
+        
+        launch_viewer_btn = ttk.Button(rdp_info, text="📂 Open Remote Desktop App", command=self.open_rdp_app)
+        launch_viewer_btn.pack(pady=5)
+        
+        expense_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(expense_frame, text="💰 Expenses")
+        
+        add_frame = ttk.LabelFrame(expense_frame, text=f"Add Expense (Max {MAX_EXPENSES} entries)", padding=10)
+        add_frame.pack(fill="x", pady=5)
+        
+        input_frame = ttk.Frame(add_frame)
+        input_frame.pack(fill="x")
+        
+        ttk.Label(input_frame, text="Description:").grid(row=0, column=0, sticky="w")
+        self.expense_desc = ttk.Entry(input_frame, width=30)
+        self.expense_desc.grid(row=0, column=1, padx=5, pady=2)
+        
+        ttk.Label(input_frame, text="Amount $:").grid(row=0, column=2, padx=(10, 0))
+        self.expense_amount = ttk.Entry(input_frame, width=10)
+        self.expense_amount.grid(row=0, column=3, padx=5, pady=2)
+        
+        ttk.Label(input_frame, text="Category:").grid(row=1, column=0, sticky="w")
+        self.expense_category = ttk.Combobox(input_frame, values=["General", "Travel", "Food", "Office", "Software", "Equipment"], width=27)
+        self.expense_category.grid(row=1, column=1, padx=5, pady=2)
+        self.expense_category.set("General")
+        
+        add_expense_btn = ttk.Button(input_frame, text="➕ Add", command=self.add_expense)
+        add_expense_btn.grid(row=1, column=2, columnspan=2, padx=10, pady=2)
+        
+        list_frame = ttk.LabelFrame(expense_frame, text="Expense List", padding=10)
+        list_frame.pack(fill="both", expand=True, pady=5)
+        
+        columns = ("id", "date", "description", "category", "amount")
+        self.expense_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=6)
+        
+        self.expense_tree.heading("id", text="ID")
+        self.expense_tree.heading("date", text="Date")
+        self.expense_tree.heading("description", text="Description")
+        self.expense_tree.heading("category", text="Category")
+        self.expense_tree.heading("amount", text="Amount")
+        
+        self.expense_tree.column("id", width=40)
+        self.expense_tree.column("date", width=100)
+        self.expense_tree.column("description", width=180)
+        self.expense_tree.column("category", width=80)
+        self.expense_tree.column("amount", width=80)
+        
+        self.expense_tree.pack(fill="both", expand=True)
+        
+        btn_frame = ttk.Frame(list_frame)
+        btn_frame.pack(fill="x", pady=5)
+        
+        delete_btn = ttk.Button(btn_frame, text="🗑 Delete Selected", command=self.delete_expense)
+        delete_btn.pack(side="left")
+        
+        refresh_btn = ttk.Button(btn_frame, text="🔄 Refresh", command=self.refresh_expenses)
+        refresh_btn.pack(side="left", padx=5)
+        
+        self.summary_label = ttk.Label(list_frame, text="", font=("Arial", 10))
+        self.summary_label.pack()
+        
+        self.refresh_expenses()
+        
+        upgrade_frame = ttk.LabelFrame(self.root, text="🔒 Premium Features", padding=10)
+        upgrade_frame.pack(fill="x", padx=10, pady=5)
+        
+        upgrade_text = ttk.Label(
+            upgrade_frame,
+            text="Unlock unlimited expenses, remote control, meeting scheduling, and more!",
+            font=("Arial", 9)
+        )
+        upgrade_text.pack()
+        
+        btn_frame2 = ttk.Frame(upgrade_frame)
+        btn_frame2.pack(pady=5)
+        
+        upgrade_btn = ttk.Button(btn_frame2, text="💎 Upgrade to Workplace Edition", command=self.open_upgrade)
+        upgrade_btn.pack(side="left", padx=5)
+        
+        close_btn = ttk.Button(btn_frame2, text="Close", command=self.root.destroy)
+        close_btn.pack(side="left", padx=5)
+        
+    def launch_meeting(self):
+        """Launch meeting from URL"""
+        url = self.url_entry.get().strip()
+        if not url:
+            messagebox.showwarning("Warning", "Please enter a meeting URL")
+            return
+        
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        
+        result = self.workplace.launch_meeting(url)
+        
+        if result["success"]:
+            self.meeting_status.config(text=f"{result['icon']} {result['message']}", foreground="green")
+        else:
+            self.meeting_status.config(text=result["message"], foreground="red")
+    
+    def connect_rdp(self):
+        """Connect to remote desktop"""
+        host = self.rdp_host.get().strip()
+        port = int(self.rdp_port.get().strip() or 5900)
+        
+        if not host:
+            messagebox.showwarning("Warning", "Please enter a host address")
+            return
+        
+        result = self.workplace.launch_remote_desktop_viewer(host, port)
+        
+        if result["success"]:
+            self.rdp_status.config(text=f"✅ Connected to {host} - {result['note']}", foreground="green")
+        else:
+            self.rdp_status.config(text=f"❌ {result['message']}", foreground="red")
+    
+    def open_rdp_app(self):
+        """Open remote desktop application"""
+        result = self.workplace.launch_remote_desktop_viewer()
+        if not result["success"]:
+            messagebox.showerror("Error", result["message"])
+    
+    def add_expense(self):
+        """Add new expense"""
+        desc = self.expense_desc.get().strip()
+        amount = self.expense_amount.get().strip()
+        category = self.expense_category.get()
+        
+        if not desc or not amount:
+            messagebox.showwarning("Warning", "Please enter description and amount")
+            return
+        
+        try:
+            amount = float(amount)
+        except ValueError:
+            messagebox.showwarning("Warning", "Amount must be a number")
+            return
+        
+        result = self.workplace.add_expense(desc, amount, category)
+        
+        if result["success"]:
+            self.expense_desc.delete(0, tk.END)
+            self.expense_amount.delete(0, tk.END)
+            self.refresh_expenses()
+            messagebox.showinfo("Success", f"Expense added! {result['remaining']} slots remaining.")
+        else:
+            messagebox.showwarning("Limit Reached", result["message"])
+    
+    def delete_expense(self):
+        """Delete selected expense"""
+        selection = self.expense_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select an expense to delete")
+            return
+        
+        item = self.expense_tree.item(selection[0])
+        expense_id = int(item["values"][0])
+        
+        result = self.workplace.delete_expense(expense_id)
+        if result["success"]:
+            self.refresh_expenses()
+    
+    def refresh_expenses(self):
+        """Refresh expense list"""
+        self.expense_tree.delete(*self.expense_tree.get_children())
+        
+        expenses = self.workplace.get_expenses()
+        for expense in expenses:
+            date = expense.get("created", expense.get("date", "")[:10])
+            self.expense_tree.insert("", "end", values=(
+                expense.get("id", 0),
+                date,
+                expense.get("description", ""),
+                expense.get("category", "General"),
+                f"${expense.get('amount', 0):.2f}"
+            ))
+        
+        summary = self.workplace.get_expense_summary()
+        self.summary_label.config(
+            text=f"Total: ${summary['total']:.2f} | Entries: {summary['count']}/{MAX_EXPENSES} | Slots remaining: {summary['remaining_slots']}"
+        )
+    
+    def open_upgrade(self):
+        """Open upgrade page"""
+        webbrowser.open(AEGIS_WEBSITE)
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def run_cli(workplace, args):
+    """Run CLI mode"""
+    print("""
+╔═══════════════════════════════════════════════════════════════╗
+║      💼 AEGIS WORKPLACE LITE                                 ║
+║                    Freemium Edition                           ║
+╚═══════════════════════════════════════════════════════════════╝
+""")
+    
+    if args.meeting:
+        print(f"🚀 Launching meeting: {args.meeting}")
+        result = workplace.launch_meeting(args.meeting)
+        if result["success"]:
+            print(f"   {result['icon']} {result['message']}")
+        else:
+            print(f"   ❌ {result['message']}")
+    
+    if args.remote:
+        host = args.remote
+        port = args.port or 5900
+        print(f"🖥 Connecting to remote desktop: {host}:{port}")
+        result = workplace.launch_remote_desktop_viewer(host, port)
+        if result["success"]:
+            print(f"   ✅ Connected with {result['viewer']}")
+            print(f"   {result['note']}")
+        else:
+            print(f"   ❌ {result['message']}")
+    
+    if args.add_expense:
+        parts = args.add_expense.split(",")
+        if len(parts) >= 2:
+            desc = parts[0].strip()
+            amount = float(parts[1].strip())
+            category = parts[2].strip() if len(parts) > 2 else "General"
+            
+            result = workplace.add_expense(desc, amount, category)
+            if result["success"]:
+                print(f"✅ Added expense: {desc} - ${amount}")
+                print(f"   Remaining slots: {result['remaining']}")
+            else:
+                print(f"❌ {result['message']}")
+        else:
+            print("❌ Format: --add-expense 'Description, Amount, Category'")
+    
+    if args.list_expenses:
+        print("💰 Expense List:")
+        print("-" * 60)
+        expenses = workplace.get_expenses()
+        if expenses:
+            for e in expenses:
+                print(f"  [{e['id']}] {e.get('created', e['date'][:10])} | {e['description']} | {e['category']} | ${e['amount']:.2f}")
+            
+            summary = workplace.get_expense_summary()
+            print("-" * 60)
+            print(f"Total: ${summary['total']:.2f} | Entries: {summary['count']}/{MAX_EXPENSES}")
+        else:
+            print("  No expenses recorded.")
+    
+    print(workplace.show_upgrade_prompt())
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aegis Workplace Lite")
+    parser.add_argument('--cli', action='store_true', help='Run in CLI mode')
+    parser.add_argument('--meeting', type=str, help='Launch meeting from URL')
+    parser.add_argument('--remote', type=str, help='Connect to remote desktop host')
+    parser.add_argument('--port', type=int, help='Remote desktop port (default: 5900)')
+    parser.add_argument('--add-expense', type=str, help='Add expense: "Description, Amount, Category"')
+    parser.add_argument('--list-expenses', action='store_true', help='List all expenses')
+    args = parser.parse_args()
+    
+    workplace = AegisWorkplaceLite()
+    
+    if args.cli or not TKINTER_AVAILABLE or any([args.meeting, args.remote, args.add_expense, args.list_expenses]):
+        if not any([args.meeting, args.remote, args.add_expense, args.list_expenses]):
+            args.list_expenses = True
+        run_cli(workplace, args)
+    else:
+        try:
+            app = WorkplaceLiteGUI(workplace)
+            app.run()
+        except Exception as e:
+            print(f"GUI failed: {e}")
+            args.list_expenses = True
+            run_cli(workplace, args)
+
+
+if __name__ == "__main__":
+    main()

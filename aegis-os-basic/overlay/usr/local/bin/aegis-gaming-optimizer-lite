@@ -1,0 +1,453 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Gaming Optimizer Lite - Freemium Edition
+Basic game detection and simple performance mode
+NO overclocking, NO custom profiles, NO advanced tweaks
+"""
+
+import os
+import sys
+import subprocess
+import json
+import logging
+import argparse
+from datetime import datetime
+
+TIER_LIMIT = "lite"
+VERSION = "1.0.0"
+AEGIS_WEBSITE = "https://aegis-os.com/editions"
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    import webbrowser
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+KNOWN_GAMES = {
+    "steam": {"name": "Steam", "priority": "high"},
+    "lutris": {"name": "Lutris", "priority": "high"},
+    "wine": {"name": "Wine Game", "priority": "high"},
+    "proton": {"name": "Proton Game", "priority": "high"},
+    "heroic": {"name": "Heroic Launcher", "priority": "high"},
+    "minecraft": {"name": "Minecraft", "priority": "high"},
+    "java": {"name": "Java Game", "priority": "medium"},
+    "dosbox": {"name": "DOSBox Game", "priority": "medium"},
+    "retroarch": {"name": "RetroArch", "priority": "medium"},
+    "dolphin": {"name": "Dolphin Emulator", "priority": "medium"},
+    "pcsx2": {"name": "PCSX2", "priority": "medium"},
+    "rpcs3": {"name": "RPCS3", "priority": "medium"},
+    "yuzu": {"name": "Yuzu/Switch Emulator", "priority": "medium"},
+    "citra": {"name": "Citra/3DS Emulator", "priority": "medium"},
+}
+
+BACKGROUND_APPS_TO_KILL = [
+    "tracker-miner-fs",
+    "tracker-extract",
+    "tracker-store",
+    "zeitgeist-daemon",
+    "evolution-alarm",
+    "gnome-software",
+    "packagekitd",
+    "update-notifier",
+    "apt-check",
+]
+
+class AegisGamingOptimizerLite:
+    def __init__(self):
+        self.config_file = "/etc/aegis/gaming-lite-config.json"
+        self.log_file = "/var/log/aegis-gaming-lite.log"
+        self.detected_games = []
+        self.performance_mode_active = False
+        self.setup_logging()
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(self.log_file, mode='a'),
+                    logging.StreamHandler()
+                ]
+            )
+        except:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+    
+    def load_config(self):
+        """Load configuration"""
+        default_config = {
+            "auto_detect": True,
+            "auto_performance_mode": False,
+            "kill_background_apps": True,
+            "detected_games_history": []
+        }
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    return {**default_config, **config}
+        except:
+            pass
+        return default_config
+    
+    def save_config(self, config):
+        """Save configuration"""
+        try:
+            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save config: {e}")
+    
+    def detect_running_games(self):
+        """Auto-detect running games"""
+        self.detected_games = []
+        try:
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            processes = result.stdout.lower()
+            
+            for game_key, game_info in KNOWN_GAMES.items():
+                if game_key in processes:
+                    self.detected_games.append({
+                        "key": game_key,
+                        "name": game_info["name"],
+                        "priority": game_info["priority"],
+                        "detected_at": datetime.now().isoformat()
+                    })
+            
+            logging.info(f"Detected {len(self.detected_games)} running games")
+        except Exception as e:
+            logging.error(f"Game detection failed: {e}")
+        
+        return self.detected_games
+    
+    def get_running_background_apps(self):
+        """Get list of running background apps that can be killed"""
+        running = []
+        try:
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            processes = result.stdout.lower()
+            
+            for app in BACKGROUND_APPS_TO_KILL:
+                if app.lower() in processes:
+                    running.append(app)
+        except:
+            pass
+        return running
+    
+    def kill_background_apps(self):
+        """Kill resource-heavy background applications"""
+        killed = []
+        for app in BACKGROUND_APPS_TO_KILL:
+            try:
+                subprocess.run(['pkill', '-f', app], capture_output=True)
+                killed.append(app)
+            except:
+                pass
+        
+        logging.info(f"Killed {len(killed)} background apps for gaming")
+        return killed
+    
+    def enable_performance_mode(self):
+        """Enable simple performance mode"""
+        if TIER_LIMIT == "lite":
+            logging.info("Enabling Lite performance mode")
+            
+            killed = self.kill_background_apps()
+            
+            try:
+                subprocess.run(['sync'], capture_output=True)
+                if os.path.exists('/proc/sys/vm/drop_caches'):
+                    try:
+                        subprocess.run(['sudo', 'sh', '-c', 'echo 1 > /proc/sys/vm/drop_caches'], 
+                                      capture_output=True, timeout=5)
+                    except:
+                        pass
+            except:
+                pass
+            
+            self.performance_mode_active = True
+            return {
+                "status": "enabled",
+                "killed_apps": killed,
+                "tier": "lite"
+            }
+        return {"status": "error", "message": "Unknown tier"}
+    
+    def disable_performance_mode(self):
+        """Disable performance mode"""
+        self.performance_mode_active = False
+        logging.info("Performance mode disabled")
+        return {"status": "disabled"}
+    
+    def get_system_status(self):
+        """Get basic system status"""
+        status = {
+            "cpu_count": os.cpu_count() or 1,
+            "performance_mode": self.performance_mode_active,
+            "detected_games": len(self.detected_games),
+            "background_apps": len(self.get_running_background_apps())
+        }
+        
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = f.read()
+            mem_total = int([line.split()[1] for line in meminfo.split('\n') if 'MemTotal' in line][0]) // 1024
+            mem_available = int([line.split()[1] for line in meminfo.split('\n') if 'MemAvailable' in line][0]) // 1024
+            status["memory_total_mb"] = mem_total
+            status["memory_available_mb"] = mem_available
+            status["memory_used_percent"] = round((1 - mem_available / mem_total) * 100, 1)
+        except:
+            pass
+        
+        return status
+    
+    def show_upgrade_prompt(self):
+        """Show upgrade prompt for premium features"""
+        return """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 PREMIUM FEATURES (Upgrade to Aegis Gamer Edition):
+
+   • Per-game custom optimization profiles
+   • GPU/CPU overclocking controls  
+   • AI-powered performance tuning
+   • Advanced latency optimizations
+   • Custom shader management
+   • Frame rate limiter and monitoring
+   • Game-specific memory management
+   • Priority CPU scheduling
+
+💎 Upgrade at: https://aegis-os.com/editions
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+
+class GamingOptimizerLiteGUI:
+    def __init__(self, optimizer):
+        self.optimizer = optimizer
+        self.root = tk.Tk()
+        self.setup_window()
+        self.create_widgets()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis Gaming Optimizer Lite")
+        self.root.geometry("700x550")
+        self.root.resizable(False, False)
+        
+        self.root.update_idletasks()
+        x = (self.root.winfo_screenwidth() // 2) - (700 // 2)
+        y = (self.root.winfo_screenheight() // 2) - (550 // 2)
+        self.root.geometry(f"700x550+{x}+{y}")
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        header_frame = ttk.Frame(self.root)
+        header_frame.pack(fill="x", padx=20, pady=15)
+        
+        title_label = ttk.Label(
+            header_frame,
+            text="🎮 Aegis Gaming Optimizer",
+            font=("Arial", 20, "bold")
+        )
+        title_label.pack()
+        
+        lite_label = ttk.Label(
+            header_frame,
+            text="LITE VERSION",
+            font=("Arial", 10),
+            foreground="gray"
+        )
+        lite_label.pack()
+        
+        games_frame = ttk.LabelFrame(self.root, text="Detected Games", padding=10)
+        games_frame.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        self.games_listbox = tk.Listbox(games_frame, height=6, font=("Arial", 10))
+        self.games_listbox.pack(fill="both", expand=True, side="left")
+        
+        scrollbar = ttk.Scrollbar(games_frame, orient="vertical", command=self.games_listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.games_listbox.config(yscrollcommand=scrollbar.set)
+        
+        detect_btn = ttk.Button(games_frame, text="🔍 Detect Games", command=self.detect_games)
+        detect_btn.pack(pady=5)
+        
+        status_frame = ttk.LabelFrame(self.root, text="System Status", padding=10)
+        status_frame.pack(fill="x", padx=20, pady=5)
+        
+        self.status_label = ttk.Label(status_frame, text="Loading...", font=("Arial", 10))
+        self.status_label.pack()
+        
+        self.perf_status_label = ttk.Label(status_frame, text="Performance Mode: OFF", font=("Arial", 10, "bold"))
+        self.perf_status_label.pack()
+        
+        actions_frame = ttk.LabelFrame(self.root, text="Actions", padding=10)
+        actions_frame.pack(fill="x", padx=20, pady=5)
+        
+        btn_frame = ttk.Frame(actions_frame)
+        btn_frame.pack(fill="x")
+        
+        self.perf_btn = ttk.Button(btn_frame, text="⚡ Enable Performance Mode", command=self.toggle_performance_mode)
+        self.perf_btn.pack(side="left", padx=5)
+        
+        kill_btn = ttk.Button(btn_frame, text="🔫 Kill Background Apps", command=self.kill_background)
+        kill_btn.pack(side="left", padx=5)
+        
+        refresh_btn = ttk.Button(btn_frame, text="🔄 Refresh Status", command=self.refresh_status)
+        refresh_btn.pack(side="left", padx=5)
+        
+        upgrade_frame = ttk.LabelFrame(self.root, text="🔒 Premium Features", padding=10)
+        upgrade_frame.pack(fill="x", padx=20, pady=5)
+        
+        upgrade_text = ttk.Label(
+            upgrade_frame,
+            text="Unlock overclocking, custom profiles, AI tuning, and more!",
+            font=("Arial", 9)
+        )
+        upgrade_text.pack()
+        
+        upgrade_btn = ttk.Button(upgrade_frame, text="💎 Upgrade to Full Version", command=self.open_upgrade)
+        upgrade_btn.pack(pady=5)
+        
+        close_btn = ttk.Button(self.root, text="Close", command=self.root.destroy)
+        close_btn.pack(pady=10)
+        
+        self.refresh_status()
+        self.detect_games()
+        
+    def detect_games(self):
+        """Detect running games"""
+        self.games_listbox.delete(0, tk.END)
+        games = self.optimizer.detect_running_games()
+        
+        if games:
+            for game in games:
+                self.games_listbox.insert(tk.END, f"🎮 {game['name']} ({game['priority']} priority)")
+        else:
+            self.games_listbox.insert(tk.END, "No games detected. Start a game and click Detect.")
+    
+    def refresh_status(self):
+        """Refresh system status"""
+        status = self.optimizer.get_system_status()
+        
+        status_text = f"CPU: {status['cpu_count']} cores | "
+        if 'memory_available_mb' in status:
+            status_text += f"RAM: {status['memory_available_mb']}MB free ({status['memory_used_percent']}% used) | "
+        status_text += f"Background Apps: {status['background_apps']}"
+        
+        self.status_label.config(text=status_text)
+        
+        if self.optimizer.performance_mode_active:
+            self.perf_status_label.config(text="Performance Mode: ON ⚡", foreground="green")
+            self.perf_btn.config(text="⏹ Disable Performance Mode")
+        else:
+            self.perf_status_label.config(text="Performance Mode: OFF", foreground="gray")
+            self.perf_btn.config(text="⚡ Enable Performance Mode")
+    
+    def toggle_performance_mode(self):
+        """Toggle performance mode"""
+        if self.optimizer.performance_mode_active:
+            self.optimizer.disable_performance_mode()
+            messagebox.showinfo("Performance Mode", "Performance mode disabled.")
+        else:
+            result = self.optimizer.enable_performance_mode()
+            messagebox.showinfo("Performance Mode", 
+                f"Performance mode enabled!\nKilled {len(result.get('killed_apps', []))} background apps.")
+        self.refresh_status()
+    
+    def kill_background(self):
+        """Kill background apps"""
+        killed = self.optimizer.kill_background_apps()
+        messagebox.showinfo("Background Apps", f"Killed {len(killed)} background applications.")
+        self.refresh_status()
+    
+    def open_upgrade(self):
+        """Open upgrade page"""
+        webbrowser.open(AEGIS_WEBSITE)
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def run_cli(optimizer, args):
+    """Run CLI mode"""
+    print("""
+╔═══════════════════════════════════════════════════════════════╗
+║      🎮 AEGIS GAMING OPTIMIZER LITE                          ║
+║                    Freemium Edition                           ║
+╚═══════════════════════════════════════════════════════════════╝
+""")
+    
+    if args.detect:
+        print("🔍 Detecting running games...")
+        games = optimizer.detect_running_games()
+        if games:
+            print(f"\n✅ Found {len(games)} game(s):")
+            for game in games:
+                print(f"   • {game['name']} ({game['priority']} priority)")
+        else:
+            print("\n❌ No games detected. Start a game and try again.")
+    
+    if args.performance:
+        print("\n⚡ Enabling performance mode...")
+        result = optimizer.enable_performance_mode()
+        print(f"   Status: {result['status']}")
+        if result.get('killed_apps'):
+            print(f"   Killed {len(result['killed_apps'])} background apps")
+    
+    if args.kill_background:
+        print("\n🔫 Killing background apps...")
+        killed = optimizer.kill_background_apps()
+        print(f"   Killed {len(killed)} apps")
+    
+    if args.status:
+        print("\n📊 System Status:")
+        status = optimizer.get_system_status()
+        print(f"   CPU Cores: {status['cpu_count']}")
+        if 'memory_available_mb' in status:
+            print(f"   RAM Available: {status['memory_available_mb']}MB")
+            print(f"   RAM Used: {status['memory_used_percent']}%")
+        print(f"   Performance Mode: {'ON' if status['performance_mode'] else 'OFF'}")
+        print(f"   Background Apps: {status['background_apps']}")
+    
+    print(optimizer.show_upgrade_prompt())
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aegis Gaming Optimizer Lite")
+    parser.add_argument('--cli', action='store_true', help='Run in CLI mode')
+    parser.add_argument('--detect', action='store_true', help='Detect running games')
+    parser.add_argument('--performance', action='store_true', help='Enable performance mode')
+    parser.add_argument('--kill-background', action='store_true', help='Kill background apps')
+    parser.add_argument('--status', action='store_true', help='Show system status')
+    args = parser.parse_args()
+    
+    optimizer = AegisGamingOptimizerLite()
+    
+    if args.cli or not TKINTER_AVAILABLE or any([args.detect, args.performance, args.kill_background, args.status]):
+        if not any([args.detect, args.performance, args.kill_background, args.status]):
+            args.detect = True
+            args.status = True
+        run_cli(optimizer, args)
+    else:
+        try:
+            app = GamingOptimizerLiteGUI(optimizer)
+            app.run()
+        except Exception as e:
+            print(f"GUI failed: {e}")
+            args.detect = True
+            args.status = True
+            run_cli(optimizer, args)
+
+
+if __name__ == "__main__":
+    main()

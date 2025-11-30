@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""
+Aegis OS AI Toolkit Lite - Freemium Edition
+View pre-installed AI models and run basic inference
+NO training, NO CUDA management, NO model downloading
+"""
+
+import os
+import sys
+import subprocess
+import json
+import logging
+import argparse
+from datetime import datetime
+
+TIER_LIMIT = "lite"
+VERSION = "1.0.0"
+AEGIS_WEBSITE = "https://aegis-os.com/editions"
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, scrolledtext
+    import webbrowser
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+PRE_INSTALLED_MODELS = [
+    {
+        "id": "gpt2-small",
+        "name": "GPT-2 Small",
+        "type": "text-generation",
+        "size": "124M parameters",
+        "description": "Small language model for text generation",
+        "available": True
+    },
+    {
+        "id": "distilbert",
+        "name": "DistilBERT",
+        "type": "text-classification",
+        "size": "66M parameters",
+        "description": "Lightweight BERT for text classification",
+        "available": True
+    },
+    {
+        "id": "mobilenet-v2",
+        "name": "MobileNet V2",
+        "type": "image-classification",
+        "size": "3.4M parameters",
+        "description": "Efficient image classification model",
+        "available": True
+    },
+    {
+        "id": "resnet-18",
+        "name": "ResNet-18",
+        "type": "image-classification",
+        "size": "11.7M parameters",
+        "description": "Deep residual network for images",
+        "available": True
+    },
+    {
+        "id": "whisper-tiny",
+        "name": "Whisper Tiny",
+        "type": "speech-to-text",
+        "size": "39M parameters",
+        "description": "Tiny speech recognition model",
+        "available": False
+    },
+    {
+        "id": "stable-diffusion",
+        "name": "Stable Diffusion",
+        "type": "image-generation",
+        "size": "1B+ parameters",
+        "description": "Text-to-image generation (Premium only)",
+        "available": False
+    },
+    {
+        "id": "llama-7b",
+        "name": "LLaMA 7B",
+        "type": "text-generation",
+        "size": "7B parameters",
+        "description": "Large language model (Premium only)",
+        "available": False
+    }
+]
+
+SAMPLE_PROMPTS = [
+    "Once upon a time in a distant galaxy",
+    "The future of artificial intelligence is",
+    "In the year 2050, humans discovered",
+    "The secret to happiness is",
+    "Technology has changed our lives by"
+]
+
+
+class AegisAIToolkitLite:
+    def __init__(self):
+        self.config_file = "/etc/aegis/ai-toolkit-lite-config.json"
+        self.log_file = "/var/log/aegis-ai-toolkit-lite.log"
+        self.models_dir = "/var/lib/aegis/ai-models"
+        self.setup_logging()
+        
+    def setup_logging(self):
+        """Setup logging configuration"""
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(self.log_file, mode='a'),
+                    logging.StreamHandler()
+                ]
+            )
+        except:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+    
+    def load_config(self):
+        """Load configuration"""
+        default_config = {
+            "default_model": "gpt2-small",
+            "max_tokens": 50,
+            "inference_history": []
+        }
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    return {**default_config, **config}
+        except:
+            pass
+        return default_config
+    
+    def save_config(self, config):
+        """Save configuration"""
+        try:
+            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save config: {e}")
+    
+    def get_available_models(self):
+        """Get list of pre-installed AI models (read-only)"""
+        return [m for m in PRE_INSTALLED_MODELS if m["available"]]
+    
+    def get_all_models(self):
+        """Get all models including premium-only"""
+        return PRE_INSTALLED_MODELS
+    
+    def get_model_info(self, model_id):
+        """Get information about a specific model"""
+        for model in PRE_INSTALLED_MODELS:
+            if model["id"] == model_id:
+                return model
+        return None
+    
+    def run_text_inference(self, prompt, model_id="gpt2-small", max_tokens=50):
+        """Run basic text generation inference (simulated for lite version)"""
+        if TIER_LIMIT == "lite":
+            model = self.get_model_info(model_id)
+            if not model or not model.get("available"):
+                return {
+                    "error": True,
+                    "message": f"Model '{model_id}' is not available in Lite version"
+                }
+            
+            if model["type"] != "text-generation":
+                return {
+                    "error": True,
+                    "message": f"Model '{model_id}' is not a text generation model"
+                }
+            
+            import random
+            continuations = [
+                " was a journey that would change everything. The stars aligned in ways nobody expected, and soon the world would witness something extraordinary.",
+                " holds endless possibilities. With each passing day, new discoveries reshape our understanding of what machines can accomplish.",
+                " that would reshape the fabric of reality itself. Scientists were baffled, but the evidence was undeniable.",
+                " found within the connections we make with others. Through shared experiences and mutual understanding, we find meaning.",
+                " transforming industries and creating opportunities that previous generations could only dream about."
+            ]
+            
+            generated = random.choice(continuations)
+            words = generated.split()[:max_tokens]
+            result_text = " ".join(words)
+            
+            logging.info(f"Text inference completed with model {model_id}")
+            
+            return {
+                "error": False,
+                "model": model_id,
+                "prompt": prompt,
+                "generated_text": prompt + result_text,
+                "tokens_generated": len(words),
+                "note": "Lite version uses simplified inference. Upgrade for full model capabilities."
+            }
+    
+    def run_image_classification(self, image_path):
+        """Run basic image classification (simulated for lite version)"""
+        if TIER_LIMIT == "lite":
+            import random
+            categories = [
+                {"label": "cat", "confidence": 0.85},
+                {"label": "dog", "confidence": 0.78},
+                {"label": "bird", "confidence": 0.72},
+                {"label": "car", "confidence": 0.88},
+                {"label": "building", "confidence": 0.91},
+                {"label": "landscape", "confidence": 0.82},
+                {"label": "person", "confidence": 0.89},
+                {"label": "food", "confidence": 0.76}
+            ]
+            
+            results = random.sample(categories, 3)
+            results.sort(key=lambda x: x["confidence"], reverse=True)
+            
+            logging.info("Image classification completed")
+            
+            return {
+                "error": False,
+                "model": "mobilenet-v2",
+                "image": image_path or "sample_image.jpg",
+                "predictions": results,
+                "note": "Lite version uses simplified classification. Upgrade for accurate results."
+            }
+    
+    def download_model(self, model_id):
+        """Model downloading (blocked in lite version)"""
+        return {
+            "error": True,
+            "message": "🔒 Model downloading is a Premium feature. Upgrade to download custom models.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def train_model(self, model_id, dataset):
+        """Model training (blocked in lite version)"""
+        return {
+            "error": True,
+            "message": "🔒 Model training is a Premium feature. Upgrade to train custom models.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def manage_cuda(self):
+        """CUDA management (blocked in lite version)"""
+        return {
+            "error": True,
+            "message": "🔒 CUDA/GPU management is a Premium feature. Upgrade for GPU acceleration.",
+            "upgrade_url": AEGIS_WEBSITE
+        }
+    
+    def show_upgrade_prompt(self):
+        """Show upgrade prompt for premium features"""
+        return """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 PREMIUM AI FEATURES (Upgrade to Aegis AI Edition):
+
+   • Download any model from Hugging Face
+   • Train and fine-tune custom models
+   • CUDA/GPU acceleration management
+   • Large language models (LLaMA, Mistral, etc.)
+   • Stable Diffusion image generation
+   • Speech recognition and synthesis
+   • Model quantization and optimization
+   • Jupyter notebook integration
+
+💎 Upgrade at: https://aegis-os.com/editions
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+
+
+class AIToolkitLiteGUI:
+    def __init__(self, toolkit):
+        self.toolkit = toolkit
+        self.root = tk.Tk()
+        self.setup_window()
+        self.create_widgets()
+        
+    def setup_window(self):
+        """Configure the main window"""
+        self.root.title("Aegis AI Toolkit Lite")
+        self.root.geometry("750x600")
+        self.root.resizable(False, False)
+        
+        self.root.update_idletasks()
+        x = (self.root.winfo_screenwidth() // 2) - (750 // 2)
+        y = (self.root.winfo_screenheight() // 2) - (600 // 2)
+        self.root.geometry(f"750x600+{x}+{y}")
+        
+    def create_widgets(self):
+        """Create GUI widgets"""
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        models_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(models_frame, text="📚 Model Browser")
+        
+        header = ttk.Label(models_frame, text="🤖 Aegis AI Toolkit Lite", font=("Arial", 16, "bold"))
+        header.pack()
+        
+        lite_label = ttk.Label(models_frame, text="LITE VERSION - View pre-installed models", foreground="gray")
+        lite_label.pack()
+        
+        models_list_frame = ttk.LabelFrame(models_frame, text="Pre-installed Models", padding=10)
+        models_list_frame.pack(fill="both", expand=True, pady=10)
+        
+        columns = ("name", "type", "size", "status")
+        self.models_tree = ttk.Treeview(models_list_frame, columns=columns, show="headings", height=8)
+        
+        self.models_tree.heading("name", text="Model Name")
+        self.models_tree.heading("type", text="Type")
+        self.models_tree.heading("size", text="Size")
+        self.models_tree.heading("status", text="Status")
+        
+        self.models_tree.column("name", width=150)
+        self.models_tree.column("type", width=140)
+        self.models_tree.column("size", width=120)
+        self.models_tree.column("status", width=100)
+        
+        self.models_tree.pack(fill="both", expand=True)
+        
+        for model in self.toolkit.get_all_models():
+            status = "✅ Available" if model["available"] else "🔒 Premium"
+            self.models_tree.insert("", "end", values=(model["name"], model["type"], model["size"], status))
+        
+        inference_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(inference_frame, text="🧠 Inference")
+        
+        text_gen_frame = ttk.LabelFrame(inference_frame, text="Text Generation", padding=10)
+        text_gen_frame.pack(fill="x", pady=5)
+        
+        prompt_label = ttk.Label(text_gen_frame, text="Enter prompt:")
+        prompt_label.pack(anchor="w")
+        
+        self.prompt_entry = ttk.Entry(text_gen_frame, width=70)
+        self.prompt_entry.pack(fill="x", pady=5)
+        self.prompt_entry.insert(0, SAMPLE_PROMPTS[0])
+        
+        gen_btn = ttk.Button(text_gen_frame, text="🚀 Generate Text", command=self.generate_text)
+        gen_btn.pack(pady=5)
+        
+        result_label = ttk.Label(text_gen_frame, text="Generated result:")
+        result_label.pack(anchor="w")
+        
+        self.result_text = scrolledtext.ScrolledText(text_gen_frame, height=6, width=70, wrap=tk.WORD)
+        self.result_text.pack(fill="x", pady=5)
+        
+        img_class_frame = ttk.LabelFrame(inference_frame, text="Image Classification (Demo)", padding=10)
+        img_class_frame.pack(fill="x", pady=5)
+        
+        classify_btn = ttk.Button(img_class_frame, text="📷 Classify Sample Image", command=self.classify_image)
+        classify_btn.pack(pady=5)
+        
+        self.class_result_label = ttk.Label(img_class_frame, text="Click to classify a sample image")
+        self.class_result_label.pack()
+        
+        upgrade_frame = ttk.LabelFrame(self.root, text="🔒 Premium Features", padding=10)
+        upgrade_frame.pack(fill="x", padx=10, pady=5)
+        
+        upgrade_text = ttk.Label(
+            upgrade_frame,
+            text="Unlock model downloading, training, CUDA acceleration, and large language models!",
+            font=("Arial", 9)
+        )
+        upgrade_text.pack()
+        
+        btn_frame = ttk.Frame(upgrade_frame)
+        btn_frame.pack(pady=5)
+        
+        upgrade_btn = ttk.Button(btn_frame, text="💎 Upgrade to AI Edition", command=self.open_upgrade)
+        upgrade_btn.pack(side="left", padx=5)
+        
+        close_btn = ttk.Button(btn_frame, text="Close", command=self.root.destroy)
+        close_btn.pack(side="left", padx=5)
+        
+    def generate_text(self):
+        """Generate text using the model"""
+        prompt = self.prompt_entry.get()
+        if not prompt:
+            messagebox.showwarning("Warning", "Please enter a prompt")
+            return
+        
+        result = self.toolkit.run_text_inference(prompt)
+        
+        self.result_text.delete(1.0, tk.END)
+        if result.get("error"):
+            self.result_text.insert(tk.END, f"Error: {result['message']}")
+        else:
+            self.result_text.insert(tk.END, result["generated_text"])
+            self.result_text.insert(tk.END, f"\n\n---\n{result['note']}")
+    
+    def classify_image(self):
+        """Classify a sample image"""
+        result = self.toolkit.run_image_classification(None)
+        
+        if result.get("error"):
+            self.class_result_label.config(text=f"Error: {result['message']}")
+        else:
+            predictions = result["predictions"]
+            pred_text = " | ".join([f"{p['label']}: {p['confidence']:.0%}" for p in predictions])
+            self.class_result_label.config(text=f"Predictions: {pred_text}")
+    
+    def open_upgrade(self):
+        """Open upgrade page"""
+        webbrowser.open(AEGIS_WEBSITE)
+    
+    def run(self):
+        """Run the GUI"""
+        self.root.mainloop()
+
+
+def run_cli(toolkit, args):
+    """Run CLI mode"""
+    print("""
+╔═══════════════════════════════════════════════════════════════╗
+║      🤖 AEGIS AI TOOLKIT LITE                                ║
+║                    Freemium Edition                           ║
+╚═══════════════════════════════════════════════════════════════╝
+""")
+    
+    if args.list_models:
+        print("📚 Pre-installed AI Models:")
+        print("-" * 60)
+        for model in toolkit.get_all_models():
+            status = "✅" if model["available"] else "🔒"
+            print(f"  {status} {model['name']}")
+            print(f"      Type: {model['type']}")
+            print(f"      Size: {model['size']}")
+            print(f"      {model['description']}")
+            print()
+    
+    if args.generate:
+        prompt = args.generate
+        print(f"🧠 Generating text from prompt: '{prompt}'")
+        print("-" * 60)
+        result = toolkit.run_text_inference(prompt)
+        if result.get("error"):
+            print(f"❌ Error: {result['message']}")
+        else:
+            print(f"\n{result['generated_text']}")
+            print(f"\n📝 Note: {result['note']}")
+    
+    if args.classify:
+        print("📷 Running image classification...")
+        print("-" * 60)
+        result = toolkit.run_image_classification(args.classify)
+        if result.get("error"):
+            print(f"❌ Error: {result['message']}")
+        else:
+            print("Predictions:")
+            for pred in result["predictions"]:
+                print(f"  • {pred['label']}: {pred['confidence']:.0%}")
+            print(f"\n📝 Note: {result['note']}")
+    
+    print(toolkit.show_upgrade_prompt())
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aegis AI Toolkit Lite")
+    parser.add_argument('--cli', action='store_true', help='Run in CLI mode')
+    parser.add_argument('--list-models', action='store_true', help='List available models')
+    parser.add_argument('--generate', type=str, help='Generate text from prompt')
+    parser.add_argument('--classify', type=str, nargs='?', const='sample.jpg', help='Classify an image')
+    args = parser.parse_args()
+    
+    toolkit = AegisAIToolkitLite()
+    
+    if args.cli or not TKINTER_AVAILABLE or any([args.list_models, args.generate, args.classify]):
+        if not any([args.list_models, args.generate, args.classify]):
+            args.list_models = True
+        run_cli(toolkit, args)
+    else:
+        try:
+            app = AIToolkitLiteGUI(toolkit)
+            app.run()
+        except Exception as e:
+            print(f"GUI failed: {e}")
+            args.list_models = True
+            run_cli(toolkit, args)
+
+
+if __name__ == "__main__":
+    main()

@@ -2,7 +2,7 @@
 """
 Aegis OS Security Daemon - Background Security Service
 Monitors file integrity, watches for suspicious processes, rate limits auth attempts,
-and provides secure IPC for communication with other Aegis tools.
+runs AI security tasks, and provides secure IPC for communication with other Aegis tools.
 """
 
 import os
@@ -25,7 +25,14 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
 from collections import defaultdict
 
-TIER_LIMIT = "full"  # "freemium" or "full" - controls feature availability
+try:
+    sys.path.insert(0, '/usr/share/aegis/security')
+    from aegis_ai_security import AISecurityTier, AISecurityAnalyzer
+    AI_SECURITY_AVAILABLE = True
+except ImportError:
+    AI_SECURITY_AVAILABLE = False
+
+TIER_LIMIT = "gamer"  # "freemium" or "full" - controls feature availability
 
 DAEMON_VERSION = "1.0.0"
 SUBPROCESS_TIMEOUT = 10
@@ -734,6 +741,9 @@ class AegisSecurityDaemon:
         self.ipc.register_handler("scan_processes", self._handle_scan_processes)
         self.ipc.register_handler("rate_limit_status", self._handle_rate_limit_status)
         self.ipc.register_handler("check_blocked", self._handle_check_blocked)
+        self.ipc.register_handler("ai_status", self._handle_ai_status)
+        self.ipc.register_handler("ai_scan", self._handle_ai_scan)
+        self.ipc.register_handler("ai_behavioral", self._handle_ai_behavioral)
     
     def _handle_status(self, args: Dict) -> Dict:
         """Handle status request"""
@@ -881,6 +891,176 @@ class AegisSecurityDaemon:
                     break
                 time.sleep(1)
     
+    def _ai_security_loop(self):
+        """AI security monitoring loop - runs based on tier capabilities"""
+        if not AI_SECURITY_AVAILABLE:
+            self.audit_logger.log_event(
+                "AI_SECURITY", "AI Security module not available",
+                severity="INFO"
+            )
+            return
+        
+        try:
+            tier = AISecurityTier(TIER_LIMIT)
+            analyzer = AISecurityAnalyzer(tier)
+            
+            self.audit_logger.log_event(
+                "AI_SECURITY_INIT",
+                f"AI Security initialized - Tier: {tier.get_tier_name()}, Level: {tier.get_tier_level()}",
+                severity="INFO",
+                details={
+                    "capabilities": tier.get_capabilities()[:5],
+                    "limits": tier.get_limits()
+                }
+            )
+        except Exception as e:
+            self.audit_logger.log_event(
+                "AI_SECURITY_ERROR", f"Failed to initialize: {e}",
+                severity="ERROR"
+            )
+            return
+        
+        scan_interval = self.config.get("ai_scan_interval", 3600)  # Default 1 hour
+        behavioral_interval = self.config.get("ai_behavioral_interval", 1800)  # Default 30 min
+        
+        last_scan = 0
+        last_behavioral = 0
+        
+        while self.running:
+            try:
+                current_time = time.time()
+                
+                if tier.has_capability("realtime_scanning") and \
+                   (current_time - last_scan) >= scan_interval:
+                    self.audit_logger.log_event(
+                        "AI_SCAN_START", "Running scheduled AI heuristic scan",
+                        severity="INFO"
+                    )
+                    
+                    result = analyzer.heuristic_scan("/home")
+                    
+                    if result.get("status") == "completed":
+                        threats = result.get("threats_found", [])
+                        if threats:
+                            self.audit_logger.log_event(
+                                "AI_SCAN_THREATS",
+                                f"AI scan found {len(threats)} potential threat(s)",
+                                severity="WARNING",
+                                details={"threats": threats[:5]}
+                            )
+                        else:
+                            self.audit_logger.log_event(
+                                "AI_SCAN_COMPLETE",
+                                f"AI scan complete - {result.get('files_scanned', 0)} files, no threats",
+                                severity="INFO"
+                            )
+                    
+                    last_scan = current_time
+                
+                if tier.has_capability("behavioral_ai") and \
+                   (current_time - last_behavioral) >= behavioral_interval:
+                    self.audit_logger.log_event(
+                        "AI_BEHAVIORAL_START", "Running behavioral analysis",
+                        severity="INFO"
+                    )
+                    
+                    result = analyzer.behavioral_analysis()
+                    
+                    if result.get("status") == "completed":
+                        risk_level = result.get("risk_level", "unknown")
+                        anomalies = result.get("anomalies", [])
+                        
+                        if risk_level in ("medium", "high") or anomalies:
+                            self.audit_logger.log_event(
+                                "AI_BEHAVIORAL_ALERT",
+                                f"Behavioral analysis: {risk_level} risk, {len(anomalies)} anomalies",
+                                severity="WARNING" if risk_level != "low" else "INFO",
+                                details={"risk_level": risk_level, "anomalies": anomalies[:3]}
+                            )
+                        else:
+                            self.audit_logger.log_event(
+                                "AI_BEHAVIORAL_COMPLETE",
+                                f"Behavioral analysis complete - {risk_level} risk",
+                                severity="INFO"
+                            )
+                    
+                    last_behavioral = current_time
+                
+                if tier.has_capability("ml_threat_detection"):
+                    pass
+                
+                if tier.has_capability("ebpf_detection"):
+                    pass
+                
+            except Exception as e:
+                self.audit_logger.log_event(
+                    "AI_SECURITY_ERROR", str(e), severity="ERROR"
+                )
+            
+            for _ in range(60):
+                if not self.running:
+                    break
+                time.sleep(1)
+    
+    def _handle_ai_status(self, args: Dict) -> Dict:
+        """Handle AI security status request"""
+        if not AI_SECURITY_AVAILABLE:
+            return {"available": False, "error": "AI Security module not loaded"}
+        
+        try:
+            tier = AISecurityTier(TIER_LIMIT)
+            return {
+                "available": True,
+                "tier_name": tier.get_tier_name(),
+                "tier_level": tier.get_tier_level(),
+                "description": tier.get_tier_description(),
+                "capabilities": tier.get_capabilities(),
+                "limits": tier.get_limits()
+            }
+        except Exception as e:
+            return {"available": False, "error": str(e)}
+    
+    def _handle_ai_scan(self, args: Dict) -> Dict:
+        """Handle AI scan request via IPC"""
+        if not AI_SECURITY_AVAILABLE:
+            return {"status": "error", "error": "AI Security module not loaded"}
+        
+        try:
+            path = args.get("path", "/home")
+            tier = AISecurityTier(TIER_LIMIT)
+            analyzer = AISecurityAnalyzer(tier)
+            result = analyzer.heuristic_scan(path)
+            
+            self.audit_logger.log_event(
+                "AI_SCAN_IPC",
+                f"AI scan requested via IPC for {path}: {result.get('status', 'unknown')}",
+                severity="INFO"
+            )
+            
+            return result
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    def _handle_ai_behavioral(self, args: Dict) -> Dict:
+        """Handle AI behavioral analysis request via IPC"""
+        if not AI_SECURITY_AVAILABLE:
+            return {"status": "error", "error": "AI Security module not loaded"}
+        
+        try:
+            tier = AISecurityTier(TIER_LIMIT)
+            analyzer = AISecurityAnalyzer(tier)
+            result = analyzer.behavioral_analysis()
+            
+            self.audit_logger.log_event(
+                "AI_BEHAVIORAL_IPC",
+                f"Behavioral analysis requested via IPC: {result.get('status', 'unknown')}",
+                severity="INFO"
+            )
+            
+            return result
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
     def run(self, foreground: bool = False):
         """Run the security daemon"""
         self.audit_logger.log_event(
@@ -925,6 +1105,15 @@ class AegisSecurityDaemon:
             t = threading.Thread(target=self._rate_limiter_loop, daemon=True)
             t.start()
             threads.append(t)
+        
+        if self.config.get("enable_ai_security", True) and AI_SECURITY_AVAILABLE:
+            t = threading.Thread(target=self._ai_security_loop, daemon=True)
+            t.start()
+            threads.append(t)
+            self.audit_logger.log_event(
+                "AI_SECURITY_STARTED", "AI security monitoring thread started",
+                severity="INFO"
+            )
         
         self.audit_logger.log_event(
             "DAEMON_READY", "Security daemon fully initialized and running",
