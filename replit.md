@@ -59,8 +59,30 @@ Each OS edition includes 25+ custom Python-based utilities located in `/usr/loca
    - Filesystem/network access control
    - Per-tool security policies
 
+### AI Security Tiering System
+
+All editions include AI-powered security with progressive capabilities:
+- **Freemium**: Basic heuristics, signature-based scanning
+- **Basic**: + Real-time file monitoring, process scanning
+- **Gamer/Workplace**: + Behavioral AI analysis, anomaly detection
+- **AI Developer**: + ML-powered threat intelligence, model-based detection
+- **Server**: Full XDR (Extended Detection & Response), eBPF monitoring, zero-trust enforcement, SIEM integration
+
+Configuration files: `tier-security.json` per edition, `aegis_ai_security.py` module with edition-specific `TIER_LIMIT` values.
+
+### Freemium Lite Tools
+
+Freemium edition includes toggleable lite versions of premium features:
+- **aegis-gaming-optimizer-lite**: Basic game detection, simple performance mode (no overclocking)
+- **aegis-ai-toolkit-lite**: Read-only model browser, basic inference (no training, no downloads)
+- **aegis-workplace-lite**: Meeting launcher, view-only remote desktop, expense tracker (10 entries max)
+- **aegis-wallpaper-engine-lite**: Static wallpapers only
+- **aegis-stream-lite**: 720p30 max, watermark, no audio
+- **aegis-security-center-lite**: Basic firewall + AI heuristics (no ClamAV/realtime)
+- **aegis-backup-lite**: Manual local backup only (no scheduling, no cloud)
+
 **Tier Limitations (Freemium vs Full):**
-- security-center: Basic firewall only vs full ClamAV/UFW
+- security-center: Basic firewall + AI heuristics vs full ClamAV/UFW + behavioral AI
 - backup-pro: Manual only, 5GB max vs scheduled, unlimited
 - gaming-optimizer: Basic mode vs custom profiles/overclocking
 - desktop-effects: Basic transparency vs blur/animations
