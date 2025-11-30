@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
 
-TIER_LIMIT = "freemium"
+TIER_LIMIT = "server"
 
 TIER_CONFIG_PATH = Path("/etc/aegis/tier-security.json")
 AI_SECURITY_LOG = Path("/var/log/aegis/ai-security.log")
