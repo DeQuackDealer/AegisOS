@@ -4,16 +4,17 @@
 <HTA:APPLICATION
     ID="AegisMediaTool"
     APPLICATIONNAME="Aegis OS Media Creation Tool"
-    BORDER="dialog"
+    BORDER="thick"
     BORDERSTYLE="normal"
     CAPTION="yes"
-    MAXIMIZEBUTTON="no"
+    MAXIMIZEBUTTON="yes"
     MINIMIZEBUTTON="yes"
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="2.6"
-    SCROLL="no"
+    VERSION="2.7"
+    SCROLL="yes"
+    INNERBORDER="no"
 />
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -21,7 +22,8 @@ body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     color: #fff;
-    overflow: hidden;
+    overflow-y: auto;
+    min-height: 100vh;
 }
 .container { height: 100%; display: flex; flex-direction: column; }
 .header {
@@ -208,7 +210,7 @@ Dim partitionStyle, quickFormat
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
 
 Sub Window_OnLoad()
-    window.resizeTo 620, 720
+    window.resizeTo 680, 820
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
