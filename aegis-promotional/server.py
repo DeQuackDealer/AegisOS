@@ -1467,6 +1467,15 @@ DEMO_LICENSES = {
         'expires': '2025-12-31T23:59:59',
         'max_activations': 5,
         'hardware_ids': []
+    },
+    'WORK-DEMO-TEST-2024': {
+        'edition': 'workplace',
+        'tier': 'workplace',
+        'type': 'demo',
+        'created': '2024-01-01T00:00:00',
+        'expires': '2025-12-31T23:59:59',
+        'max_activations': 5,
+        'hardware_ids': []
     }
 }
 
@@ -1482,6 +1491,7 @@ VALID_LICENSE_TOKENS = {}
 # Edition to prefix mapping for license key validation
 EDITION_PREFIXES = {
     'basic': 'BSIC',
+    'workplace': 'WORK',
     'gamer': 'GAME',
     'ai-dev': 'AIDV',
     'ai': 'AIDV',  # alias
@@ -1784,8 +1794,34 @@ def validate_license():
                 'code': 'INVALID_FORMAT'
             }), 400
 
-        # Check if license exists in demo database
-        if key not in DEMO_LICENSES:
+        # Check if license exists in demo database OR real database
+        license_data = None
+        license_source = None
+        
+        # First check demo licenses
+        if key in DEMO_LICENSES:
+            license_data = DEMO_LICENSES[key]
+            license_source = 'demo'
+        else:
+            # Check real database
+            try:
+                db_license = License.query.filter_by(license_key=key).first()
+                if db_license and db_license.status == 'active':
+                    license_data = {
+                        'edition': db_license.edition,
+                        'tier': db_license.edition,
+                        'type': db_license.license_type,
+                        'created': db_license.created_at.isoformat() if db_license.created_at else None,
+                        'expires': db_license.expires_at.isoformat() if db_license.expires_at else '2099-12-31T23:59:59',
+                        'max_activations': 3,
+                        'hardware_ids': [db_license.machine_id] if db_license.machine_id else [],
+                        'db_id': db_license.id
+                    }
+                    license_source = 'database'
+            except Exception as db_err:
+                logger.error(f"Database license check failed: {db_err}")
+        
+        if not license_data:
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_KEY_NOT_FOUND",
                 {"ip": client_ip, "key_prefix": key[:4]},
@@ -1797,21 +1833,24 @@ def validate_license():
                 'code': 'INVALID_LICENSE'
             }), 401
 
-        license_data = DEMO_LICENSES[key]
-
         # Check if license has expired
-        expires_dt = datetime.fromisoformat(license_data['expires'])
+        expires_str = license_data.get('expires', '2099-12-31T23:59:59')
+        try:
+            expires_dt = datetime.fromisoformat(expires_str)
+        except:
+            expires_dt = datetime.now() + timedelta(days=365)
+            
         if datetime.now() > expires_dt:
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_EXPIRED",
-                {"ip": client_ip, "key_prefix": key[:4], "expired": license_data['expires']},
+                {"ip": client_ip, "key_prefix": key[:4], "expired": expires_str},
                 "INFO"
             )
             return jsonify({
                 'valid': False,
                 'error': 'This license key has expired',
                 'code': 'LICENSE_EXPIRED',
-                'expired_on': license_data['expires']
+                'expired_on': expires_str
             }), 401
 
         # Validate edition prefix matches

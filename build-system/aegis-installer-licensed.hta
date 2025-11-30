@@ -267,6 +267,9 @@ Sub Window_OnLoad()
     networkPreset = "DHCP"
     sysReqPassed = False
     selectedFeatures = "wallpaper,stream,security,backup"
+    serverUrl = "https://aegis-os.replit.app"
+    validationToken = ""
+    isValidating = False
     CheckAdminStatus
     CheckSystemRequirements
 End Sub
@@ -351,52 +354,193 @@ Sub CheckSystemRequirements()
         "<div class='sys-req-item'>" & osStatus & "</div>"
 End Sub
 
-Function ValidateLicense(key)
-    Dim prefix, parts, cleanKey
-    cleanKey = UCase(Trim(key))
-    ValidateLicense = ""
-    If Len(cleanKey) < 10 Then Exit Function
-    parts = Split(cleanKey, "-")
-    If UBound(parts) < 0 Then Exit Function
-    prefix = parts(0)
-    Select Case prefix
-        Case "BSIC": ValidateLicense = "Basic"
-        Case "WORK": ValidateLicense = "Workplace"
-        Case "GAME": ValidateLicense = "Gamer"
-        Case "AIDV": ValidateLicense = "AI Developer"
-        Case "GMAI": ValidateLicense = "Gamer + AI"
-        Case "SERV": ValidateLicense = "Server"
+Dim validationToken, serverUrl, isValidating
+
+Function GetEditionFromPrefix(prefix)
+    GetEditionFromPrefix = ""
+    Select Case UCase(prefix)
+        Case "BSIC": GetEditionFromPrefix = "Basic"
+        Case "WORK": GetEditionFromPrefix = "Workplace"
+        Case "GAME": GetEditionFromPrefix = "Gamer"
+        Case "AIDV": GetEditionFromPrefix = "AI Developer"
+        Case "GMAI": GetEditionFromPrefix = "Gamer + AI"
+        Case "SERV": GetEditionFromPrefix = "Server"
     End Select
 End Function
 
-Sub CheckLicense()
-    Dim key, edition, inputEl
+Function ValidateLicenseFormat(key)
+    Dim cleanKey, parts
+    cleanKey = UCase(Trim(key))
+    ValidateLicenseFormat = False
+    If Len(cleanKey) < 19 Then Exit Function
+    parts = Split(cleanKey, "-")
+    If UBound(parts) <> 3 Then Exit Function
+    If Len(GetEditionFromPrefix(parts(0))) > 0 Then
+        ValidateLicenseFormat = True
+    End If
+End Function
+
+Sub ValidateLicenseWithServer(key)
+    Dim xhr, jsonData, response, cleanKey
     On Error Resume Next
-    Set inputEl = document.getElementById("licenseInput")
-    If inputEl Is Nothing Then Exit Sub
-    key = inputEl.value
-    If IsNull(key) Then key = ""
-    edition = ValidateLicense(key)
-    If Len(edition) > 0 Then
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> Valid: <strong>" & edition & " Edition</strong>"
-        document.getElementById("licenseStatus").className = "license-valid"
-        licenseKey = UCase(Trim(key))
-        detectedEdition = edition
-        document.getElementById("btnNext1").disabled = False
-        UpdateFeatureShowcase edition
-    Else
-        If Len(Trim(key & "")) > 0 Then
-            document.getElementById("licenseStatus").innerHTML = "Enter valid key (e.g., BSIC-XXXX-XXXX-XXXX)"
+    
+    cleanKey = UCase(Trim(key))
+    isValidating = True
+    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Validating with server..."
+    document.getElementById("licenseStatus").className = ""
+    document.getElementById("btnNext1").disabled = True
+    document.getElementById("btnValidate").disabled = True
+    
+    Set xhr = CreateObject("MSXML2.XMLHTTP.6.0")
+    If xhr Is Nothing Then
+        Set xhr = CreateObject("MSXML2.XMLHTTP")
+    End If
+    
+    jsonData = "{""key"": """ & cleanKey & """, ""hardware_id"": """ & GetMachineId() & """}"
+    
+    xhr.Open "POST", serverUrl & "/api/validate-license", False
+    xhr.setRequestHeader "Content-Type", "application/json"
+    xhr.setRequestHeader "Accept", "application/json"
+    xhr.Send jsonData
+    
+    If xhr.Status = 200 Then
+        response = xhr.responseText
+        If InStr(response, """valid"": true") > 0 Or InStr(response, """valid"":true") > 0 Then
+            Dim edition, tier, token, expiresMatch
+            edition = ExtractJsonValue(response, "edition")
+            tier = ExtractJsonValue(response, "tier")
+            validationToken = ExtractJsonValue(response, "token")
+            
+            Dim displayEdition
+            displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
+            If Len(displayEdition) = 0 Then displayEdition = edition
+            
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified:</strong> " & displayEdition & " Edition"
+            document.getElementById("licenseStatus").className = "license-valid"
+            licenseKey = cleanKey
+            detectedEdition = displayEdition
+            document.getElementById("btnNext1").disabled = False
+            document.getElementById("btnNext1").style.display = "inline-block"
+            UpdateFeatureShowcase displayEdition
         Else
-            document.getElementById("licenseStatus").innerHTML = ""
+            Dim errorMsg
+            errorMsg = ExtractJsonValue(response, "error")
+            If Len(errorMsg) = 0 Then errorMsg = "License validation failed"
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> " & errorMsg
+            document.getElementById("licenseStatus").className = "license-invalid"
+            licenseKey = ""
+            detectedEdition = ""
+            validationToken = ""
+            document.getElementById("btnNext1").disabled = True
+            document.getElementById("featureShowcase").style.display = "none"
         End If
+    ElseIf xhr.Status = 401 Then
+        response = xhr.responseText
+        Dim errCode
+        errCode = ExtractJsonValue(response, "code")
+        Select Case errCode
+            Case "INVALID_LICENSE"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License key not found in database"
+            Case "LICENSE_EXPIRED"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> This license has expired"
+            Case "MAX_ACTIVATIONS"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Maximum activations reached"
+            Case Else
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license key"
+        End Select
         document.getElementById("licenseStatus").className = "license-invalid"
         licenseKey = ""
         detectedEdition = ""
         document.getElementById("btnNext1").disabled = True
         document.getElementById("featureShowcase").style.display = "none"
+    ElseIf xhr.Status = 429 Then
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Too many attempts. Please wait and try again."
+        document.getElementById("licenseStatus").className = "license-invalid"
+    Else
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable. Check internet connection."
+        document.getElementById("licenseStatus").className = "license-invalid"
+    End If
+    
+    document.getElementById("btnValidate").disabled = False
+    isValidating = False
+    Set xhr = Nothing
+    On Error Goto 0
+End Sub
+
+Function ExtractJsonValue(jsonStr, key)
+    Dim startPos, endPos, searchKey
+    ExtractJsonValue = ""
+    searchKey = """" & key & """:"
+    startPos = InStr(jsonStr, searchKey)
+    If startPos = 0 Then
+        searchKey = """" & key & """: "
+        startPos = InStr(jsonStr, searchKey)
+    End If
+    If startPos > 0 Then
+        startPos = startPos + Len(searchKey)
+        If Mid(jsonStr, startPos, 1) = """" Then
+            startPos = startPos + 1
+            endPos = InStr(startPos, jsonStr, """")
+        Else
+            endPos = InStr(startPos, jsonStr, ",")
+            If endPos = 0 Then endPos = InStr(startPos, jsonStr, "}")
+        End If
+        If endPos > startPos Then
+            ExtractJsonValue = Mid(jsonStr, startPos, endPos - startPos)
+        End If
+    End If
+End Function
+
+Function GetMachineId()
+    Dim wmi, items, item, machineId
+    On Error Resume Next
+    machineId = ""
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    Set items = wmi.ExecQuery("SELECT UUID FROM Win32_ComputerSystemProduct")
+    For Each item In items
+        machineId = item.UUID
+        Exit For
+    Next
+    If Len(machineId) = 0 Then machineId = "UNKNOWN-" & Int(Rnd * 100000)
+    GetMachineId = machineId
+    On Error Goto 0
+End Function
+
+Sub CheckLicense()
+    Dim key, inputEl
+    On Error Resume Next
+    Set inputEl = document.getElementById("licenseInput")
+    If inputEl Is Nothing Then Exit Sub
+    key = inputEl.value
+    If IsNull(key) Then key = ""
+    
+    If Len(Trim(key)) = 0 Then
+        document.getElementById("licenseStatus").innerHTML = ""
+        document.getElementById("licenseStatus").className = ""
+        document.getElementById("btnNext1").disabled = True
+        document.getElementById("featureShowcase").style.display = "none"
+        licenseKey = ""
+        detectedEdition = ""
+    ElseIf ValidateLicenseFormat(key) Then
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Press 'Validate' to verify with server"
+        document.getElementById("licenseStatus").className = ""
+        document.getElementById("btnValidate").style.display = "inline-block"
+        document.getElementById("btnNext1").disabled = True
+    Else
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#888'>Format: XXXX-XXXX-XXXX-XXXX (e.g., BSIC-DEMO-TEST-2024)</span>"
+        document.getElementById("licenseStatus").className = ""
+        document.getElementById("btnNext1").disabled = True
+        document.getElementById("btnValidate").style.display = "none"
     End If
     On Error Goto 0
+End Sub
+
+Sub OnValidateClick()
+    Dim key
+    key = document.getElementById("licenseInput").value
+    If ValidateLicenseFormat(key) Then
+        ValidateLicenseWithServer key
+    End If
 End Sub
 
 Sub UpdateFeatureShowcase(edition)
@@ -1029,7 +1173,7 @@ End Sub
 
             <div class="form-group">
                 <label class="form-label">License Key</label>
-                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" onkeyup="CheckLicense" maxlength="30">
+                <input type="text" id="licenseInput" class="form-input" placeholder="BSIC-XXXX-XXXX-XXXX" onkeyup="CheckLicense" maxlength="30" style="text-transform:uppercase">
                 <div id="licenseStatus" style="margin-top:6px"></div>
             </div>
             
@@ -1040,6 +1184,7 @@ End Sub
                     <li>GAME = Gamer | AIDV = AI Developer</li>
                     <li>GMAI = Gamer+AI | SERV = Server</li>
                 </ul>
+                <div style="font-size:10px;color:#888;margin-top:4px">Demo keys: BSIC-DEMO-TEST-2024, GAME-DEMO-TEST-2024, etc.</div>
             </div>
 
             <div id="featureShowcase" class="feature-showcase" style="display:none">
@@ -1048,6 +1193,7 @@ End Sub
             </div>
 
             <div class="btn-row">
+                <button id="btnValidate" class="btn btn-secondary" onclick="OnValidateClick" style="display:none">Validate License</button>
                 <div style="flex:1"></div>
                 <button id="btnNext1" class="btn btn-primary" disabled onclick="GoToStep 2">Next</button>
             </div>
