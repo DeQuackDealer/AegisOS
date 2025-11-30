@@ -28,7 +28,43 @@ A robust payment and license system is integrated, managing user accounts, licen
 
 ### Aegis Exclusive Tools
 
-Each OS edition includes 22 custom Python-based utilities located in `/usr/local/bin/`. These tools cover system monitoring, desktop customization (e.g., `aegis-wallpaper-engine` for advanced animated wallpapers), security, backup, app management, device integration, and system maintenance. All tools support both GUI (tkinter) and CLI modes, configurable settings, and logging. The `aegis-wallpaper-engine` (SIGMA Edition v3.0) is a notable feature, offering advanced animated wallpaper capabilities with extensive video and image format support, audio controls, and performance optimizations.
+Each OS edition includes 25+ custom Python-based utilities located in `/usr/local/bin/`. All tools support GUI (tkinter) and CLI modes, tier-based feature gating, and logging.
+
+**Key Tools:**
+
+1. **aegis-wallpaper-engine v3.1** - AI-powered animated wallpaper system
+   - MPV-based rendering (no Chrome dependency)
+   - AI preference learning (time-based, category-based suggestions)
+   - Weekly update checks from Aegis servers
+   - Video: MP4, AVI, MKV, WebM, MOV, HEVC, VP9, AV1
+   - Image: JPG, PNG, GIF, WebP, TIFF, SVG, HEIC
+   - Audio control, gaming mode auto-pause
+
+2. **aegis-stream v1.0** - Local game/desktop streaming
+   - Host mode: Screen capture, hardware encoding (NVENC/VAAPI/AMF)
+   - Client mode: Low-latency playback, input forwarding
+   - Quality presets: Ultra (4K60) to Potato (480p30)
+   - PIN-based pairing, auto-discovery on LAN
+   - Freemium: 720p30 max, no audio, watermark
+
+3. **aegis-security-daemon** - Background security service
+   - File integrity monitoring with hash verification
+   - Suspicious process detection
+   - Auth rate limiting
+   - Privilege separation
+   - Secure IPC via Unix sockets
+
+4. **aegis-sandbox-policy** - Application sandboxing
+   - AppArmor/Firejail profile management
+   - Filesystem/network access control
+   - Per-tool security policies
+
+**Tier Limitations (Freemium vs Full):**
+- security-center: Basic firewall only vs full ClamAV/UFW
+- backup-pro: Manual only, 5GB max vs scheduled, unlimited
+- gaming-optimizer: Basic mode vs custom profiles/overclocking
+- desktop-effects: Basic transparency vs blur/animations
+- app-store: 5 installs/month vs unlimited
 
 ### Admin Panel
 
@@ -55,11 +91,13 @@ A comprehensive admin panel provides API endpoints for managing the system, incl
 
 *   **Python 3**: Core for all tools.
 *   **tkinter**: For GUI components of Aegis tools.
-*   **Chromium/Chrome**: Recommended for `aegis-wallpaper-engine`.
-*   **FFmpeg**: For video processing in `aegis-wallpaper-engine`.
+*   **MPV**: Primary renderer for `aegis-wallpaper-engine` and `aegis-stream`.
+*   **FFmpeg**: Video processing, encoding, format conversion.
 *   **ClamAV, UFW**: For `aegis-security-center`.
 *   **rsync**: For `aegis-backup-pro`.
 *   **Steam, Lutris, Heroic**: Integrations for `aegis-game-library`.
 *   **KDE Connect, Barrier/Synergy**: Integrations for device linking.
 *   **GameMode**: Integration for `aegis-gaming-optimizer`.
-*   **NVIDIA drivers**: For `aegis-nvidia-info`.
+*   **NVIDIA drivers**: For `aegis-nvidia-info` and hardware encoding.
+*   **AppArmor/Firejail**: For `aegis-sandbox-policy`.
+*   **PipeWire/PulseAudio**: For audio capture in `aegis-stream`.
