@@ -3,7 +3,7 @@ Aegis OS - ULTRA-SECURE v4.0
 100/100 Security Score - Enterprise Grade - Absolute Perfection
 """
 
-from flask import Flask, send_from_directory, redirect, jsonify, request, make_response, Response, send_file
+from flask import Flask, send_from_directory, redirect, jsonify, request, make_response, Response, send_file, g
 from functools import wraps, lru_cache
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -4512,8 +4512,8 @@ def require_admin(f):
         if not payload:
             return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
 
-        request.admin_user = payload.get('username')
-        request.admin_role = payload.get('role', 'designer')
+        g.admin_user = payload.get('username')
+        g.admin_role = payload.get('role', 'designer')
         return f(*args, **kwargs)
     return decorated
 
@@ -4533,8 +4533,8 @@ def require_roles(*allowed_roles):
                 return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
 
             user_role = payload.get('role', 'designer')
-            request.admin_user = payload.get('username')
-            request.admin_role = user_role
+            g.admin_user = payload.get('username')
+            g.admin_role = user_role
             
             # Owner always has access
             if user_role == AdminRole.OWNER:
@@ -4574,8 +4574,8 @@ def require_build_access(f):
             return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
 
         user_role = payload.get('role', 'designer')
-        request.admin_user = payload.get('username')
-        request.admin_role = user_role
+        g.admin_user = payload.get('username')
+        g.admin_role = user_role
         
         if not AdminRole.can_access_builds(user_role):
             tamper_protected_audit_log("BUILD_ACCESS_DENIED", {
@@ -4880,8 +4880,8 @@ OS_EDITIONS = {
 def admin_list_builds():
     """List all available OS builds (Tester/Developer/Owner only)"""
     tamper_protected_audit_log("BUILD_LIST_ACCESS", {
-        "username": request.admin_user,
-        "role": request.admin_role
+        "username": g.admin_user,
+        "role": g.admin_role
     }, "INFO")
     
     builds = []
@@ -4901,8 +4901,8 @@ def admin_list_builds():
         'success': True,
         'builds': builds,
         'total': len(builds),
-        'access_granted_to': request.admin_user,
-        'role': request.admin_role
+        'access_granted_to': g.admin_user,
+        'role': g.admin_role
     }), 200
 
 @app.route('/api/admin/builds/<edition>', methods=['GET'])
@@ -4921,8 +4921,8 @@ def admin_get_build_details(edition):
     build_data = OS_EDITIONS[edition]
     
     tamper_protected_audit_log("BUILD_DETAILS_ACCESS", {
-        "username": request.admin_user,
-        "role": request.admin_role,
+        "username": g.admin_user,
+        "role": g.admin_role,
         "edition": edition
     }, "INFO")
     
@@ -4957,8 +4957,8 @@ def admin_download_build(edition):
     build_data = OS_EDITIONS[edition]
     
     tamper_protected_audit_log("BUILD_DOWNLOAD_INITIATED", {
-        "username": request.admin_user,
-        "role": request.admin_role,
+        "username": g.admin_user,
+        "role": g.admin_role,
         "edition": edition
     }, "HIGH")
     
@@ -4992,8 +4992,8 @@ def admin_get_build_download_token(edition):
     expiry = datetime.utcnow() + timedelta(hours=1)
     
     tamper_protected_audit_log("BUILD_DOWNLOAD_TOKEN_GENERATED", {
-        "username": request.admin_user,
-        "role": request.admin_role,
+        "username": g.admin_user,
+        "role": g.admin_role,
         "edition": edition,
         "token_prefix": download_token[:8]
     }, "HIGH")
@@ -5019,9 +5019,9 @@ def admin_get_roles():
         'display_names': AdminRole.DISPLAY_NAMES,
         'build_access_roles': AdminRole.BUILD_ACCESS_ROLES,
         'admin_management_roles': AdminRole.ADMIN_MANAGEMENT_ROLES,
-        'your_role': request.admin_role,
-        'can_access_builds': AdminRole.can_access_builds(request.admin_role),
-        'can_manage_admins': AdminRole.can_manage_admins(request.admin_role)
+        'your_role': g.admin_role,
+        'can_access_builds': AdminRole.can_access_builds(g.admin_role),
+        'can_manage_admins': AdminRole.can_manage_admins(g.admin_role)
     }), 200
 
 @app.route('/api/admin/logout', methods=['POST'])
@@ -5039,7 +5039,7 @@ def admin_logout():
     except:
         pass
 
-    tamper_protected_audit_log("ADMIN_LOGOUT", {"username": request.admin_user}, "INFO")
+    tamper_protected_audit_log("ADMIN_LOGOUT", {"username": g.admin_user}, "INFO")
     return jsonify({'success': True}), 200
 
 # Admin dashboard stats endpoint
@@ -5125,7 +5125,7 @@ def admin_create_license():
         tamper_protected_audit_log("ADMIN_LICENSE_CREATED", {
             "key": key[:8] + "...",
             "edition": edition,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
 
         return jsonify({'success': True, 'license': new_license.to_dict()}), 201
@@ -5186,7 +5186,7 @@ def admin_create_giveaway():
             prize_edition=prize_edition,
             prize_type=prize_type,
             max_winners=max_winners,
-            created_by=request.admin_user,
+            created_by=g.admin_user,
             status='active'
         )
         db.session.add(giveaway)
@@ -5363,7 +5363,7 @@ def admin_save_page(filename):
 
         tamper_protected_audit_log("ADMIN_PAGE_SAVED", {
             "filename": filename,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
 
         return jsonify({'success': True}), 200
@@ -5415,7 +5415,7 @@ def admin_analytics_sales():
         
         tamper_protected_audit_log("ADMIN_ANALYTICS_SALES", {
             "period": period,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5478,7 +5478,7 @@ def admin_analytics_editions():
             license_types[license_type] += 1
         
         tamper_protected_audit_log("ADMIN_ANALYTICS_EDITIONS", {
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5526,7 +5526,7 @@ def admin_analytics_trends():
         
         tamper_protected_audit_log("ADMIN_ANALYTICS_TRENDS", {
             "days": days,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5576,7 +5576,7 @@ def admin_list_users():
             "page": page,
             "per_page": per_page,
             "search": search[:50] if search else None,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5617,7 +5617,7 @@ def admin_get_user(user_id):
         
         tamper_protected_audit_log("ADMIN_GET_USER", {
             "user_id": user_id,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({'user': user_data}), 200
@@ -5659,7 +5659,7 @@ def admin_update_user(user_id):
         tamper_protected_audit_log("ADMIN_UPDATE_USER", {
             "user_id": user_id,
             "updated_fields": list(data.keys()),
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5762,7 +5762,7 @@ def admin_system_health():
         
         tamper_protected_audit_log("ADMIN_SYSTEM_HEALTH", {
             "status": health['status'],
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify(health), 200
@@ -5797,7 +5797,7 @@ def admin_system_logs():
             "limit": limit,
             "severity_filter": severity or None,
             "action_filter": action or None,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5867,7 +5867,7 @@ def admin_bulk_create_licenses():
             "count": count,
             "edition": edition,
             "type": license_type,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -5964,7 +5964,7 @@ def admin_bulk_send_emails():
             "sent": sent_count,
             "failed": failed_count,
             "edition_filter": edition_filter,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -6037,7 +6037,7 @@ def admin_report_monthly():
         tamper_protected_audit_log("ADMIN_REPORT_MONTHLY", {
             "year": year,
             "month": month,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "INFO")
         
         return jsonify({
@@ -6075,7 +6075,7 @@ def admin_report_export():
         
         export_data = {
             'exported_at': datetime.now().isoformat(),
-            'exported_by': request.admin_user,
+            'exported_by': g.admin_user,
             'version': '4.0'
         }
         
@@ -6092,9 +6092,9 @@ def admin_report_export():
         if include_giveaways:
             giveaways = Giveaway.query.all()
             giveaway_data = []
-            for g in giveaways:
-                gd = g.to_dict()
-                gd['entries'] = [e.to_dict() for e in g.entries.all()]
+            for giveaway in giveaways:
+                gd = giveaway.to_dict()
+                gd['entries'] = [e.to_dict() for e in giveaway.entries.all()]
                 giveaway_data.append(gd)
             export_data['giveaways'] = giveaway_data
             export_data['giveaway_count'] = len(giveaways)
@@ -6116,7 +6116,7 @@ def admin_report_export():
             "include_licenses": include_licenses,
             "include_giveaways": include_giveaways,
             "include_logs": include_logs,
-            "by": request.admin_user
+            "by": g.admin_user
         }, "HIGH")
         
         response = make_response(json.dumps(export_data, indent=2, default=str))
