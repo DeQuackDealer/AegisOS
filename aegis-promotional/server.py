@@ -386,6 +386,16 @@ def internal_error(e):
 
 # ============= ROUTES: CORE =============
 
+@app.route('/favicon.svg')
+def favicon():
+    """Serve favicon"""
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), 'favicon.svg', mimetype='image/svg+xml')
+
+@app.route('/favicon.ico')
+def favicon_ico():
+    """Serve favicon.ico (redirect to SVG)"""
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), 'favicon.svg', mimetype='image/svg+xml')
+
 @app.route('/')
 @rate_limit(limit=1000)
 def index():
