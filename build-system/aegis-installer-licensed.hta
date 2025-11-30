@@ -443,16 +443,99 @@ Function ValidateLicenseFormat(key)
     End If
 End Function
 
-Sub ValidateLicenseWithServer(key)
-    Dim xhr, jsonData, response, cleanKey
+' OFFLINE-FIRST validation - no server required
+Sub ValidateLicenseOffline(key)
+    Dim cleanKey, cachedEdition, displayEdition, daysLeft
     On Error Resume Next
     
     cleanKey = UCase(Trim(key))
     isValidating = True
-    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Validating with server..."
+    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Validating license..."
     document.getElementById("licenseStatus").className = ""
     document.getElementById("btnNext1").disabled = True
     document.getElementById("btnValidate").disabled = True
+    
+    ' Check local cache FIRST (no server call)
+    cachedEdition = CheckLocalCache(cleanKey)
+    
+    If Len(cachedEdition) > 0 Then
+        ' License found in cache
+        displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
+        If Len(displayEdition) = 0 Then displayEdition = cachedEdition
+        
+        If IsCacheValid() Then
+            daysLeft = GetCacheDaysLeft()
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified:</strong> " & displayEdition & " Edition" & _
+                "<div style='font-size:9px;color:#888;margin-top:2px'>License valid (cache expires in " & daysLeft & " days)</div>"
+            document.getElementById("licenseStatus").className = "license-valid"
+            licenseKey = cleanKey
+            detectedEdition = displayEdition
+            validationToken = "OFFLINE_" & SimpleHash(cleanKey)
+            document.getElementById("btnNext1").disabled = False
+            document.getElementById("btnNext1").style.display = "inline-block"
+            document.getElementById("btnOnlineVerify").style.display = "inline-block"
+            UpdateFeatureShowcase displayEdition
+        Else
+            ' Cache expired but license exists - allow demo keys, warn paid keys
+            If InStr(cleanKey, "DEMO") > 0 Then
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Demo License:</strong> " & displayEdition & " Edition" & _
+                    "<div style='font-size:9px;color:#888;margin-top:2px'>Cache expired. Demo licenses remain valid.</div>"
+                document.getElementById("licenseStatus").className = "license-valid"
+                licenseKey = cleanKey
+                detectedEdition = displayEdition
+                validationToken = "DEMO_" & SimpleHash(cleanKey)
+                document.getElementById("btnNext1").disabled = False
+                document.getElementById("btnNext1").style.display = "inline-block"
+                document.getElementById("btnOnlineVerify").style.display = "inline-block"
+                UpdateFeatureShowcase displayEdition
+            Else
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Cache Expired:</strong> " & displayEdition & " Edition" & _
+                    "<div style='font-size:9px;color:#888;margin-top:2px'>Download a fresh installer to renew cache, or verify online.</div>"
+                document.getElementById("licenseStatus").className = "license-valid"
+                licenseKey = cleanKey
+                detectedEdition = displayEdition
+                validationToken = "EXPIRED_CACHE_" & SimpleHash(cleanKey)
+                document.getElementById("btnNext1").disabled = False
+                document.getElementById("btnNext1").style.display = "inline-block"
+                document.getElementById("btnOnlineVerify").style.display = "inline-block"
+                UpdateFeatureShowcase displayEdition
+            End If
+        End If
+    Else
+        ' License NOT in cache - check if format is valid for unknown license
+        If ValidateLicenseFormat(cleanKey) Then
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not recognized" & _
+                "<div style='font-size:9px;color:#888;margin-top:2px'>This installer was downloaded before your purchase. Download fresh installer or verify online.</div>"
+            document.getElementById("licenseStatus").className = "license-invalid"
+            document.getElementById("btnOnlineVerify").style.display = "inline-block"
+        Else
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license format"
+            document.getElementById("licenseStatus").className = "license-invalid"
+        End If
+        licenseKey = ""
+        detectedEdition = ""
+        validationToken = ""
+        document.getElementById("btnNext1").disabled = True
+        document.getElementById("featureShowcase").style.display = "none"
+    End If
+    
+    document.getElementById("btnValidate").disabled = False
+    isValidating = False
+    On Error Goto 0
+End Sub
+
+' Optional online verification (user-triggered only)
+Sub VerifyOnline()
+    Dim key, xhr, jsonData, response, cleanKey
+    On Error Resume Next
+    
+    key = document.getElementById("licenseInput").value
+    cleanKey = UCase(Trim(key))
+    
+    If Not ValidateLicenseFormat(cleanKey) Then Exit Sub
+    
+    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Contacting server..."
+    document.getElementById("btnOnlineVerify").disabled = True
     
     Set xhr = CreateObject("MSXML2.XMLHTTP.6.0")
     If xhr Is Nothing Then
@@ -469,16 +552,13 @@ Sub ValidateLicenseWithServer(key)
     If xhr.Status = 200 Then
         response = xhr.responseText
         If InStr(response, """valid"": true") > 0 Or InStr(response, """valid"":true") > 0 Then
-            Dim edition, tier, token, expiresMatch
+            Dim edition, displayEdition
             edition = ExtractJsonValue(response, "edition")
-            tier = ExtractJsonValue(response, "tier")
             validationToken = ExtractJsonValue(response, "token")
-            
-            Dim displayEdition
             displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
             If Len(displayEdition) = 0 Then displayEdition = edition
             
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified:</strong> " & displayEdition & " Edition"
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Online Verified:</strong> " & displayEdition & " Edition"
             document.getElementById("licenseStatus").className = "license-valid"
             licenseKey = cleanKey
             detectedEdition = displayEdition
@@ -489,13 +569,8 @@ Sub ValidateLicenseWithServer(key)
             Dim errorMsg
             errorMsg = ExtractJsonValue(response, "error")
             If Len(errorMsg) = 0 Then errorMsg = "License validation failed"
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> " & errorMsg
+            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Server: " & errorMsg
             document.getElementById("licenseStatus").className = "license-invalid"
-            licenseKey = ""
-            detectedEdition = ""
-            validationToken = ""
-            document.getElementById("btnNext1").disabled = True
-            document.getElementById("featureShowcase").style.display = "none"
         End If
     ElseIf xhr.Status = 401 Then
         response = xhr.responseText
@@ -503,51 +578,23 @@ Sub ValidateLicenseWithServer(key)
         errCode = ExtractJsonValue(response, "code")
         Select Case errCode
             Case "INVALID_LICENSE"
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License key not found in database"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not found on server"
             Case "LICENSE_EXPIRED"
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> This license has expired"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License expired"
             Case "MAX_ACTIVATIONS"
                 document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Maximum activations reached"
             Case Else
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license key"
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license"
         End Select
         document.getElementById("licenseStatus").className = "license-invalid"
-        licenseKey = ""
-        detectedEdition = ""
-        document.getElementById("btnNext1").disabled = True
-        document.getElementById("featureShowcase").style.display = "none"
-    ElseIf xhr.Status = 429 Then
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Too many attempts. Please wait and try again."
-        document.getElementById("licenseStatus").className = "license-invalid"
     Else
-        ' Server unavailable - try local cache fallback
-        Dim cachedEdition
-        cachedEdition = CheckLocalCache(cleanKey)
-        If Len(cachedEdition) > 0 And IsCacheValid() Then
-            Dim displayEdition2
-            displayEdition2 = GetEditionFromPrefix(Left(cleanKey, 4))
-            If Len(displayEdition2) = 0 Then displayEdition2 = cachedEdition
-            
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Offline Mode:</strong> " & displayEdition2 & " Edition" & _
-                "<div style='font-size:9px;color:#888;margin-top:2px'>Server unavailable. Using cached validation (expires in " & GetCacheDaysLeft() & " days)</div>"
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable - offline validation still applies"
+        If Len(licenseKey) > 0 Then
             document.getElementById("licenseStatus").className = "license-valid"
-            licenseKey = cleanKey
-            detectedEdition = displayEdition2
-            validationToken = "OFFLINE_" & SimpleHash(cleanKey)
-            document.getElementById("btnNext1").disabled = False
-            document.getElementById("btnNext1").style.display = "inline-block"
-            UpdateFeatureShowcase displayEdition2
-        ElseIf Len(cachedEdition) > 0 And Not IsCacheValid() Then
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Server unavailable and local cache expired. Please connect to internet."
-            document.getElementById("licenseStatus").className = "license-invalid"
-        Else
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable. Check internet connection or try again later."
-            document.getElementById("licenseStatus").className = "license-invalid"
         End If
     End If
     
-    document.getElementById("btnValidate").disabled = False
-    isValidating = False
+    document.getElementById("btnOnlineVerify").disabled = False
     Set xhr = Nothing
     On Error Goto 0
 End Sub
@@ -599,15 +646,19 @@ Sub CheckLicense()
     key = inputEl.value
     If IsNull(key) Then key = ""
     
+    ' Hide online verify button on input change
+    document.getElementById("btnOnlineVerify").style.display = "none"
+    
     If Len(Trim(key)) = 0 Then
         document.getElementById("licenseStatus").innerHTML = ""
         document.getElementById("licenseStatus").className = ""
         document.getElementById("btnNext1").disabled = True
         document.getElementById("featureShowcase").style.display = "none"
+        document.getElementById("btnValidate").style.display = "none"
         licenseKey = ""
         detectedEdition = ""
     ElseIf ValidateLicenseFormat(key) Then
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Press 'Validate' to verify with server"
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Press 'Validate' to check license"
         document.getElementById("licenseStatus").className = ""
         document.getElementById("btnValidate").style.display = "inline-block"
         document.getElementById("btnNext1").disabled = True
@@ -624,7 +675,7 @@ Sub OnValidateClick()
     Dim key
     key = document.getElementById("licenseInput").value
     If ValidateLicenseFormat(key) Then
-        ValidateLicenseWithServer key
+        ValidateLicenseOffline key
     End If
 End Sub
 
@@ -1279,6 +1330,7 @@ End Sub
 
             <div class="btn-row">
                 <button id="btnValidate" class="btn btn-secondary" onclick="OnValidateClick" style="display:none">Validate License</button>
+                <button id="btnOnlineVerify" class="btn btn-secondary btn-small" onclick="VerifyOnline" style="display:none;margin-left:8px">Verify Online</button>
                 <div style="flex:1"></div>
                 <button id="btnNext1" class="btn btn-primary" disabled onclick="GoToStep 2">Next</button>
             </div>
