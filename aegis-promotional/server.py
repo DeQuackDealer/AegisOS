@@ -2389,11 +2389,30 @@ def download_freemium_installer():
         return jsonify({'error': 'Download failed'}), 500
 
 def generate_vbs_hash(key):
-    """Generate hash matching VBScript SimpleHash function"""
+    """Generate hash matching VBScript ComputeKeyHash function exactly
+    
+    VBScript code:
+        h = 0: r = &H5A3C
+        For i = 1 To Len(str)
+            c = Asc(Mid(str, i, 1))
+            h = ((h * 31) + c) And &H7FFFFFFF
+            r = ((r Xor c) * 17) And &HFFFF
+        Next
+        ComputeKeyHash = LCase(Left(Hex(h) & Hex(r), 16))
+    """
     h = 0
+    r = 0x5A3C  # Initial value for secondary hash
     for c in key.upper():
-        h = ((h * 31) + ord(c)) & 0x7FFFFFFF
-    return format(h, '016x')[:16]
+        code = ord(c)
+        h = ((h * 31) + code) & 0x7FFFFFFF
+        r = ((r ^ code) * 17) & 0xFFFF
+    
+    # Combine h and r, convert to hex, take first 16 chars, pad with zeros
+    combined = format(h, 'x') + format(r, 'x')
+    result = combined[:16].lower()
+    while len(result) < 16:
+        result = '0' + result
+    return result
 
 # ============================================================
 # RSA ASYMMETRIC SIGNATURE SYSTEM
