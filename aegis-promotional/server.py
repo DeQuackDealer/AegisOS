@@ -75,7 +75,7 @@ db.init_app(app)
 
 with app.app_context():
     db.create_all()
-    
+
     # Ensure DeQuackDealer owner account exists in database with synced password
     try:
         dequack_pwd = os.getenv('DeQuackDealerPWD', 'fallback_password_123!')
@@ -918,7 +918,7 @@ def ai_dev_optimizations():
                 'Batch processing scheduler',
                 'GPU memory pool management',
                 'Tensor core utilization optimizer',
-                'Mixed precision auto-tuning',
+                'Mixed precision multi-tuning',
                 'Distributed training optimization',
                 'Model compilation cache',
                 'Jupyter kernel resource limits'
@@ -1416,7 +1416,62 @@ def documentation():
 # ============= ROUTES: STATIC FILES =============
 
 # In-memory license storage
-LICENSES = {}
+LICENSES = {
+    "BSIC-DEMO-TEST-2024": {
+        "id": "demo_basic",
+        "tier": "basic",
+        "type": "demo",
+        "created": "2024-01-01T00:00:00",
+        "status": "active",
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    },
+    "WORK-DEMO-TEST-2024": {
+        "id": "demo_workplace",
+        "tier": "workplace", 
+        "type": "demo",
+        "created": "2024-01-01T00:00:00",
+        "status": "active",
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    },
+    "GAME-DEMO-TEST-2024": {
+        "id": "demo_gamer",
+        "tier": "gamer",
+        "type": "demo", 
+        "created": "2024-01-01T00:00:00",
+        "status": "active",
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    },
+    "AIDV-DEMO-TEST-2024": {
+        "id": "demo_ai_dev",
+        "tier": "ai_dev",
+        "type": "demo",
+        "created": "2024-01-01T00:00:00", 
+        "status": "active",
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    },
+    "GMAI-DEMO-TEST-2024": {
+        "id": "demo_gamer_ai",
+        "tier": "gamer_ai",
+        "type": "demo",
+        "created": "2024-01-01T00:00:00",
+        "status": "active", 
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    },
+    "SERV-DEMO-TEST-2024": {
+        "id": "demo_server",
+        "tier": "server",
+        "type": "demo",
+        "created": "2024-01-01T00:00:00",
+        "status": "active",
+        "activated": True,
+        "activated_date": "2024-01-01T00:00:00"
+    }
+}
 ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
 ADMIN_PWD = os.getenv('ADMIN_PWD', 'DefaultAdminPassword123!')
 ADMIN_TOKENS = {}  # Simple token storage for authenticated sessions
@@ -1739,10 +1794,34 @@ def validate_license():
                 'code': 'INVALID_FORMAT'
             }), 400
 
+        # Check demo licenses first (always valid)
+        demo_licenses = {
+            "BSIC-DEMO-TEST-2024": "basic",
+            "WORK-DEMO-TEST-2024": "workplace",
+            "GAME-DEMO-TEST-2024": "gamer",
+            "AIDV-DEMO-TEST-2024": "ai_dev",
+            "GMAI-DEMO-TEST-2024": "gamer_ai",
+            "SERV-DEMO-TEST-2024": "server"
+        }
+
+        if key in demo_licenses:
+            tamper_protected_audit_log(
+                "LICENSE_VALIDATION_DEMO_SUCCESS",
+                {"ip": client_ip, "edition": demo_licenses[key]},
+                "INFO"
+            )
+            return jsonify({
+                'valid': True,
+                'tier': demo_licenses[key],
+                'type': 'demo',
+                'edition': demo_licenses[key],
+                'token': f"demo_{key[:8]}"
+            }), 200
+
         # Check if license exists in database
         license_data = None
         license_source = None
-        
+
         try:
             db_license = License.query.filter_by(license_key=key).first()
             if db_license and db_license.status == 'active':
@@ -1759,7 +1838,7 @@ def validate_license():
                 license_source = 'database'
         except Exception as db_err:
             logger.error(f"Database license check failed: {db_err}")
-        
+
         if not license_data:
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_KEY_NOT_FOUND",
@@ -1778,7 +1857,7 @@ def validate_license():
             expires_dt = datetime.fromisoformat(expires_str)
         except:
             expires_dt = datetime.now() + timedelta(days=365)
-            
+
         if datetime.now() > expires_dt:
             tamper_protected_audit_log(
                 "LICENSE_VALIDATION_EXPIRED",
@@ -2303,11 +2382,11 @@ def download_freemium_installer():
     """Download the Freemium Windows GUI installer (.hta file)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.hta')
-        
+
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             return Response(
                 script_content,
                 mimetype='application/hta',
@@ -2319,14 +2398,14 @@ def download_freemium_installer():
         else:
             app.logger.error(f"Installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
-            
+
     except Exception as e:
         app.logger.error(f"Installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
 
 def generate_vbs_hash(key):
     """Generate hash matching VBScript ComputeKeyHash function exactly
-    
+
     VBScript code:
         h = 0: r = &H5A3C
         For i = 1 To Len(str)
@@ -2342,7 +2421,7 @@ def generate_vbs_hash(key):
         code = ord(c)
         h = ((h * 31) + code) & 0x7FFFFFFF
         r = ((r ^ code) * 17) & 0xFFFF
-    
+
     # Combine h and r, convert to hex, take first 16 chars, pad with zeros
     combined = format(h, 'x') + format(r, 'x')
     result = combined[:16].lower()
@@ -2363,18 +2442,18 @@ def get_rsa_private_key():
     NEVER auto-generate or log the private key
     """
     global _rsa_private_key
-    
+
     if _rsa_private_key is not None:
         return _rsa_private_key
-    
+
     private_key_pem = os.getenv('LICENSE_SIGNING_PRIVATE_KEY')
-    
+
     if not private_key_pem:
         # FAIL CLOSED: Do not auto-generate or log private key
         # Return None - license signing will be disabled
         app.logger.error("LICENSE_SIGNING_PRIVATE_KEY not configured - RSA signing disabled")
         return None
-    
+
     try:
         _rsa_private_key = serialization.load_pem_private_key(
             private_key_pem.encode(),
@@ -2389,37 +2468,37 @@ def get_rsa_private_key():
 
 def get_public_key_for_hta():
     """Get public key in XML format suitable for PowerShell 5 verification
-    
+
     Uses XML format (modulus+exponent) instead of DER because:
     - ImportSubjectPublicKeyInfo() requires PowerShell 7+ (.NET 5+)
     - FromXmlString() works on PowerShell 5 (standard on Windows 10/11)
-    
+
     Returns: Base64-encoded XML string: "<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>"
     """
     private_key = get_rsa_private_key()
     if private_key is None:
         return None
-    
+
     public_key = private_key.public_key()
     public_numbers = public_key.public_numbers()
-    
+
     # Convert modulus (n) and exponent (e) to bytes
     modulus_bytes = public_numbers.n.to_bytes((public_numbers.n.bit_length() + 7) // 8, byteorder='big')
     exponent_bytes = public_numbers.e.to_bytes((public_numbers.e.bit_length() + 7) // 8, byteorder='big')
-    
+
     # CRITICAL: .NET requires a leading zero byte if the high bit is set
     # otherwise it interprets the modulus as a negative number!
     if modulus_bytes[0] & 0x80:
         modulus_bytes = b'\x00' + modulus_bytes
     if exponent_bytes[0] & 0x80:
         exponent_bytes = b'\x00' + exponent_bytes
-    
+
     modulus_b64 = base64.b64encode(modulus_bytes).decode()
     exponent_b64 = base64.b64encode(exponent_bytes).decode()
-    
+
     # Build XML format that PowerShell 5's FromXmlString() can parse
     xml_key = f"<RSAKeyValue><Modulus>{modulus_b64}</Modulus><Exponent>{exponent_b64}</Exponent></RSAKeyValue>"
-    
+
     # Return as base64 to embed safely in HTA (avoids XML escaping issues)
     return base64.b64encode(xml_key.encode()).decode()
 
@@ -2430,13 +2509,13 @@ def sign_license_rsa(message):
     private_key = get_rsa_private_key()
     if private_key is None:
         return None
-    
+
     signature = private_key.sign(
         message.encode(),
         padding.PKCS1v15(),
         hashes.SHA256()
     )
-    
+
     return base64.b64encode(signature).decode()
 
 def generate_license_cache():
@@ -2448,14 +2527,14 @@ def generate_license_cache():
     cache_entries = []
     build_date = datetime.now().strftime('%Y-%m-%d')
     build_timestamp = int(datetime.now().timestamp())
-    
+
     # Get public key for HTA embedding
     public_key_b64 = get_public_key_for_hta()
     rsa_enabled = public_key_b64 is not None
-    
+
     if not rsa_enabled:
         app.logger.warning("RSA signing disabled - producing unsigned installer cache")
-    
+
     # Add database licenses (last 30 days) with RSA signatures
     try:
         recent_date = datetime.now() - timedelta(days=30)
@@ -2463,9 +2542,9 @@ def generate_license_cache():
             License.created_at >= recent_date,
             License.status == 'active'
         ).limit(500).all()
-        
+
         for lic in recent_licenses:
-            key_hash = generate_vbs_hash(lic.license_key)
+            key_hash = compute_key_hash(lic.license_key) # Use correct hash function
             if rsa_enabled:
                 message = f"{key_hash}:{lic.edition}"
                 sig = sign_license_rsa(message)
@@ -2474,9 +2553,9 @@ def generate_license_cache():
                 cache_entries.append(f"{key_hash}:{lic.edition}:{lic.edition}")
     except Exception as e:
         app.logger.warning(f"Could not fetch recent licenses for cache: {e}")
-    
+
     cache_data = '|'.join(cache_entries)
-    
+
     # Create master RSA signature for entire cache (anti-tampering)
     if rsa_enabled:
         master_sig = sign_license_rsa(f"CACHE:{cache_data}:{build_date}")
@@ -2484,22 +2563,22 @@ def generate_license_cache():
     else:
         master_sig = "PLACEHOLDER_MASTER_SIG"
         master_sig_short = "PLACEHOLDER_INTEGRITY"
-    
+
     # Return placeholders for unsigned mode
     if not rsa_enabled:
         return cache_data, build_date, "PLACEHOLDER_SALT", master_sig_short, master_sig
-    
+
     return cache_data, build_date, public_key_b64, master_sig_short, master_sig
 
 @app.route('/download-installer-licensed')
 @app.route('/download-installer-licensed.hta')
 def download_licensed_installer():
     """Download the Licensed Windows GUI installer (.hta file) for paid editions
-    
+
     Uses RSA asymmetric cryptography:
     - Server signs licenses with private key
     - HTA verifies with embedded public key (cannot forge signatures)
-    
+
     SECURITY: Fails closed if LICENSE_SIGNING_PRIVATE_KEY is not configured
     """
     try:
@@ -2510,21 +2589,21 @@ def download_licensed_installer():
                 'error': 'License signing not configured',
                 'message': 'The server administrator must configure LICENSE_SIGNING_PRIVATE_KEY to enable license signing.'
             }), 503  # Service Unavailable
-        
+
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.hta')
-        
+
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             # Generate RSA-signed license cache (guaranteed to have signatures)
             cache_data, build_date, public_key_b64, master_sig_short, master_sig_full = generate_license_cache()
-            
+
             # Double-check RSA is enabled (defense in depth)
             if public_key_b64 == "PLACEHOLDER_SALT":
                 app.logger.error("SECURITY: RSA signing failed unexpectedly")
                 return jsonify({'error': 'License signing failed'}), 500
-            
+
             # Inject RSA public key and signed cache into installer
             script_content = script_content.replace(
                 'Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"',
@@ -2548,7 +2627,7 @@ def download_licensed_installer():
                 'Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"',
                 f'Const INTEGRITY_CHECK = "{master_sig_short}"'
             )
-            
+
             return Response(
                 script_content,
                 mimetype='application/hta',
@@ -2560,7 +2639,7 @@ def download_licensed_installer():
         else:
             app.logger.error(f"Licensed installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
-            
+
     except Exception as e:
         app.logger.error(f"Licensed installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
@@ -2572,11 +2651,11 @@ def download_freemium_shell_installer():
     """Download the Freemium macOS/Linux installer (.sh file)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.sh')
-        
+
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             return Response(
                 script_content,
                 mimetype='application/x-sh',
@@ -2588,7 +2667,7 @@ def download_freemium_shell_installer():
         else:
             app.logger.error(f"Shell installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
-            
+
     except Exception as e:
         app.logger.error(f"Shell installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
@@ -2600,11 +2679,11 @@ def download_licensed_shell_installer():
     """Download the Licensed macOS/Linux installer (.sh file)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.sh')
-        
+
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             return Response(
                 script_content,
                 mimetype='application/x-sh',
@@ -2616,7 +2695,7 @@ def download_licensed_shell_installer():
         else:
             app.logger.error(f"Licensed shell installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
-            
+
     except Exception as e:
         app.logger.error(f"Licensed shell installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
@@ -2626,11 +2705,11 @@ def download_python_installer():
     """Download the cross-platform Python installer script (for Mac/Linux)"""
     try:
         installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer.py')
-        
+
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-            
+
             return Response(
                 script_content,
                 mimetype='application/x-python',
@@ -2642,7 +2721,7 @@ def download_python_installer():
         else:
             app.logger.error(f"Installer not found at: {installer_path}")
             return jsonify({'error': 'Installer file not found'}), 404
-            
+
     except Exception as e:
         app.logger.error(f"Installer download failed: {str(e)}")
         return jsonify({'error': 'Download failed'}), 500
@@ -3046,15 +3125,15 @@ EDITION_FEATURES_UPDATE = {
 def check_for_updates():
     """
     Check for Aegis OS updates
-    
+
     Works for both Freemium (no license) and paid editions (with license key)
-    
+
     Query params or JSON body:
     - license_key: Optional license key for paid editions
     - current_version: Current installed version
     - hardware_id: Optional hardware identifier
     - edition: Current edition (freemium, basic, gamer, etc.)
-    
+
     Returns:
     - update_available: boolean
     - latest_version: string
@@ -3068,16 +3147,16 @@ def check_for_updates():
             data = request.get_json() or {}
         else:
             data = request.args.to_dict()
-        
+
         license_key = data.get('license_key', '').strip().upper()
         current_version = data.get('current_version', '0.0.0')
         hardware_id = data.get('hardware_id', '')
         edition = data.get('edition', 'freemium').lower()
-        
+
         validated_edition = 'freemium'
         license_valid = False
         license_status = 'none'
-        
+
         if license_key:
             cached_edition = None
             from models import License
@@ -3088,7 +3167,7 @@ def check_for_updates():
                 license_status = 'active'
             elif db_license:
                 license_status = 'expired'
-            
+
             if cached_edition:
                 edition_map = {
                     'basic': 'basic', 'workplace': 'workplace', 
@@ -3096,27 +3175,27 @@ def check_for_updates():
                     'gamer_ai': 'gamer_ai', 'server': 'server'
                 }
                 validated_edition = edition_map.get(cached_edition.lower().replace(' ', '_').replace('+', '_'), 'basic')
-        
+
         update_features = EDITION_FEATURES_UPDATE.get(validated_edition, EDITION_FEATURES_UPDATE['freemium'])
-        
+
         def version_tuple(v):
             try:
                 return tuple(map(int, v.split('.')))
             except:
                 return (0, 0, 0)
-        
+
         current_tuple = version_tuple(current_version)
         latest_tuple = version_tuple(AEGIS_CURRENT_VERSION)
         update_available = latest_tuple > current_tuple
-        
+
         relevant_changelog = []
         for entry in AEGIS_VERSION_INFO['changelog']:
             entry_tuple = version_tuple(entry['version'])
             if entry_tuple > current_tuple:
                 relevant_changelog.append(entry)
-        
+
         download_url = AEGIS_VERSION_INFO['download_urls']['licensed'] if license_valid else AEGIS_VERSION_INFO['download_urls']['freemium']
-        
+
         response_data = {
             "update_available": update_available,
             "latest_version": AEGIS_CURRENT_VERSION,
@@ -3131,7 +3210,7 @@ def check_for_updates():
             "check_timestamp": datetime.now().isoformat(),
             "server_version": "4.0"
         }
-        
+
         private_key = get_rsa_private_key()
         if private_key:
             message = f"UPDATE:{AEGIS_CURRENT_VERSION}:{validated_edition}:{response_data['check_timestamp']}"
@@ -3139,9 +3218,9 @@ def check_for_updates():
             if signature:
                 response_data['signature'] = signature
                 response_data['signature_message'] = message
-        
+
         return jsonify(response_data), 200
-        
+
     except Exception as e:
         app.logger.error(f"Update check error: {e}")
         return jsonify({
@@ -3164,14 +3243,14 @@ def get_changelog():
 def get_download_info():
     """Get download URLs and checksums for current version"""
     license_key = request.args.get('license_key', '').strip().upper()
-    
+
     is_licensed = False
     if license_key:
         from models import License
         db_license = License.query.filter_by(license_key=license_key).first()
         if db_license and db_license.is_active:
             is_licensed = True
-    
+
     iso_info = {
         "version": AEGIS_CURRENT_VERSION,
         "base_iso": {
@@ -3191,10 +3270,11 @@ def get_download_info():
             "format": "hta"
         }
     }
-    
+
     return jsonify(iso_info), 200
 
 @app.route('/api/v1/admin/stats', methods=['GET'])
+@require_api_key
 @rate_limit(limit=100)
 def get_stats():
     """Get licensing statistics"""
@@ -3222,8 +3302,9 @@ def get_stats():
     }), 200
 
 @app.route('/api/v1/admin/license/batch', methods=['POST'])
+@require_admin
 @rate_limit(limit=100)
-def batch_create_licenses():
+def admin_batch_create_licenses():
     """Create multiple licenses at once"""
     auth = request.headers.get('X-Admin-Key')
     if auth != ADMIN_KEY:
@@ -3273,6 +3354,7 @@ def get_features():
     }), 200
 
 @app.route('/api/v1/admin/export/csv', methods=['GET'])
+@require_admin
 @rate_limit(limit=100)
 def export_licenses_csv():
     """Export licenses as CSV"""
@@ -3951,7 +4033,7 @@ def detect_gpus():
             'opencl': True,
             'vulkan': True,
             'opengl': '4.6',
-            'directx': '12 Ultimate (via DXVK)',
+            'directx': '12 (via DXVK)',
             'video_encode': ['H.264', 'H.265', 'AV1'],
             'video_decode': ['H.264', 'H.265', 'VP9', 'AV1']
         }
@@ -4435,7 +4517,7 @@ def generate_license_key(edition):
         'server': 'SERV'
     }
     prefix = prefix_map.get(edition, 'AEGS')
-    
+
     while True:
         part2 = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
         part3 = ''.join(secrets.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(4))
@@ -4450,7 +4532,7 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
     if not SENDGRID_API_KEY:
         logger.warning("SendGrid API key not configured - skipping email")
         return False
-    
+
     try:
         edition_names = {
             'basic': 'Basic Edition',
@@ -4461,31 +4543,31 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
             'server': 'Server Edition'
         }
         edition_name = edition_names.get(edition, edition.title())
-        
+
         html_content = f"""
         <html>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 20px;">
                 <h1 style="color: white; margin: 0;">Thank You for Your Purchase!</h1>
             </div>
-            
+
             <div style="background: #f9fafb; padding: 25px; border-radius: 12px; margin-bottom: 20px;">
                 <h2 style="color: #1f2937; margin-top: 0;">Your Aegis OS {edition_name} License</h2>
-                
+
                 <div style="background: white; border: 2px solid #6366f1; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
                     <p style="color: #6b7280; margin: 0 0 10px;">Your License Key:</p>
                     <p style="font-size: 24px; font-weight: bold; color: #1f2937; letter-spacing: 2px; margin: 0; font-family: monospace;">{license_key}</p>
                 </div>
-                
+
                 <p style="color: #4b5563;"><strong>Edition:</strong> {edition_name}</p>
                 <p style="color: #4b5563;"><strong>License Type:</strong> {'Annual Subscription' if license_type == 'annual' else 'Lifetime License'}</p>
                 <p style="color: #4b5563;"><strong>Amount Paid:</strong> ${amount:.2f} USD</p>
             </div>
-            
+
             <div style="background: #fef3c7; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                 <p style="color: #92400e; margin: 0;"><strong>Important:</strong> Save this license key! You will need it to activate your Aegis OS installation.</p>
             </div>
-            
+
             <div style="background: #f9fafb; padding: 20px; border-radius: 12px;">
                 <h3 style="color: #1f2937; margin-top: 0;">Next Steps:</h3>
                 <ol style="color: #4b5563;">
@@ -4495,7 +4577,7 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
                     <li>Follow the installation wizard to create your bootable USB</li>
                 </ol>
             </div>
-            
+
             <div style="margin-top: 30px; padding: 20px; border-top: 1px solid #e5e7eb;">
                 <p style="color: #9ca3af; font-size: 12px; text-align: center;">
                     This is a technical preview. No warranty expressed or implied. Use at your own risk.<br>
@@ -4505,17 +4587,17 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
         </body>
         </html>
         """
-        
+
         message = Mail(
             from_email=Email(SENDGRID_FROM_EMAIL, "Aegis OS"),
             to_emails=To(to_email),
             subject=f"Your Aegis OS {edition_name} License - Thank You!",
             html_content=Content("text/html", html_content)
         )
-        
+
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
-        
+
         with app.app_context():
             email_log = EmailLog(
                 email_to=to_email,
@@ -4527,10 +4609,10 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
             )
             db.session.add(email_log)
             db.session.commit()
-        
+
         logger.info(f"Purchase email sent to {to_email} - Status: {response.status_code}")
         return True
-        
+
     except Exception as e:
         logger.error(f"SendGrid error: {str(e)}")
         return False
@@ -4553,15 +4635,15 @@ def payment_success():
                 payment_verified = True
                 customer_email = session.customer_details.email if session.customer_details else "your email"
                 amount_paid = session.amount_total / 100 if session.amount_total else 0
-                
+
                 with app.app_context():
                     existing_license = License.query.filter_by(stripe_session_id=session_id).first()
-                    
+
                     if existing_license:
                         license_key = existing_license.license_key
                     else:
                         license_key = generate_license_key(tier)
-                        
+
                         user = User.query.filter_by(email=customer_email).first()
                         if not user and customer_email != "your email":
                             user = User(
@@ -4571,7 +4653,7 @@ def payment_success():
                             user.set_password(secrets.token_urlsafe(16))
                             db.session.add(user)
                             db.session.flush()
-                        
+
                         new_license = License(
                             user_id=user.id if user else None,
                             license_key=license_key,
@@ -4584,7 +4666,7 @@ def payment_success():
                         )
                         db.session.add(new_license)
                         db.session.commit()
-                        
+
                         if customer_email and customer_email != "your email":
                             send_purchase_email(
                                 customer_email, 
@@ -4593,7 +4675,7 @@ def payment_success():
                                 amount_paid,
                                 'annual' if session.mode == 'subscription' else 'lifetime'
                             )
-                
+
                 tamper_protected_audit_log('PAYMENT_COMPLETED', {
                     'tier': tier,
                     'session_id': session_id,
@@ -4869,11 +4951,11 @@ def require_roles(*allowed_roles):
             user_role = payload.get('role', 'designer')
             g.admin_user = payload.get('username')
             g.admin_role = user_role
-            
+
             # Owner always has access
             if user_role == AdminRole.OWNER:
                 return f(*args, **kwargs)
-            
+
             # Check if user's role is in allowed roles
             if user_role not in allowed_roles:
                 tamper_protected_audit_log("ROLE_ACCESS_DENIED", {
@@ -4894,7 +4976,7 @@ def require_roles(*allowed_roles):
     return decorator
 
 def require_build_access(f):
-    """Decorator to require OS build access (Owner, Developer, Tester only)"""
+    """Decorator to require OS build access (Tester/Developer/Owner only)"""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization', '')
@@ -4910,7 +4992,7 @@ def require_build_access(f):
         user_role = payload.get('role', 'designer')
         g.admin_user = payload.get('username')
         g.admin_role = user_role
-        
+
         if not AdminRole.can_access_builds(user_role):
             tamper_protected_audit_log("BUILD_ACCESS_DENIED", {
                 "username": payload.get('username'),
@@ -4941,7 +5023,7 @@ def admin_login():
 
     try:
         admin = AdminUser.query.filter_by(username=username, is_active=True).first()
-        
+
         if not admin:
             tamper_protected_audit_log("ADMIN_LOGIN_INVALID_USER", {"username": username[:20]}, "HIGH")
             return jsonify({'error': 'Invalid credentials', 'code': 'INVALID_CREDENTIALS'}), 401
@@ -4988,7 +5070,7 @@ def admin_login():
             'can_create_admins': admin.can_create_admins,
             'expires': (datetime.utcnow() + ADMIN_SESSION_DURATION).isoformat()
         }), 200
-        
+
     except Exception as e:
         logger.error(f"Admin login error: {e}")
         db.session.rollback()
@@ -5022,7 +5104,7 @@ def admin_list_admins():
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or payload.get('role') != AdminRole.OWNER:
         return jsonify({'error': 'Owner access required', 'code': 'FORBIDDEN'}), 403
-    
+
     try:
         admin_users = AdminUser.query.filter_by(is_active=True).all()
         admins = [admin.to_dict() for admin in admin_users]
@@ -5042,7 +5124,7 @@ def admin_create_admin():
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or payload.get('role') != AdminRole.OWNER:
         return jsonify({'error': 'Owner access required to create admin accounts', 'code': 'FORBIDDEN'}), 403
-    
+
     data = request.json or {}
     new_username = str(data.get('username', '')).strip()
     new_password = str(data.get('password', '')).strip()
@@ -5050,37 +5132,37 @@ def admin_create_admin():
     role = str(data.get('role', 'designer')).strip()
     email = str(data.get('email', '')).strip()
     can_create_admins = bool(data.get('can_create_admins', False))
-    
+
     # Validate role
     if role not in AdminRole.ALL_ROLES:
         return jsonify({
             'error': f'Invalid role. Must be one of: {", ".join(AdminRole.ALL_ROLES)}',
             'code': 'INVALID_ROLE'
         }), 400
-    
+
     # Only owner can create owner accounts
     if role == AdminRole.OWNER and payload.get('role') != AdminRole.OWNER:
         return jsonify({'error': 'Only owner can create owner accounts', 'code': 'FORBIDDEN'}), 403
-    
+
     if not new_username or not new_password:
         return jsonify({'error': 'Username and password required', 'code': 'MISSING_FIELDS'}), 400
-    
+
     if len(new_username) < 3 or len(new_username) > 50:
         return jsonify({'error': 'Username must be 3-50 characters', 'code': 'INVALID_USERNAME'}), 400
-    
+
     if len(new_password) < 8:
         return jsonify({'error': 'Password must be at least 8 characters', 'code': 'WEAK_PASSWORD'}), 400
-    
+
     try:
         # Check if username already exists in database
         existing_admin = AdminUser.query.filter_by(username=new_username).first()
         if existing_admin:
             return jsonify({'error': 'Username already exists', 'code': 'DUPLICATE_USERNAME'}), 409
-        
+
         # Only superadmin can grant can_create_admins permission
         if can_create_admins and payload.get('role') != 'superadmin':
             can_create_admins = False
-        
+
         # Create the new admin in database
         new_admin = AdminUser(
             username=new_username,
@@ -5092,16 +5174,16 @@ def admin_create_admin():
             created_by=payload.get('username')
         )
         new_admin.set_password(new_password)
-        
+
         db.session.add(new_admin)
         db.session.commit()
-        
+
         tamper_protected_audit_log("ADMIN_CREATED", {
             "created_by": payload.get('username'),
             "new_admin": new_username,
             "role": role
         }, "INFO")
-        
+
         return jsonify({
             'success': True,
             'username': new_admin.username,
@@ -5109,7 +5191,7 @@ def admin_create_admin():
             'role': new_admin.role,
             'can_create_admins': new_admin.can_create_admins
         }), 201
-        
+
     except Exception as e:
         logger.error(f"Error creating admin: {e}")
         db.session.rollback()
@@ -5122,27 +5204,27 @@ def admin_delete_admin(username):
     payload = verify_admin_token(request.headers.get('Authorization', '')[7:])
     if not payload or payload.get('role') != AdminRole.OWNER:
         return jsonify({'error': 'Owner access required', 'code': 'FORBIDDEN'}), 403
-    
+
     username = sanitize_input(username)
-    
+
     if username == payload.get('username'):
         return jsonify({'error': 'Cannot delete your own account', 'code': 'CANNOT_DELETE_SELF'}), 400
-    
+
     try:
         admin = AdminUser.query.filter_by(username=username).first()
         if not admin:
             return jsonify({'error': 'Admin not found', 'code': 'NOT_FOUND'}), 404
-        
+
         db.session.delete(admin)
         db.session.commit()
-        
+
         tamper_protected_audit_log("ADMIN_DELETED", {
             "deleted_by": payload.get('username'),
             "deleted_admin": username
         }, "HIGH")
-        
+
         return jsonify({'success': True}), 200
-        
+
     except Exception as e:
         logger.error(f"Error deleting admin: {e}")
         db.session.rollback()
@@ -5217,7 +5299,7 @@ def admin_list_builds():
         "username": g.admin_user,
         "role": g.admin_role
     }, "INFO")
-    
+
     builds = []
     for edition_id, edition_data in OS_EDITIONS.items():
         builds.append({
@@ -5230,7 +5312,7 @@ def admin_list_builds():
             'status': 'ready',
             'built_at': '2025-11-28T00:00:00Z'
         })
-    
+
     return jsonify({
         'success': True,
         'builds': builds,
@@ -5244,22 +5326,22 @@ def admin_list_builds():
 def admin_get_build_details(edition):
     """Get detailed build information for a specific edition"""
     edition = sanitize_input(edition.lower())
-    
+
     if edition not in OS_EDITIONS:
         return jsonify({
             'error': f'Unknown edition: {edition}',
             'code': 'UNKNOWN_EDITION',
             'available_editions': list(OS_EDITIONS.keys())
         }), 404
-    
+
     build_data = OS_EDITIONS[edition]
-    
+
     tamper_protected_audit_log("BUILD_DETAILS_ACCESS", {
         "username": g.admin_user,
         "role": g.admin_role,
         "edition": edition
     }, "INFO")
-    
+
     return jsonify({
         'success': True,
         'edition': edition,
@@ -5280,22 +5362,21 @@ def admin_get_build_details(edition):
 def admin_download_build(edition):
     """Get download URL for a specific edition (Tester/Developer/Owner only)"""
     edition = sanitize_input(edition.lower())
-    
+
     if edition not in OS_EDITIONS:
         return jsonify({
             'error': f'Unknown edition: {edition}',
-            'code': 'UNKNOWN_EDITION',
-            'available_editions': list(OS_EDITIONS.keys())
+            'code': 'UNKNOWN_EDITION'
         }), 404
-    
+
     build_data = OS_EDITIONS[edition]
-    
+
     tamper_protected_audit_log("BUILD_DOWNLOAD_INITIATED", {
         "username": g.admin_user,
         "role": g.admin_role,
         "edition": edition
     }, "HIGH")
-    
+
     return jsonify({
         'success': True,
         'edition': edition,
@@ -5314,26 +5395,26 @@ def admin_download_build(edition):
 def admin_get_build_download_token(edition):
     """Generate a temporary download token for an OS build"""
     edition = sanitize_input(edition.lower())
-    
+
     if edition not in OS_EDITIONS:
         return jsonify({
             'error': f'Unknown edition: {edition}',
             'code': 'UNKNOWN_EDITION'
         }), 404
-    
+
     # Generate a temporary download token (valid for 1 hour)
     download_token = secrets.token_urlsafe(32)
     expiry = datetime.utcnow() + timedelta(hours=1)
-    
+
     tamper_protected_audit_log("BUILD_DOWNLOAD_TOKEN_GENERATED", {
         "username": g.admin_user,
         "role": g.admin_role,
         "edition": edition,
         "token_prefix": download_token[:8]
     }, "HIGH")
-    
+
     build_data = OS_EDITIONS[edition]
-    
+
     return jsonify({
         'success': True,
         'edition': edition,
@@ -5376,10 +5457,9 @@ def admin_logout():
     tamper_protected_audit_log("ADMIN_LOGOUT", {"username": g.admin_user}, "INFO")
     return jsonify({'success': True}), 200
 
-# ============================================================
-# EDITION HTA INSTALLERS (NO LICENSE CHECK)
+# ============= EDITION HTA INSTALLERS (NO LICENSE CHECK)
 # Individual installer files for each edition
-# ============================================================
+# =============
 
 # Global free period settings (in-memory, could be stored in DB)
 # DEFAULT: Disabled - admin must enable
@@ -5400,7 +5480,7 @@ FREE_DOWNLOAD_MAX_PER_DAY = 10  # Max downloads per IP per day
 def check_download_rate_limit(ip_address):
     """Check if IP is within download rate limits. Returns (allowed, message)"""
     now = datetime.now()
-    
+
     if ip_address not in FREE_DOWNLOAD_LIMITS:
         FREE_DOWNLOAD_LIMITS[ip_address] = {
             'hourly_count': 0,
@@ -5408,32 +5488,32 @@ def check_download_rate_limit(ip_address):
             'hour_start': now,
             'day_start': now
         }
-    
+
     limits = FREE_DOWNLOAD_LIMITS[ip_address]
-    
+
     # Reset hourly counter if hour passed
     if (now - limits['hour_start']).total_seconds() > 3600:
         limits['hourly_count'] = 0
         limits['hour_start'] = now
-    
+
     # Reset daily counter if day passed
     if (now - limits['day_start']).total_seconds() > 86400:
         limits['daily_count'] = 0
         limits['day_start'] = now
-    
+
     # Check limits
     if limits['hourly_count'] >= FREE_DOWNLOAD_MAX_PER_HOUR:
         minutes_left = 60 - int((now - limits['hour_start']).total_seconds() / 60)
         return False, f"Rate limit exceeded. Try again in {minutes_left} minutes."
-    
+
     if limits['daily_count'] >= FREE_DOWNLOAD_MAX_PER_DAY:
         hours_left = 24 - int((now - limits['day_start']).total_seconds() / 3600)
         return False, f"Daily limit reached. Try again in {hours_left} hours."
-    
+
     # Increment counters
     limits['hourly_count'] += 1
     limits['daily_count'] += 1
-    
+
     return True, "OK"
 
 EDITION_HTA_FILES = {
@@ -5449,22 +5529,22 @@ def is_free_period_active(edition=None):
     """Check if free period is currently active for an edition"""
     if not FREE_PERIOD_SETTINGS['enabled']:
         return False
-    
+
     now = datetime.now()
     start = FREE_PERIOD_SETTINGS.get('start_time')
     end = FREE_PERIOD_SETTINGS.get('end_time')
-    
+
     # Check time bounds
     if start and now < start:
         return False
     if end and now > end:
         return False
-    
+
     # Check edition restrictions
     allowed_editions = FREE_PERIOD_SETTINGS.get('editions', [])
     if allowed_editions and edition and edition not in allowed_editions:
         return False
-    
+
     return True
 
 @app.route('/api/admin/installers', methods=['GET'])
@@ -5473,14 +5553,14 @@ def admin_list_installers():
     """List all available edition-specific HTA installers"""
     installers = []
     editions_dir = os.path.join(BASE_DIR, '..', 'build-system', 'editions')
-    
+
     for edition, filename in EDITION_HTA_FILES.items():
         filepath = os.path.join(editions_dir, filename)
         exists = os.path.exists(filepath)
         size = os.path.getsize(filepath) if exists else 0
-        
+
         edition_info = OS_EDITIONS.get(edition, {})
-        
+
         installers.append({
             'edition': edition,
             'filename': filename,
@@ -5490,7 +5570,7 @@ def admin_list_installers():
             'edition_name': edition_info.get('name', edition.replace('_', ' ').title()),
             'download_url': f"/api/admin/installers/{edition}/download"
         })
-    
+
     free_period_serialized = {
         'enabled': FREE_PERIOD_SETTINGS['enabled'],
         'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
@@ -5498,7 +5578,7 @@ def admin_list_installers():
         'editions': FREE_PERIOD_SETTINGS['editions'],
         'is_active': is_free_period_active()
     }
-    
+
     return jsonify({
         'success': True,
         'installers': installers,
@@ -5510,32 +5590,32 @@ def admin_list_installers():
 def admin_download_edition_hta(edition):
     """Download a specific edition HTA installer (no license validation)"""
     edition = sanitize_input(edition.lower().replace('-', '_'))
-    
+
     if edition not in EDITION_HTA_FILES:
         return jsonify({
             'error': f'Unknown edition: {edition}',
             'available': list(EDITION_HTA_FILES.keys())
         }), 404
-    
+
     filename = EDITION_HTA_FILES[edition]
     filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
-    
+
     if not os.path.exists(filepath):
         return jsonify({
             'error': f'Installer file not found: {filename}',
             'hint': 'The edition installer may not have been generated yet.'
         }), 404
-    
+
     tamper_protected_audit_log("ADMIN_HTA_DOWNLOAD", {
         "username": g.admin_user,
         "role": g.admin_role,
         "edition": edition,
         "filename": filename
     }, "HIGH")
-    
+
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
-    
+
     return Response(
         content,
         mimetype='application/hta',
@@ -5554,20 +5634,20 @@ def admin_download_edition_hta(edition):
 def public_check_free_period():
     """Public endpoint to check if free period is active (for homepage banner)"""
     is_active = is_free_period_active()
-    
+
     if not is_active:
         return jsonify({
             'free_period_active': False
         }), 200
-    
+
     # Get client IP to check if they already claimed
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip:
         client_ip = client_ip.split(',')[0].strip()
-    
+
     period_id = FREE_PERIOD_SETTINGS.get('period_id')
     already_claimed = None
-    
+
     if period_id:
         existing = FreePeriodRedemption.query.filter_by(
             ip_address=client_ip,
@@ -5575,7 +5655,7 @@ def public_check_free_period():
         ).first()
         if existing:
             already_claimed = existing.edition
-    
+
     # List available editions (exclude server)
     editions = []
     for edition, filename in EDITION_HTA_FILES.items():
@@ -5587,7 +5667,7 @@ def public_check_free_period():
             'name': edition_info.get('name', edition.replace('_', ' ').title()),
             'download_url': f"/api/free/download/{edition}"
         })
-    
+
     return jsonify({
         'free_period_active': True,
         'already_claimed': already_claimed,
@@ -5603,15 +5683,15 @@ def public_list_free_editions():
             'error': 'Free downloads are not currently available',
             'free_period_active': False
         }), 403
-    
+
     # Get client IP
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip:
         client_ip = client_ip.split(',')[0].strip()
-    
+
     period_id = FREE_PERIOD_SETTINGS.get('period_id')
     already_claimed = None
-    
+
     if period_id:
         existing = FreePeriodRedemption.query.filter_by(
             ip_address=client_ip,
@@ -5619,7 +5699,7 @@ def public_list_free_editions():
         ).first()
         if existing:
             already_claimed = existing.edition
-    
+
     editions = []
     for edition, filename in EDITION_HTA_FILES.items():
         if edition == 'server':
@@ -5630,7 +5710,7 @@ def public_list_free_editions():
             'name': edition_info.get('name', edition.replace('_', ' ').title()),
             'download_url': f"/api/free/download/{edition}"
         })
-    
+
     return jsonify({
         'success': True,
         'free_period_active': True,
@@ -5647,54 +5727,45 @@ def public_free_download(edition):
             'error': 'Free downloads are not currently available',
             'free_period_active': False
         }), 403
-    
+
     edition = sanitize_input(edition.lower().replace('-', '_'))
-    
+
     if edition == 'server':
         return jsonify({
             'error': 'Server edition is not available for free download',
             'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
         }), 403
-    
+
     if edition not in EDITION_HTA_FILES:
         return jsonify({
             'error': f'Unknown edition: {edition}',
             'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
         }), 404
-    
+
     # Get client IP
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip:
         client_ip = client_ip.split(',')[0].strip()
-    
+
     period_id = FREE_PERIOD_SETTINGS.get('period_id')
     if not period_id:
         return jsonify({
             'error': 'Free period not properly configured'
         }), 500
-    
+
     # Check if this IP already claimed an edition
     existing = FreePeriodRedemption.query.filter_by(
         ip_address=client_ip,
         period_id=period_id
     ).first()
-    
+
     if existing:
         return jsonify({
             'error': 'You have already claimed a free edition',
             'claimed_edition': existing.edition,
             'message': f'You already downloaded the {existing.edition} edition. Each person can only claim one free edition during this promotion.'
         }), 403
-    
-    filename = EDITION_HTA_FILES[edition]
-    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
-    
-    if not os.path.exists(filepath):
-        return jsonify({
-            'error': f'Installer not available for {edition}',
-            'hint': 'Please try again later.'
-        }), 404
-    
+
     # Record this redemption
     try:
         redemption = FreePeriodRedemption(
@@ -5710,16 +5781,19 @@ def public_free_download(edition):
         return jsonify({
             'error': 'Could not process your request. Please try again.'
         }), 500
-    
+
     tamper_protected_audit_log("FREE_EDITION_CLAIMED", {
         "ip": client_ip,
         "edition": edition,
         "period_id": period_id
     }, "INFO")
-    
+
+    filename = EDITION_HTA_FILES[edition]
+    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
+
     with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
-    
+
     return Response(
         content,
         mimetype='application/hta',
@@ -5734,14 +5808,14 @@ def public_free_download(edition):
 def admin_get_free_period():
     """Get current free period settings"""
     is_active = is_free_period_active()
-    
+
     # Count redemptions for current period
     redemption_count = 0
     if FREE_PERIOD_SETTINGS.get('period_id'):
         redemption_count = FreePeriodRedemption.query.filter_by(
             period_id=FREE_PERIOD_SETTINGS['period_id']
         ).count()
-    
+
     return jsonify({
         'success': True,
         'enabled': FREE_PERIOD_SETTINGS['enabled'],
@@ -5758,20 +5832,20 @@ def admin_get_free_period():
 def admin_set_free_period():
     """Set or update free period settings"""
     data = request.json or {}
-    
+
     enabled = data.get('enabled', False)
     start_time_str = data.get('start_time')
     end_time_str = data.get('end_time')
     editions = data.get('editions', [])
-    
+
     # Generate new period_id when enabling (resets redemption tracking)
     if enabled and not FREE_PERIOD_SETTINGS['enabled']:
         FREE_PERIOD_SETTINGS['period_id'] = f"free_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
     elif not enabled:
         FREE_PERIOD_SETTINGS['period_id'] = None
-    
+
     FREE_PERIOD_SETTINGS['enabled'] = enabled
-    
+
     if start_time_str:
         try:
             FREE_PERIOD_SETTINGS['start_time'] = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
@@ -5779,7 +5853,7 @@ def admin_set_free_period():
             FREE_PERIOD_SETTINGS['start_time'] = datetime.now()
     else:
         FREE_PERIOD_SETTINGS['start_time'] = None
-    
+
     if end_time_str:
         try:
             FREE_PERIOD_SETTINGS['end_time'] = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
@@ -5787,9 +5861,9 @@ def admin_set_free_period():
             FREE_PERIOD_SETTINGS['end_time'] = None
     else:
         FREE_PERIOD_SETTINGS['end_time'] = None
-    
+
     FREE_PERIOD_SETTINGS['editions'] = editions if isinstance(editions, list) else []
-    
+
     tamper_protected_audit_log("FREE_PERIOD_UPDATED", {
         "username": g.admin_user,
         "role": g.admin_role,
@@ -5799,7 +5873,7 @@ def admin_set_free_period():
         "end": end_time_str,
         "editions": editions
     }, "HIGH")
-    
+
     return jsonify({
         'success': True,
         'message': 'Free period settings updated',
@@ -5821,12 +5895,12 @@ def admin_clear_free_period():
     FREE_PERIOD_SETTINGS['end_time'] = None
     FREE_PERIOD_SETTINGS['editions'] = []
     FREE_PERIOD_SETTINGS['period_id'] = None
-    
+
     tamper_protected_audit_log("FREE_PERIOD_CLEARED", {
         "username": g.admin_user,
         "role": g.admin_role
     }, "HIGH")
-    
+
     return jsonify({
         'success': True,
         'message': 'Free period cleared'
@@ -5842,7 +5916,7 @@ def admin_dashboard_stats():
         licenses_count = License.query.count()
         active_giveaways_count = Giveaway.query.filter_by(status='active').count()
         downloads_count = EmailLog.query.filter(EmailLog.email_type.ilike('%download%')).count()
-        
+
         return jsonify({
             'users': users_count,
             'downloads': downloads_count,
@@ -5949,10 +6023,10 @@ def admin_create_giveaway():
     prize_edition = str(data.get('prize_edition', 'Basic')).strip()
     prize_type = str(data.get('prize_type', 'lifetime')).strip()
     max_winners = int(data.get('max_winners', 1))
-    
+
     if not title or not riddle or not answer:
         return jsonify({'error': 'Title, riddle, and answer are required'}), 400
-    
+
     try:
         giveaway = Giveaway(
             title=title,
@@ -6009,15 +6083,15 @@ def admin_add_giveaway_winner(giveaway_id):
     data = request.json or {}
     email = str(data.get('email', '')).strip().lower()
     name = str(data.get('name', '')).strip()
-    
+
     if not email:
         return jsonify({'error': 'Email is required'}), 400
-    
+
     try:
         giveaway = Giveaway.query.get(giveaway_id)
         if not giveaway:
             return jsonify({'error': 'Giveaway not found'}), 404
-        
+
         existing = GiveawayEntry.query.filter_by(giveaway_id=giveaway_id, email=email).first()
         if existing:
             if existing.is_winner:
@@ -6027,7 +6101,7 @@ def admin_add_giveaway_winner(giveaway_id):
             existing.license_key = generate_license_key(giveaway.prize_edition)
             db.session.commit()
             return jsonify({'message': 'Existing entry marked as winner', 'entry': existing.to_dict()})
-        
+
         entry = GiveawayEntry(
             giveaway_id=giveaway_id,
             email=email,
@@ -6043,22 +6117,6 @@ def admin_add_giveaway_winner(giveaway_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/admin/giveaways/<int:giveaway_id>/close', methods=['POST'])
-@require_admin
-def admin_close_giveaway(giveaway_id):
-    """Close a giveaway"""
-    try:
-        giveaway = Giveaway.query.get(giveaway_id)
-        if not giveaway:
-            return jsonify({'error': 'Giveaway not found'}), 404
-        giveaway.status = 'closed'
-        db.session.commit()
-        return jsonify({'message': 'Giveaway closed', 'giveaway': giveaway.to_dict()})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-# Admin pages endpoints
 @app.route('/api/admin/pages', methods=['GET'])
 @require_admin
 def admin_get_pages():
@@ -6154,45 +6212,45 @@ def admin_analytics_sales():
     """Get sales data by day/week/month with revenue totals"""
     try:
         period = request.args.get('period', 'month')
-        
+
         now = datetime.now()
-        
+
         if period == 'day':
             start_date = now - timedelta(days=1)
         elif period == 'week':
             start_date = now - timedelta(weeks=1)
         else:
             start_date = now - timedelta(days=30)
-        
+
         licenses = License.query.filter(
             License.created_at >= start_date
         ).all()
-        
+
         daily_sales = {}
         total_revenue = 0
         edition_revenue = {}
-        
+
         for lic in licenses:
             date_key = lic.created_at.strftime('%Y-%m-%d') if lic.created_at else 'unknown'
-            
+
             if date_key not in daily_sales:
                 daily_sales[date_key] = {'count': 0, 'revenue': 0}
-            
+
             daily_sales[date_key]['count'] += 1
             amount = (lic.amount_paid or 0) / 100
             daily_sales[date_key]['revenue'] += amount
             total_revenue += amount
-            
+
             edition = lic.edition or 'unknown'
             if edition not in edition_revenue:
                 edition_revenue[edition] = 0
             edition_revenue[edition] += amount
-        
+
         tamper_protected_audit_log("ADMIN_ANALYTICS_SALES", {
             "period": period,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'period': period,
             'start_date': start_date.isoformat(),
@@ -6214,14 +6272,14 @@ def admin_analytics_editions():
     """Get breakdown of sales by edition type"""
     try:
         licenses = License.query.all()
-        
+
         edition_breakdown = {}
         license_types = {}
-        
+
         for lic in licenses:
             edition = lic.edition or 'unknown'
             license_type = lic.license_type or 'unknown'
-            
+
             if edition not in edition_breakdown:
                 edition_breakdown[edition] = {
                     'total': 0,
@@ -6232,30 +6290,30 @@ def admin_analytics_editions():
                     'lifetime': 0,
                     'annual': 0
                 }
-            
+
             edition_breakdown[edition]['total'] += 1
             edition_breakdown[edition]['revenue'] += (lic.amount_paid or 0) / 100
-            
+
             if lic.status == 'active':
                 edition_breakdown[edition]['active'] += 1
             elif lic.status == 'revoked':
                 edition_breakdown[edition]['revoked'] += 1
             else:
                 edition_breakdown[edition]['expired'] += 1
-            
+
             if lic.license_type == 'lifetime':
                 edition_breakdown[edition]['lifetime'] += 1
             else:
                 edition_breakdown[edition]['annual'] += 1
-            
+
             if license_type not in license_types:
                 license_types[license_type] = 0
             license_types[license_type] += 1
-        
+
         tamper_protected_audit_log("ADMIN_ANALYTICS_EDITIONS", {
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'edition_breakdown': edition_breakdown,
             'license_types': license_types,
@@ -6274,36 +6332,36 @@ def admin_analytics_trends():
     try:
         days = int(request.args.get('days', 30))
         days = min(days, 365)
-        
+
         start_date = datetime.now() - timedelta(days=days)
-        
+
         licenses = License.query.filter(
             License.created_at >= start_date
         ).order_by(License.created_at).all()
-        
+
         daily_trend = {}
         weekly_trend = {}
         monthly_trend = {}
-        
+
         for lic in licenses:
             if not lic.created_at:
                 continue
-            
+
             day_key = lic.created_at.strftime('%Y-%m-%d')
             week_key = lic.created_at.strftime('%Y-W%W')
             month_key = lic.created_at.strftime('%Y-%m')
-            
+
             daily_trend[day_key] = daily_trend.get(day_key, 0) + 1
             weekly_trend[week_key] = weekly_trend.get(week_key, 0) + 1
             monthly_trend[month_key] = monthly_trend.get(month_key, 0) + 1
-        
+
         average_daily = len(licenses) / max(days, 1) if licenses else 0
-        
+
         tamper_protected_audit_log("ADMIN_ANALYTICS_TRENDS", {
             "days": days,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'period_days': days,
             'total_licenses': len(licenses),
@@ -6329,31 +6387,31 @@ def admin_list_users():
         per_page = int(request.args.get('per_page', 20))
         per_page = min(per_page, 100)
         search = request.args.get('search', '').strip()
-        
+
         query = User.query
-        
+
         if search:
             query = query.filter(
                 (User.email.ilike(f'%{search}%')) |
                 (User.name.ilike(f'%{search}%'))
             )
-        
+
         total = query.count()
         users = query.order_by(User.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
-        
+
         user_list = []
         for user in users:
             user_data = user.to_dict()
             user_data['license_count'] = License.query.filter_by(user_id=user.id).count()
             user_list.append(user_data)
-        
+
         tamper_protected_audit_log("ADMIN_LIST_USERS", {
             "page": page,
             "per_page": per_page,
             "search": search[:50] if search else None,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'users': user_list,
             'pagination': {
@@ -6376,25 +6434,25 @@ def admin_get_user(user_id):
         user = User.query.get(user_id)
         if not user:
             return jsonify({'error': 'User not found', 'code': 'NOT_FOUND'}), 404
-        
+
         licenses = License.query.filter_by(user_id=user.id).all()
-        
+
         user_data = user.to_dict()
         user_data['licenses'] = [lic.to_dict() for lic in licenses]
         user_data['total_spent'] = sum((lic.amount_paid or 0) / 100 for lic in licenses)
-        
+
         email_logs = EmailLog.query.filter_by(user_id=user.id).order_by(EmailLog.created_at.desc()).limit(10).all()
         user_data['recent_emails'] = [{
             'type': log.email_type,
             'status': log.status,
             'sent_at': log.sent_at.isoformat() if log.sent_at else None
         } for log in email_logs]
-        
+
         tamper_protected_audit_log("ADMIN_GET_USER", {
             "user_id": user_id,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({'user': user_data}), 200
     except Exception as e:
         logger.error(f"Error fetching user: {e}")
@@ -6409,15 +6467,15 @@ def admin_update_user(user_id):
         user = User.query.get(user_id)
         if not user:
             return jsonify({'error': 'User not found', 'code': 'NOT_FOUND'}), 404
-        
+
         data = request.json or {}
-        
+
         if 'name' in data:
             user.name = sanitize_input(str(data['name']).strip())[:255]
-        
+
         if 'email_verified' in data:
             user.email_verified = bool(data['email_verified'])
-        
+
         if 'email' in data:
             new_email = str(data['email']).strip().lower()
             if validate_email(new_email):
@@ -6427,16 +6485,16 @@ def admin_update_user(user_id):
                 user.email = new_email
             else:
                 return jsonify({'error': 'Invalid email format', 'code': 'INVALID_EMAIL'}), 400
-        
+
         user.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
         tamper_protected_audit_log("ADMIN_UPDATE_USER", {
             "user_id": user_id,
             "updated_fields": list(data.keys()),
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'success': True,
             'user': user.to_dict()
@@ -6455,13 +6513,13 @@ def admin_system_health():
     """Get system health: database connection, disk space, memory usage"""
     try:
         import shutil
-        
+
         health = {
             'status': 'healthy',
             'timestamp': datetime.now().isoformat(),
             'checks': {}
         }
-        
+
         try:
             db.session.execute(db.text('SELECT 1'))
             health['checks']['database'] = {
@@ -6474,7 +6532,7 @@ def admin_system_health():
                 'message': str(e)
             }
             health['status'] = 'degraded'
-        
+
         try:
             total, used, free = shutil.disk_usage('/')
             health['checks']['disk'] = {
@@ -6492,7 +6550,7 @@ def admin_system_health():
                 'status': 'unknown',
                 'message': str(e)
             }
-        
+
         try:
             with open('/proc/meminfo', 'r') as f:
                 meminfo = {}
@@ -6502,11 +6560,11 @@ def admin_system_health():
                         key = parts[0].rstrip(':')
                         value = int(parts[1])
                         meminfo[key] = value
-                
+
                 total_kb = meminfo.get('MemTotal', 0)
                 free_kb = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
                 used_kb = total_kb - free_kb
-                
+
                 health['checks']['memory'] = {
                     'status': 'healthy' if free_kb / total_kb > 0.1 else 'warning',
                     'total_mb': round(total_kb / 1024, 1),
@@ -6519,7 +6577,7 @@ def admin_system_health():
                 'status': 'unknown',
                 'message': str(e)
             }
-        
+
         health['checks']['application'] = {
             'status': 'healthy',
             'version': '4.0',
@@ -6527,19 +6585,19 @@ def admin_system_health():
             'active_admin_sessions': len(ADMIN_TOKENS),
             'audit_log_entries': len(audit_log)
         }
-        
+
         health['checks']['tables'] = {
             'users': User.query.count(),
             'licenses': License.query.count(),
             'giveaways': Giveaway.query.count(),
             'admin_users': AdminUser.query.count()
         }
-        
+
         tamper_protected_audit_log("ADMIN_SYSTEM_HEALTH", {
             "status": health['status'],
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify(health), 200
     except Exception as e:
         logger.error(f"Error fetching system health: {e}")
@@ -6559,22 +6617,22 @@ def admin_system_logs():
         limit = min(limit, 500)
         severity = request.args.get('severity', '').upper()
         action = request.args.get('action', '').upper()
-        
+
         filtered_logs = audit_log[-limit:]
-        
+
         if severity:
             filtered_logs = [log for log in filtered_logs if log.get('severity') == severity]
-        
+
         if action:
             filtered_logs = [log for log in filtered_logs if action in log.get('action', '')]
-        
+
         tamper_protected_audit_log("ADMIN_VIEW_LOGS", {
             "limit": limit,
             "severity_filter": severity or None,
             "action_filter": action or None,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'logs': filtered_logs[-limit:],
             'total_available': len(audit_log),
@@ -6602,23 +6660,23 @@ def admin_bulk_create_licenses():
         edition = str(data.get('edition', 'basic')).strip()
         license_type = str(data.get('type', 'lifetime')).strip()
         emails = data.get('emails', [])
-        
+
         if edition not in TIERS:
             return jsonify({'error': 'Invalid edition', 'valid_editions': list(TIERS.keys())}), 400
-        
+
         if license_type == 'lifetime':
             expires = datetime.now() + timedelta(days=36500)
         elif license_type == 'annual':
             expires = datetime.now() + timedelta(days=365)
         else:
             expires = datetime.now() + timedelta(days=30)
-        
+
         created_licenses = []
-        
+
         for i in range(count):
             key = generate_license_key(edition)
             email = emails[i] if i < len(emails) else None
-            
+
             new_license = License(
                 license_key=key,
                 edition=edition,
@@ -6635,16 +6693,16 @@ def admin_bulk_create_licenses():
                 'email': email,
                 'expires': expires.isoformat()
             })
-        
+
         db.session.commit()
-        
+
         tamper_protected_audit_log("ADMIN_BULK_LICENSES_CREATED", {
             "count": count,
             "edition": edition,
             "type": license_type,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'success': True,
             'count': len(created_licenses),
@@ -6666,31 +6724,31 @@ def admin_bulk_send_emails():
         content = str(data.get('content', '')).strip()
         edition_filter = data.get('edition', None)
         status_filter = data.get('status', 'active')
-        
+
         if not subject or not content:
             return jsonify({'error': 'Subject and content are required'}), 400
-        
+
         query = License.query.filter(License.customer_email.isnot(None))
-        
+
         if edition_filter:
             query = query.filter(License.edition == edition_filter)
-        
+
         if status_filter:
             query = query.filter(License.status == status_filter)
-        
+
         licenses = query.all()
-        
+
         sent_count = 0
         failed_count = 0
         sent_to = []
-        
+
         if SENDGRID_API_KEY:
             sg = SendGridAPIClient(SENDGRID_API_KEY)
-            
+
             for lic in licenses:
                 if not lic.customer_email:
                     continue
-                
+
                 try:
                     message = Mail(
                         from_email=Email(SENDGRID_FROM_EMAIL),
@@ -6698,9 +6756,9 @@ def admin_bulk_send_emails():
                         subject=subject,
                         plain_text_content=Content("text/plain", content)
                     )
-                    
+
                     response = sg.send(message)
-                    
+
                     email_log = EmailLog(
                         license_id=lic.id,
                         email_to=lic.customer_email,
@@ -6710,13 +6768,13 @@ def admin_bulk_send_emails():
                         sent_at=datetime.utcnow()
                     )
                     db.session.add(email_log)
-                    
+
                     sent_count += 1
                     sent_to.append(lic.customer_email)
                 except Exception as e:
                     failed_count += 1
                     logger.error(f"Failed to send email to {lic.customer_email}: {e}")
-            
+
             db.session.commit()
         else:
             for lic in licenses:
@@ -6730,10 +6788,9 @@ def admin_bulk_send_emails():
                         error_message='SendGrid not configured'
                     )
                     db.session.add(email_log)
-                    sent_to.append(lic.customer_email)
-            
+
             db.session.commit()
-        
+
         tamper_protected_audit_log("ADMIN_BULK_EMAILS_SENT", {
             "total_recipients": len(licenses),
             "sent": sent_count,
@@ -6741,7 +6798,7 @@ def admin_bulk_send_emails():
             "edition_filter": edition_filter,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'success': True,
             'total_recipients': len(licenses),
@@ -6765,56 +6822,56 @@ def admin_report_monthly():
     try:
         year = int(request.args.get('year', datetime.now().year))
         month = int(request.args.get('month', datetime.now().month))
-        
+
         start_date = datetime(year, month, 1)
         if month == 12:
             end_date = datetime(year + 1, 1, 1)
         else:
             end_date = datetime(year, month + 1, 1)
-        
+
         licenses = License.query.filter(
             License.created_at >= start_date,
             License.created_at < end_date
         ).all()
-        
+
         edition_counts = {}
         type_counts = {'lifetime': 0, 'annual': 0, 'monthly': 0}
         total_revenue = 0
         daily_breakdown = {}
-        
+
         for lic in licenses:
             edition = lic.edition or 'unknown'
             edition_counts[edition] = edition_counts.get(edition, 0) + 1
-            
+
             lic_type = lic.license_type or 'unknown'
             if lic_type in type_counts:
                 type_counts[lic_type] += 1
-            
+
             total_revenue += (lic.amount_paid or 0) / 100
-            
+
             if lic.created_at:
                 day_key = lic.created_at.strftime('%Y-%m-%d')
                 if day_key not in daily_breakdown:
                     daily_breakdown[day_key] = {'count': 0, 'revenue': 0}
                 daily_breakdown[day_key]['count'] += 1
                 daily_breakdown[day_key]['revenue'] += (lic.amount_paid or 0) / 100
-        
+
         users_created = User.query.filter(
             User.created_at >= start_date,
             User.created_at < end_date
         ).count()
-        
+
         giveaways_created = Giveaway.query.filter(
             Giveaway.created_at >= start_date,
             Giveaway.created_at < end_date
         ).count()
-        
+
         tamper_protected_audit_log("ADMIN_REPORT_MONTHLY", {
             "year": year,
             "month": month,
             "by": g.admin_user
         }, "INFO")
-        
+
         return jsonify({
             'report': {
                 'period': f'{year}-{month:02d}',
@@ -6847,23 +6904,23 @@ def admin_report_export():
         include_licenses = request.args.get('licenses', 'true').lower() == 'true'
         include_giveaways = request.args.get('giveaways', 'true').lower() == 'true'
         include_logs = request.args.get('logs', 'false').lower() == 'true'
-        
+
         export_data = {
             'exported_at': datetime.now().isoformat(),
             'exported_by': g.admin_user,
             'version': '4.0'
         }
-        
+
         if include_users:
             users = User.query.all()
             export_data['users'] = [u.to_dict() for u in users]
             export_data['user_count'] = len(users)
-        
+
         if include_licenses:
             licenses = License.query.all()
             export_data['licenses'] = [lic.to_dict() for lic in licenses]
             export_data['license_count'] = len(licenses)
-        
+
         if include_giveaways:
             giveaways = Giveaway.query.all()
             giveaway_data = []
@@ -6873,11 +6930,11 @@ def admin_report_export():
                 giveaway_data.append(gd)
             export_data['giveaways'] = giveaway_data
             export_data['giveaway_count'] = len(giveaways)
-        
+
         if include_logs:
             export_data['audit_logs'] = audit_log[-1000:]
             export_data['log_count'] = len(audit_log)
-        
+
         export_data['summary'] = {
             'total_users': User.query.count(),
             'total_licenses': License.query.count(),
@@ -6885,7 +6942,7 @@ def admin_report_export():
             'total_giveaways': Giveaway.query.count(),
             'active_giveaways': Giveaway.query.filter_by(status='active').count()
         }
-        
+
         tamper_protected_audit_log("ADMIN_DATA_EXPORT", {
             "include_users": include_users,
             "include_licenses": include_licenses,
@@ -6893,11 +6950,11 @@ def admin_report_export():
             "include_logs": include_logs,
             "by": g.admin_user
         }, "HIGH")
-        
+
         response = make_response(json.dumps(export_data, indent=2, default=str))
         response.headers['Content-Type'] = 'application/json'
         response.headers['Content-Disposition'] = f'attachment; filename=aegis_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
-        
+
         return response, 200
     except Exception as e:
         logger.error(f"Error exporting data: {e}")
