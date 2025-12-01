@@ -40,6 +40,7 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 - Uses XML format `<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>`
 - This format works with `FromXmlString()` in PowerShell 5 (standard on Windows 10/11)
 - Previous DER format (`ImportSubjectPublicKeyInfo`) required PowerShell 7+ which most users don't have
+- **Important:** Modulus bytes must have a leading 0x00 if high bit is set (otherwise .NET treats it as negative)
 
 **Fail-Closed Design:**
 - Server returns HTTP 503 if private key not configured (no unsigned installers generated)

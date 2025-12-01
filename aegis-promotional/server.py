@@ -2467,9 +2467,16 @@ def get_public_key_for_hta():
     public_key = private_key.public_key()
     public_numbers = public_key.public_numbers()
     
-    # Convert modulus (n) and exponent (e) to base64
+    # Convert modulus (n) and exponent (e) to bytes
     modulus_bytes = public_numbers.n.to_bytes((public_numbers.n.bit_length() + 7) // 8, byteorder='big')
     exponent_bytes = public_numbers.e.to_bytes((public_numbers.e.bit_length() + 7) // 8, byteorder='big')
+    
+    # CRITICAL: .NET requires a leading zero byte if the high bit is set
+    # otherwise it interprets the modulus as a negative number!
+    if modulus_bytes[0] & 0x80:
+        modulus_bytes = b'\x00' + modulus_bytes
+    if exponent_bytes[0] & 0x80:
+        exponent_bytes = b'\x00' + exponent_bytes
     
     modulus_b64 = base64.b64encode(modulus_bytes).decode()
     exponent_b64 = base64.b64encode(exponent_bytes).decode()
