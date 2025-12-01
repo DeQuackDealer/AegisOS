@@ -488,6 +488,53 @@ def login():
 
 # ============= ROUTES: SECURITY =============
 
+def require_api_key(f):
+    """Decorator to require API key authentication"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        if not api_key:
+            return jsonify({'error': 'API key required', 'code': 'NO_API_KEY'}), 401
+        if not secrets.compare_digest(api_key, os.environ.get('API_KEY', 'aegis-dev-key')):
+            tamper_protected_audit_log("INVALID_API_KEY", {'key_prefix': api_key[:8] if api_key else 'none'}, "HIGH")
+            return jsonify({'error': 'Invalid API key', 'code': 'INVALID_API_KEY'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# Forward declaration of admin decorators (full implementation below)
+ADMIN_TOKENS = {}
+ADMIN_SESSION_DURATION = timedelta(hours=8)
+
+def verify_admin_token(token: str):
+    """Verify admin JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        if payload.get('type') != 'admin':
+            return None
+        if payload.get('jti') not in ADMIN_TOKENS:
+            return None
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+
+def require_admin(f):
+    """Decorator to require admin authentication"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
+        token = auth_header[7:]
+        payload = verify_admin_token(token)
+        if not payload:
+            return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
+        g.admin_user = payload.get('username')
+        g.admin_role = payload.get('role', 'designer')
+        return f(*args, **kwargs)
+    return decorated
+
 @app.route('/api/v1/security/audit')
 @require_api_key
 @rate_limit(limit=50)
@@ -3444,7 +3491,7 @@ def download_iso():
     }), 200
 
 @app.route('/api/v1/iso/checksums', methods=['GET'])
-@rate_limit=500)
+@rate_limit(limit=500)
 def get_iso_checksums():
     """Get all ISO checksums for verification"""
     return jsonify({
@@ -4869,44 +4916,6 @@ def payment_success():
     return html
 
 # ============= ADMIN PANEL =============
-
-# Admin session tokens (kept in memory - sessions are temporary)
-ADMIN_TOKENS = {}
-ADMIN_SESSION_DURATION = timedelta(hours=8)
-
-# Admin authentication
-def verify_admin_token(token: str) -> dict | None:
-    """Verify admin JWT token"""
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        if payload.get('type') != 'admin':
-            return None
-        if payload.get('jti') not in ADMIN_TOKENS:
-            return None
-        return payload
-    except jwt.ExpiredSignatureError:
-        return None
-    except jwt.InvalidTokenError:
-        return None
-
-def require_admin(f):
-    """Decorator to require admin authentication"""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth_header = request.headers.get('Authorization', '')
-        if not auth_header.startswith('Bearer '):
-            return jsonify({'error': 'No token provided', 'code': 'NO_TOKEN'}), 401
-
-        token = auth_header[7:]
-        payload = verify_admin_token(token)
-
-        if not payload:
-            return jsonify({'error': 'Invalid or expired token', 'code': 'INVALID_TOKEN'}), 401
-
-        g.admin_user = payload.get('username')
-        g.admin_role = payload.get('role', 'designer')
-        return f(*args, **kwargs)
-    return decorated
 
 def require_roles(*allowed_roles):
     """Decorator to require specific admin roles"""
