@@ -5737,15 +5737,7 @@ def public_free_download(edition):
 @require_admin
 def admin_get_free_period():
     """Get current free period settings"""
-    is_active = False
-    if FREE_PERIOD_SETTINGS['enabled']:
-        now = datetime.now()
-        start = FREE_PERIOD_SETTINGS.get('start_time')
-        end = FREE_PERIOD_SETTINGS.get('end_time')
-        if start and end:
-            is_active = start <= now <= end
-        elif start:
-            is_active = now >= start
+    is_active = is_free_period_active()
     
     return jsonify({
         'success': True,
