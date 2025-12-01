@@ -341,9 +341,14 @@
             <nav>
                 <div class="nav-section">
                     <div class="nav-section-title">Main</div>
-                    <a href="/admin" class="nav-item active">
+                    <a href="/admin" class="nav-item active" data-page="dashboard">
                         <span class="nav-icon">📊</span>
                         <span class="nav-text">Dashboard</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="downloads" onclick="showDownloadsPage()">
+                        <span class="nav-icon">⬇️</span>
+                        <span class="nav-text">Free Downloads</span>
+                        <span id="freePeriodBadge" style="margin-left:auto;background:var(--success);color:#fff;font-size:0.65rem;padding:2px 6px;border-radius:10px;display:none;">ON</span>
                     </a>
                     <a href="/admin/licenses" class="nav-item">
                         <span class="nav-icon">🔑</span>
@@ -440,6 +445,14 @@
             </div>
 
             <div class="stats-grid">
+                <div class="stat-card" id="freePeriodCard" style="cursor:pointer;" onclick="showDownloadsPage()">
+                    <div class="stat-header">
+                        <div class="stat-icon" id="freePeriodIcon" style="background: linear-gradient(135deg, #10b981, #059669);">🎉</div>
+                        <span id="freePeriodStatus" class="stat-change positive">ACTIVE</span>
+                    </div>
+                    <div class="stat-value" id="freePeriodLabel">FREE MODE</div>
+                    <div class="stat-label">Click to manage free downloads</div>
+                </div>
                 <div class="stat-card">
                     <div class="stat-header">
                         <div class="stat-icon users">👤</div>
@@ -460,13 +473,6 @@
                     </div>
                     <div class="stat-value" id="activeGiveaways">0</div>
                     <div class="stat-label">Active Giveaways</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon downloads">⬇️</div>
-                    </div>
-                    <div class="stat-value" id="totalDownloads">0</div>
-                    <div class="stat-label">Downloads</div>
                 </div>
             </div>
 
@@ -520,13 +526,17 @@
                         <span class="card-title">Quick Actions</span>
                     </div>
                     <div class="card-body">
+                        <a href="#" class="quick-action" onclick="showDownloadsPage()">
+                            <div class="quick-action-icon" style="background:linear-gradient(135deg,#10b981,#059669);">⬇️</div>
+                            <span class="quick-action-text">Free Downloads & Installers</span>
+                        </a>
+                        <a href="#" class="quick-action" onclick="toggleFreePeriod()">
+                            <div class="quick-action-icon" id="toggleFreePeriodIcon">🔄</div>
+                            <span class="quick-action-text" id="toggleFreePeriodText">Toggle Free Mode</span>
+                        </a>
                         <a href="/admin/licenses" class="quick-action">
                             <div class="quick-action-icon">🔑</div>
                             <span class="quick-action-text">Generate License</span>
-                        </a>
-                        <a href="/admin/licenses#gift" class="quick-action">
-                            <div class="quick-action-icon">🎁</div>
-                            <span class="quick-action-text">Gift Free License</span>
                         </a>
                         <a href="/admin/giveaways" class="quick-action">
                             <div class="quick-action-icon">🎲</div>
@@ -535,10 +545,6 @@
                         <a href="/admin/pages" class="quick-action">
                             <div class="quick-action-icon">📄</div>
                             <span class="quick-action-text">Edit Pages</span>
-                        </a>
-                        <a href="/admin/settings" class="quick-action">
-                            <div class="quick-action-icon">⚙️</div>
-                            <span class="quick-action-text">Site Settings</span>
                         </a>
                     </div>
                 </div>
@@ -640,6 +646,8 @@
             }
         }
 
+        let freePeriodEnabled = false;
+
         async function loadDashboardData() {
             try {
                 const res = await fetch(`${API_BASE}/stats`, {
@@ -648,13 +656,188 @@
                 if (res.ok) {
                     const data = await res.json();
                     document.getElementById('totalUsers').textContent = (data.users || 0).toLocaleString();
-                    document.getElementById('totalDownloads').textContent = (data.downloads || 0).toLocaleString();
                     document.getElementById('activeLicenses').textContent = (data.licenses || 0).toLocaleString();
                     document.getElementById('activeGiveaways').textContent = (data.active_giveaways || 0).toLocaleString();
                 }
+                await loadFreePeriodStatus();
             } catch (err) {
                 console.log('Error loading stats:', err);
             }
+        }
+
+        async function loadFreePeriodStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/free-period`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    freePeriodEnabled = data.enabled;
+                    updateFreePeriodUI(data);
+                }
+            } catch (err) {
+                console.log('Error loading free period:', err);
+            }
+        }
+
+        function updateFreePeriodUI(data) {
+            const badge = document.getElementById('freePeriodBadge');
+            const status = document.getElementById('freePeriodStatus');
+            const label = document.getElementById('freePeriodLabel');
+            const icon = document.getElementById('freePeriodIcon');
+            const card = document.getElementById('freePeriodCard');
+            
+            if (data.enabled || data.is_currently_active) {
+                badge.style.display = 'inline';
+                badge.textContent = 'ON';
+                badge.style.background = 'var(--success)';
+                status.textContent = 'ACTIVE';
+                status.className = 'stat-change positive';
+                label.textContent = 'FREE MODE';
+                icon.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                card.style.borderColor = 'var(--success)';
+            } else {
+                badge.style.display = 'none';
+                status.textContent = 'OFF';
+                status.className = 'stat-change negative';
+                label.textContent = 'PAID MODE';
+                icon.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
+                card.style.borderColor = 'var(--border)';
+            }
+        }
+
+        async function toggleFreePeriod() {
+            try {
+                if (freePeriodEnabled) {
+                    const res = await fetch(`${API_BASE}/free-period`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    if (res.ok) {
+                        freePeriodEnabled = false;
+                        updateFreePeriodUI({ enabled: false });
+                        showToast('Free period disabled', 'warning');
+                    }
+                } else {
+                    const res = await fetch(`${API_BASE}/free-period`, {
+                        method: 'POST',
+                        headers: { 
+                            'Authorization': `Bearer ${authToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ enabled: true })
+                    });
+                    if (res.ok) {
+                        freePeriodEnabled = true;
+                        updateFreePeriodUI({ enabled: true, is_currently_active: true });
+                        showToast('Free period enabled! All editions now free.', 'success');
+                    }
+                }
+            } catch (err) {
+                showToast('Error toggling free period', 'error');
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'var(--success)',
+                error: 'var(--error)',
+                warning: 'var(--warning)',
+                info: 'var(--primary)'
+            };
+            toast.style.cssText = `
+                position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+                padding: 1rem 1.5rem; border-radius: 8px;
+                background: ${colors[type]}; color: white;
+                font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                animation: slideIn 0.3s ease;
+            `;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        async function showDownloadsPage() {
+            try {
+                const res = await fetch(`${API_BASE}/installers`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (!res.ok) throw new Error('Failed to load installers');
+                
+                const data = await res.json();
+                const installers = data.installers || [];
+                const freePeriod = data.free_period || {};
+                
+                const content = `
+                    <div style="margin-bottom:1.5rem;">
+                        <h4 style="margin-bottom:1rem;">Free Period Status</h4>
+                        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+                            <div style="flex:1;min-width:200px;background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-size:0.875rem;color:var(--text-secondary);margin-bottom:0.5rem;">Status</div>
+                                <div style="font-size:1.25rem;font-weight:600;color:${freePeriod.enabled ? 'var(--success)' : 'var(--error)'}">
+                                    ${freePeriod.enabled ? '🟢 FREE MODE ACTIVE' : '🔴 PAID MODE'}
+                                </div>
+                            </div>
+                            <div style="flex:1;min-width:200px;background:var(--bg-hover);padding:1rem;border-radius:8px;">
+                                <div style="font-size:0.875rem;color:var(--text-secondary);margin-bottom:0.5rem;">Rate Limits</div>
+                                <div style="font-size:0.875rem;">5 downloads/hour • 10 downloads/day per IP</div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:0.5rem;">
+                            <button onclick="toggleFreePeriod();closeModal();setTimeout(showDownloadsPage,500);" class="btn ${freePeriod.enabled ? 'btn-danger' : 'btn-primary'}">
+                                ${freePeriod.enabled ? '🔴 Disable Free Mode' : '🟢 Enable Free Mode'}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <h4 style="margin-bottom:1rem;">Edition Installers (HTA Files)</h4>
+                    <p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:1rem;">
+                        Download pre-configured installers for each edition. These don't require license validation.
+                    </p>
+                    
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;">
+                        ${installers.map(inst => `
+                            <div style="background:var(--bg-hover);border-radius:8px;padding:1rem;border:1px solid var(--border);">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+                                    <span style="font-weight:600;">${inst.edition_name}</span>
+                                    <span style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:${inst.exists ? 'var(--success)' : 'var(--error)'}22;color:${inst.exists ? 'var(--success)' : 'var(--error)'};">
+                                        ${inst.exists ? 'Ready' : 'Missing'}
+                                    </span>
+                                </div>
+                                <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.75rem;">
+                                    ${inst.filename} • ${inst.size_formatted}
+                                </div>
+                                <button onclick="downloadInstaller('${inst.edition}')" 
+                                    class="btn btn-secondary" style="width:100%;justify-content:center;"
+                                    ${!inst.exists ? 'disabled' : ''}>
+                                    ⬇️ Download HTA
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div style="margin-top:1.5rem;padding:1rem;background:rgba(99,102,241,0.1);border-radius:8px;border:1px solid rgba(99,102,241,0.3);">
+                        <h5 style="color:var(--primary);margin-bottom:0.5rem;">Public Download Links</h5>
+                        <p style="font-size:0.875rem;color:var(--text-secondary);margin-bottom:0.5rem;">
+                            When free mode is enabled, users can download from these public URLs:
+                        </p>
+                        <code style="font-size:0.75rem;color:var(--text-secondary);word-break:break-all;">
+                            /api/free/editions - List editions<br>
+                            /api/free/download/{edition} - Download HTA
+                        </code>
+                    </div>
+                `;
+                
+                showModal('Free Downloads & Installers', content);
+            } catch (err) {
+                showToast('Error loading installers: ' + err.message, 'error');
+            }
+        }
+
+        async function downloadInstaller(edition) {
+            window.open(`${API_BASE}/installers/${edition}/download`, '_blank');
         }
 
         async function refreshData() {

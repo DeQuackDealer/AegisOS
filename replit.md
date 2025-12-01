@@ -67,6 +67,36 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 - GMAI-DEMO-TEST-2024 (Gamer+AI)
 - SERV-DEMO-TEST-2024 (Server)
 
+### Free Period & No-License Installers (December 2025)
+
+**Free Period Mode:**
+The admin panel can enable "free mode" where all editions are available without license validation. This bypasses the license system temporarily for promotions or while license issues are being fixed.
+
+- **Admin Endpoints:**
+  - `GET /api/admin/free-period` - View free period status
+  - `POST /api/admin/free-period` - Enable/configure free period
+  - `DELETE /api/admin/free-period` - Disable free period
+
+- **Public Endpoints (during free period):**
+  - `GET /api/free/editions` - List available free editions
+  - `GET /api/free/download/{edition}` - Download edition HTA (rate limited)
+
+**Rate Limiting (Anti-Bot):**
+- 5 downloads per IP per hour
+- 10 downloads per IP per day
+- HTTP 429 returned when limit exceeded
+
+**Edition-Specific HTAs (No License Validation):**
+Located in `build-system/editions/`:
+- `aegis-installer-basic.hta` - Basic edition
+- `aegis-installer-workplace.hta` - Workplace edition
+- `aegis-installer-gamer.hta` - Gamer edition
+- `aegis-installer-aidev.hta` - AI Developer edition
+- `aegis-installer-gamer-ai.hta` - Gamer+AI edition
+- `aegis-installer-server.hta` - Server edition (admin-only)
+
+These HTAs are pre-configured for their specific edition and skip the license validation step entirely.
+
 ### Auto-Update System (December 2025)
 
 The server provides a REST API for Aegis OS installations to check for updates. Works with both Freemium (no license) and paid editions (with license key).
