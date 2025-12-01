@@ -5462,6 +5462,221 @@ def admin_logout():
     tamper_protected_audit_log("ADMIN_LOGOUT", {"username": g.admin_user}, "INFO")
     return jsonify({'success': True}), 200
 
+# ============================================================
+# EDITION HTA INSTALLERS (NO LICENSE CHECK)
+# Individual installer files for each edition
+# ============================================================
+
+# Global free period settings (in-memory, could be stored in DB)
+FREE_PERIOD_SETTINGS = {
+    'enabled': False,
+    'start_time': None,
+    'end_time': None,
+    'editions': []  # Empty = all editions, or list specific ones
+}
+
+EDITION_HTA_FILES = {
+    'basic': 'aegis-installer-basic.hta',
+    'workplace': 'aegis-installer-workplace.hta',
+    'gamer': 'aegis-installer-gamer.hta',
+    'ai_developer': 'aegis-installer-aidev.hta',
+    'gamer_ai': 'aegis-installer-gamer-ai.hta',
+    'server': 'aegis-installer-server.hta'
+}
+
+def is_free_period_active(edition=None):
+    """Check if free period is currently active for an edition"""
+    if not FREE_PERIOD_SETTINGS['enabled']:
+        return False
+    
+    now = datetime.now()
+    start = FREE_PERIOD_SETTINGS.get('start_time')
+    end = FREE_PERIOD_SETTINGS.get('end_time')
+    
+    # Check time bounds
+    if start and now < start:
+        return False
+    if end and now > end:
+        return False
+    
+    # Check edition restrictions
+    allowed_editions = FREE_PERIOD_SETTINGS.get('editions', [])
+    if allowed_editions and edition and edition not in allowed_editions:
+        return False
+    
+    return True
+
+@app.route('/api/admin/installers', methods=['GET'])
+@require_admin
+def admin_list_installers():
+    """List all available edition-specific HTA installers"""
+    installers = []
+    editions_dir = os.path.join(BASE_DIR, '..', 'build-system', 'editions')
+    
+    for edition, filename in EDITION_HTA_FILES.items():
+        filepath = os.path.join(editions_dir, filename)
+        exists = os.path.exists(filepath)
+        size = os.path.getsize(filepath) if exists else 0
+        
+        edition_info = OS_EDITIONS.get(edition, {})
+        
+        installers.append({
+            'edition': edition,
+            'filename': filename,
+            'exists': exists,
+            'size': size,
+            'size_formatted': f"{size / 1024:.1f} KB" if exists else "N/A",
+            'edition_name': edition_info.get('name', edition.replace('_', ' ').title()),
+            'download_url': f"/api/admin/installers/{edition}/download"
+        })
+    
+    free_period_serialized = {
+        'enabled': FREE_PERIOD_SETTINGS['enabled'],
+        'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
+        'end_time': FREE_PERIOD_SETTINGS['end_time'].isoformat() if FREE_PERIOD_SETTINGS['end_time'] else None,
+        'editions': FREE_PERIOD_SETTINGS['editions'],
+        'is_active': is_free_period_active()
+    }
+    
+    return jsonify({
+        'success': True,
+        'installers': installers,
+        'free_period': free_period_serialized
+    }), 200
+
+@app.route('/api/admin/installers/<edition>/download', methods=['GET'])
+@require_build_access
+def admin_download_edition_hta(edition):
+    """Download a specific edition HTA installer (no license validation)"""
+    edition = sanitize_input(edition.lower().replace('-', '_'))
+    
+    if edition not in EDITION_HTA_FILES:
+        return jsonify({
+            'error': f'Unknown edition: {edition}',
+            'available': list(EDITION_HTA_FILES.keys())
+        }), 404
+    
+    filename = EDITION_HTA_FILES[edition]
+    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({
+            'error': f'Installer file not found: {filename}',
+            'hint': 'The edition installer may not have been generated yet.'
+        }), 404
+    
+    tamper_protected_audit_log("ADMIN_HTA_DOWNLOAD", {
+        "username": g.admin_user,
+        "role": g.admin_role,
+        "edition": edition,
+        "filename": filename
+    }, "HIGH")
+    
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    return Response(
+        content,
+        mimetype='application/hta',
+        headers={
+            'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Installer.hta',
+            'Content-Type': 'application/hta; charset=utf-8'
+        }
+    )
+
+@app.route('/api/admin/free-period', methods=['GET'])
+@require_admin
+def admin_get_free_period():
+    """Get current free period settings"""
+    is_active = False
+    if FREE_PERIOD_SETTINGS['enabled']:
+        now = datetime.now()
+        start = FREE_PERIOD_SETTINGS.get('start_time')
+        end = FREE_PERIOD_SETTINGS.get('end_time')
+        if start and end:
+            is_active = start <= now <= end
+        elif start:
+            is_active = now >= start
+    
+    return jsonify({
+        'success': True,
+        'enabled': FREE_PERIOD_SETTINGS['enabled'],
+        'is_currently_active': is_active,
+        'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
+        'end_time': FREE_PERIOD_SETTINGS['end_time'].isoformat() if FREE_PERIOD_SETTINGS['end_time'] else None,
+        'editions': FREE_PERIOD_SETTINGS['editions']
+    }), 200
+
+@app.route('/api/admin/free-period', methods=['POST'])
+@require_build_access
+def admin_set_free_period():
+    """Set or update free period settings"""
+    data = request.json or {}
+    
+    enabled = data.get('enabled', False)
+    start_time_str = data.get('start_time')
+    end_time_str = data.get('end_time')
+    editions = data.get('editions', [])
+    
+    FREE_PERIOD_SETTINGS['enabled'] = enabled
+    
+    if start_time_str:
+        try:
+            FREE_PERIOD_SETTINGS['start_time'] = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        except:
+            FREE_PERIOD_SETTINGS['start_time'] = datetime.now()
+    else:
+        FREE_PERIOD_SETTINGS['start_time'] = None
+    
+    if end_time_str:
+        try:
+            FREE_PERIOD_SETTINGS['end_time'] = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+        except:
+            FREE_PERIOD_SETTINGS['end_time'] = None
+    else:
+        FREE_PERIOD_SETTINGS['end_time'] = None
+    
+    FREE_PERIOD_SETTINGS['editions'] = editions if isinstance(editions, list) else []
+    
+    tamper_protected_audit_log("FREE_PERIOD_UPDATED", {
+        "username": g.admin_user,
+        "role": g.admin_role,
+        "enabled": enabled,
+        "start": start_time_str,
+        "end": end_time_str,
+        "editions": editions
+    }, "HIGH")
+    
+    return jsonify({
+        'success': True,
+        'message': 'Free period settings updated',
+        'settings': {
+            'enabled': FREE_PERIOD_SETTINGS['enabled'],
+            'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
+            'end_time': FREE_PERIOD_SETTINGS['end_time'].isoformat() if FREE_PERIOD_SETTINGS['end_time'] else None,
+            'editions': FREE_PERIOD_SETTINGS['editions']
+        }
+    }), 200
+
+@app.route('/api/admin/free-period', methods=['DELETE'])
+@require_build_access
+def admin_clear_free_period():
+    """Clear/disable free period"""
+    FREE_PERIOD_SETTINGS['enabled'] = False
+    FREE_PERIOD_SETTINGS['start_time'] = None
+    FREE_PERIOD_SETTINGS['end_time'] = None
+    FREE_PERIOD_SETTINGS['editions'] = []
+    
+    tamper_protected_audit_log("FREE_PERIOD_CLEARED", {
+        "username": g.admin_user,
+        "role": g.admin_role
+    }, "HIGH")
+    
+    return jsonify({
+        'success': True,
+        'message': 'Free period cleared'
+    }), 200
+
 # Admin dashboard stats endpoint
 @app.route('/api/admin/stats', methods=['GET'])
 @require_admin

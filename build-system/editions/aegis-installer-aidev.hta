@@ -1,0 +1,976 @@
+<html>
+<head>
+<title>Aegis OS AI Developer Edition Installer</title>
+<HTA:APPLICATION
+    ID="AegisAIDevInstaller"
+    APPLICATIONNAME="Aegis OS AI Developer Edition Installer"
+    BORDER="thick"
+    BORDERSTYLE="normal"
+    CAPTION="yes"
+    MAXIMIZEBUTTON="yes"
+    MINIMIZEBUTTON="yes"
+    SHOWINTASKBAR="yes"
+    SINGLEINSTANCE="yes"
+    SYSMENU="yes"
+    VERSION="2.8"
+    SCROLL="yes"
+    INNERBORDER="no"
+/>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    color: #fff;
+    overflow-y: auto;
+    min-height: 100vh;
+}
+.container { height: 100%; display: flex; flex-direction: column; }
+.header {
+    background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.logo-svg { width: 42px; height: 42px; }
+.shield-animate { animation: shieldPulse 2s ease-in-out infinite; }
+@keyframes shieldPulse {
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(139, 92, 246, 0.5)); }
+    50% { transform: scale(1.05); filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.8)); }
+}
+.header-text h1 { font-size: 16px; font-weight: 600; }
+.header-text p { font-size: 11px; opacity: 0.9; }
+.content { flex: 1; padding: 15px 20px; overflow-y: auto; min-height: 0; }
+.step-nav { display: flex; justify-content: center; gap: 8px; margin-bottom: 15px; }
+.step-item { text-align: center; position: relative; }
+.step-num {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: #2a2a4a; border: 2px solid #444;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 3px; font-weight: 600; font-size: 10px;
+    transition: all 0.3s ease;
+}
+.step-item.active .step-num { 
+    background: linear-gradient(135deg, #7c3aed, #8b5cf6); 
+    border-color: #8b5cf6; 
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.4);
+}
+.step-item.done .step-num { 
+    background: linear-gradient(135deg, #10b981, #34d399); 
+    border-color: #34d399;
+}
+.step-label { font-size: 8px; color: #888; }
+.step-item.active .step-label { color: #8b5cf6; font-weight: 500; }
+.step-item.done .step-label { color: #34d399; }
+.step-connector {
+    position: absolute; top: 13px; left: 50%; width: 20px; height: 2px;
+    background: #333; margin-left: 13px;
+}
+.step-item.done .step-connector { background: #34d399; }
+.panel { display: none; }
+.panel.active { display: block; }
+.section-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.section-desc { font-size: 12px; color: #aaa; margin-bottom: 12px; line-height: 1.3; }
+.info-box {
+    background: rgba(124, 58, 237, 0.15);
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+}
+.info-box h3 { font-size: 12px; margin-bottom: 5px; color: #8b5cf6; }
+.info-box ul { font-size: 11px; color: #aaa; padding-left: 16px; }
+.info-box li { margin-bottom: 2px; }
+.form-group { margin-bottom: 10px; }
+.form-label { display: block; font-size: 11px; margin-bottom: 4px; color: #aaa; }
+.drive-list {
+    background: #1e1e3a; border: 1px solid #333;
+    border-radius: 6px; max-height: 120px; overflow-y: auto; margin-bottom: 10px;
+}
+.drive-item {
+    padding: 8px 10px; border-bottom: 1px solid #333;
+    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    transition: all 0.2s;
+}
+.drive-item:last-child { border-bottom: none; }
+.drive-item:hover { background: #2a2a4a; }
+.drive-item.selected { background: rgba(124, 58, 237, 0.3); border-left: 3px solid #8b5cf6; }
+.drive-icon {
+    width: 28px; height: 28px; background: linear-gradient(135deg, #7c3aed, #8b5cf6); border-radius: 5px;
+    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;
+}
+.drive-info { flex: 1; }
+.drive-name { font-weight: 500; font-size: 12px; }
+.drive-size { font-size: 10px; color: #888; }
+.drive-details { font-size: 9px; color: #666; margin-top: 2px; }
+.no-drives { padding: 20px; text-align: center; color: #888; font-size: 12px; }
+.btn {
+    padding: 8px 16px; border-radius: 5px;
+    font-weight: 600; cursor: pointer; border: none; font-size: 12px;
+    transition: all 0.2s;
+}
+.btn-primary { background: linear-gradient(135deg, #7c3aed, #8b5cf6); color: white; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(124, 58, 237, 0.4); }
+.btn-primary:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-secondary { background: #2a2a4a; color: #aaa; border: 1px solid #444; }
+.btn-refresh { background: #1e1e3a; color: #8b5cf6; padding: 5px 10px; font-size: 10px; }
+.btn-small { padding: 4px 10px; font-size: 10px; }
+.btn-row { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; align-items: center; }
+.progress-container { background: #1e1e3a; border-radius: 6px; padding: 15px; text-align: center; }
+.progress-bar-bg { 
+    height: 10px; background: #2a2a4a; border-radius: 5px; 
+    overflow: hidden; margin: 12px 0;
+}
+.progress-bar-fill {
+    height: 100%; 
+    background: linear-gradient(90deg, #7c3aed, #8b5cf6, #7c3aed);
+    background-size: 200% 100%;
+    width: 0%; 
+    transition: width 0.5s ease-out; 
+    border-radius: 5px;
+}
+.progress-bar-fill.animated { animation: shimmer 1.5s infinite linear; }
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+.progress-percent { font-size: 28px; font-weight: 700; color: #8b5cf6; }
+.progress-status { font-size: 12px; color: #aaa; margin-top: 6px; }
+.progress-detail { font-size: 10px; color: #666; margin-top: 4px; }
+.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 10px; font-size: 10px; }
+.progress-stat { text-align: center; }
+.progress-stat-value { font-size: 12px; color: #8b5cf6; font-weight: 600; }
+.progress-stat-label { font-size: 8px; color: #666; margin-top: 1px; }
+.success-container { text-align: center; padding: 15px; }
+.success-icon { font-size: 36px; margin-bottom: 12px; color: #10b981; }
+.success-title { font-size: 18px; color: #10b981; margin-bottom: 6px; }
+.success-desc { font-size: 12px; color: #aaa; }
+.success-steps { background: #1e1e3a; border-radius: 6px; padding: 12px; margin-top: 12px; text-align: left; }
+.success-steps h3 { font-size: 12px; margin-bottom: 8px; }
+.success-steps ol { padding-left: 16px; font-size: 11px; color: #aaa; }
+.success-steps li { margin-bottom: 4px; }
+.error-box {
+    background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px; padding: 10px; color: #f87171; margin-top: 10px; font-size: 12px;
+}
+.warning-box {
+    background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 11px;
+}
+.warning-box strong { color: #a78bfa; }
+.admin-notice {
+    background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 5px; padding: 8px; margin-bottom: 10px; font-size: 10px;
+}
+.admin-notice strong { color: #f87171; }
+.edition-badge {
+    display: inline-block; background: linear-gradient(135deg, #7c3aed, #8b5cf6);
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    margin-left: 4px;
+}
+.footer {
+    padding: 8px 15px; background: #12122a; border-top: 1px solid #333;
+    font-size: 9px; color: #666; text-align: center; flex-shrink: 0;
+}
+.sys-req-box {
+    background: #1e1e3a; border: 1px solid #333;
+    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+}
+.sys-req-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
+.sys-req-icon { font-size: 14px; }
+.sys-req-pass { color: #10b981; }
+.sys-req-fail { color: #ef4444; }
+.sys-req-warn { color: #8b5cf6; }
+.option-group { margin-bottom: 10px; }
+.option-label { font-size: 11px; color: #aaa; margin-bottom: 5px; display: block; }
+.radio-group { display: flex; gap: 15px; }
+.radio-item { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.radio-item input { accent-color: #8b5cf6; }
+.checkbox-item { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
+.checkbox-item input { accent-color: #8b5cf6; width: 14px; height: 14px; }
+.advanced-panel {
+    background: rgba(124, 58, 237, 0.1); border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 6px; padding: 10px; margin-top: 10px;
+}
+.advanced-panel h4 { font-size: 11px; color: #8b5cf6; margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
+.advanced-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.select-input {
+    width: 100%; padding: 6px 8px;
+    background: #1e1e3a; border: 1px solid #444;
+    border-radius: 4px; color: #fff; font-size: 11px;
+}
+.core-features { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px; margin-bottom: 10px; }
+.core-feature-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 10px; color: #aaa; }
+.core-feature-item .icon { color: #10b981; font-size: 11px; }
+.optional-features { background: #1e1e3a; border: 1px solid #333; border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; }
+.feature-card { display: flex; align-items: flex-start; gap: 8px; padding: 6px; border-bottom: 1px solid #333; transition: background 0.2s; }
+.feature-card:last-child { border-bottom: none; }
+.feature-card:hover { background: rgba(124, 58, 237, 0.1); }
+.feature-card input { margin-top: 2px; accent-color: #8b5cf6; width: 14px; height: 14px; flex-shrink: 0; }
+.feature-card-content { flex: 1; min-width: 0; }
+.feature-card-name { font-size: 11px; font-weight: 500; color: #fff; }
+.feature-card-desc { font-size: 9px; color: #888; margin-top: 1px; }
+.feature-actions { display: flex; gap: 6px; margin-bottom: 8px; }
+.feature-count { font-size: 10px; color: #888; margin-top: 6px; }
+</style>
+<script language="VBScript">
+Const EDITION = "aidev"
+Const EDITION_NAME = "AI Developer"
+
+Dim selectedDrive, selectedDriveNumber, drives(), driveCount
+Dim progressTimer, shell, fso, wmi
+Dim lastProgress, smoothProgress
+Dim partitionStyle, quickFormat
+Dim systemRAM, diskSpace, winVersion, sysReqPassed
+Dim selectedFeatures
+
+Sub Window_OnLoad()
+    window.resizeTo 680, 780
+    Set shell = CreateObject("WScript.Shell")
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    lastProgress = 0
+    smoothProgress = 0
+    partitionStyle = "GPT"
+    quickFormat = True
+    sysReqPassed = False
+    selectedFeatures = "wallpaper,stream,security,backup,ai,cuda,docker"
+    CheckAdminStatus
+    CheckSystemRequirements
+    SetupFeatureSelection
+End Sub
+
+Sub CheckAdminStatus()
+    Dim isAdmin
+    On Error Resume Next
+    isAdmin = shell.Run("net session", 0, True) = 0
+    On Error Goto 0
+    If Not isAdmin Then
+        document.getElementById("adminNotice").style.display = "block"
+    End If
+End Sub
+
+Sub CheckSystemRequirements()
+    Dim ramGB, freeSpaceGB, osVer, ramStatus, diskStatus, osStatus
+    ramGB = 0
+    freeSpaceGB = 0
+    osVer = ""
+    On Error Resume Next
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    If Not wmi Is Nothing Then
+        Dim compSys, mem
+        Set compSys = wmi.ExecQuery("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem")
+        If Not compSys Is Nothing Then
+            For Each mem In compSys
+                If Not mem Is Nothing Then
+                    ramGB = Round(mem.TotalPhysicalMemory / 1073741824, 1)
+                End If
+            Next
+        End If
+        Dim osInfo, os
+        Set osInfo = wmi.ExecQuery("SELECT Caption, Version FROM Win32_OperatingSystem")
+        If Not osInfo Is Nothing Then
+            For Each os In osInfo
+                If Not os Is Nothing Then
+                    osVer = os.Caption & " (" & os.Version & ")"
+                End If
+            Next
+        End If
+    End If
+    Dim tempFolder, drv
+    tempFolder = shell.ExpandEnvironmentStrings("%TEMP%")
+    If Len(tempFolder) > 0 Then
+        Set drv = fso.GetDrive(fso.GetDriveName(tempFolder))
+        If Not drv Is Nothing Then
+            freeSpaceGB = Round(drv.FreeSpace / 1073741824, 1)
+        End If
+    End If
+    On Error Goto 0
+    systemRAM = ramGB
+    diskSpace = freeSpaceGB
+    winVersion = osVer
+    If ramGB >= 16 Then
+        ramStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB (16GB+ recommended for AI)"
+        sysReqPassed = True
+    ElseIf ramGB >= 8 Then
+        ramStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> RAM: " & ramGB & " GB (16GB recommended)"
+        sysReqPassed = True
+    Else
+        ramStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> RAM: " & ramGB & " GB (16GB required)"
+        sysReqPassed = False
+    End If
+    If freeSpaceGB >= 5 Then
+        diskStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Temp Space: " & freeSpaceGB & " GB (5GB+ required)"
+    ElseIf freeSpaceGB >= 3 Then
+        diskStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Temp Space: " & freeSpaceGB & " GB (5GB recommended)"
+    Else
+        diskStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Temp Space: " & freeSpaceGB & " GB (5GB required)"
+        sysReqPassed = False
+    End If
+    If InStr(osVer, "Windows 10") > 0 Or InStr(osVer, "Windows 11") > 0 Then
+        osStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> OS: Windows 10/11 detected"
+    ElseIf InStr(osVer, "Windows") > 0 Then
+        osStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> OS: " & Left(osVer, 30) & "..."
+    Else
+        osStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> OS: Unknown"
+    End If
+    document.getElementById("sysReqContent").innerHTML = _
+        "<div class='sys-req-item'>" & ramStatus & "</div>" & _
+        "<div class='sys-req-item'>" & diskStatus & "</div>" & _
+        "<div class='sys-req-item'>" & osStatus & "</div>"
+End Sub
+
+Sub SetupFeatureSelection()
+    On Error Resume Next
+    Dim chk
+    Set chk = document.getElementById("chk_wallpaper")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_stream")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_security")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_backup")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_ai")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_cuda")
+    If Not chk Is Nothing Then chk.checked = True
+    Set chk = document.getElementById("chk_docker")
+    If Not chk Is Nothing Then chk.checked = True
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub ToggleFeature(featureId)
+    Dim chk, features, i, newFeatures, found
+    On Error Resume Next
+    Set chk = document.getElementById("chk_" & featureId)
+    If chk Is Nothing Then Exit Sub
+    features = Split(selectedFeatures, ",")
+    newFeatures = ""
+    found = False
+    For i = 0 To UBound(features)
+        If features(i) = featureId Then
+            found = True
+            If chk.checked Then
+                If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+                newFeatures = newFeatures & featureId
+            End If
+        Else
+            If Len(features(i)) > 0 Then
+                If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+                newFeatures = newFeatures & features(i)
+            End If
+        End If
+    Next
+    If Not found And chk.checked Then
+        If Len(newFeatures) > 0 Then newFeatures = newFeatures & ","
+        newFeatures = newFeatures & featureId
+    End If
+    selectedFeatures = newFeatures
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub SelectAllFeatures()
+    Dim checkboxes, i
+    On Error Resume Next
+    Set checkboxes = document.querySelectorAll(".optional-features input[type='checkbox']")
+    selectedFeatures = ""
+    For i = 0 To checkboxes.length - 1
+        checkboxes(i).checked = True
+        Dim fid
+        fid = Replace(checkboxes(i).id, "chk_", "")
+        If Len(selectedFeatures) > 0 Then selectedFeatures = selectedFeatures & ","
+        selectedFeatures = selectedFeatures & fid
+    Next
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub DeselectAllFeatures()
+    Dim checkboxes, i
+    On Error Resume Next
+    Set checkboxes = document.querySelectorAll(".optional-features input[type='checkbox']")
+    For i = 0 To checkboxes.length - 1
+        checkboxes(i).checked = False
+    Next
+    selectedFeatures = ""
+    UpdateFeatureCount
+    On Error Goto 0
+End Sub
+
+Sub UpdateFeatureCount()
+    Dim count, features
+    On Error Resume Next
+    features = Split(selectedFeatures, ",")
+    count = 0
+    Dim i
+    For i = 0 To UBound(features)
+        If Len(features(i)) > 0 Then count = count + 1
+    Next
+    document.getElementById("featureCount").innerText = "3 core + " & count & " optional features selected"
+    On Error Goto 0
+End Sub
+
+Sub RefreshDrives()
+    Dim diskDrives, disk, html, sizeGB, partCount, busType
+    On Error Resume Next
+    If wmi Is Nothing Then
+        Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    End If
+    If Err.Number <> 0 Then
+        Err.Clear
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br>Try running as Administrator.</div>"
+        document.getElementById("btnNext2").disabled = True
+        Exit Sub
+    End If
+    Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
+    If Err.Number <> 0 Then
+        Err.Clear
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.<br>Try running as Administrator.</div>"
+        document.getElementById("btnNext2").disabled = True
+        Exit Sub
+    End If
+    ReDim drives(0)
+    driveCount = 0
+    html = ""
+    For Each disk In diskDrives
+        If Err.Number <> 0 Then Exit For
+        If IsObject(disk) Then
+            If disk.Size > 0 Then
+                If InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
+                    sizeGB = FormatNumber(disk.Size / 1073741824, 1)
+                    partCount = disk.Partitions
+                    busType = disk.InterfaceType
+                    If IsNull(busType) Or busType = "" Then busType = "USB"
+                    Dim modelName
+                    modelName = disk.Model
+                    If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive"
+                    ReDim Preserve drives(driveCount)
+                    drives(driveCount) = disk.Index
+                    html = html & "<div class='drive-item' onclick='SelectDrive " & driveCount & "'>"
+                    html = html & "<div class='drive-icon'>USB</div>"
+                    html = html & "<div class='drive-info'>"
+                    html = html & "<div class='drive-name'>" & modelName & "</div>"
+                    html = html & "<div class='drive-size'>" & sizeGB & " GB - Disk " & disk.Index & "</div>"
+                    html = html & "<div class='drive-details'>" & partCount & " partition(s) | " & busType & "</div>"
+                    html = html & "</div></div>"
+                    driveCount = driveCount + 1
+                End If
+            End If
+        End If
+    Next
+    On Error Goto 0
+    If driveCount = 0 Then
+        html = "<div class='no-drives'>No USB drives detected.<br>Insert a USB drive and click Refresh.</div>"
+    End If
+    document.getElementById("driveList").innerHTML = html
+    selectedDrive = ""
+    selectedDriveNumber = -1
+    document.getElementById("btnNext2").disabled = True
+End Sub
+
+Sub SelectDrive(index)
+    Dim items, i
+    On Error Resume Next
+    Set items = document.getElementsByClassName("drive-item")
+    If items.length = 0 Then Exit Sub
+    If index < 0 Or index >= items.length Then Exit Sub
+    For i = 0 To items.length - 1
+        items(i).className = "drive-item"
+    Next
+    items(index).className = "drive-item selected"
+    selectedDriveNumber = drives(index)
+    selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
+    document.getElementById("btnNext2").disabled = False
+    On Error Goto 0
+End Sub
+
+Sub SetPartitionStyle(style)
+    partitionStyle = style
+End Sub
+
+Sub SetQuickFormat()
+    Dim chk
+    On Error Resume Next
+    Set chk = document.getElementById("chkQuickFormat")
+    If Not chk Is Nothing Then
+        quickFormat = chk.checked
+    End If
+    On Error Goto 0
+End Sub
+
+Sub GoToStep(stepNum)
+    Dim panels, steps, i, stepEl
+    On Error Resume Next
+    Set panels = document.getElementsByClassName("panel")
+    For i = 0 To panels.length - 1
+        panels(i).className = "panel"
+    Next
+    Set stepEl = document.getElementById("step" & stepNum)
+    If Not stepEl Is Nothing Then
+        stepEl.className = "panel active"
+    End If
+    Set steps = document.getElementsByClassName("step-item")
+    For i = 0 To steps.length - 1
+        If i + 1 < stepNum Then
+            steps(i).className = "step-item done"
+        ElseIf i + 1 = stepNum Then
+            steps(i).className = "step-item active"
+        Else
+            steps(i).className = "step-item"
+        End If
+    Next
+    If stepNum = 2 Then
+        RefreshDrives
+        document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & EDITION_NAME & "</span>"
+    ElseIf stepNum = 3 Then
+        document.getElementById("confirmDrive").innerText = selectedDrive
+        document.getElementById("confirmEdition").innerHTML = "<span class='edition-badge'>" & EDITION_NAME & "</span>"
+        document.getElementById("confirmPartStyle").innerText = partitionStyle
+        document.getElementById("confirmQuickFmt").innerText = IIf(quickFormat, "Yes", "No")
+        document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
+    ElseIf stepNum = 4 Then
+        document.getElementById("progressBar").className = "progress-bar-fill animated"
+        smoothProgress = 0
+    End If
+    On Error Goto 0
+End Sub
+
+Function GetFeatureCountText()
+    Dim features, count, i
+    features = Split(selectedFeatures, ",")
+    count = 0
+    For i = 0 To UBound(features)
+        If Len(features(i)) > 0 Then count = count + 1
+    Next
+    GetFeatureCountText = "3 core + " & count & " optional"
+End Function
+
+Function IIf(cond, trueVal, falseVal)
+    If cond Then IIf = trueVal Else IIf = falseVal
+End Function
+
+Sub StartCreation()
+    GoToStep 4
+    CreateUSB
+End Sub
+
+Sub CreateUSB()
+    Dim tempDir, psFile, progressFile, psCode, ts
+    tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
+    psFile = tempDir & "\aegis_creator.ps1"
+    progressFile = tempDir & "\aegis_progress.txt"
+    If fso.FileExists(progressFile) Then fso.DeleteFile progressFile
+    psCode = GetPowerShellCode()
+    Set ts = fso.CreateTextFile(psFile, True)
+    ts.Write psCode
+    ts.Close
+    Dim cmd
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & EDITION_NAME & """ -Features """ & selectedFeatures & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
+    shell.Run cmd, 0, False
+    progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
+End Sub
+
+Function GetPowerShellCode()
+    Dim code
+    code = "param([int]$DiskNumber, [string]$Edition, [string]$Features, [string]$PartitionStyle, [bool]$QuickFormat, [string]$ProgressFile)" & vbCrLf
+    code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
+    code = code & "$global:startTime = $null; $global:lastBytes = 0; $global:lastTime = $null" & vbCrLf
+    code = code & "function Write-P { param([int]$P, [string]$S, [string]$D='', [string]$Speed='', [string]$ETA='', [string]$Size=''); " & vbCrLf
+    code = code & "  $line = ""$P|$S|$D|$Speed|$ETA|$Size""; $line | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
+    code = code & "function Test-Admin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }" & vbCrLf
+    code = code & "function Get-DetailedError { param($ex)" & vbCrLf
+    code = code & "  $msg = $ex.Exception.Message" & vbCrLf
+    code = code & "  if ($msg -match 'access.*denied|permission') { return 'PERMISSION_DENIED: Run as Administrator.' }" & vbCrLf
+    code = code & "  if ($msg -match 'network|connection|timeout') { return 'NETWORK_ERROR: Check internet connection.' }" & vbCrLf
+    code = code & "  if ($msg -match 'disk.*full|space') { return 'DISK_FULL: Free up temp space.' }" & vbCrLf
+    code = code & "  if ($msg -match 'not found|404') { return 'NOT_FOUND: Server unavailable.' }" & vbCrLf
+    code = code & "  return ""ERROR: $msg"" }" & vbCrLf
+    code = code & "if (-not (Test-Admin)) { Write-P -1 'ADMIN_REQUIRED: Run as Administrator.'; exit 1 }" & vbCrLf
+    code = code & "try {" & vbCrLf
+    code = code & "Write-P 0 'Initializing...' ""$Edition Edition""" & vbCrLf
+    code = code & "$disk = Get-Disk -Number $DiskNumber -ErrorAction Stop" & vbCrLf
+    code = code & "if ($disk.IsSystem -or $disk.IsBoot) { Write-P -1 'SYSTEM_DRIVE: Cannot write to system drive.'; exit 1 }" & vbCrLf
+    code = code & "if ($disk.Size -lt 4GB) { Write-P -1 'DRIVE_TOO_SMALL: USB must be 4GB+.'; exit 1 }" & vbCrLf
+    code = code & "Write-P 3 'USB drive validated' ""Edition: $Edition""" & vbCrLf
+    code = code & "$tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null" & vbCrLf
+    code = code & "$isoPath = ""$tempDir\base.iso""" & vbCrLf
+    code = code & "$mirrors = @(" & vbCrLf
+    code = code & "  'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'," & vbCrLf
+    code = code & "  'https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'," & vbCrLf
+    code = code & "  'https://mirrors.xtom.com/osdn/storage/g/l/li/linuxlite/7.2/linux-lite-7.2-64bit.iso'" & vbCrLf
+    code = code & ")" & vbCrLf
+    code = code & "$expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'" & vbCrLf
+    code = code & "$maxRetries = 3; $mirrorIndex = 0; $downloadSuccess = $false" & vbCrLf
+    code = code & "Write-P 5 'Preparing download...' ""Aegis OS $Edition (~2.9 GB)""" & vbCrLf
+    code = code & "while (-not $downloadSuccess -and $mirrorIndex -lt $mirrors.Count) {" & vbCrLf
+    code = code & "  $isoUrl = $mirrors[$mirrorIndex]; $retryCount = 0" & vbCrLf
+    code = code & "  while (-not $downloadSuccess -and $retryCount -lt $maxRetries) {" & vbCrLf
+    code = code & "  try {" & vbCrLf
+    code = code & "    if ($mirrorIndex -gt 0 -or $retryCount -gt 0) { Write-P 6 ""Mirror $($mirrorIndex+1), Attempt $($retryCount+1)..."" }" & vbCrLf
+    code = code & "    $webRequest = [System.Net.HttpWebRequest]::Create($isoUrl)" & vbCrLf
+    code = code & "    $webRequest.UserAgent = 'AegisOS/2.8'; $webRequest.Timeout = 30000" & vbCrLf
+    code = code & "    $response = $webRequest.GetResponse(); $totalBytes = $response.ContentLength" & vbCrLf
+    code = code & "    $responseStream = $response.GetResponseStream(); $fileStream = [System.IO.File]::Create($isoPath)" & vbCrLf
+    code = code & "    $buffer = New-Object byte[] 8MB; $downloadedBytes = 0" & vbCrLf
+    code = code & "    $global:startTime = Get-Date; $global:lastTime = $global:startTime" & vbCrLf
+    code = code & "    while (($bytesRead = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {" & vbCrLf
+    code = code & "      $fileStream.Write($buffer, 0, $bytesRead); $downloadedBytes += $bytesRead" & vbCrLf
+    code = code & "      $pct = [int](($downloadedBytes / $totalBytes) * 100); $mappedPct = 8 + [int]($pct * 0.40)" & vbCrLf
+    code = code & "      $now = Get-Date" & vbCrLf
+    code = code & "      if (($now - $global:lastTime).TotalSeconds -ge 1) {" & vbCrLf
+    code = code & "        $elapsed = ($now - $global:startTime).TotalSeconds" & vbCrLf
+    code = code & "        $speed = $downloadedBytes / $elapsed / 1MB" & vbCrLf
+    code = code & "        $remaining = ($totalBytes - $downloadedBytes) / ($downloadedBytes / $elapsed)" & vbCrLf
+    code = code & "        $etaMins = [math]::Floor($remaining / 60); $etaSecs = [int]($remaining % 60)" & vbCrLf
+    code = code & "        $dlMB = [math]::Round($downloadedBytes / 1MB, 1); $totMB = [math]::Round($totalBytes / 1MB, 1)" & vbCrLf
+    code = code & "        $speedStr = '{0:N1} MB/s' -f $speed" & vbCrLf
+    code = code & "        $etaStr = if ($etaMins -gt 0) { ""$etaMins min $etaSecs sec"" } else { ""$etaSecs sec"" }" & vbCrLf
+    code = code & "        Write-P $mappedPct ""Downloading $Edition..."" ""$pct%"" $speedStr $etaStr ""$dlMB / $totMB MB""" & vbCrLf
+    code = code & "        $global:lastTime = $now" & vbCrLf
+    code = code & "      }}" & vbCrLf
+    code = code & "    $fileStream.Close(); $responseStream.Close(); $response.Close(); $downloadSuccess = $true" & vbCrLf
+    code = code & "  } catch { $retryCount++; if ($fileStream) { $fileStream.Close() }; if ($retryCount -ge $maxRetries) { break }; Start-Sleep -Seconds (2 * $retryCount) }" & vbCrLf
+    code = code & "  }" & vbCrLf
+    code = code & "  if (-not $downloadSuccess) { $mirrorIndex++ }}" & vbCrLf
+    code = code & "if (-not $downloadSuccess) { Write-P -1 'ALL_MIRRORS_FAILED: Check connection.'; exit 1 }" & vbCrLf
+    code = code & "if (-not (Test-Path $isoPath) -or (Get-Item $isoPath).Length -lt 500MB) { Write-P -1 'DOWNLOAD_INCOMPLETE'; exit 1 }" & vbCrLf
+    code = code & "Write-P 50 'Verifying integrity...' 'SHA256 checksum'" & vbCrLf
+    code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
+    code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
+    code = code & "Start-Sleep 1" & vbCrLf
+    code = code & "Write-P 54 'Preparing USB...' ""$PartitionStyle partition""" & vbCrLf
+    code = code & "$dp = ""select disk $DiskNumber`nclean""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
+    code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    code = code & "Start-Sleep 2" & vbCrLf
+    code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
+    code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
+    code = code & "try { $src = [IO.File]::OpenRead($isoPath)" & vbCrLf
+    code = code & "  $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None, 8MB, [IO.FileOptions]::WriteThrough)" & vbCrLf
+    code = code & "} catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    code = code & "$buf = New-Object byte[] 8MB; $written = 0; $total = $src.Length" & vbCrLf
+    code = code & "$writeStart = Get-Date; $lastWriteUpdate = $writeStart" & vbCrLf
+    code = code & "while (($read = $src.Read($buf, 0, $buf.Length)) -gt 0) {" & vbCrLf
+    code = code & "  try { $dst.Write($buf, 0, $read) } catch { $dst.Close(); $src.Close(); Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    code = code & "  $written += $read; $pct = [int](($written / $total) * 100); $mappedPct = 56 + [int]($pct * 0.40)" & vbCrLf
+    code = code & "  $now = Get-Date" & vbCrLf
+    code = code & "  if (($now - $lastWriteUpdate).TotalSeconds -ge 1) {" & vbCrLf
+    code = code & "    $elapsed = ($now - $writeStart).TotalSeconds; $speed = $written / $elapsed / 1MB" & vbCrLf
+    code = code & "    $remaining = ($total - $written) / ($written / $elapsed)" & vbCrLf
+    code = code & "    $etaMins = [math]::Floor($remaining / 60); $etaSecs = [int]($remaining % 60)" & vbCrLf
+    code = code & "    $speedStr = '{0:N1} MB/s' -f $speed" & vbCrLf
+    code = code & "    $etaStr = if ($etaMins -gt 0) { ""$etaMins min"" } else { ""$etaSecs sec"" }" & vbCrLf
+    code = code & "    Write-P $mappedPct 'Writing...' ""$pct%"" $speedStr $etaStr ''" & vbCrLf
+    code = code & "    $lastWriteUpdate = $now}}" & vbCrLf
+    code = code & "$dst.Flush(); $dst.Close(); $src.Close()" & vbCrLf
+    code = code & "Write-P 97 'Syncing...' 'Finalizing'" & vbCrLf
+    code = code & "Start-Sleep 3" & vbCrLf
+    code = code & """rescan"" | Out-File ""$tempDir\rs.txt"" -Encoding ASCII; diskpart /s ""$tempDir\rs.txt"" | Out-Null" & vbCrLf
+    code = code & "Write-P 99 'Cleaning up...' ''" & vbCrLf
+    code = code & "Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue" & vbCrLf
+    code = code & "Write-P 100 ""SUCCESS! Aegis OS $Edition ready!"" 'Safe to remove USB.'" & vbCrLf
+    code = code & "} catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    GetPowerShellCode = code
+End Function
+
+Sub CheckProgress()
+    Dim progressFile, ts, line, parts, pct, status, detail, speed, eta, size
+    On Error Resume Next
+    progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
+    If fso.FileExists(progressFile) Then
+        Set ts = fso.OpenTextFile(progressFile, 1)
+        If Err.Number = 0 And Not ts Is Nothing Then
+            line = ts.ReadLine()
+            ts.Close
+            If Err.Number = 0 And Len(line) > 0 Then
+                parts = Split(line, "|")
+                If UBound(parts) >= 0 Then
+                    If IsNumeric(parts(0)) Then pct = CInt(parts(0)) Else pct = 0
+                    status = "": detail = "": speed = "": eta = "": size = ""
+                    If UBound(parts) >= 1 Then status = parts(1)
+                    If UBound(parts) >= 2 Then detail = parts(2)
+                    If UBound(parts) >= 3 Then speed = parts(3)
+                    If UBound(parts) >= 4 Then eta = parts(4)
+                    If UBound(parts) >= 5 Then size = parts(5)
+                    If pct = -1 Then
+                        window.clearInterval progressTimer
+                        ShowError status, detail
+                    ElseIf pct = 100 Then
+                        window.clearInterval progressTimer
+                        document.getElementById("progressBar").className = "progress-bar-fill"
+                        UpdateProgress 100, status, detail, "", "", ""
+                        window.setTimeout GetRef("GoToStepFive"), 1500
+                    Else
+                        UpdateProgressSmooth pct, status, detail, speed, eta, size
+                    End If
+                End If
+            End If
+        Else
+            Err.Clear
+        End If
+    End If
+    On Error Goto 0
+End Sub
+
+Sub GoToStepFive()
+    GoToStep 5
+End Sub
+
+Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
+    If targetPct > smoothProgress Then
+        smoothProgress = smoothProgress + 1
+        If smoothProgress > targetPct Then smoothProgress = targetPct
+    End If
+    UpdateProgress smoothProgress, status, detail, speed, eta, size
+End Sub
+
+Sub UpdateProgress(pct, status, detail, speed, eta, size)
+    document.getElementById("progressBar").style.width = pct & "%"
+    document.getElementById("progressPercent").innerText = pct & "%"
+    document.getElementById("progressStatus").innerText = status
+    document.getElementById("progressDetail").innerText = detail
+    If Len(speed) > 0 Then
+        document.getElementById("progressStats").innerHTML = _
+            "<div class='progress-stat'><div class='progress-stat-value'>" & speed & "</div><div class='progress-stat-label'>Speed</div></div>" & _
+            "<div class='progress-stat'><div class='progress-stat-value'>" & eta & "</div><div class='progress-stat-label'>Remaining</div></div>" & _
+            "<div class='progress-stat'><div class='progress-stat-value'>" & size & "</div><div class='progress-stat-label'>Size</div></div>"
+    End If
+End Sub
+
+Sub ShowError(errCode, errDetail)
+    document.getElementById("progressContainer").innerHTML = _
+        "<div class='error-box'><strong>&#10007; Error: " & errCode & "</strong><br>" & errDetail & "</div>" & _
+        "<div class='btn-row'><button class='btn btn-secondary' onclick='GoToStep 2'>Back</button></div>"
+End Sub
+
+Sub CloseApp()
+    window.close
+End Sub
+</script>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <svg class="logo-svg shield-animate" viewBox="0 0 100 100">
+            <defs>
+                <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style="stop-color:#8b5cf6"/>
+                    <stop offset="100%" style="stop-color:#7c3aed"/>
+                </linearGradient>
+            </defs>
+            <path d="M50 5 L90 20 L90 45 C90 70 70 90 50 95 C30 90 10 70 10 45 L10 20 Z" fill="url(#shieldGrad)" stroke="#fff" stroke-width="2"/>
+            <path d="M35 50 L45 60 L65 40" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="header-text">
+            <h1>Aegis OS AI Developer Edition Installer</h1>
+            <p>Machine learning and AI development environment</p>
+        </div>
+    </div>
+    <div class="content">
+        <div id="adminNotice" class="admin-notice" style="display:none">
+            <strong>&#9888; Administrator Required</strong> - Right-click and "Run as Administrator" for full functionality.
+        </div>
+        <div class="step-nav">
+            <div class="step-item active">
+                <div class="step-num">1</div>
+                <div class="step-label">Features</div>
+                <div class="step-connector"></div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">2</div>
+                <div class="step-label">USB</div>
+                <div class="step-connector"></div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">3</div>
+                <div class="step-label">Confirm</div>
+                <div class="step-connector"></div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">4</div>
+                <div class="step-label">Create</div>
+                <div class="step-connector"></div>
+            </div>
+            <div class="step-item">
+                <div class="step-num">5</div>
+                <div class="step-label">Done</div>
+            </div>
+        </div>
+        <div id="step1" class="panel active">
+            <h2 class="section-title">Select Features <span class="edition-badge">AI Developer</span></h2>
+            <p class="section-desc">Choose which features to include in your Aegis OS AI Developer installation.</p>
+            <div class="sys-req-box">
+                <div id="sysReqContent"></div>
+            </div>
+            <div class="core-features">
+                <div class="feature-section-title"><span class="icon">&#9733;</span> Core Features (Always Included)</div>
+                <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis OS Base System</div>
+                <div class="core-feature-item"><span class="icon">&#10003;</span> XFCE 4.18 Desktop Environment</div>
+                <div class="core-feature-item"><span class="icon">&#10003;</span> Essential System Utilities</div>
+            </div>
+            <div class="feature-actions">
+                <button class="btn btn-small btn-secondary" onclick="SelectAllFeatures">Select All</button>
+                <button class="btn btn-small btn-secondary" onclick="DeselectAllFeatures">Deselect All</button>
+            </div>
+            <div class="optional-features">
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_wallpaper" checked onclick="ToggleFeature 'wallpaper'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">Wallpaper Engine</div>
+                        <div class="feature-card-desc">Dynamic wallpapers and themes</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_stream" checked onclick="ToggleFeature 'stream'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">Aegis Stream</div>
+                        <div class="feature-card-desc">Screen sharing and collaboration</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_security" checked onclick="ToggleFeature 'security'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">Security Center</div>
+                        <div class="feature-card-desc">Secure development environment</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_backup" checked onclick="ToggleFeature 'backup'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">Backup Pro</div>
+                        <div class="feature-card-desc">Model and code backup</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_ai" checked onclick="ToggleFeature 'ai'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">AI Toolkit</div>
+                        <div class="feature-card-desc">PyTorch, TensorFlow, model management</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_cuda" checked onclick="ToggleFeature 'cuda'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">CUDA Support</div>
+                        <div class="feature-card-desc">NVIDIA GPU acceleration for AI</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_docker" checked onclick="ToggleFeature 'docker'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">Docker & Containers</div>
+                        <div class="feature-card-desc">Container runtime for ML environments</div>
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <input type="checkbox" id="chk_jupyter" onclick="ToggleFeature 'jupyter'">
+                    <div class="feature-card-content">
+                        <div class="feature-card-name">JupyterLab</div>
+                        <div class="feature-card-desc">Interactive notebooks for data science</div>
+                    </div>
+                </div>
+            </div>
+            <div id="featureCount" class="feature-count">3 core + 7 optional features selected</div>
+            <div class="btn-row">
+                <button class="btn btn-primary" onclick="GoToStep 2">Next: Select USB Drive &#8594;</button>
+            </div>
+        </div>
+        <div id="step2" class="panel">
+            <h2 class="section-title">Select USB Drive <span id="editionDisplay"></span></h2>
+            <p class="section-desc">Choose the USB drive for your Aegis OS installation. All data will be erased.</p>
+            <div class="warning-box">
+                <strong>&#9888; Warning:</strong> The selected drive will be completely formatted. Back up important data first!
+            </div>
+            <div id="driveList" class="drive-list">
+                <div class="no-drives">Click "Refresh" to scan for USB drives.</div>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button class="btn btn-refresh" onclick="RefreshDrives">&#8635; Refresh Drives</button>
+            </div>
+            <div class="advanced-panel">
+                <h4>&#9881; Advanced Options</h4>
+                <div class="advanced-grid">
+                    <div class="option-group">
+                        <span class="option-label">Partition Style:</span>
+                        <div class="radio-group">
+                            <label class="radio-item"><input type="radio" name="partStyle" checked onclick="SetPartitionStyle 'GPT'"> GPT (UEFI)</label>
+                            <label class="radio-item"><input type="radio" name="partStyle" onclick="SetPartitionStyle 'MBR'"> MBR (Legacy)</label>
+                        </div>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat">
+                            Quick Format
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-secondary" onclick="GoToStep 1">&#8592; Back</button>
+                <button id="btnNext2" class="btn btn-primary" onclick="GoToStep 3" disabled>Next: Confirm &#8594;</button>
+            </div>
+        </div>
+        <div id="step3" class="panel">
+            <h2 class="section-title">Confirm Installation</h2>
+            <p class="section-desc">Review your settings before creating the bootable USB.</p>
+            <div class="info-box">
+                <h3>Installation Summary</h3>
+                <ul>
+                    <li><strong>Target Drive:</strong> <span id="confirmDrive"></span></li>
+                    <li><strong>Edition:</strong> <span id="confirmEdition"></span></li>
+                    <li><strong>Partition Style:</strong> <span id="confirmPartStyle"></span></li>
+                    <li><strong>Quick Format:</strong> <span id="confirmQuickFmt"></span></li>
+                    <li><strong>Features:</strong> <span id="confirmFeatures"></span></li>
+                </ul>
+            </div>
+            <div class="warning-box">
+                <strong>&#9888; Final Warning:</strong> Clicking "Create USB" will erase all data on the selected drive. This action cannot be undone!
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-secondary" onclick="GoToStep 2">&#8592; Back</button>
+                <button class="btn btn-primary" onclick="StartCreation">&#9889; Create USB</button>
+            </div>
+        </div>
+        <div id="step4" class="panel">
+            <h2 class="section-title">Creating Bootable USB</h2>
+            <p class="section-desc">Please wait while your Aegis OS AI Developer USB is being created...</p>
+            <div id="progressContainer" class="progress-container">
+                <div class="progress-percent" id="progressPercent">0%</div>
+                <div class="progress-bar-bg">
+                    <div id="progressBar" class="progress-bar-fill animated"></div>
+                </div>
+                <div class="progress-status" id="progressStatus">Initializing...</div>
+                <div class="progress-detail" id="progressDetail"></div>
+                <div class="progress-stats" id="progressStats"></div>
+            </div>
+            <div class="warning-box" style="margin-top: 15px;">
+                <strong>&#9888; Do not remove the USB drive</strong> until the process is complete!
+            </div>
+        </div>
+        <div id="step5" class="panel">
+            <div class="success-container">
+                <div class="success-icon">&#10003;</div>
+                <h2 class="success-title">USB Created Successfully!</h2>
+                <p class="success-desc">Your Aegis OS AI Developer bootable USB is ready to use.</p>
+                <div class="success-steps">
+                    <h3>Next Steps:</h3>
+                    <ol>
+                        <li>Safely eject the USB drive from Windows</li>
+                        <li>Insert the USB into your AI workstation</li>
+                        <li>Restart and boot from the USB drive</li>
+                        <li>Follow the Aegis OS installation wizard</li>
+                    </ol>
+                </div>
+                <div class="btn-row" style="justify-content: center; margin-top: 20px;">
+                    <button class="btn btn-primary" onclick="CloseApp">Close Installer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="footer">
+        Aegis OS AI Developer Edition &copy; 2025 | Version 2.8
+    </div>
+</div>
+</body>
+</html>
