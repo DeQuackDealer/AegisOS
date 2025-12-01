@@ -5468,12 +5468,58 @@ def admin_logout():
 # ============================================================
 
 # Global free period settings (in-memory, could be stored in DB)
+# DEFAULT: Enabled with no time limits until license system is fixed
 FREE_PERIOD_SETTINGS = {
-    'enabled': False,
+    'enabled': True,  # FREE MODE ENABLED BY DEFAULT
     'start_time': None,
     'end_time': None,
-    'editions': []  # Empty = all editions, or list specific ones
+    'editions': []  # Empty = all editions
 }
+
+# Rate limiting for free downloads to prevent bot abuse
+# Tracks IP -> {count, first_request_time}
+FREE_DOWNLOAD_LIMITS = {}
+FREE_DOWNLOAD_MAX_PER_HOUR = 5  # Max downloads per IP per hour
+FREE_DOWNLOAD_MAX_PER_DAY = 10  # Max downloads per IP per day
+
+def check_download_rate_limit(ip_address):
+    """Check if IP is within download rate limits. Returns (allowed, message)"""
+    now = datetime.now()
+    
+    if ip_address not in FREE_DOWNLOAD_LIMITS:
+        FREE_DOWNLOAD_LIMITS[ip_address] = {
+            'hourly_count': 0,
+            'daily_count': 0,
+            'hour_start': now,
+            'day_start': now
+        }
+    
+    limits = FREE_DOWNLOAD_LIMITS[ip_address]
+    
+    # Reset hourly counter if hour passed
+    if (now - limits['hour_start']).total_seconds() > 3600:
+        limits['hourly_count'] = 0
+        limits['hour_start'] = now
+    
+    # Reset daily counter if day passed
+    if (now - limits['day_start']).total_seconds() > 86400:
+        limits['daily_count'] = 0
+        limits['day_start'] = now
+    
+    # Check limits
+    if limits['hourly_count'] >= FREE_DOWNLOAD_MAX_PER_HOUR:
+        minutes_left = 60 - int((now - limits['hour_start']).total_seconds() / 60)
+        return False, f"Rate limit exceeded. Try again in {minutes_left} minutes."
+    
+    if limits['daily_count'] >= FREE_DOWNLOAD_MAX_PER_DAY:
+        hours_left = 24 - int((now - limits['day_start']).total_seconds() / 3600)
+        return False, f"Daily limit reached. Try again in {hours_left} hours."
+    
+    # Increment counters
+    limits['hourly_count'] += 1
+    limits['daily_count'] += 1
+    
+    return True, "OK"
 
 EDITION_HTA_FILES = {
     'basic': 'aegis-installer-basic.hta',
@@ -5580,6 +5626,109 @@ def admin_download_edition_hta(edition):
         mimetype='application/hta',
         headers={
             'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Installer.hta',
+            'Content-Type': 'application/hta; charset=utf-8'
+        }
+    )
+
+# ============================================================
+# PUBLIC FREE DOWNLOAD ENDPOINTS (Rate Limited)
+# Available during free period - no admin auth required
+# ============================================================
+
+@app.route('/api/free/editions', methods=['GET'])
+def public_list_free_editions():
+    """List available editions during free period (public endpoint)"""
+    if not is_free_period_active():
+        return jsonify({
+            'error': 'Free downloads are not currently available',
+            'free_period_active': False
+        }), 403
+    
+    editions = []
+    for edition, filename in EDITION_HTA_FILES.items():
+        # Skip server edition from public free downloads
+        if edition == 'server':
+            continue
+            
+        edition_info = OS_EDITIONS.get(edition, {})
+        editions.append({
+            'edition': edition,
+            'name': edition_info.get('name', edition.replace('_', ' ').title()),
+            'download_url': f"/api/free/download/{edition}"
+        })
+    
+    return jsonify({
+        'success': True,
+        'free_period_active': True,
+        'editions': editions,
+        'rate_limit': {
+            'per_hour': FREE_DOWNLOAD_MAX_PER_HOUR,
+            'per_day': FREE_DOWNLOAD_MAX_PER_DAY
+        }
+    }), 200
+
+@app.route('/api/free/download/<edition>', methods=['GET'])
+def public_free_download(edition):
+    """Download a free edition HTA (rate limited, public endpoint)"""
+    # Check free period is active
+    if not is_free_period_active():
+        return jsonify({
+            'error': 'Free downloads are not currently available',
+            'free_period_active': False
+        }), 403
+    
+    edition = sanitize_input(edition.lower().replace('-', '_'))
+    
+    # Server edition not available for free download
+    if edition == 'server':
+        return jsonify({
+            'error': 'Server edition is not available for free download',
+            'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
+        }), 403
+    
+    if edition not in EDITION_HTA_FILES:
+        return jsonify({
+            'error': f'Unknown edition: {edition}',
+            'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
+        }), 404
+    
+    # Check rate limit
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
+    allowed, message = check_download_rate_limit(client_ip)
+    if not allowed:
+        return jsonify({
+            'error': 'Rate limit exceeded',
+            'message': message,
+            'retry_info': 'Too many download requests. Please wait before trying again.'
+        }), 429
+    
+    filename = EDITION_HTA_FILES[edition]
+    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({
+            'error': f'Installer not available for {edition}',
+            'hint': 'Please try again later.'
+        }), 404
+    
+    # Log the download
+    tamper_protected_audit_log("FREE_HTA_DOWNLOAD", {
+        "ip": client_ip,
+        "edition": edition,
+        "filename": filename
+    }, "INFO")
+    
+    with open(filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    return Response(
+        content,
+        mimetype='application/hta',
+        headers={
+            'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Free-Installer.hta',
             'Content-Type': 'application/hta; charset=utf-8'
         }
     )
