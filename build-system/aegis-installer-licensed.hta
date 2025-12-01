@@ -378,17 +378,17 @@ Set rsaVerifyCache = CreateObject("Scripting.Dictionary")
 ' ============================================================
 
 Function VerifyRSASignature(message, signatureB64)
-    Dim tempDir, psScript, resultFile, ts, result, cmd, publicKey
+    Dim tempDir, psScript, resultFile, ts, result, cmd, publicKeyXmlB64
     On Error Resume Next
     
     VerifyRSASignature = False
     
-    ' Get the public key (RSA_PUBLIC_KEY replaces CACHE_SALT in signed installers)
-    publicKey = CACHE_SALT
+    ' Get the public key XML (base64-encoded XML format for PowerShell 5 compatibility)
+    publicKeyXmlB64 = CACHE_SALT
     
     ' FAIL CLOSED: If no public key embedded, this installer is unsigned
     ' Do NOT allow unsigned installers to pass validation
-    If publicKey = "PLACEHOLDER_SALT" Or Len(publicKey) < 100 Then
+    If publicKeyXmlB64 = "PLACEHOLDER_SALT" Or Len(publicKeyXmlB64) < 100 Then
         ' This installer was not properly signed - REJECT
         VerifyRSASignature = False
         Exit Function
@@ -407,22 +407,28 @@ Function VerifyRSASignature(message, signatureB64)
     resultFile = tempDir & "\aegis_rsa_result.txt"
     
     ' PowerShell script for RSA-SHA256 signature verification
+    ' Uses XML format (FromXmlString) for PowerShell 5 compatibility
+    ' (ImportSubjectPublicKeyInfo requires PowerShell 7+ which most Windows users don't have)
     Dim psCode
     psCode = "$ErrorActionPreference='Stop'" & vbCrLf
     psCode = psCode & "try {" & vbCrLf
-    psCode = psCode & "  $pubKeyB64 = '" & publicKey & "'" & vbCrLf
+    psCode = psCode & "  $pubKeyXmlB64 = '" & publicKeyXmlB64 & "'" & vbCrLf
     psCode = psCode & "  $sigB64 = '" & signatureB64 & "'" & vbCrLf
     psCode = psCode & "  $message = '" & EscapePSString(message) & "'" & vbCrLf
-    psCode = psCode & "  $pubKeyDer = [Convert]::FromBase64String($pubKeyB64)" & vbCrLf
+    psCode = psCode & "  # Decode base64-encoded XML public key" & vbCrLf
+    psCode = psCode & "  $pubKeyXml = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pubKeyXmlB64))" & vbCrLf
     psCode = psCode & "  $sig = [Convert]::FromBase64String($sigB64)" & vbCrLf
     psCode = psCode & "  $msgBytes = [System.Text.Encoding]::UTF8.GetBytes($message)" & vbCrLf
-    psCode = psCode & "  $rsa = [System.Security.Cryptography.RSA]::Create()" & vbCrLf
-    psCode = psCode & "  $rsa.ImportSubjectPublicKeyInfo($pubKeyDer, [ref]$null)" & vbCrLf
-    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sig, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)" & vbCrLf
+    psCode = psCode & "  # Create RSA object and import XML key (PowerShell 5 compatible)" & vbCrLf
+    psCode = psCode & "  $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider" & vbCrLf
+    psCode = psCode & "  $rsa.FromXmlString($pubKeyXml)" & vbCrLf
+    psCode = psCode & "  # Verify signature using SHA256" & vbCrLf
+    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, 'SHA256', $sig)" & vbCrLf
     psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding UTF8 -Force }" & vbCrLf
     psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding UTF8 -Force }" & vbCrLf
+    psCode = psCode & "  $rsa.Dispose()" & vbCrLf
     psCode = psCode & "} catch {" & vbCrLf
-    psCode = psCode & "  'ERROR' | Out-File '" & resultFile & "' -Encoding UTF8 -Force" & vbCrLf
+    psCode = psCode & "  $_.Exception.Message | Out-File '" & resultFile & "' -Encoding UTF8 -Force" & vbCrLf
     psCode = psCode & "}" & vbCrLf
     
     ' Write and execute PowerShell script

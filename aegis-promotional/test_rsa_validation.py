@@ -2,6 +2,7 @@
 """
 RSA License Validation Tester
 Tests the complete signing and verification process used by the HTA installer
+Now uses XML format for PowerShell 5 compatibility
 """
 
 import os
@@ -13,56 +14,27 @@ import base64
 import requests
 
 def compute_key_hash(key):
-    """Replicate the VBScript ComputeKeyHash function EXACTLY
-    
-    VBScript:
-        h = 0: r = &H5A3C
-        For i = 1 To Len(str)
-            c = Asc(Mid(str, i, 1))
-            h = ((h * 31) + c) And &H7FFFFFFF
-            r = ((r Xor c) * 17) And &HFFFF
-        Next
-        ComputeKeyHash = LCase(Left(Hex(h) & Hex(r), 16))
-    """
+    """Replicate the VBScript ComputeKeyHash function EXACTLY"""
     h = 0
-    r = 0x5A3C  # Initial value for secondary hash
+    r = 0x5A3C
     for c in key.upper():
         code = ord(c)
         h = ((h * 31) + code) & 0x7FFFFFFF
         r = ((r ^ code) * 17) & 0xFFFF
     
-    # Combine h and r, convert to hex, take first 16 chars, pad with zeros
     combined = format(h, 'x') + format(r, 'x')
     result = combined[:16].lower()
     while len(result) < 16:
         result = '0' + result
     return result
 
-def test_hash_function():
-    """Test that the hash function matches across all implementations"""
-    print("\n[0] Testing hash function consistency...")
-    test_keys = [
-        "BSIC-DEMO-TEST-2024",
-        "GAME-DEMO-TEST-2024",
-        "AIDV-DEMO-TEST-2024",
-    ]
-    
-    for key in test_keys:
-        hash_val = compute_key_hash(key)
-        print(f"   {key} -> {hash_val}")
-    
-    return True
-
 def test_server_rsa_signing():
     """Test that the server is properly signing licenses"""
     print("=" * 60)
-    print("RSA LICENSE VALIDATION TESTER")
+    print("RSA LICENSE VALIDATION TESTER (XML Format)")
     print("=" * 60)
     
     base_url = "http://localhost:5000"
-    
-    # Test hash function first
-    test_hash_function()
     
     # Test 1: Check if licensed installer is available
     print("\n[1] Testing licensed installer download...")
@@ -80,18 +52,33 @@ def test_server_rsa_signing():
         print(f"   FAIL: {e}")
         return False
     
-    # Test 2: Extract RSA public key from HTA
-    print("\n[2] Extracting RSA public key from installer...")
-    pk_match = re.search(r'Const RSA_PUBLIC_KEY = "([^"]+)"', hta_content)
-    if not pk_match:
-        pk_match = re.search(r'Const CACHE_SALT = "([^"]+)"', hta_content)
+    # Test 2: Extract RSA public key XML from HTA
+    print("\n[2] Extracting RSA public key XML from installer...")
+    pk_match = re.search(r'Const CACHE_SALT = "([^"]+)"', hta_content)
     
     if not pk_match or pk_match.group(1) == "PLACEHOLDER_SALT":
         print("   FAIL: No RSA public key found (still placeholder)")
         return False
     
-    public_key_b64 = pk_match.group(1)
-    print(f"   PASS: Public key found ({len(public_key_b64)} chars)")
+    public_key_xml_b64 = pk_match.group(1)
+    print(f"   PASS: Public key XML found ({len(public_key_xml_b64)} chars)")
+    
+    # Decode and verify it's valid XML format
+    try:
+        public_key_xml = base64.b64decode(public_key_xml_b64).decode()
+        if not public_key_xml.startswith('<RSAKeyValue>'):
+            print(f"   FAIL: Invalid XML format: {public_key_xml[:50]}")
+            return False
+        print(f"   PASS: Valid XML format detected")
+        
+        # Extract modulus and exponent
+        mod_match = re.search(r'<Modulus>([^<]+)</Modulus>', public_key_xml)
+        exp_match = re.search(r'<Exponent>([^<]+)</Exponent>', public_key_xml)
+        if mod_match and exp_match:
+            print(f"   PASS: Modulus ({len(mod_match.group(1))} chars) and Exponent found")
+    except Exception as e:
+        print(f"   FAIL: Could not decode XML: {e}")
+        return False
     
     # Test 3: Extract license cache
     print("\n[3] Extracting signed license cache...")
@@ -114,22 +101,30 @@ def test_server_rsa_signing():
     master_sig = sig_match.group(1)
     print(f"   PASS: Master signature found ({len(master_sig)} chars)")
     
-    # Test 5: Extract build date
-    print("\n[5] Extracting cache build date...")
+    # Test 5: Extract build date and integrity check
+    print("\n[5] Extracting cache metadata...")
     date_match = re.search(r'Const CACHE_BUILD_DATE = "([^"]+)"', hta_content)
+    integrity_match = re.search(r'Const INTEGRITY_CHECK = "([^"]+)"', hta_content)
+    
     if not date_match:
         print("   FAIL: No build date found")
         return False
     
     build_date = date_match.group(1)
+    integrity = integrity_match.group(1) if integrity_match else "N/A"
     print(f"   PASS: Build date: {build_date}")
+    print(f"   PASS: Integrity check: {integrity[:30]}...")
+    
+    if integrity == "PLACEHOLDER_INTEGRITY":
+        print("   FAIL: Integrity check still placeholder!")
+        return False
     
     # Test 6: Verify license entries have signatures
     print("\n[6] Verifying license entry signatures...")
     signed_entries = 0
     for entry in cache_entries:
         parts = entry.split(':')
-        if len(parts) >= 4:  # hash:edition:extra:signature
+        if len(parts) >= 4:
             signed_entries += 1
     
     print(f"   PASS: {signed_entries}/{len(cache_entries)} entries have signatures")
@@ -164,21 +159,29 @@ def test_server_rsa_signing():
         print("   FAIL: No demo licenses match - hash function mismatch!")
         return False
     
-    # Test 8: Verify RSA signature using Python cryptography
+    # Test 8: Verify RSA signature using Python cryptography (with XML format)
     print("\n[8] Verifying RSA signatures with Python crypto...")
     try:
         from cryptography.hazmat.primitives import serialization, hashes
         from cryptography.hazmat.primitives.asymmetric import padding
         from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
         
-        # Decode the public key
-        try:
-            public_key_der = base64.b64decode(public_key_b64)
-            public_key = serialization.load_der_public_key(public_key_der, backend=default_backend())
-            print("   PASS: Public key decoded successfully")
-        except Exception as e:
-            print(f"   FAIL: Could not decode public key: {e}")
-            return False
+        # Parse XML to extract modulus and exponent
+        modulus_b64 = mod_match.group(1)
+        exponent_b64 = exp_match.group(1)
+        
+        modulus_bytes = base64.b64decode(modulus_b64)
+        exponent_bytes = base64.b64decode(exponent_b64)
+        
+        modulus = int.from_bytes(modulus_bytes, byteorder='big')
+        exponent = int.from_bytes(exponent_bytes, byteorder='big')
+        
+        # Reconstruct public key from numbers
+        public_numbers = RSAPublicNumbers(exponent, modulus)
+        public_key = public_numbers.public_key(default_backend())
+        
+        print(f"   PASS: Public key reconstructed (modulus bits: {modulus.bit_length()})")
         
         # Verify master signature
         print("\n[9] Verifying master cache signature...")
@@ -247,6 +250,7 @@ def test_server_rsa_signing():
     
     print("\n" + "=" * 60)
     print("ALL TESTS PASSED - RSA validation is working correctly!")
+    print("PowerShell 5 compatible XML format in use")
     print("=" * 60)
     return True
 

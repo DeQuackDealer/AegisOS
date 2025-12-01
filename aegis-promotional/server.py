@@ -2452,19 +2452,33 @@ def get_rsa_private_key():
         return None
 
 def get_public_key_for_hta():
-    """Get public key in format suitable for HTA PowerShell verification"""
+    """Get public key in XML format suitable for PowerShell 5 verification
+    
+    Uses XML format (modulus+exponent) instead of DER because:
+    - ImportSubjectPublicKeyInfo() requires PowerShell 7+ (.NET 5+)
+    - FromXmlString() works on PowerShell 5 (standard on Windows 10/11)
+    
+    Returns: Base64-encoded XML string: "<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>"
+    """
     private_key = get_rsa_private_key()
     if private_key is None:
         return None
     
     public_key = private_key.public_key()
+    public_numbers = public_key.public_numbers()
     
-    # Export as base64-encoded DER (more compact for HTA embedding)
-    public_der = public_key.public_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-    return base64.b64encode(public_der).decode()
+    # Convert modulus (n) and exponent (e) to base64
+    modulus_bytes = public_numbers.n.to_bytes((public_numbers.n.bit_length() + 7) // 8, byteorder='big')
+    exponent_bytes = public_numbers.e.to_bytes((public_numbers.e.bit_length() + 7) // 8, byteorder='big')
+    
+    modulus_b64 = base64.b64encode(modulus_bytes).decode()
+    exponent_b64 = base64.b64encode(exponent_bytes).decode()
+    
+    # Build XML format that PowerShell 5's FromXmlString() can parse
+    xml_key = f"<RSAKeyValue><Modulus>{modulus_b64}</Modulus><Exponent>{exponent_b64}</Exponent></RSAKeyValue>"
+    
+    # Return as base64 to embed safely in HTA (avoids XML escaping issues)
+    return base64.b64encode(xml_key.encode()).decode()
 
 def sign_license_rsa(message):
     """Sign a license message using RSA-SHA256
@@ -2588,10 +2602,10 @@ def download_licensed_installer():
                 'Const CACHE_BUILD_DATE = "2025-11-30"',
                 f'Const CACHE_BUILD_DATE = "{build_date}"'
             )
-            # Replace CACHE_SALT with RSA public key (for verification only)
+            # Replace CACHE_SALT value with RSA public key (keep constant name for HTA compatibility)
             script_content = script_content.replace(
                 'Const CACHE_SALT = "PLACEHOLDER_SALT"',
-                f'Const RSA_PUBLIC_KEY = "{public_key_b64}"'
+                f'Const CACHE_SALT = "{public_key_b64}"'
             )
             script_content = script_content.replace(
                 'Const MASTER_SIG = "PLACEHOLDER_MASTER_SIG"',

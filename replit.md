@@ -32,8 +32,14 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 
 **Security Model:**
 - **Private Key**: Stored as `LICENSE_SIGNING_PRIVATE_KEY` secret (PEM format)
-- **Public Key**: Embedded in HTA installer as base64-encoded DER
+- **Public Key**: Embedded in HTA installer as base64-encoded XML (PowerShell 5 compatible)
 - **Signatures**: RSA-SHA256 for each license entry and cache integrity
+- **Hash Function**: Two-part hash combining h=((h*31)+c)&0x7FFFFFFF and r=((r^c)*17)&0xFFFF
+
+**PowerShell 5 Compatibility (Critical):**
+- Uses XML format `<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>`
+- This format works with `FromXmlString()` in PowerShell 5 (standard on Windows 10/11)
+- Previous DER format (`ImportSubjectPublicKeyInfo`) required PowerShell 7+ which most users don't have
 
 **Fail-Closed Design:**
 - Server returns HTTP 503 if private key not configured (no unsigned installers generated)
@@ -43,8 +49,8 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 **Operational Procedures:**
 1. Generate RSA-2048 key pair (private key in PEM format)
 2. Set `LICENSE_SIGNING_PRIVATE_KEY` secret with private key contents
-3. Server automatically derives public key and embeds in installers
-4. HTA uses PowerShell .NET crypto for offline RSA verification
+3. Server automatically derives public key and embeds in installers (XML format)
+4. HTA uses PowerShell .NET crypto (RSACryptoServiceProvider.FromXmlString) for offline RSA verification
 
 **Key Rotation:**
 1. Generate new RSA-2048 key pair
