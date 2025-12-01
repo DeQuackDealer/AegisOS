@@ -26,6 +26,40 @@ The project includes cross-platform GUI installers: Windows HTA (HTML Applicatio
 
 A robust payment and license system is integrated, managing user accounts, license key generation (e.g., `PREFIX-XXXX-XXXX-XXXX` format with checksums), and Stripe-based payment processing. Database models track users, licenses, Stripe events, and email logs. Confirmation emails with license keys are sent via SendGrid.
 
+### RSA License Signing System (December 2025)
+
+The licensed installer uses RSA-2048 asymmetric cryptography to prevent license forgery:
+
+**Security Model:**
+- **Private Key**: Stored as `LICENSE_SIGNING_PRIVATE_KEY` secret (PEM format)
+- **Public Key**: Embedded in HTA installer as base64-encoded DER
+- **Signatures**: RSA-SHA256 for each license entry and cache integrity
+
+**Fail-Closed Design:**
+- Server returns HTTP 503 if private key not configured (no unsigned installers generated)
+- HTA rejects validation if public key is placeholder (no bypass for unsigned builds)
+- All validation functions default to False and require valid RSA signatures
+
+**Operational Procedures:**
+1. Generate RSA-2048 key pair (private key in PEM format)
+2. Set `LICENSE_SIGNING_PRIVATE_KEY` secret with private key contents
+3. Server automatically derives public key and embeds in installers
+4. HTA uses PowerShell .NET crypto for offline RSA verification
+
+**Key Rotation:**
+1. Generate new RSA-2048 key pair
+2. Update `LICENSE_SIGNING_PRIVATE_KEY` secret
+3. All new installer downloads will contain new public key
+4. Existing installers continue working until user re-downloads
+
+**Demo Licenses (for testing):**
+- BSIC-DEMO-TEST-2024 (Basic)
+- WORK-DEMO-TEST-2024 (Workplace)
+- GAME-DEMO-TEST-2024 (Gamer)
+- AIDV-DEMO-TEST-2024 (AI Developer)
+- GMAI-DEMO-TEST-2024 (Gamer+AI)
+- SERV-DEMO-TEST-2024 (Server)
+
 ### Aegis Exclusive Tools
 
 Each OS edition includes 25+ custom Python-based utilities located in `/usr/local/bin/`. All tools support GUI (tkinter) and CLI modes, tier-based feature gating, and logging.
