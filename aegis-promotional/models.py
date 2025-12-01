@@ -1,14 +1,13 @@
 import os
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
 class Base(DeclarativeBase):
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    pass
 
 
 db = SQLAlchemy(model_class=Base)
