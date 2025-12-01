@@ -2568,7 +2568,7 @@ def generate_license_cache():
         ).limit(500).all()
 
         for lic in recent_licenses:
-            key_hash = compute_key_hash(lic.license_key) # Use correct hash function
+            key_hash = generate_vbs_hash(lic.license_key) # Use correct hash function
             if rsa_enabled:
                 message = f"{key_hash}:{lic.edition}"
                 sig = sign_license_rsa(message)
