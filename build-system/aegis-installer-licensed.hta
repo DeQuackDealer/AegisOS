@@ -357,20 +357,111 @@ End Sub
 Dim validationToken, serverUrl, isValidating, cachedLicenses, cacheExpiry
 Dim g_integrityValid, g_validationCount
 
-' Cryptographically signed license cache - Server-signed at download time
-' Format: "HASH:EDITION:TIER:SIGNATURE" separated by |
-' NEVER modify these constants - signatures will fail
+' RSA-signed license cache - Server signs with private key, HTA verifies with public key
+' Format: "KEY_HASH:EDITION:TIER:RSA_SIG_BASE64" separated by |
+' NEVER modify these constants - RSA signatures will fail verification
 Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"
 Const CACHE_BUILD_DATE = "2025-11-30"
 Const CACHE_SALT = "PLACEHOLDER_SALT"
 Const MASTER_SIG = "PLACEHOLDER_MASTER_SIG"
 Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"
 
-' Anti-tampering: Validation state tracking
-Dim v_s1, v_s2, v_s3, v_chk
+' Anti-tampering: Validation state tracking (obfuscated variable names)
+Dim v_s1, v_s2, v_s3, v_chk, rsaVerifyCache
 v_s1 = 0: v_s2 = 0: v_s3 = 0: v_chk = 0
+Set rsaVerifyCache = CreateObject("Scripting.Dictionary")
 
-Function ComputeHash(str)
+' ============================================================
+' RSA SIGNATURE VERIFICATION USING .NET CRYPTOGRAPHY
+' Uses RSA-SHA256 with public key for verification only
+' Attackers cannot forge signatures without the private key
+' ============================================================
+
+Function VerifyRSASignature(message, signatureB64)
+    Dim tempDir, psScript, resultFile, ts, result, cmd, publicKey
+    On Error Resume Next
+    
+    VerifyRSASignature = False
+    
+    ' Get the public key (RSA_PUBLIC_KEY replaces CACHE_SALT in signed installers)
+    publicKey = CACHE_SALT
+    
+    ' FAIL CLOSED: If no public key embedded, this installer is unsigned
+    ' Do NOT allow unsigned installers to pass validation
+    If publicKey = "PLACEHOLDER_SALT" Or Len(publicKey) < 100 Then
+        ' This installer was not properly signed - REJECT
+        VerifyRSASignature = False
+        Exit Function
+    End If
+    
+    ' Check cache first
+    Dim cacheKey
+    cacheKey = Left(message, 20) & "|" & Left(signatureB64, 20)
+    If rsaVerifyCache.Exists(cacheKey) Then
+        VerifyRSASignature = rsaVerifyCache(cacheKey)
+        Exit Function
+    End If
+    
+    tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
+    psScript = tempDir & "\aegis_rsa_verify.ps1"
+    resultFile = tempDir & "\aegis_rsa_result.txt"
+    
+    ' PowerShell script for RSA-SHA256 signature verification
+    Dim psCode
+    psCode = "$ErrorActionPreference='Stop'" & vbCrLf
+    psCode = psCode & "try {" & vbCrLf
+    psCode = psCode & "  $pubKeyB64 = '" & publicKey & "'" & vbCrLf
+    psCode = psCode & "  $sigB64 = '" & signatureB64 & "'" & vbCrLf
+    psCode = psCode & "  $message = '" & EscapePSString(message) & "'" & vbCrLf
+    psCode = psCode & "  $pubKeyDer = [Convert]::FromBase64String($pubKeyB64)" & vbCrLf
+    psCode = psCode & "  $sig = [Convert]::FromBase64String($sigB64)" & vbCrLf
+    psCode = psCode & "  $msgBytes = [System.Text.Encoding]::UTF8.GetBytes($message)" & vbCrLf
+    psCode = psCode & "  $rsa = [System.Security.Cryptography.RSA]::Create()" & vbCrLf
+    psCode = psCode & "  $rsa.ImportSubjectPublicKeyInfo($pubKeyDer, [ref]$null)" & vbCrLf
+    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sig, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)" & vbCrLf
+    psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding UTF8 -Force }" & vbCrLf
+    psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding UTF8 -Force }" & vbCrLf
+    psCode = psCode & "} catch {" & vbCrLf
+    psCode = psCode & "  'ERROR' | Out-File '" & resultFile & "' -Encoding UTF8 -Force" & vbCrLf
+    psCode = psCode & "}" & vbCrLf
+    
+    ' Write and execute PowerShell script
+    Set ts = fso.CreateTextFile(psScript, True)
+    ts.Write psCode
+    ts.Close
+    
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File """ & psScript & """"
+    shell.Run cmd, 0, True
+    
+    ' Read result
+    If fso.FileExists(resultFile) Then
+        Set ts = fso.OpenTextFile(resultFile, 1)
+        result = Trim(ts.ReadLine())
+        ts.Close
+        fso.DeleteFile resultFile
+        fso.DeleteFile psScript
+        
+        VerifyRSASignature = (result = "VALID")
+    End If
+    
+    ' Cache result
+    If Not rsaVerifyCache.Exists(cacheKey) Then
+        rsaVerifyCache.Add cacheKey, VerifyRSASignature
+    End If
+    On Error Goto 0
+End Function
+
+Function EscapePSString(str)
+    Dim result
+    result = str
+    result = Replace(result, "'", "''")
+    result = Replace(result, "`", "``")
+    result = Replace(result, "$", "`$")
+    EscapePSString = result
+End Function
+
+' Legacy hash for quick key lookups (non-security critical)
+Function ComputeKeyHash(str)
     Dim i, h, c, r
     h = 0: r = &H5A3C
     For i = 1 To Len(str)
@@ -378,37 +469,40 @@ Function ComputeHash(str)
         h = ((h * 31) + c) And &H7FFFFFFF
         r = ((r Xor c) * 17) And &HFFFF
     Next
-    ComputeHash = LCase(Left(Hex(h) & Hex(r), 16))
-    Do While Len(ComputeHash) < 16
-        ComputeHash = "0" & ComputeHash
+    ComputeKeyHash = LCase(Left(Hex(h) & Hex(r), 16))
+    Do While Len(ComputeKeyHash) < 16
+        ComputeKeyHash = "0" & ComputeKeyHash
     Loop
 End Function
 
+' Alias for backward compatibility
+Function ComputeHash(str)
+    ComputeHash = ComputeKeyHash(str)
+End Function
+
+' ============================================================
+' RSA SIGNATURE VERIFICATION
+' Only server can create valid signatures (has private key)
+' ============================================================
+
 Function VerifySignature(keyHash, edition, storedSig)
-    Dim computed, expected, i, c1, c2, match
     VerifySignature = False
     v_s1 = v_s1 + 1
     
-    ' Signature verification using stored salt
-    If Len(CACHE_SALT) < 4 Or CACHE_SALT = "PLACEHOLDER_SALT" Then
-        ' Unsigned installer - allow for testing only
-        VerifySignature = True
+    ' FAIL CLOSED: Reject unsigned installers
+    If CACHE_SALT = "PLACEHOLDER_SALT" Then
+        VerifySignature = False
         Exit Function
     End If
     
-    ' Compute expected signature pattern
-    computed = ComputeHash(keyHash & ":" & edition & ":" & CACHE_SALT)
+    ' Verify RSA-SHA256 signature with embedded public key
+    Dim message
+    message = keyHash & ":" & edition
     
-    ' Partial signature match (first 8 chars)
-    match = True
-    For i = 1 To Min(8, Len(storedSig))
-        c1 = Mid(LCase(computed), i, 1)
-        c2 = Mid(LCase(storedSig), i, 1)
-        If c1 <> c2 Then match = False
-    Next
-    
-    If match Then v_s2 = v_s2 + 1
-    VerifySignature = match
+    If VerifyRSASignature(message, storedSig) Then
+        v_s2 = v_s2 + 1
+        VerifySignature = True
+    End If
 End Function
 
 Function Min(a, b)
@@ -419,7 +513,7 @@ Function CheckLocalCache(key)
     Dim cleanKey, keyHash, entries, entry, parts, sig
     CheckLocalCache = ""
     cleanKey = UCase(Trim(key))
-    keyHash = ComputeHash(cleanKey)
+    keyHash = ComputeKeyHash(cleanKey)
     
     ' Verify cache integrity first
     If Not VerifyCacheIntegrity() Then
@@ -431,7 +525,7 @@ Function CheckLocalCache(key)
         parts = Split(entry, ":")
         If UBound(parts) >= 2 Then
             If LCase(parts(0)) = keyHash Then
-                ' Verify per-license signature if present
+                ' Verify per-license RSA signature if present
                 If UBound(parts) >= 3 Then
                     sig = parts(3)
                     If VerifySignature(keyHash, parts(1), sig) Then
@@ -439,7 +533,7 @@ Function CheckLocalCache(key)
                         CheckLocalCache = parts(1)
                     End If
                 Else
-                    ' Legacy format without signature (demo/test)
+                    ' Legacy format without signature (demo/test only)
                     CheckLocalCache = parts(1)
                 End If
                 Exit Function
@@ -449,22 +543,21 @@ Function CheckLocalCache(key)
 End Function
 
 Function VerifyCacheIntegrity()
-    Dim h, expected
-    VerifyCacheIntegrity = True
+    VerifyCacheIntegrity = False
     
-    ' Skip integrity check if placeholders not replaced
+    ' FAIL CLOSED: Reject unsigned installers
     If MASTER_SIG = "PLACEHOLDER_MASTER_SIG" Then Exit Function
     If INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY" Then Exit Function
+    If CACHE_SALT = "PLACEHOLDER_SALT" Then Exit Function
     
-    ' Verify master signature matches cache data
-    h = ComputeHash(CACHE_SALT & ":" & Left(MASTER_SIG, 8))
+    ' Verify master RSA signature for entire cache
+    Dim message
+    message = "CACHE:" & LICENSE_CACHE & ":" & CACHE_BUILD_DATE
     
-    ' Partial match for integrity
-    If Left(h, 8) <> Left(INTEGRITY_CHECK, 8) Then
-        VerifyCacheIntegrity = False
+    If VerifyRSASignature(message, MASTER_SIG) Then
+        VerifyCacheIntegrity = True
+        v_chk = v_chk + 1
     End If
-    
-    v_chk = v_chk + 1
 End Function
 
 Function IsValidationComplete()
@@ -555,12 +648,13 @@ Sub ValidateLicenseOffline(key)
     End If
     
     If Len(cachedEdition) > 0 Then
-        ' License found and verified in cache
+        ' License found and RSA signature verified in cache
         displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
         If Len(displayEdition) = 0 Then displayEdition = cachedEdition
         
-        ' Generate secure token with validation proof
-        secToken = ComputeHash(cleanKey & ":" & CACHE_SALT & ":" & v_s2)
+        ' Generate validation proof token (includes RSA verification success markers)
+        ' This token proves RSA verification passed without leaking any secrets
+        secToken = ComputeKeyHash(cleanKey & ":" & v_s1 & ":" & v_s2 & ":" & v_s3 & ":" & v_chk)
         
         If IsCacheValid() Then
             daysLeft = GetCacheDaysLeft()
@@ -1150,17 +1244,20 @@ Function VerifyCreationAuth()
     If Len(validationToken) < 8 Then Exit Function
     If Left(validationToken, 7) <> "SECURE_" And Left(validationToken, 5) <> "DEMO_" And Left(validationToken, 8) <> "EXPIRED_" Then Exit Function
     
-    ' Check 4: For signed installers, verify signature checks passed
+    ' Check 4: For signed installers, verify RSA signature checks completed
     If CACHE_SALT <> "PLACEHOLDER_SALT" Then
-        If v_chk < 1 Then Exit Function
-        If v_s1 < 1 Then Exit Function
+        If v_chk < 1 Then Exit Function ' Cache integrity check must have run
+        If v_s1 < 1 Then Exit Function ' Signature verification must have run
+        If v_s2 < 1 Then Exit Function ' Signature must have been valid
+        If v_s3 < 1 Then Exit Function ' License must have been found and verified
     End If
     
-    ' Check 5: Verify token matches expected pattern for this license
+    ' Check 5: Verify token matches expected pattern (includes RSA verification markers)
     Dim expectedToken
-    expectedToken = ComputeHash(licenseKey & ":" & CACHE_SALT & ":" & v_s2)
+    expectedToken = ComputeKeyHash(licenseKey & ":" & v_s1 & ":" & v_s2 & ":" & v_s3 & ":" & v_chk)
+    
     If Left(validationToken, 7) = "SECURE_" Then
-        If Mid(validationToken, 8, 8) <> Left(expectedToken, 8) Then Exit Function
+        If Mid(validationToken, 8, 12) <> Left(expectedToken, 12) Then Exit Function
     End If
     
     VerifyCreationAuth = True
