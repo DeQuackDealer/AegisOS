@@ -430,9 +430,8 @@ Function VerifyRSASignature(message, signatureB64)
     psCode = psCode & "  $sha256 = [System.Security.Cryptography.SHA256]::Create()" & vbCrLf
     psCode = psCode & "  $hashBytes = $sha256.ComputeHash($msgBytes)" & vbCrLf
     psCode = psCode & "  $debug += ('Hash bytes: ' + $hashBytes.Length)" & vbCrLf
-    psCode = psCode & "  # Use VerifyHash with OID for maximum compatibility" & vbCrLf
-    psCode = psCode & "  $sha256OID = '2.16.840.1.101.3.4.2.1'" & vbCrLf
-    psCode = psCode & "  $result = $rsa.VerifyHash($hashBytes, $sha256OID, $sig)" & vbCrLf
+    psCode = psCode & "  # Use VerifyHash with algorithm name for .NET Framework compatibility" & vbCrLf
+    psCode = psCode & "  $result = $rsa.VerifyHash($hashBytes, 'SHA256', $sig)" & vbCrLf
     psCode = psCode & "  $debug += ('VerifyHash result: ' + $result)" & vbCrLf
     psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
     psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf

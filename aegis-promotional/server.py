@@ -76,11 +76,11 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
     
-    # Ensure DeQuackDealer owner account exists in database
+    # Ensure DeQuackDealer owner account exists in database with synced password
     try:
+        dequack_pwd = os.getenv('DeQuackDealerPWD', 'fallback_password_123!')
         existing_admin = AdminUser.query.filter_by(username='DeQuackDealer').first()
         if not existing_admin:
-            dequack_pwd = os.getenv('DeQuackDealerPWD', 'fallback_password_123!')
             new_admin = AdminUser(
                 username='DeQuackDealer',
                 display_name='Riley Liang',
@@ -95,14 +95,12 @@ with app.app_context():
             db.session.commit()
             logger.info("Created DeQuackDealer owner account in database")
         else:
-            # Update existing account to owner role if needed
-            if existing_admin.role != AdminRole.OWNER:
-                existing_admin.role = AdminRole.OWNER
-                existing_admin.can_create_admins = True
-                db.session.commit()
-                logger.info("Updated DeQuackDealer to owner role")
-            else:
-                logger.info("DeQuackDealer owner account already exists in database")
+            # Always sync password from DeQuackDealerPWD secret and ensure owner role
+            existing_admin.set_password(dequack_pwd)
+            existing_admin.role = AdminRole.OWNER
+            existing_admin.can_create_admins = True
+            db.session.commit()
+            logger.info("Synced DeQuackDealer password from DeQuackDealerPWD secret")
     except Exception as e:
         logger.error(f"Error ensuring DeQuackDealer exists: {e}")
         db.session.rollback()
