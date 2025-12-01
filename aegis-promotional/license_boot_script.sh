@@ -29,7 +29,7 @@ get_hardware_id() {
     hw_id=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || echo "unknown")
     mac_addr=$(ip link show | awk '/ether/ {print $2}' | head -1 || echo "unknown")
     cpu_id=$(cat /proc/cpuinfo | grep "model name" | head -1 | md5sum | cut -d' ' -f1)
-    
+
     echo "${hw_id}-${mac_addr}-${cpu_id}" | md5sum | cut -d' ' -f1
 }
 
@@ -38,14 +38,14 @@ prompt_for_license() {
     echo -e "\n${YELLOW}Please enter your Aegis OS license key:${NC}"
     echo -e "${YELLOW}Format: AEGIS-XXX-XXXXX-XXXXX-XXXXX${NC}"
     echo -e "${YELLOW}(Press Enter to continue with Freemium edition)${NC}\n"
-    
+
     read -t 30 -p "License Key: " license_key || true
-    
+
     if [ -z "$license_key" ]; then
         echo -e "\n${YELLOW}No license entered. Starting in Freemium mode...${NC}"
         return 1
     fi
-    
+
     echo "$license_key"
     return 0
 }
@@ -54,23 +54,125 @@ prompt_for_license() {
 validate_license_online() {
     local license_key=$1
     local hw_id=$2
-    
+
     # Try to validate with the Aegis license server
     response=$(curl -s -X POST https://aegis-os.com/api/validate-license \
         -H "Content-Type: application/json" \
         -d "{\"license_key\": \"$license_key\", \"hardware_id\": \"$hw_id\"}" \
         --connect-timeout 5 \
         2>/dev/null || echo "{\"valid\": false, \"tier\": \"freemium\"}")
-    
+
     echo "$response"
 }
+
+# Function to validate license key (local logic for freemium OS)
+validate_license_key() {
+    local key="$1"
+    local tier="freemium"
+    local is_valid="False"
+
+    echo -e "${YELLOW}Validating license key: ${key:0:10}...${NC}"
+
+    # Basic format validation
+    if [[ ! "$key" =~ ^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$ ]]; then
+        echo -e "${RED}✗ Invalid license key format${NC}"
+        echo -e "freemium\nFalse"
+        return
+    fi
+
+    # Extract prefix
+    local prefix="${key:0:4}"
+
+    case "$prefix" in
+        "DEMO")
+            tier="demo"
+            is_valid="True"
+            echo -e "${GREEN}✓ Demo license accepted${NC}"
+            ;;
+        "BSIC")
+            tier="basic"
+            # In freemium OS, we can't validate real licenses
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ Basic license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ Basic license validated${NC}"
+            fi
+            ;;
+        "WORK")
+            tier="workplace"
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ Workplace license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ Workplace license validated${NC}"
+            fi
+            ;;
+        "GAME")
+            tier="gamer"
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ Gamer license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ Gamer license validated${NC}"
+            fi
+            ;;
+        "AIDV")
+            tier="ai-dev"
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ AI Developer license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ AI Developer license validated${NC}"
+            fi
+            ;;
+        "GMAI")
+            tier="gamer-ai"
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ Gamer+AI license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ Gamer+AI license validated${NC}"
+            fi
+            ;;
+        "SERV")
+            tier="server"
+            if [ -f "/etc/aegis-freemium-marker" ]; then
+                echo -e "${YELLOW}⚠ Server license detected but running Freemium OS${NC}"
+                tier="freemium"
+                is_valid="False"
+            else
+                is_valid="True"
+                echo -e "${GREEN}✓ Server license validated${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${RED}✗ Unknown license prefix: $prefix${NC}"
+            tier="freemium"
+            is_valid="False"
+            ;;
+    esac
+
+    echo -e "$tier\n$is_valid"
+}
+
 
 # Function to apply tier features
 apply_tier_features() {
     local tier=$1
-    
+
     echo -e "\n${GREEN}Configuring Aegis OS - $tier Edition${NC}"
-    
+
     case "$tier" in
         "basic")
             echo "=== Security Features ==="
@@ -90,7 +192,7 @@ apply_tier_features() {
             systemctl enable aegis-ransomware-protection.service 2>/dev/null || true
             systemctl enable aegis-performance-tuner.service 2>/dev/null || true
             ;;
-            
+
         "gamer")
             echo "=== Security Features ==="
             echo "✓ Anti-Cheat Integrity Monitor"
@@ -123,7 +225,7 @@ apply_tier_features() {
             systemctl enable aegis-multi-gpu.service 2>/dev/null || true
             echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
             ;;
-            
+
         "ai-dev")
             echo "=== Security Features ==="
             echo "✓ Model Supply-Chain Scanner"
@@ -157,7 +259,7 @@ apply_tier_features() {
             systemctl enable aegis-gpu-optimizer.service 2>/dev/null || true
             systemctl enable aegis-multi-gpu-compute.service 2>/dev/null || true
             ;;
-            
+
         "gamer-ai")
             echo "=== Security Features ==="
             echo "✓ All Gamer Security Features"
@@ -189,7 +291,7 @@ apply_tier_features() {
             systemctl enable aegis-multi-gpu-hybrid.service 2>/dev/null || true
             echo "performance" > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null || true
             ;;
-            
+
         "workplace")
             echo "=== Security Features ==="
             echo "✓ Zero-Trust Endpoint Profiles"
@@ -209,7 +311,7 @@ apply_tier_features() {
             systemctl enable aegis-compliance.service 2>/dev/null || true
             systemctl enable aegis-collab-optimizer.service 2>/dev/null || true
             ;;
-            
+
         "server")
             echo "=== Security Features ==="
             echo "✓ Full XDR Integration"
@@ -247,7 +349,18 @@ apply_tier_features() {
             sysctl -w net.core.somaxconn=65535 2>/dev/null || true
             sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
             ;;
-            
+
+        "demo")
+            echo "=== Security Features ==="
+            echo "✓ Basic Malware Scanning"
+            echo "✓ Hardened Firewall Presets"
+            echo "=== Performance Features ==="
+            echo "✓ Lightweight Boot Optimization"
+            echo "✓ Resource-Aware Background Tasks"
+            echo ""
+            echo -e "${YELLOW}This is a demo license. Upgrade to unlock full features.${NC}"
+            ;;
+
         *)
             echo "=== Security Features ==="
             echo "✓ Secure Update Notarization"
@@ -266,7 +379,7 @@ apply_tier_features() {
             echo "  - Server: Enterprise security, 100K+ RPS"
             ;;
     esac
-    
+
     # Save features configuration
     echo "{\"tier\": \"$tier\", \"timestamp\": \"$(date -Iseconds)\"}" > "$FEATURES_FILE"
 }
@@ -275,11 +388,11 @@ apply_tier_features() {
 main() {
     # Create config directory if it doesn't exist
     mkdir -p "$AEGIS_CONFIG_DIR"
-    
+
     # Get hardware ID
     HW_ID=$(get_hardware_id)
     echo -e "${BLUE}Hardware ID: ${HW_ID:0:16}...${NC}"
-    
+
     # Check for cached license
     if [ -f "$LICENSE_CACHE" ]; then
         cached_license=$(cat "$LICENSE_CACHE" 2>/dev/null)
@@ -287,48 +400,47 @@ main() {
             echo -e "${GREEN}Found cached license${NC}"
             LICENSE_KEY="$cached_license"
         fi
-    else
-        # No cached license, prompt user
+    fi
+
+    # If no cached license, prompt user
+    if [ -z "$LICENSE_KEY" ]; then
         if prompt_for_license; then
             LICENSE_KEY=$(prompt_for_license)
         else
             LICENSE_KEY=""
         fi
     fi
-    
+
     # Validate license if provided
     if [ ! -z "$LICENSE_KEY" ]; then
         echo -e "\n${BLUE}Validating license...${NC}"
-        
-        # Try online validation first
-        validation_result=$(validate_license_online "$LICENSE_KEY" "$HW_ID")
-        
-        # Parse validation result
-        is_valid=$(echo "$validation_result" | python3 -c "import sys, json; print(json.load(sys.stdin).get('valid', False))" 2>/dev/null || echo "false")
-        tier=$(echo "$validation_result" | python3 -c "import sys, json; print(json.load(sys.stdin).get('tier', 'freemium'))" 2>/dev/null || echo "freemium")
-        
+        validation_output=$(validate_license_key "$LICENSE_KEY")
+        tier=$(echo "$validation_output" | head -n 1)
+        is_valid=$(echo "$validation_output" | tail -n 1)
+
         if [ "$is_valid" = "True" ] || [ "$is_valid" = "true" ]; then
             echo -e "${GREEN}✓ License validated successfully!${NC}"
             echo "$LICENSE_KEY" > "$LICENSE_CACHE"
-            echo "$validation_result" > "$LICENSE_FILE"
+            # In a real scenario, we would save the full license details here.
+            # For this script, we just cache the key.
         else
-            echo -e "${RED}✗ Invalid or expired license${NC}"
+            echo -e "${RED}✗ License validation failed or is not applicable in freemium mode.${NC}"
             tier="freemium"
             rm -f "$LICENSE_CACHE" 2>/dev/null
         fi
     else
         tier="freemium"
     fi
-    
-    # Apply features for the validated tier
+
+    # Apply features for the determined tier
     apply_tier_features "$tier"
-    
+
     # Set system branding
     echo "Aegis OS - $tier Edition" > /etc/aegis-release
-    
+
     echo -e "\n${GREEN}Aegis OS initialization complete!${NC}"
     echo -e "${BLUE}==================================${NC}\n"
-    
+
     # Continue with normal boot
     exit 0
 }

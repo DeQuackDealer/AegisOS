@@ -148,26 +148,19 @@ class AegisLicenseManager:
     
     def validate_license_format(self, license_key):
         """Validate license key format"""
-        # Expected format: AEGIS-EDITION-YEAR-STATUS (e.g., AEGIS-BASIC-2024-ACTIVE)
-        parts = license_key.split('-')
+        # Expected format: XXXX-XXXX-XXXX-XXXX (e.g., BSIC-DEMO-TEST-2024)
+        parts = license_key.upper().split('-')
         if len(parts) != 4:
             return False
         
-        if parts[0] != 'AEGIS':
-            return False
-        
-        valid_editions = ['BASIC', 'GAMER', 'AI', 'SERVER']
-        if parts[1] not in valid_editions:
-            return False
-        
-        try:
-            year = int(parts[2])
-            if year < 2024 or year > 2030:
+        # Check each part is 4 alphanumeric characters
+        for part in parts:
+            if len(part) != 4 or not part.isalnum():
                 return False
-        except ValueError:
-            return False
         
-        if parts[3] not in ['ACTIVE', 'TRIAL', 'EXPIRED']:
+        # Valid prefixes
+        valid_prefixes = ['BSIC', 'WORK', 'GAME', 'AIDV', 'GMAI', 'SERV', 'DEMO']
+        if parts[0] not in valid_prefixes:
             return False
         
         return True
@@ -176,11 +169,13 @@ class AegisLicenseManager:
         """Attempt to activate a license key"""
         self.logger.info(f"Attempting license activation for: {license_key}")
         
-        if not self.validate_license_format(license_key):
+        clean_key = license_key.upper().strip()
+        
+        if not self.validate_license_format(clean_key):
             self.logger.error("Invalid license key format")
             return {
                 'success': False,
-                'error': 'Invalid license key format',
+                'error': 'Invalid license key format. Use: XXXX-XXXX-XXXX-XXXX',
                 'code': 'INVALID_FORMAT'
             }
         
@@ -192,23 +187,39 @@ class AegisLicenseManager:
         
         self.logger.warning("Freemium Edition: License activation simulation")
         
-        # Simulate different responses based on license key
-        edition = license_key.split('-')[1]
+        # Parse the license key parts
+        parts = clean_key.split('-')
+        prefix = parts[0]
         
-        if edition in ['BASIC', 'GAMER', 'AI', 'SERVER']:
-            # Simulate license server rejection for freemium users
+        # Demo keys work in freemium for testing
+        if prefix == 'DEMO':
             return {
-                'success': False,
-                'error': 'License activation requires paid edition',
-                'code': 'FREEMIUM_LIMITATION',
-                'message': 'Please visit https://aegis-os.com to purchase a license',
-                'upgrade_url': 'https://aegis-os.com/upgrade'
+                'success': True,
+                'edition': 'demo',
+                'message': 'Demo license activated for testing',
+                'features_enabled': ['basic_demo_features'],
+                'expires_at': None
             }
+        
+        # Simulate rejection for real licenses in freemium edition
+        edition_map = {
+            'BSIC': 'Basic',
+            'WORK': 'Workplace', 
+            'GAME': 'Gamer',
+            'AIDV': 'AI Developer',
+            'GMAI': 'Gamer + AI',
+            'SERV': 'Server'
+        }
+        
+        edition_name = edition_map.get(prefix, 'Unknown')
         
         return {
             'success': False,
-            'error': 'Unknown license edition',
-            'code': 'UNKNOWN_EDITION'
+            'error': f'{edition_name} license requires paid Aegis OS edition',
+            'code': 'FREEMIUM_LIMITATION',
+            'message': f'This is a {edition_name} license key, but you are running Aegis OS Freemium.',
+            'upgrade_url': 'https://aegis-os.com/upgrade',
+            'detected_edition': edition_name
         }
     
     def get_license_status(self):
