@@ -521,10 +521,13 @@ Function ValidateLicenseFormat(key)
     End If
 End Function
 
-' OFFLINE-FIRST validation - no server required
+' OFFLINE-FIRST validation with cryptographic verification
 Sub ValidateLicenseOffline(key)
-    Dim cleanKey, cachedEdition, displayEdition, daysLeft
+    Dim cleanKey, cachedEdition, displayEdition, daysLeft, secToken
     On Error Resume Next
+    
+    ' Reset validation state
+    v_s1 = 0: v_s2 = 0: v_s3 = 0: v_chk = 0
     
     cleanKey = UCase(Trim(key))
     isValidating = True
@@ -533,13 +536,31 @@ Sub ValidateLicenseOffline(key)
     document.getElementById("btnNext1").disabled = True
     document.getElementById("btnValidate").disabled = True
     
-    ' Check local cache FIRST (no server call)
+    ' Check local cache with signature verification
     cachedEdition = CheckLocalCache(cleanKey)
     
+    ' Anti-tampering: Verify validation completed properly
+    If Not IsValidationComplete() And CACHE_SALT <> "PLACEHOLDER_SALT" Then
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Validation integrity check failed" & _
+            "<div style='font-size:9px;color:#888;margin-top:2px'>Installer may be corrupted. Please download a fresh copy.</div>"
+        document.getElementById("licenseStatus").className = "license-invalid"
+        licenseKey = ""
+        detectedEdition = ""
+        validationToken = ""
+        document.getElementById("btnNext1").disabled = True
+        document.getElementById("featureShowcase").style.display = "none"
+        document.getElementById("btnValidate").disabled = False
+        isValidating = False
+        Exit Sub
+    End If
+    
     If Len(cachedEdition) > 0 Then
-        ' License found in cache
+        ' License found and verified in cache
         displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
         If Len(displayEdition) = 0 Then displayEdition = cachedEdition
+        
+        ' Generate secure token with validation proof
+        secToken = ComputeHash(cleanKey & ":" & CACHE_SALT & ":" & v_s2)
         
         If IsCacheValid() Then
             daysLeft = GetCacheDaysLeft()
@@ -548,7 +569,7 @@ Sub ValidateLicenseOffline(key)
             document.getElementById("licenseStatus").className = "license-valid"
             licenseKey = cleanKey
             detectedEdition = displayEdition
-            validationToken = "OFFLINE_" & SimpleHash(cleanKey)
+            validationToken = "SECURE_" & Left(secToken, 12)
             document.getElementById("btnNext1").disabled = False
             document.getElementById("btnNext1").style.display = "inline-block"
             document.getElementById("btnOnlineVerify").style.display = "inline-block"
@@ -561,7 +582,7 @@ Sub ValidateLicenseOffline(key)
                 document.getElementById("licenseStatus").className = "license-valid"
                 licenseKey = cleanKey
                 detectedEdition = displayEdition
-                validationToken = "DEMO_" & SimpleHash(cleanKey)
+                validationToken = "DEMO_" & Left(secToken, 12)
                 document.getElementById("btnNext1").disabled = False
                 document.getElementById("btnNext1").style.display = "inline-block"
                 document.getElementById("btnOnlineVerify").style.display = "inline-block"
@@ -572,7 +593,7 @@ Sub ValidateLicenseOffline(key)
                 document.getElementById("licenseStatus").className = "license-valid"
                 licenseKey = cleanKey
                 detectedEdition = displayEdition
-                validationToken = "EXPIRED_CACHE_" & SimpleHash(cleanKey)
+                validationToken = "EXPIRED_" & Left(secToken, 12)
                 document.getElementById("btnNext1").disabled = False
                 document.getElementById("btnNext1").style.display = "inline-block"
                 document.getElementById("btnOnlineVerify").style.display = "inline-block"
@@ -580,10 +601,16 @@ Sub ValidateLicenseOffline(key)
             End If
         End If
     Else
-        ' License NOT in cache - check if format is valid for unknown license
+        ' License NOT in cache or signature verification failed
         If ValidateLicenseFormat(cleanKey) Then
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not recognized" & _
-                "<div style='font-size:9px;color:#888;margin-top:2px'>This installer was downloaded before your purchase. Download fresh installer or verify online.</div>"
+            If v_s1 > 0 And v_s2 = 0 Then
+                ' Signature check failed - possible tampering
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License signature invalid" & _
+                    "<div style='font-size:9px;color:#888;margin-top:2px'>This license may have been tampered with. Download fresh installer.</div>"
+            Else
+                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not recognized" & _
+                    "<div style='font-size:9px;color:#888;margin-top:2px'>This installer was downloaded before your purchase. Download fresh installer or verify online.</div>"
+            End If
             document.getElementById("licenseStatus").className = "license-invalid"
             document.getElementById("btnOnlineVerify").style.display = "inline-block"
         Else
