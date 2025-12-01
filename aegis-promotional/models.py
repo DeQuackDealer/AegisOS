@@ -276,3 +276,30 @@ class FreePeriodRedemption(db.Model):
             'period_id': self.period_id,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+
+class FreePeriodConfig(db.Model):
+    """Persistent storage for free period settings"""
+    __tablename__ = 'free_period_config'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    enabled = db.Column(db.Boolean, default=False)
+    period_id = db.Column(db.String(100))
+    start_time = db.Column(db.DateTime)
+    end_time = db.Column(db.DateTime)
+    editions = db.Column(db.Text, default='[]')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        import json
+        return {
+            'id': self.id,
+            'enabled': self.enabled,
+            'period_id': self.period_id,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+            'editions': json.loads(self.editions) if self.editions else [],
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }

@@ -70,7 +70,7 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
 
-from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry, FreePeriodRedemption
+from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry, FreePeriodRedemption, FreePeriodConfig
 db.init_app(app)
 
 with app.app_context():
@@ -5445,8 +5445,8 @@ def admin_logout():
 # Individual installer files for each edition
 # =============
 
-# Global free period settings (in-memory, could be stored in DB)
-# DEFAULT: Disabled - admin must enable
+# Free period settings loaded from database on startup
+# This dict is synced with database for quick access
 FREE_PERIOD_SETTINGS = {
     'enabled': False,
     'start_time': None,
@@ -5454,6 +5454,49 @@ FREE_PERIOD_SETTINGS = {
     'editions': [],  # Empty = all editions (except server)
     'period_id': None  # Unique ID for this free period (for tracking redemptions)
 }
+
+def load_free_period_from_db():
+    """Load free period settings from database into memory"""
+    global FREE_PERIOD_SETTINGS
+    try:
+        config = FreePeriodConfig.query.first()
+        if config:
+            FREE_PERIOD_SETTINGS['enabled'] = config.enabled
+            FREE_PERIOD_SETTINGS['start_time'] = config.start_time
+            FREE_PERIOD_SETTINGS['end_time'] = config.end_time
+            FREE_PERIOD_SETTINGS['period_id'] = config.period_id
+            try:
+                import json
+                FREE_PERIOD_SETTINGS['editions'] = json.loads(config.editions) if config.editions else []
+            except:
+                FREE_PERIOD_SETTINGS['editions'] = []
+            app.logger.info(f"Loaded free period config: enabled={config.enabled}, period_id={config.period_id}")
+    except Exception as e:
+        app.logger.warning(f"Could not load free period config: {e}")
+
+def save_free_period_to_db():
+    """Save current free period settings to database"""
+    global FREE_PERIOD_SETTINGS
+    try:
+        import json
+        config = FreePeriodConfig.query.first()
+        if not config:
+            config = FreePeriodConfig()
+            db.session.add(config)
+        
+        config.enabled = FREE_PERIOD_SETTINGS['enabled']
+        config.start_time = FREE_PERIOD_SETTINGS['start_time']
+        config.end_time = FREE_PERIOD_SETTINGS['end_time']
+        config.period_id = FREE_PERIOD_SETTINGS['period_id']
+        config.editions = json.dumps(FREE_PERIOD_SETTINGS['editions'])
+        
+        db.session.commit()
+        app.logger.info(f"Saved free period config: enabled={config.enabled}, period_id={config.period_id}")
+        return True
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Could not save free period config: {e}")
+        return False
 
 # Rate limiting for free downloads to prevent bot abuse
 # Tracks IP -> {count, first_request_time}
@@ -5848,6 +5891,9 @@ def admin_set_free_period():
 
     FREE_PERIOD_SETTINGS['editions'] = editions if isinstance(editions, list) else []
 
+    # Save to database for persistence
+    save_free_period_to_db()
+
     tamper_protected_audit_log("FREE_PERIOD_UPDATED", {
         "username": g.admin_user,
         "role": g.admin_role,
@@ -5860,7 +5906,7 @@ def admin_set_free_period():
 
     return jsonify({
         'success': True,
-        'message': 'Free period settings updated',
+        'message': 'Free period settings updated and saved to database',
         'settings': {
             'enabled': FREE_PERIOD_SETTINGS['enabled'],
             'period_id': FREE_PERIOD_SETTINGS.get('period_id'),
@@ -5880,6 +5926,9 @@ def admin_clear_free_period():
     FREE_PERIOD_SETTINGS['editions'] = []
     FREE_PERIOD_SETTINGS['period_id'] = None
 
+    # Save to database for persistence
+    save_free_period_to_db()
+
     tamper_protected_audit_log("FREE_PERIOD_CLEARED", {
         "username": g.admin_user,
         "role": g.admin_role
@@ -5887,7 +5936,7 @@ def admin_clear_free_period():
 
     return jsonify({
         'success': True,
-        'message': 'Free period cleared'
+        'message': 'Free period cleared and saved to database'
     }), 200
 
 # Admin dashboard stats endpoint
@@ -7001,5 +7050,9 @@ def admin_settings_page():
 
 
 if __name__ == '__main__':
+    # Load free period settings from database
+    with app.app_context():
+        load_free_period_from_db()
+    
     logger.info("Starting Aegis OS Server v4.0 - 100/100 Security + Tier Features + Admin Panel")
     app.run(host='0.0.0.0', port=5000, debug=False)
