@@ -473,17 +473,12 @@ class AegisUSBCreator(tk.Tk):
         self.running_as_admin = is_admin()
         
         if not self.running_as_admin:
-            response = messagebox.askyesnocancel(
-                "Administrator Recommended",
-                f"{APP_NAME} works best with Administrator privileges for USB drive access.\n\n"
-                "Click 'Yes' to restart with elevated permissions.\n"
-                "Click 'No' to continue anyway (some features may be limited).\n"
-                "Click 'Cancel' to exit."
-            )
-            if response is True:
+            if messagebox.askyesno(
+                "Administrator Required",
+                f"{APP_NAME} requires Administrator privileges to write to USB drives.\n\n"
+                "Would you like to restart with elevated permissions?"
+            ):
                 run_as_admin()
-                sys.exit(0)
-            elif response is None:
                 sys.exit(0)
         
         super().__init__()
