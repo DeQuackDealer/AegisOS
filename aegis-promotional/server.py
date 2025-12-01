@@ -2392,15 +2392,29 @@ def generate_vbs_hash(key):
         h = ((h * 31) + ord(c)) & 0x7FFFFFFF
     return format(h, '016x')[:16]
 
+def generate_secure_license_signature(license_key, edition, salt):
+    """Generate secure HMAC signature for individual license"""
+    data = f"{license_key.upper()}:{edition}:{salt}"
+    return hmac.new(
+        JWT_SECRET.encode(),
+        data.encode(),
+        hashlib.sha256
+    ).hexdigest()[:12]
+
 def generate_license_cache():
-    """Generate signed offline license cache with current licenses"""
+    """Generate cryptographically signed offline license cache"""
     cache_entries = []
     build_date = datetime.now().strftime('%Y-%m-%d')
+    build_timestamp = int(datetime.now().timestamp())
     
-    # Add demo licenses
+    # Dynamic salt based on build time (changes daily)
+    daily_salt = hashlib.sha256(f"{build_date}:{JWT_SECRET}".encode()).hexdigest()[:8]
+    
+    # Add demo licenses with secure signatures
     for key, data in DEMO_LICENSES.items():
         key_hash = generate_vbs_hash(key)
-        cache_entries.append(f"{key_hash}:{data['edition']}:{data['tier']}")
+        sig = generate_secure_license_signature(key, data['edition'], daily_salt)
+        cache_entries.append(f"{key_hash}:{data['edition']}:{data['tier']}:{sig}")
     
     # Add recent database licenses (last 30 days)
     try:
@@ -2412,20 +2426,24 @@ def generate_license_cache():
         
         for lic in recent_licenses:
             key_hash = generate_vbs_hash(lic.license_key)
-            cache_entries.append(f"{key_hash}:{lic.edition}:{lic.edition}")
+            sig = generate_secure_license_signature(lic.license_key, lic.edition, daily_salt)
+            cache_entries.append(f"{key_hash}:{lic.edition}:{lic.edition}:{sig}")
     except Exception as e:
         app.logger.warning(f"Could not fetch recent licenses for cache: {e}")
     
     cache_data = '|'.join(cache_entries)
     
-    # Create HMAC signature for verification
-    cache_signature = hmac.new(
+    # Create master signature for entire cache (anti-tampering)
+    master_sig = hmac.new(
         JWT_SECRET.encode(),
-        f"{cache_data}:{build_date}".encode(),
+        f"{cache_data}:{build_date}:{build_timestamp}".encode(),
         hashlib.sha256
-    ).hexdigest()[:16]
+    ).hexdigest()[:24]
     
-    return cache_data, build_date, cache_signature
+    # Create integrity checksum for HTA self-verification
+    integrity_check = hashlib.sha256(f"{daily_salt}:{master_sig}".encode()).hexdigest()[:16]
+    
+    return cache_data, build_date, daily_salt, master_sig, integrity_check
 
 @app.route('/download-installer-licensed')
 @app.route('/download-installer-licensed.hta')
@@ -2438,10 +2456,10 @@ def download_licensed_installer():
             with open(installer_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
             
-            # Generate dynamic license cache
-            cache_data, build_date, signature = generate_license_cache()
+            # Generate cryptographically signed license cache
+            cache_data, build_date, daily_salt, master_sig, integrity_check = generate_license_cache()
             
-            # Inject dynamic cache into installer
+            # Inject all security values into installer
             script_content = script_content.replace(
                 'Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"',
                 f'Const LICENSE_CACHE = "{cache_data}"'
@@ -2449,6 +2467,18 @@ def download_licensed_installer():
             script_content = script_content.replace(
                 'Const CACHE_BUILD_DATE = "2025-11-30"',
                 f'Const CACHE_BUILD_DATE = "{build_date}"'
+            )
+            script_content = script_content.replace(
+                'Const CACHE_SALT = "PLACEHOLDER_SALT"',
+                f'Const CACHE_SALT = "{daily_salt}"'
+            )
+            script_content = script_content.replace(
+                'Const MASTER_SIG = "PLACEHOLDER_MASTER_SIG"',
+                f'Const MASTER_SIG = "{master_sig}"'
+            )
+            script_content = script_content.replace(
+                'Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"',
+                f'Const INTEGRITY_CHECK = "{integrity_check}"'
             )
             
             return Response(
