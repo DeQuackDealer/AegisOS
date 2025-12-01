@@ -8,7 +8,7 @@ channel = "stable-25_05"
 packages = ["cargo", "libiconv", "libxcrypt", "openssl", "pkg-config", "rustc"]
 
 [workflows]
-runButton = "Project"
+runButton = "Start Aegis Server"
 
 [[workflows.workflow]]
 name = "Project"
@@ -30,6 +30,15 @@ outputType = "webview"
 task = "shell.exec"
 args = "cd aegis-promotional && python3 server.py"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Start Aegis Server"
+author = 44896518
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd aegis-promotional && python3 server.py"
 
 [[ports]]
 localPort = 5000
