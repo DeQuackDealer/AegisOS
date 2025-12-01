@@ -70,7 +70,7 @@ STRIPE_PUBLISHABLE = stripe_keys['publishable']
 environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
 logger.info(f"Stripe initialized in {environment}")
 
-from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry
+from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry, FreePeriodRedemption
 db.init_app(app)
 
 with app.app_context():
@@ -5382,12 +5382,13 @@ def admin_logout():
 # ============================================================
 
 # Global free period settings (in-memory, could be stored in DB)
-# DEFAULT: Enabled with no time limits until license system is fixed
+# DEFAULT: Disabled - admin must enable
 FREE_PERIOD_SETTINGS = {
-    'enabled': True,  # FREE MODE ENABLED BY DEFAULT
+    'enabled': False,
     'start_time': None,
     'end_time': None,
-    'editions': []  # Empty = all editions
+    'editions': [],  # Empty = all editions (except server)
+    'period_id': None  # Unique ID for this free period (for tracking redemptions)
 }
 
 # Rate limiting for free downloads to prevent bot abuse
@@ -5545,9 +5546,54 @@ def admin_download_edition_hta(edition):
     )
 
 # ============================================================
-# PUBLIC FREE DOWNLOAD ENDPOINTS (Rate Limited)
+# PUBLIC FREE DOWNLOAD ENDPOINTS (1 edition per IP)
 # Available during free period - no admin auth required
 # ============================================================
+
+@app.route('/api/public/free-period', methods=['GET'])
+def public_check_free_period():
+    """Public endpoint to check if free period is active (for homepage banner)"""
+    is_active = is_free_period_active()
+    
+    if not is_active:
+        return jsonify({
+            'free_period_active': False
+        }), 200
+    
+    # Get client IP to check if they already claimed
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
+    period_id = FREE_PERIOD_SETTINGS.get('period_id')
+    already_claimed = None
+    
+    if period_id:
+        existing = FreePeriodRedemption.query.filter_by(
+            ip_address=client_ip,
+            period_id=period_id
+        ).first()
+        if existing:
+            already_claimed = existing.edition
+    
+    # List available editions (exclude server)
+    editions = []
+    for edition, filename in EDITION_HTA_FILES.items():
+        if edition == 'server':
+            continue
+        edition_info = OS_EDITIONS.get(edition, {})
+        editions.append({
+            'edition': edition,
+            'name': edition_info.get('name', edition.replace('_', ' ').title()),
+            'download_url': f"/api/free/download/{edition}"
+        })
+    
+    return jsonify({
+        'free_period_active': True,
+        'already_claimed': already_claimed,
+        'editions': editions,
+        'message': 'Free downloads available! Choose ONE edition - this is a one-time offer per person.'
+    }), 200
 
 @app.route('/api/free/editions', methods=['GET'])
 def public_list_free_editions():
@@ -5558,12 +5604,26 @@ def public_list_free_editions():
             'free_period_active': False
         }), 403
     
+    # Get client IP
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
+    period_id = FREE_PERIOD_SETTINGS.get('period_id')
+    already_claimed = None
+    
+    if period_id:
+        existing = FreePeriodRedemption.query.filter_by(
+            ip_address=client_ip,
+            period_id=period_id
+        ).first()
+        if existing:
+            already_claimed = existing.edition
+    
     editions = []
     for edition, filename in EDITION_HTA_FILES.items():
-        # Skip server edition from public free downloads
         if edition == 'server':
             continue
-            
         edition_info = OS_EDITIONS.get(edition, {})
         editions.append({
             'edition': edition,
@@ -5574,17 +5634,14 @@ def public_list_free_editions():
     return jsonify({
         'success': True,
         'free_period_active': True,
+        'already_claimed': already_claimed,
         'editions': editions,
-        'rate_limit': {
-            'per_hour': FREE_DOWNLOAD_MAX_PER_HOUR,
-            'per_day': FREE_DOWNLOAD_MAX_PER_DAY
-        }
+        'limit_info': 'You can only claim ONE free edition during this promotion.'
     }), 200
 
 @app.route('/api/free/download/<edition>', methods=['GET'])
 def public_free_download(edition):
-    """Download a free edition HTA (rate limited, public endpoint)"""
-    # Check free period is active
+    """Download a free edition HTA (1 per IP for entire free period)"""
     if not is_free_period_active():
         return jsonify({
             'error': 'Free downloads are not currently available',
@@ -5593,7 +5650,6 @@ def public_free_download(edition):
     
     edition = sanitize_input(edition.lower().replace('-', '_'))
     
-    # Server edition not available for free download
     if edition == 'server':
         return jsonify({
             'error': 'Server edition is not available for free download',
@@ -5606,18 +5662,29 @@ def public_free_download(edition):
             'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
         }), 404
     
-    # Check rate limit
+    # Get client IP
     client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     if client_ip:
         client_ip = client_ip.split(',')[0].strip()
     
-    allowed, message = check_download_rate_limit(client_ip)
-    if not allowed:
+    period_id = FREE_PERIOD_SETTINGS.get('period_id')
+    if not period_id:
         return jsonify({
-            'error': 'Rate limit exceeded',
-            'message': message,
-            'retry_info': 'Too many download requests. Please wait before trying again.'
-        }), 429
+            'error': 'Free period not properly configured'
+        }), 500
+    
+    # Check if this IP already claimed an edition
+    existing = FreePeriodRedemption.query.filter_by(
+        ip_address=client_ip,
+        period_id=period_id
+    ).first()
+    
+    if existing:
+        return jsonify({
+            'error': 'You have already claimed a free edition',
+            'claimed_edition': existing.edition,
+            'message': f'You already downloaded the {existing.edition} edition. Each person can only claim one free edition during this promotion.'
+        }), 403
     
     filename = EDITION_HTA_FILES[edition]
     filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
@@ -5628,11 +5695,26 @@ def public_free_download(edition):
             'hint': 'Please try again later.'
         }), 404
     
-    # Log the download
-    tamper_protected_audit_log("FREE_HTA_DOWNLOAD", {
+    # Record this redemption
+    try:
+        redemption = FreePeriodRedemption(
+            ip_address=client_ip,
+            edition=edition,
+            period_id=period_id
+        )
+        db.session.add(redemption)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error recording free redemption: {e}")
+        return jsonify({
+            'error': 'Could not process your request. Please try again.'
+        }), 500
+    
+    tamper_protected_audit_log("FREE_EDITION_CLAIMED", {
         "ip": client_ip,
         "edition": edition,
-        "filename": filename
+        "period_id": period_id
     }, "INFO")
     
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -5653,13 +5735,22 @@ def admin_get_free_period():
     """Get current free period settings"""
     is_active = is_free_period_active()
     
+    # Count redemptions for current period
+    redemption_count = 0
+    if FREE_PERIOD_SETTINGS.get('period_id'):
+        redemption_count = FreePeriodRedemption.query.filter_by(
+            period_id=FREE_PERIOD_SETTINGS['period_id']
+        ).count()
+    
     return jsonify({
         'success': True,
         'enabled': FREE_PERIOD_SETTINGS['enabled'],
         'is_currently_active': is_active,
+        'period_id': FREE_PERIOD_SETTINGS.get('period_id'),
         'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
         'end_time': FREE_PERIOD_SETTINGS['end_time'].isoformat() if FREE_PERIOD_SETTINGS['end_time'] else None,
-        'editions': FREE_PERIOD_SETTINGS['editions']
+        'editions': FREE_PERIOD_SETTINGS['editions'],
+        'total_redemptions': redemption_count
     }), 200
 
 @app.route('/api/admin/free-period', methods=['POST'])
@@ -5672,6 +5763,12 @@ def admin_set_free_period():
     start_time_str = data.get('start_time')
     end_time_str = data.get('end_time')
     editions = data.get('editions', [])
+    
+    # Generate new period_id when enabling (resets redemption tracking)
+    if enabled and not FREE_PERIOD_SETTINGS['enabled']:
+        FREE_PERIOD_SETTINGS['period_id'] = f"free_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(4)}"
+    elif not enabled:
+        FREE_PERIOD_SETTINGS['period_id'] = None
     
     FREE_PERIOD_SETTINGS['enabled'] = enabled
     
@@ -5697,6 +5794,7 @@ def admin_set_free_period():
         "username": g.admin_user,
         "role": g.admin_role,
         "enabled": enabled,
+        "period_id": FREE_PERIOD_SETTINGS.get('period_id'),
         "start": start_time_str,
         "end": end_time_str,
         "editions": editions
@@ -5707,6 +5805,7 @@ def admin_set_free_period():
         'message': 'Free period settings updated',
         'settings': {
             'enabled': FREE_PERIOD_SETTINGS['enabled'],
+            'period_id': FREE_PERIOD_SETTINGS.get('period_id'),
             'start_time': FREE_PERIOD_SETTINGS['start_time'].isoformat() if FREE_PERIOD_SETTINGS['start_time'] else None,
             'end_time': FREE_PERIOD_SETTINGS['end_time'].isoformat() if FREE_PERIOD_SETTINGS['end_time'] else None,
             'editions': FREE_PERIOD_SETTINGS['editions']
@@ -5721,6 +5820,7 @@ def admin_clear_free_period():
     FREE_PERIOD_SETTINGS['start_time'] = None
     FREE_PERIOD_SETTINGS['end_time'] = None
     FREE_PERIOD_SETTINGS['editions'] = []
+    FREE_PERIOD_SETTINGS['period_id'] = None
     
     tamper_protected_audit_log("FREE_PERIOD_CLEARED", {
         "username": g.admin_user,

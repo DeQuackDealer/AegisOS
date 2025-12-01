@@ -394,6 +394,80 @@
             background: var(--bg-gray);
         }
 
+        /* Free Period Banner */
+        .free-banner {
+            display: none;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
+            50% { box-shadow: 0 0 40px rgba(16, 185, 129, 0.5); }
+        }
+
+        .free-banner.active {
+            display: block;
+        }
+
+        .free-banner h2 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .free-banner p {
+            font-size: 1.1rem;
+            opacity: 0.95;
+            margin-bottom: 1rem;
+        }
+
+        .free-edition-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+        }
+
+        .free-edition-btn {
+            background: white;
+            color: #059669;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            border: none;
+            cursor: pointer;
+        }
+
+        .free-edition-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .free-edition-btn.disabled {
+            background: #ccc;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        .free-banner .claimed-message {
+            background: rgba(255,255,255,0.2);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            display: inline-block;
+            font-weight: 600;
+        }
+
         /* Stats Section */
         .stats {
             background: var(--bg-dark);
@@ -518,6 +592,15 @@
     </style>
 </head>
 <body>
+    <!-- Free Period Banner (hidden by default, shown via JS when active) -->
+    <div id="free-banner" class="free-banner">
+        <h2>FREE EDITION GIVEAWAY!</h2>
+        <p id="free-banner-message">Choose ONE edition to download for FREE - this is a limited-time offer!</p>
+        <div id="free-edition-buttons" class="free-edition-buttons">
+            <!-- Buttons populated by JavaScript -->
+        </div>
+    </div>
+
     <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
@@ -822,6 +905,67 @@
                 alert('Payment processing unavailable. Please contact riley.liang@hotmail.com');
             }
         }
+
+        // Check for free period and show banner
+        async function checkFreePeriod() {
+            try {
+                const response = await fetch('/api/public/free-period');
+                const data = await response.json();
+                
+                if (data.free_period_active) {
+                    const banner = document.getElementById('free-banner');
+                    const messageEl = document.getElementById('free-banner-message');
+                    const buttonsEl = document.getElementById('free-edition-buttons');
+                    
+                    banner.classList.add('active');
+                    
+                    if (data.already_claimed) {
+                        // User already claimed an edition
+                        messageEl.textContent = `You already claimed the ${data.already_claimed.replace('_', ' ').toUpperCase()} edition. Thank you!`;
+                        buttonsEl.innerHTML = '<span class="claimed-message">Your free edition has been claimed. Enjoy Aegis OS!</span>';
+                    } else {
+                        // Show edition buttons
+                        messageEl.textContent = data.message || 'Choose ONE edition to download for FREE!';
+                        buttonsEl.innerHTML = '';
+                        
+                        const editionLabels = {
+                            'basic': 'Basic',
+                            'workplace': 'Workplace',
+                            'gamer': 'Gamer',
+                            'ai_developer': 'AI Developer',
+                            'gamer_ai': 'Gamer + AI'
+                        };
+                        
+                        data.editions.forEach(ed => {
+                            const btn = document.createElement('button');
+                            btn.className = 'free-edition-btn';
+                            btn.textContent = 'Get ' + (editionLabels[ed.edition] || ed.name) + ' FREE';
+                            btn.onclick = () => claimFreeEdition(ed.edition);
+                            buttonsEl.appendChild(btn);
+                        });
+                    }
+                }
+            } catch (error) {
+                console.log('Free period check failed:', error);
+            }
+        }
+
+        // Claim a free edition
+        async function claimFreeEdition(edition) {
+            if (!confirm('Are you sure you want to claim the ' + edition.replace('_', ' ').toUpperCase() + ' edition? You can only claim ONE free edition!')) {
+                return;
+            }
+            
+            try {
+                // Direct download - the server will record the claim
+                window.location.href = '/api/free/download/' + edition;
+            } catch (error) {
+                alert('Download failed. Please try again.');
+            }
+        }
+
+        // Check free period on page load
+        document.addEventListener('DOMContentLoaded', checkFreePeriod);
     </script>
 </body>
 </html>

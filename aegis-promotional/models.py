@@ -253,3 +253,27 @@ class GiveawayEntry(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'notified_at': self.notified_at.isoformat() if self.notified_at else None
         }
+
+
+class FreePeriodRedemption(db.Model):
+    """Tracks which IPs have claimed their free edition during a free period"""
+    __tablename__ = 'free_period_redemptions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    ip_address = db.Column(db.String(45), nullable=False, index=True)
+    edition = db.Column(db.String(50), nullable=False)
+    period_id = db.Column(db.String(50), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        db.UniqueConstraint('ip_address', 'period_id', name='uix_ip_period'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'ip_address': self.ip_address,
+            'edition': self.edition,
+            'period_id': self.period_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
