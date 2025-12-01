@@ -223,6 +223,7 @@ Dim lastProgress, smoothProgress
 Dim partitionStyle, quickFormat
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
 Dim selectedFeatures
+Dim hwid
 
 Sub Window_OnLoad()
     window.resizeTo 680, 780
@@ -234,20 +235,97 @@ Sub Window_OnLoad()
     quickFormat = True
     sysReqPassed = False
     selectedFeatures = "wallpaper,stream,security,backup"
-    CheckAdminStatus
+    
+    CollectHWID
+    
+    If Not IsAdmin() Then
+        If MsgBox("This tool requires Administrator privileges to write to USB drives." & vbCrLf & vbCrLf & _
+                  "Would you like to restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then
+            RestartAsAdmin
+            Exit Sub
+        Else
+            ShowAdminNotice
+        End If
+    End If
+    
     CheckSystemRequirements
     SetupFeatureSelection
 End Sub
 
-Sub CheckAdminStatus()
-    Dim isAdmin
+Function IsAdmin()
     On Error Resume Next
-    isAdmin = shell.Run("net session", 0, True) = 0
+    IsAdmin = (CreateObject("WScript.Shell").Run("net session", 0, True) = 0)
     On Error Goto 0
-    If Not isAdmin Then
-        document.getElementById("adminNotice").style.display = "block"
-    End If
+End Function
+
+Sub RestartAsAdmin()
+    Dim shellApp
+    Set shellApp = CreateObject("Shell.Application")
+    shellApp.ShellExecute "mshta.exe", document.location.href, "", "runas", 1
+    window.close
 End Sub
+
+Sub ShowAdminNotice()
+    document.getElementById("adminNotice").style.display = "block"
+End Sub
+
+Sub CollectHWID()
+    Dim hwData, computerName, cpuId, macAddr, diskSerial
+    Dim wmiLocal, items, item
+    
+    On Error Resume Next
+    
+    Set wmiLocal = GetObject("winmgmts:\\.\root\cimv2")
+    
+    computerName = CreateObject("WScript.Network").ComputerName
+    If Err.Number <> 0 Then computerName = "UNKNOWN" : Err.Clear
+    
+    cpuId = ""
+    Set items = wmiLocal.ExecQuery("SELECT ProcessorId FROM Win32_Processor")
+    For Each item In items
+        cpuId = item.ProcessorId
+        Exit For
+    Next
+    If cpuId = "" Or Err.Number <> 0 Then cpuId = "UNKNOWN" : Err.Clear
+    
+    macAddr = ""
+    Set items = wmiLocal.ExecQuery("SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True")
+    For Each item In items
+        If Not IsNull(item.MACAddress) Then
+            macAddr = item.MACAddress
+            Exit For
+        End If
+    Next
+    If macAddr = "" Or Err.Number <> 0 Then macAddr = "UNKNOWN" : Err.Clear
+    
+    diskSerial = ""
+    Set items = wmiLocal.ExecQuery("SELECT SerialNumber FROM Win32_DiskDrive WHERE Index = 0")
+    For Each item In items
+        diskSerial = Trim(item.SerialNumber)
+        Exit For
+    Next
+    If diskSerial = "" Or Err.Number <> 0 Then diskSerial = "UNKNOWN" : Err.Clear
+    
+    On Error Goto 0
+    
+    hwData = computerName & "|" & cpuId & "|" & macAddr & "|" & diskSerial
+    hwid = SimpleHash(hwData)
+End Sub
+
+Function SimpleHash(strInput)
+    Dim i, charCode, hash1, hash2, combined
+    hash1 = 5381
+    hash2 = 52711
+    
+    For i = 1 To Len(strInput)
+        charCode = Asc(Mid(strInput, i, 1))
+        hash1 = ((hash1 * 33) Xor charCode) And &H7FFFFFFF
+        hash2 = ((hash2 * 33) Xor charCode) And &H7FFFFFFF
+    Next
+    
+    combined = Hex(hash1) & Hex(hash2)
+    SimpleHash = UCase(combined)
+End Function
 
 Sub CheckSystemRequirements()
     Dim ramGB, freeSpaceGB, osVer, ramStatus, diskStatus, osStatus

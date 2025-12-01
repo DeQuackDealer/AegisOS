@@ -262,6 +262,9 @@ class FreePeriodRedemption(db.Model):
     ip_address = db.Column(db.String(45), nullable=False, index=True)
     edition = db.Column(db.String(50), nullable=False)
     period_id = db.Column(db.String(50), nullable=False, index=True)
+    hwid = db.Column(db.String(50), index=True)
+    activation_count = db.Column(db.Integer, default=0)
+    max_activations = db.Column(db.Integer, default=2)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     __table_args__ = (
@@ -274,6 +277,9 @@ class FreePeriodRedemption(db.Model):
             'ip_address': self.ip_address,
             'edition': self.edition,
             'period_id': self.period_id,
+            'hwid': self.hwid,
+            'activation_count': self.activation_count,
+            'max_activations': self.max_activations,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 

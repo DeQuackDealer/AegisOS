@@ -5830,6 +5830,112 @@ def public_free_download(edition):
         }
     )
 
+@app.route('/api/free/activate', methods=['POST'])
+def activate_free_edition():
+    """Track HWID activation for anti-redistribution. Called when OS is installed."""
+    if not is_free_period_active():
+        return jsonify({
+            'error': 'Free period is not active',
+            'activated': False
+        }), 403
+    
+    data = request.json or {}
+    hwid = sanitize_input(data.get('hwid', ''))
+    edition = sanitize_input(data.get('edition', ''))
+    
+    if not hwid or not edition:
+        return jsonify({
+            'error': 'Missing hwid or edition',
+            'activated': False
+        }), 400
+    
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
+    period_id = FREE_PERIOD_SETTINGS.get('period_id')
+    
+    # Find existing redemption for this IP
+    redemption = FreePeriodRedemption.query.filter_by(
+        ip_address=client_ip,
+        period_id=period_id
+    ).first()
+    
+    if not redemption:
+        # Check if HWID was used on a different IP (redistribution attempt)
+        hwid_redemption = FreePeriodRedemption.query.filter_by(
+            hwid=hwid,
+            period_id=period_id
+        ).first()
+        
+        if hwid_redemption:
+            tamper_protected_audit_log("REDISTRIBUTION_ATTEMPT", {
+                "hwid": hwid,
+                "new_ip": client_ip,
+                "original_ip": hwid_redemption.ip_address,
+                "edition": edition,
+                "period_id": period_id
+            }, "HIGH")
+            return jsonify({
+                'error': 'This installer was obtained from a different source. Redistribution is not allowed.',
+                'activated': False,
+                'redistribution_detected': True
+            }), 403
+        
+        return jsonify({
+            'error': 'No valid claim found for this IP. Please download the installer first.',
+            'activated': False
+        }), 404
+    
+    # Check activation limit
+    if redemption.activation_count >= redemption.max_activations:
+        return jsonify({
+            'error': f'Maximum activations ({redemption.max_activations}) reached for this claim.',
+            'activated': False,
+            'activations_remaining': 0
+        }), 403
+    
+    # Update HWID and activation count
+    if not redemption.hwid:
+        redemption.hwid = hwid
+    elif redemption.hwid != hwid:
+        # Different machine trying to activate - count it
+        tamper_protected_audit_log("MULTI_MACHINE_ACTIVATION", {
+            "original_hwid": redemption.hwid,
+            "new_hwid": hwid,
+            "ip": client_ip,
+            "edition": edition
+        }, "INFO")
+    
+    redemption.activation_count += 1
+    
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating activation: {e}")
+        return jsonify({
+            'error': 'Could not process activation',
+            'activated': False
+        }), 500
+    
+    tamper_protected_audit_log("FREE_EDITION_ACTIVATED", {
+        "ip": client_ip,
+        "hwid": hwid,
+        "edition": edition,
+        "activation_count": redemption.activation_count,
+        "max_activations": redemption.max_activations
+    }, "INFO")
+    
+    return jsonify({
+        'success': True,
+        'activated': True,
+        'edition': edition,
+        'activations_used': redemption.activation_count,
+        'activations_remaining': redemption.max_activations - redemption.activation_count,
+        'message': f'Activation successful! You have {redemption.max_activations - redemption.activation_count} activations remaining.'
+    }), 200
+
 @app.route('/api/admin/free-period', methods=['GET'])
 @require_admin
 def admin_get_free_period():

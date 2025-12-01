@@ -252,8 +252,89 @@ Dim lastProgress, smoothProgress
 Dim partitionStyle, quickFormat, secureBootEnabled, bootTheme, unattendedMode, networkPreset
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
 Dim selectedFeatures
+Dim hwid
+
+Function IsAdmin()
+    On Error Resume Next
+    IsAdmin = (CreateObject("WScript.Shell").Run("net session", 0, True) = 0)
+    On Error Goto 0
+End Function
+
+Sub RestartAsAdmin()
+    Dim shellApp
+    Set shellApp = CreateObject("Shell.Application")
+    shellApp.ShellExecute "mshta.exe", document.location.href, "", "runas", 1
+    window.close
+End Sub
+
+Sub ShowAdminNotice()
+    On Error Resume Next
+    document.getElementById("adminNotice").style.display = "block"
+    On Error Goto 0
+End Sub
+
+Sub CollectHWID()
+    Dim computerName, cpuId, macAddr, diskSerial, combined
+    On Error Resume Next
+    
+    computerName = CreateObject("WScript.Network").ComputerName
+    If Len(computerName) = 0 Then computerName = "UNKNOWN"
+    
+    cpuId = "UNKNOWN"
+    Set wmiTemp = GetObject("winmgmts:\\.\root\cimv2")
+    If Not wmiTemp Is Nothing Then
+        Set cpuQuery = wmiTemp.ExecQuery("SELECT ProcessorId FROM Win32_Processor")
+        For Each cpu In cpuQuery
+            If Not IsNull(cpu.ProcessorId) Then cpuId = cpu.ProcessorId
+        Next
+        
+        macAddr = "UNKNOWN"
+        Set netQuery = wmiTemp.ExecQuery("SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True")
+        For Each adapter In netQuery
+            If Not IsNull(adapter.MACAddress) Then
+                macAddr = adapter.MACAddress
+                Exit For
+            End If
+        Next
+        
+        diskSerial = "UNKNOWN"
+        Set diskQuery = wmiTemp.ExecQuery("SELECT SerialNumber FROM Win32_DiskDrive")
+        For Each disk In diskQuery
+            If Not IsNull(disk.SerialNumber) Then
+                diskSerial = Trim(disk.SerialNumber)
+                Exit For
+            End If
+        Next
+    End If
+    
+    combined = computerName & "|" & cpuId & "|" & macAddr & "|" & diskSerial
+    hwid = SimpleHash(combined)
+    On Error Goto 0
+End Sub
+
+Function SimpleHash(str)
+    Dim h, i, c
+    h = 5381
+    For i = 1 To Len(str)
+        c = Asc(Mid(str, i, 1))
+        h = ((h * 33) Xor c) And &H7FFFFFFF
+    Next
+    SimpleHash = Hex(h)
+End Function
 
 Sub Window_OnLoad()
+    CollectHWID
+    
+    If Not IsAdmin() Then
+        If MsgBox("This tool requires Administrator privileges to write to USB drives." & vbCrLf & vbCrLf & _
+                  "Would you like to restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then
+            RestartAsAdmin
+            Exit Sub
+        Else
+            ShowAdminNotice
+        End If
+    End If
+    
     window.resizeTo 680, 880
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
@@ -270,18 +351,7 @@ Sub Window_OnLoad()
     serverUrl = "https://aegis-os.replit.app"
     validationToken = ""
     isValidating = False
-    CheckAdminStatus
     CheckSystemRequirements
-End Sub
-
-Sub CheckAdminStatus()
-    Dim isAdmin
-    On Error Resume Next
-    isAdmin = shell.Run("net session", 0, True) = 0
-    On Error Goto 0
-    If Not isAdmin Then
-        document.getElementById("adminNotice").style.display = "block"
-    End If
 End Sub
 
 Sub CheckSystemRequirements()
