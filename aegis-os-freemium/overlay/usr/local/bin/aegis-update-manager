@@ -30,7 +30,33 @@ SUBPROCESS_TIMEOUT_LONG = 600
 TIER_LIMIT = "freemium"  # "freemium" or "full" - controls feature availability
 
 AEGIS_GPG_KEYRING = "/etc/aegis/trusted-keys.gpg"
-AEGIS_UPDATE_SERVER = "https://updates.aegis-os.com"
+AEGIS_CONFIG_FILE = "/etc/aegis/update-config.json"
+AEGIS_LICENSE_FILE = "/etc/aegis/license.json"
+
+def get_aegis_server_url():
+    """Get the Aegis update server URL from config or use default"""
+    default_url = "https://aegis-os.example.com"
+    try:
+        if os.path.exists(AEGIS_CONFIG_FILE):
+            with open(AEGIS_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                return config.get('update_server', default_url)
+    except:
+        pass
+    return default_url
+
+def get_license_key():
+    """Get the stored license key if available"""
+    try:
+        if os.path.exists(AEGIS_LICENSE_FILE):
+            with open(AEGIS_LICENSE_FILE, 'r') as f:
+                license_data = json.load(f)
+                return license_data.get('license_key', '')
+    except:
+        pass
+    return ''
+
+AEGIS_UPDATE_SERVER = get_aegis_server_url()
 AEGIS_TRUSTED_FINGERPRINTS = [
     "AEGIS_OS_RELEASE_KEY_2024",
 ]
@@ -486,6 +512,128 @@ class AegisUpdateManager:
                     json.dump(self.config, f, indent=2)
         except (OSError, PermissionError, IOError) as e:
             self.logger.debug(f"Could not save config: {e}")
+    
+    def check_aegis_updates(self, callback=None) -> Dict:
+        """
+        Check for Aegis OS version updates from the server
+        Uses license key if available for edition-specific updates
+        """
+        import urllib.request
+        import urllib.error
+        import ssl
+        
+        result = {
+            "success": False,
+            "error": "",
+            "update_available": False,
+            "latest_version": "",
+            "current_version": self.version,
+            "changelog": [],
+            "download_url": "",
+            "edition": "freemium",
+            "features": {}
+        }
+        
+        self.logger.info("Checking Aegis OS server for updates...")
+        if callback:
+            callback("Checking Aegis OS server for updates...")
+        
+        try:
+            server_url = get_aegis_server_url()
+            license_key = get_license_key()
+            
+            current_version = "2.8.0"
+            try:
+                version_file = Path("/etc/aegis/version")
+                if version_file.exists():
+                    current_version = version_file.read_text().strip()
+            except:
+                pass
+            
+            params = f"current_version={current_version}"
+            if license_key:
+                params += f"&license_key={license_key}"
+            
+            url = f"{server_url}/api/v1/updates/check?{params}"
+            
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(url, headers={
+                'User-Agent': f'AegisOS-UpdateManager/{self.version}',
+                'Accept': 'application/json'
+            })
+            
+            try:
+                with urllib.request.urlopen(req, timeout=30, context=ctx) as response:
+                    data = json.loads(response.read().decode('utf-8'))
+                    
+                    result["success"] = True
+                    result["update_available"] = data.get("update_available", False)
+                    result["latest_version"] = data.get("latest_version", "")
+                    result["current_version"] = data.get("current_version", current_version)
+                    result["changelog"] = data.get("changelog", [])
+                    result["download_url"] = data.get("download_url", "")
+                    result["edition"] = data.get("edition", "freemium")
+                    result["features"] = data.get("features", {})
+                    result["license_status"] = data.get("license_status", "none")
+                    result["signature"] = data.get("signature", "")
+                    
+                    if callback:
+                        if result["update_available"]:
+                            callback(f"Update available: v{result['latest_version']}")
+                        else:
+                            callback("Aegis OS is up to date")
+                    
+                    self.logger.info(f"Aegis update check: available={result['update_available']}, latest={result['latest_version']}")
+                    
+            except urllib.error.URLError as e:
+                result["error"] = f"Network error: {e.reason}"
+                self.logger.warning(f"Aegis server unreachable: {e}")
+                if callback:
+                    callback(f"Server unavailable: {e.reason}")
+            except urllib.error.HTTPError as e:
+                result["error"] = f"Server error: HTTP {e.code}"
+                self.logger.warning(f"Aegis server error: HTTP {e.code}")
+                if callback:
+                    callback(f"Server error: HTTP {e.code}")
+                    
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Aegis update check error: {e}")
+            if callback:
+                callback(f"Error: {e}")
+        
+        return result
+    
+    def get_aegis_download_info(self) -> Dict:
+        """Get download URLs and checksums for current Aegis OS version"""
+        import urllib.request
+        import urllib.error
+        
+        result = {"success": False, "error": "", "info": {}}
+        
+        try:
+            server_url = get_aegis_server_url()
+            license_key = get_license_key()
+            
+            url = f"{server_url}/api/v1/updates/download-info"
+            if license_key:
+                url += f"?license_key={license_key}"
+            
+            req = urllib.request.Request(url, headers={
+                'User-Agent': f'AegisOS-UpdateManager/{self.version}',
+                'Accept': 'application/json'
+            })
+            
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                result["success"] = True
+                result["info"] = data
+                
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Download info fetch error: {e}")
+        
+        return result
     
     def add_history(self, action: str, packages: List[str], success: bool, details: str = ""):
         """Add entry to update history"""

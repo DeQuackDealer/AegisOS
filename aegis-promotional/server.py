@@ -2993,6 +2993,253 @@ def extend_license(license_id):
     tamper_protected_audit_log('license_extended', {'license_id': license_id, 'new_end': new_end.isoformat()}, 'INFO')
     return jsonify({'license': license_data}), 200
 
+# ============================================================
+# AUTO-UPDATE CHECK API
+# Allows Aegis OS installations to check for updates
+# Works with license key validation (Freemium works without key)
+# ============================================================
+
+AEGIS_CURRENT_VERSION = "2.8.0"
+AEGIS_VERSION_INFO = {
+    "version": AEGIS_CURRENT_VERSION,
+    "release_date": "2025-12-01",
+    "min_supported": "2.5.0",
+    "changelog": [
+        {"version": "2.8.0", "date": "2025-12-01", "changes": [
+            "RSA asymmetric license signing for enhanced security",
+            "Improved offline license validation",
+            "New aegis-stream local game streaming",
+            "Enhanced AI security tiering system",
+            "Wallpaper Engine v3.1 with MPV renderer"
+        ]},
+        {"version": "2.7.0", "date": "2025-11-15", "changes": [
+            "Added aegis-security-daemon background service",
+            "AppArmor/Firejail sandboxing policies",
+            "Improved gaming optimizer performance",
+            "Bug fixes and stability improvements"
+        ]},
+        {"version": "2.6.0", "date": "2025-10-20", "changes": [
+            "New AI toolkit with model training support",
+            "Server edition XDR security features",
+            "Desktop effects engine improvements",
+            "Enhanced backup scheduling"
+        ]}
+    ],
+    "download_urls": {
+        "freemium": "/download-installer-freemium",
+        "licensed": "/download-installer-licensed"
+    }
+}
+
+EDITION_FEATURES_UPDATE = {
+    "freemium": {
+        "priority_updates": False,
+        "early_access": False,
+        "auto_update": False,
+        "update_channel": "stable"
+    },
+    "basic": {
+        "priority_updates": True,
+        "early_access": False,
+        "auto_update": True,
+        "update_channel": "stable"
+    },
+    "workplace": {
+        "priority_updates": True,
+        "early_access": False,
+        "auto_update": True,
+        "update_channel": "stable"
+    },
+    "gamer": {
+        "priority_updates": True,
+        "early_access": True,
+        "auto_update": True,
+        "update_channel": "beta"
+    },
+    "ai_developer": {
+        "priority_updates": True,
+        "early_access": True,
+        "auto_update": True,
+        "update_channel": "beta"
+    },
+    "gamer_ai": {
+        "priority_updates": True,
+        "early_access": True,
+        "auto_update": True,
+        "update_channel": "beta"
+    },
+    "server": {
+        "priority_updates": True,
+        "early_access": True,
+        "auto_update": True,
+        "update_channel": "lts"
+    }
+}
+
+@app.route('/api/v1/updates/check', methods=['GET', 'POST'])
+@rate_limit(limit=200)
+def check_for_updates():
+    """
+    Check for Aegis OS updates
+    
+    Works for both Freemium (no license) and paid editions (with license key)
+    
+    Query params or JSON body:
+    - license_key: Optional license key for paid editions
+    - current_version: Current installed version
+    - hardware_id: Optional hardware identifier
+    - edition: Current edition (freemium, basic, gamer, etc.)
+    
+    Returns:
+    - update_available: boolean
+    - latest_version: string
+    - changelog: list of changes
+    - download_url: where to get the update
+    - features: edition-specific update features
+    - signature: RSA signature for verification
+    """
+    try:
+        if request.method == 'POST':
+            data = request.get_json() or {}
+        else:
+            data = request.args.to_dict()
+        
+        license_key = data.get('license_key', '').strip().upper()
+        current_version = data.get('current_version', '0.0.0')
+        hardware_id = data.get('hardware_id', '')
+        edition = data.get('edition', 'freemium').lower()
+        
+        validated_edition = 'freemium'
+        license_valid = False
+        license_status = 'none'
+        
+        if license_key:
+            cached_edition = None
+            for demo_key, demo_data in DEMO_LICENSES.items():
+                if demo_key == license_key:
+                    cached_edition = demo_data['edition']
+                    license_valid = True
+                    license_status = 'demo'
+                    break
+            
+            if not cached_edition:
+                from models import License
+                db_license = License.query.filter_by(license_key=license_key).first()
+                if db_license and db_license.is_active:
+                    cached_edition = db_license.edition
+                    license_valid = True
+                    license_status = 'active'
+                elif db_license:
+                    license_status = 'expired'
+            
+            if cached_edition:
+                edition_map = {
+                    'basic': 'basic', 'workplace': 'workplace', 
+                    'gamer': 'gamer', 'ai_developer': 'ai_developer',
+                    'gamer_ai': 'gamer_ai', 'server': 'server'
+                }
+                validated_edition = edition_map.get(cached_edition.lower().replace(' ', '_').replace('+', '_'), 'basic')
+        
+        update_features = EDITION_FEATURES_UPDATE.get(validated_edition, EDITION_FEATURES_UPDATE['freemium'])
+        
+        def version_tuple(v):
+            try:
+                return tuple(map(int, v.split('.')))
+            except:
+                return (0, 0, 0)
+        
+        current_tuple = version_tuple(current_version)
+        latest_tuple = version_tuple(AEGIS_CURRENT_VERSION)
+        update_available = latest_tuple > current_tuple
+        
+        relevant_changelog = []
+        for entry in AEGIS_VERSION_INFO['changelog']:
+            entry_tuple = version_tuple(entry['version'])
+            if entry_tuple > current_tuple:
+                relevant_changelog.append(entry)
+        
+        download_url = AEGIS_VERSION_INFO['download_urls']['licensed'] if license_valid else AEGIS_VERSION_INFO['download_urls']['freemium']
+        
+        response_data = {
+            "update_available": update_available,
+            "latest_version": AEGIS_CURRENT_VERSION,
+            "current_version": current_version,
+            "release_date": AEGIS_VERSION_INFO['release_date'],
+            "min_supported": AEGIS_VERSION_INFO['min_supported'],
+            "edition": validated_edition,
+            "license_status": license_status,
+            "changelog": relevant_changelog if update_available else [],
+            "download_url": download_url,
+            "features": update_features,
+            "check_timestamp": datetime.now().isoformat(),
+            "server_version": "4.0"
+        }
+        
+        private_key = get_rsa_private_key()
+        if private_key:
+            message = f"UPDATE:{AEGIS_CURRENT_VERSION}:{validated_edition}:{response_data['check_timestamp']}"
+            signature = sign_license_rsa(message)
+            if signature:
+                response_data['signature'] = signature
+                response_data['signature_message'] = message
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        app.logger.error(f"Update check error: {e}")
+        return jsonify({
+            "update_available": False,
+            "error": "Update check failed",
+            "latest_version": AEGIS_CURRENT_VERSION
+        }), 500
+
+@app.route('/api/v1/updates/changelog', methods=['GET'])
+@rate_limit(limit=300)
+def get_changelog():
+    """Get full changelog for all versions"""
+    return jsonify({
+        "current_version": AEGIS_CURRENT_VERSION,
+        "changelog": AEGIS_VERSION_INFO['changelog']
+    }), 200
+
+@app.route('/api/v1/updates/download-info', methods=['GET'])
+@rate_limit(limit=200)
+def get_download_info():
+    """Get download URLs and checksums for current version"""
+    license_key = request.args.get('license_key', '').strip().upper()
+    
+    is_licensed = False
+    if license_key:
+        if license_key in DEMO_LICENSES:
+            is_licensed = True
+        else:
+            from models import License
+            db_license = License.query.filter_by(license_key=license_key).first()
+            if db_license and db_license.is_active:
+                is_licensed = True
+    
+    iso_info = {
+        "version": AEGIS_CURRENT_VERSION,
+        "base_iso": {
+            "name": "linux-lite-7.2-64bit.iso",
+            "size_bytes": 3100000000,
+            "size_human": "2.9 GB",
+            "sha256": "DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216",
+            "mirrors": [
+                "https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso",
+                "https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso",
+                "https://mirrors.xtom.com/osdn/storage/g/l/li/linuxlite/7.2/linux-lite-7.2-64bit.iso"
+            ]
+        },
+        "installer": {
+            "type": "licensed" if is_licensed else "freemium",
+            "url": "/download-installer-licensed" if is_licensed else "/download-installer-freemium",
+            "format": "hta"
+        }
+    }
+    
+    return jsonify(iso_info), 200
+
 @app.route('/api/v1/admin/stats', methods=['GET'])
 @rate_limit(limit=100)
 def get_stats():

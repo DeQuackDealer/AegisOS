@@ -60,6 +60,34 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 - GMAI-DEMO-TEST-2024 (Gamer+AI)
 - SERV-DEMO-TEST-2024 (Server)
 
+### Auto-Update System (December 2025)
+
+The server provides a REST API for Aegis OS installations to check for updates. Works with both Freemium (no license) and paid editions (with license key).
+
+**API Endpoints:**
+
+1. **GET/POST /api/v1/updates/check** - Check for available updates
+   - Query params: `license_key`, `current_version`, `hardware_id`, `edition`
+   - Returns: `update_available`, `latest_version`, `changelog`, `download_url`, `features`
+   - Response is RSA-signed for verification
+
+2. **GET /api/v1/updates/changelog** - Get full version changelog
+
+3. **GET /api/v1/updates/download-info** - Get ISO download URLs and checksums
+   - Query params: `license_key` (optional)
+   - Returns mirror URLs, SHA256 checksum, installer type
+
+**Edition-Specific Features:**
+- Freemium: Stable channel, manual updates only
+- Basic/Workplace: Priority updates, auto-update enabled
+- Gamer/AI Developer/Gamer+AI: Beta channel access, early access features
+- Server: LTS channel, priority patches
+
+**Client Integration:**
+- `aegis-update-manager` tool reads server URL from `/etc/aegis/update-config.json`
+- License key stored in `/etc/aegis/license.json`
+- Current version from `/etc/aegis/version`
+
 ### Aegis Exclusive Tools
 
 Each OS edition includes 25+ custom Python-based utilities located in `/usr/local/bin/`. All tools support GUI (tkinter) and CLI modes, tier-based feature gating, and logging.
