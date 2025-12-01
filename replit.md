@@ -59,13 +59,10 @@ The licensed installer uses RSA-2048 asymmetric cryptography to prevent license 
 3. All new installer downloads will contain new public key
 4. Existing installers continue working until user re-downloads
 
-**Demo Licenses (for testing):**
-- BSIC-DEMO-TEST-2024 (Basic)
-- WORK-DEMO-TEST-2024 (Workplace)
-- GAME-DEMO-TEST-2024 (Gamer)
-- AIDV-DEMO-TEST-2024 (AI Developer)
-- GMAI-DEMO-TEST-2024 (Gamer+AI)
-- SERV-DEMO-TEST-2024 (Server)
+**RSA Verification Method (Critical):**
+- Python signs with: `cryptography` library, PKCS1v15 padding, SHA256
+- PowerShell verifies with: `RSA.Create().VerifyData()`, explicit UTF-8 encoding, PKCS1 padding, HashAlgorithmName.SHA256
+- This ensures byte-level compatibility between Python signing and .NET verification
 
 ### Free Period & No-License Installers (December 2025)
 

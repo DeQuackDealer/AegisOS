@@ -407,12 +407,12 @@ Function VerifyRSASignature(message, signatureB64)
     debugFile = tempDir & "\aegis_rsa_debug.txt"
     
     ' Robust PowerShell script for RSA-SHA256 signature verification
-    ' Compatible with PowerShell 5.1 (.NET Framework 4.x)
+    ' Uses VerifyData with explicit UTF-8 encoding to match Python PKCS1v15+SHA256 signing
     Dim psCode
     psCode = "$ErrorActionPreference='Continue'" & vbCrLf
     psCode = psCode & "$debug = @()" & vbCrLf
     psCode = psCode & "try {" & vbCrLf
-    psCode = psCode & "  $debug += 'Starting RSA verification...'" & vbCrLf
+    psCode = psCode & "  $debug += 'Starting RSA verification (VerifyData method)...'" & vbCrLf
     psCode = psCode & "  $pubKeyXmlB64 = '" & publicKeyXmlB64 & "'" & vbCrLf
     psCode = psCode & "  $sigB64 = '" & signatureB64 & "'" & vbCrLf
     psCode = psCode & "  $message = '" & EscapePSString(message) & "'" & vbCrLf
@@ -423,20 +423,17 @@ Function VerifyRSASignature(message, signatureB64)
     psCode = psCode & "  $debug += ('Signature bytes: ' + $sig.Length)" & vbCrLf
     psCode = psCode & "  $msgBytes = [System.Text.Encoding]::UTF8.GetBytes($message)" & vbCrLf
     psCode = psCode & "  $debug += ('Message bytes: ' + $msgBytes.Length)" & vbCrLf
-    psCode = psCode & "  $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider" & vbCrLf
+    psCode = psCode & "  # Use RSA.Create() with VerifyData for Python PKCS1v15 compatibility" & vbCrLf
+    psCode = psCode & "  $rsa = [System.Security.Cryptography.RSA]::Create()" & vbCrLf
     psCode = psCode & "  $rsa.FromXmlString($pubKeyXml)" & vbCrLf
     psCode = psCode & "  $debug += ('RSA key size: ' + $rsa.KeySize + ' bits')" & vbCrLf
-    psCode = psCode & "  # Create SHA256 hash first, then verify" & vbCrLf
-    psCode = psCode & "  $sha256 = [System.Security.Cryptography.SHA256]::Create()" & vbCrLf
-    psCode = psCode & "  $hashBytes = $sha256.ComputeHash($msgBytes)" & vbCrLf
-    psCode = psCode & "  $debug += ('Hash bytes: ' + $hashBytes.Length)" & vbCrLf
-    psCode = psCode & "  # Use VerifyHash with algorithm name for .NET Framework compatibility" & vbCrLf
-    psCode = psCode & "  $result = $rsa.VerifyHash($hashBytes, 'SHA256', $sig)" & vbCrLf
-    psCode = psCode & "  $debug += ('VerifyHash result: ' + $result)" & vbCrLf
+    psCode = psCode & "  $hashAlg = [System.Security.Cryptography.HashAlgorithmName]::SHA256" & vbCrLf
+    psCode = psCode & "  $padding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1" & vbCrLf
+    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sig, $hashAlg, $padding)" & vbCrLf
+    psCode = psCode & "  $debug += ('VerifyData result: ' + $result)" & vbCrLf
     psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
     psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
     psCode = psCode & "  $rsa.Dispose()" & vbCrLf
-    psCode = psCode & "  $sha256.Dispose()" & vbCrLf
     psCode = psCode & "} catch {" & vbCrLf
     psCode = psCode & "  $debug += ('ERROR: ' + $_.Exception.Message)" & vbCrLf
     psCode = psCode & "  $debug += ('Stack: ' + $_.Exception.StackTrace)" & vbCrLf

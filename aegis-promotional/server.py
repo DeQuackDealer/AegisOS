@@ -1421,64 +1421,8 @@ ADMIN_KEY = os.getenv('ADMIN_KEY', 'admin-secret-key-123')
 ADMIN_PWD = os.getenv('ADMIN_PWD', 'DefaultAdminPassword123!')
 ADMIN_TOKENS = {}  # Simple token storage for authenticated sessions
 
-# ============= DEMO LICENSE DATABASE =============
-# Demo license keys for testing - in production, this would be a database
-DEMO_LICENSES = {
-    'BSIC-DEMO-TEST-2024': {
-        'edition': 'basic',
-        'tier': 'basic',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    },
-    'GAME-DEMO-TEST-2024': {
-        'edition': 'gamer',
-        'tier': 'gamer',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    },
-    'AIDV-DEMO-TEST-2024': {
-        'edition': 'ai-dev',
-        'tier': 'ai-dev',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    },
-    'GMAI-DEMO-TEST-2024': {
-        'edition': 'gamer-ai',
-        'tier': 'gamer-ai',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    },
-    'SERV-DEMO-TEST-2024': {
-        'edition': 'server',
-        'tier': 'server',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    },
-    'WORK-DEMO-TEST-2024': {
-        'edition': 'workplace',
-        'tier': 'workplace',
-        'type': 'demo',
-        'created': '2024-01-01T00:00:00',
-        'expires': '2025-12-31T23:59:59',
-        'max_activations': 5,
-        'hardware_ids': []
-    }
-}
+# ============= LICENSE DATABASE =============
+# All licenses are validated from database - no demo/test keys in production
 
 # License validation rate limiting (stricter than general rate limiting)
 LICENSE_VALIDATION_ATTEMPTS = defaultdict(lambda: {'count': 0, 'reset_time': time.time(), 'locked_until': 0})
@@ -1795,32 +1739,26 @@ def validate_license():
                 'code': 'INVALID_FORMAT'
             }), 400
 
-        # Check if license exists in demo database OR real database
+        # Check if license exists in database
         license_data = None
         license_source = None
         
-        # First check demo licenses
-        if key in DEMO_LICENSES:
-            license_data = DEMO_LICENSES[key]
-            license_source = 'demo'
-        else:
-            # Check real database
-            try:
-                db_license = License.query.filter_by(license_key=key).first()
-                if db_license and db_license.status == 'active':
-                    license_data = {
-                        'edition': db_license.edition,
-                        'tier': db_license.edition,
-                        'type': db_license.license_type,
-                        'created': db_license.created_at.isoformat() if db_license.created_at else None,
-                        'expires': db_license.expires_at.isoformat() if db_license.expires_at else '2099-12-31T23:59:59',
-                        'max_activations': 3,
-                        'hardware_ids': [db_license.machine_id] if db_license.machine_id else [],
-                        'db_id': db_license.id
-                    }
-                    license_source = 'database'
-            except Exception as db_err:
-                logger.error(f"Database license check failed: {db_err}")
+        try:
+            db_license = License.query.filter_by(license_key=key).first()
+            if db_license and db_license.status == 'active':
+                license_data = {
+                    'edition': db_license.edition,
+                    'tier': db_license.edition,
+                    'type': db_license.license_type,
+                    'created': db_license.created_at.isoformat() if db_license.created_at else None,
+                    'expires': db_license.expires_at.isoformat() if db_license.expires_at else '2099-12-31T23:59:59',
+                    'max_activations': 3,
+                    'hardware_ids': [db_license.machine_id] if db_license.machine_id else [],
+                    'db_id': db_license.id
+                }
+                license_source = 'database'
+        except Exception as db_err:
+            logger.error(f"Database license check failed: {db_err}")
         
         if not license_data:
             tamper_protected_audit_log(
@@ -2518,18 +2456,7 @@ def generate_license_cache():
     if not rsa_enabled:
         app.logger.warning("RSA signing disabled - producing unsigned installer cache")
     
-    # Add demo licenses with RSA signatures (or unsigned if not available)
-    for key, data in DEMO_LICENSES.items():
-        key_hash = generate_vbs_hash(key)
-        if rsa_enabled:
-            message = f"{key_hash}:{data['edition']}"
-            sig = sign_license_rsa(message)
-            cache_entries.append(f"{key_hash}:{data['edition']}:{data['tier']}:{sig}")
-        else:
-            # Unsigned fallback for development/testing
-            cache_entries.append(f"{key_hash}:{data['edition']}:{data['tier']}")
-    
-    # Add recent database licenses (last 30 days)
+    # Add database licenses (last 30 days) with RSA signatures
     try:
         recent_date = datetime.now() - timedelta(days=30)
         recent_licenses = License.query.filter(
@@ -3153,22 +3080,14 @@ def check_for_updates():
         
         if license_key:
             cached_edition = None
-            for demo_key, demo_data in DEMO_LICENSES.items():
-                if demo_key == license_key:
-                    cached_edition = demo_data['edition']
-                    license_valid = True
-                    license_status = 'demo'
-                    break
-            
-            if not cached_edition:
-                from models import License
-                db_license = License.query.filter_by(license_key=license_key).first()
-                if db_license and db_license.is_active:
-                    cached_edition = db_license.edition
-                    license_valid = True
-                    license_status = 'active'
-                elif db_license:
-                    license_status = 'expired'
+            from models import License
+            db_license = License.query.filter_by(license_key=license_key).first()
+            if db_license and db_license.is_active:
+                cached_edition = db_license.edition
+                license_valid = True
+                license_status = 'active'
+            elif db_license:
+                license_status = 'expired'
             
             if cached_edition:
                 edition_map = {
@@ -3248,13 +3167,10 @@ def get_download_info():
     
     is_licensed = False
     if license_key:
-        if license_key in DEMO_LICENSES:
+        from models import License
+        db_license = License.query.filter_by(license_key=license_key).first()
+        if db_license and db_license.is_active:
             is_licensed = True
-        else:
-            from models import License
-            db_license = License.query.filter_by(license_key=license_key).first()
-            if db_license and db_license.is_active:
-                is_licensed = True
     
     iso_info = {
         "version": AEGIS_CURRENT_VERSION,
@@ -5843,25 +5759,10 @@ def admin_dashboard_stats():
 @app.route('/api/admin/licenses', methods=['GET'])
 @require_admin
 def admin_get_licenses():
-    """Get all licenses from database and demo licenses"""
+    """Get all licenses from database"""
     try:
-        all_licenses = []
-
-        for key, data in DEMO_LICENSES.items():
-            all_licenses.append({
-                'key': key,
-                'edition': data['edition'],
-                'tier': data['tier'],
-                'expires': data['expires'],
-                'activations': len(data['hardware_ids']),
-                'max_activations': data['max_activations'],
-                'status': 'active' if datetime.fromisoformat(data['expires']) > datetime.now() else 'expired'
-            })
-
         db_licenses = License.query.all()
-        for lic in db_licenses:
-            all_licenses.append(lic.to_dict())
-
+        all_licenses = [lic.to_dict() for lic in db_licenses]
         return jsonify({'licenses': all_licenses}), 200
     except Exception as e:
         logger.error(f"Error fetching licenses: {e}")
