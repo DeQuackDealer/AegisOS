@@ -2651,6 +2651,17 @@ def download_licensed_installer():
                 'Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"',
                 f'Const INTEGRITY_CHECK = "{master_sig_short}"'
             )
+            
+            # Replace serverUrl with actual server URL
+            server_domain = os.environ.get('REPLIT_DEV_DOMAIN', os.environ.get('REPLIT_DOMAINS', 'localhost:5000'))
+            if server_domain and not server_domain.startswith('http'):
+                server_url = f'https://{server_domain}'
+            else:
+                server_url = server_domain or 'http://localhost:5000'
+            script_content = script_content.replace(
+                'serverUrl = "https://aegis-os.replit.app"',
+                f'serverUrl = "{server_url}"'
+            )
 
             return Response(
                 script_content,
