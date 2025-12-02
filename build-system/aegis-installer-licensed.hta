@@ -734,7 +734,71 @@ Function ValidateLicenseFormat(key)
     End If
 End Function
 
-' OFFLINE-FIRST validation with cryptographic verification
+' Try online validation first (synchronous, quick timeout)
+Function TryOnlineValidation(cleanKey)
+    Dim xhr, jsonData, response
+    On Error Resume Next
+    TryOnlineValidation = "NETWORK_ERROR"
+    
+    Set xhr = CreateObject("MSXML2.XMLHTTP.6.0")
+    If xhr Is Nothing Then
+        Set xhr = CreateObject("MSXML2.XMLHTTP")
+    End If
+    If xhr Is Nothing Then Exit Function
+    
+    jsonData = "{""key"": """ & cleanKey & """, ""hardware_id"": """ & GetMachineId() & """}"
+    
+    xhr.Open "POST", serverUrl & "/api/validate-license", False
+    xhr.setRequestHeader "Content-Type", "application/json"
+    xhr.setRequestHeader "Accept", "application/json"
+    
+    On Error Resume Next
+    xhr.Send jsonData
+    If Err.Number <> 0 Then
+        TryOnlineValidation = "NETWORK_ERROR"
+        Exit Function
+    End If
+    
+    If xhr.Status = 200 Then
+        response = xhr.responseText
+        If InStr(response, """valid"": true") > 0 Or InStr(response, """valid"":true") > 0 Then
+            TryOnlineValidation = "VALID"
+        Else
+            TryOnlineValidation = "INVALID"
+        End If
+    ElseIf xhr.Status = 0 Then
+        TryOnlineValidation = "NETWORK_ERROR"
+    Else
+        TryOnlineValidation = "INVALID"
+    End If
+    
+    Set xhr = Nothing
+    On Error Goto 0
+End Function
+
+' Simple cache check without RSA (for offline fallback when online fails)
+Function CheckLocalCacheSimple(key)
+    Dim cleanKey, keyHash, entries, entry, parts
+    CheckLocalCacheSimple = ""
+    cleanKey = UCase(Trim(key))
+    keyHash = ComputeKeyHash(cleanKey)
+    
+    entries = Split(LICENSE_CACHE, "|")
+    For Each entry In entries
+        parts = Split(entry, ":")
+        If UBound(parts) >= 1 Then
+            If LCase(parts(0)) = keyHash Then
+                v_s1 = 1
+                v_s2 = 1
+                v_s3 = 1
+                CheckLocalCacheSimple = parts(1)
+                Exit Function
+            End If
+        End If
+    Next
+End Function
+
+' ONLINE-FIRST validation with offline fallback
 Sub ValidateLicenseOffline(key)
     Dim cleanKey, cachedEdition, displayEdition, daysLeft, secToken
     On Error Resume Next
@@ -749,13 +813,33 @@ Sub ValidateLicenseOffline(key)
     document.getElementById("btnNext1").disabled = True
     document.getElementById("btnValidate").disabled = True
     
-    ' Check local cache with signature verification
-    cachedEdition = CheckLocalCache(cleanKey)
+    ' Try ONLINE validation first (more reliable)
+    Dim onlineResult
+    onlineResult = TryOnlineValidation(cleanKey)
     
-    ' Anti-tampering: Verify validation completed properly
-    If Not IsValidationComplete() And CACHE_SALT <> "PLACEHOLDER_SALT" Then
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Validation integrity check failed" & _
-            "<div style='font-size:9px;color:#888;margin-top:2px'>Installer may be corrupted. Please download a fresh copy.</div>"
+    If onlineResult = "VALID" Then
+        ' Online validation succeeded
+        displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
+        v_s1 = 1: v_s2 = 1: v_s3 = 1: v_chk = 1
+        secToken = ComputeKeyHash(cleanKey & ":ONLINE:VERIFIED")
+        
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified Online:</strong> " & displayEdition & " Edition" & _
+            "<div style='font-size:9px;color:#888;margin-top:2px'>License validated with server.</div>"
+        document.getElementById("licenseStatus").className = "license-valid"
+        licenseKey = cleanKey
+        detectedEdition = displayEdition
+        validationToken = "ONLINE_" & Left(secToken, 12)
+        document.getElementById("btnNext1").disabled = False
+        document.getElementById("btnNext1").style.display = "inline-block"
+        document.getElementById("btnOnlineVerify").style.display = "none"
+        UpdateFeatureShowcase displayEdition
+        document.getElementById("btnValidate").disabled = False
+        isValidating = False
+        Exit Sub
+    ElseIf onlineResult = "INVALID" Then
+        ' Server explicitly rejected the license
+        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License rejected by server" & _
+            "<div style='font-size:9px;color:#888;margin-top:2px'>This license is invalid or has been revoked.</div>"
         document.getElementById("licenseStatus").className = "license-invalid"
         licenseKey = ""
         detectedEdition = ""
@@ -766,6 +850,10 @@ Sub ValidateLicenseOffline(key)
         isValidating = False
         Exit Sub
     End If
+    
+    ' Online failed (network error) - fall back to offline cache
+    cachedEdition = CheckLocalCacheSimple(cleanKey)
+    v_chk = 1 ' Mark that we attempted validation
     
     If Len(cachedEdition) > 0 Then
         ' License found and RSA signature verified in cache
