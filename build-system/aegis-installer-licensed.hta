@@ -477,32 +477,33 @@ Function VerifyRSASignature(message, signatureB64)
     debugFile = tempDir & "\aegis_rsa_debug.txt"
     
     ' Robust PowerShell script for RSA-SHA256 signature verification
-    ' Uses VerifyData with explicit UTF-8 encoding to match Python PKCS1v15+SHA256 signing
+    ' Uses RSACryptoServiceProvider for PowerShell 5.1 compatibility (Windows 10/11)
     Dim psCode
     psCode = "$ErrorActionPreference='Continue'" & vbCrLf
     psCode = psCode & "$debug = @()" & vbCrLf
     psCode = psCode & "try {" & vbCrLf
-    psCode = psCode & "  $debug += 'Starting RSA verification (VerifyData method)...'" & vbCrLf
+    psCode = psCode & "  $debug += 'Starting RSA verification (RSACryptoServiceProvider)...'" & vbCrLf
     psCode = psCode & "  $pubKeyXmlB64 = '" & publicKeyXmlB64 & "'" & vbCrLf
     psCode = psCode & "  $sigB64 = '" & signatureB64 & "'" & vbCrLf
     psCode = psCode & "  $message = '" & EscapePSString(message) & "'" & vbCrLf
-    psCode = psCode & "  $debug += ('Message length: ' + $message.Length)" & vbCrLf
+    psCode = psCode & "  $debug += ('Message: ' + $message)" & vbCrLf
     psCode = psCode & "  $pubKeyXml = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pubKeyXmlB64))" & vbCrLf
-    psCode = psCode & "  $debug += ('Key XML length: ' + $pubKeyXml.Length)" & vbCrLf
+    psCode = psCode & "  $debug += ('Key XML first 50: ' + $pubKeyXml.Substring(0, [Math]::Min(50, $pubKeyXml.Length)))" & vbCrLf
     psCode = psCode & "  $sig = [Convert]::FromBase64String($sigB64)" & vbCrLf
     psCode = psCode & "  $debug += ('Signature bytes: ' + $sig.Length)" & vbCrLf
     psCode = psCode & "  $msgBytes = [System.Text.Encoding]::UTF8.GetBytes($message)" & vbCrLf
     psCode = psCode & "  $debug += ('Message bytes: ' + $msgBytes.Length)" & vbCrLf
-    psCode = psCode & "  # Use RSA.Create() with VerifyData for Python PKCS1v15 compatibility" & vbCrLf
-    psCode = psCode & "  $rsa = [System.Security.Cryptography.RSA]::Create()" & vbCrLf
+    psCode = psCode & "  # Use RSACryptoServiceProvider for Windows PowerShell 5.1 compatibility" & vbCrLf
+    psCode = psCode & "  $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider" & vbCrLf
     psCode = psCode & "  $rsa.FromXmlString($pubKeyXml)" & vbCrLf
     psCode = psCode & "  $debug += ('RSA key size: ' + $rsa.KeySize + ' bits')" & vbCrLf
-    psCode = psCode & "  $hashAlg = [System.Security.Cryptography.HashAlgorithmName]::SHA256" & vbCrLf
-    psCode = psCode & "  $padding = [System.Security.Cryptography.RSASignaturePadding]::Pkcs1" & vbCrLf
-    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sig, $hashAlg, $padding)" & vbCrLf
+    psCode = psCode & "  # Use SHA256CryptoServiceProvider for VerifyData" & vbCrLf
+    psCode = psCode & "  $sha256 = New-Object System.Security.Cryptography.SHA256CryptoServiceProvider" & vbCrLf
+    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sha256, $sig)" & vbCrLf
     psCode = psCode & "  $debug += ('VerifyData result: ' + $result)" & vbCrLf
     psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
     psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
+    psCode = psCode & "  $sha256.Dispose()" & vbCrLf
     psCode = psCode & "  $rsa.Dispose()" & vbCrLf
     psCode = psCode & "} catch {" & vbCrLf
     psCode = psCode & "  $debug += ('ERROR: ' + $_.Exception.Message)" & vbCrLf
