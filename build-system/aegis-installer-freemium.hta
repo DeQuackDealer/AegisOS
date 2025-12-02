@@ -245,9 +245,17 @@ Function IsAdmin()
 End Function
 
 Sub RestartAsAdmin()
-    Dim shellApp
+    Dim shellApp, htaPath
     Set shellApp = CreateObject("Shell.Application")
-    shellApp.ShellExecute "mshta.exe", document.location.href, "", "runas", 1
+    ' Get proper file path - document.location.href can be malformed in HTA
+    htaPath = document.location.pathname
+    ' Remove leading slash if present (file:///C:/path becomes /C:/path)
+    If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2)
+    ' Decode URL-encoded characters
+    htaPath = Replace(htaPath, "%20", " ")
+    htaPath = Replace(htaPath, "%5C", "\\")
+    ' Use mshta with quoted path
+    shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1
     window.close
 End Sub
 

@@ -122,6 +122,19 @@ body {
 .btn-refresh { background: #1e1e3a; color: #f59e0b; padding: 5px 10px; font-size: 10px; }
 .btn-small { padding: 4px 10px; font-size: 10px; }
 .btn-row { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; align-items: center; }
+.btn-next-main { 
+    padding: 12px 24px !important; 
+    font-size: 14px !important; 
+    min-width: 120px;
+    box-shadow: 0 2px 8px rgba(180, 83, 9, 0.3);
+}
+.btn-next-main:not(:disabled) {
+    animation: pulseNext 2s infinite;
+}
+@keyframes pulseNext {
+    0%, 100% { box-shadow: 0 2px 8px rgba(180, 83, 9, 0.3); }
+    50% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.5); }
+}
 .progress-container { background: #1e1e3a; border-radius: 6px; padding: 15px; text-align: center; }
 .progress-bar-bg { 
     height: 10px; background: #2a2a4a; border-radius: 5px; 
@@ -261,9 +274,17 @@ Function IsAdmin()
 End Function
 
 Sub RestartAsAdmin()
-    Dim shellApp
+    Dim shellApp, htaPath
     Set shellApp = CreateObject("Shell.Application")
-    shellApp.ShellExecute "mshta.exe", document.location.href, "", "runas", 1
+    ' Get proper file path - document.location.href can be malformed in HTA
+    htaPath = document.location.pathname
+    ' Remove leading slash if present (file:///C:/path becomes /C:/path)
+    If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2)
+    ' Decode URL-encoded characters
+    htaPath = Replace(htaPath, "%20", " ")
+    htaPath = Replace(htaPath, "%5C", "\\")
+    ' Use mshta with quoted path
+    shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1
     window.close
 End Sub
 
@@ -1779,11 +1800,11 @@ End Sub
                 <ul class="feature-list" id="featureList"></ul>
             </div>
 
-            <div class="btn-row">
+            <div class="btn-row" style="margin-top:20px; padding-top:15px; border-top:1px solid #333;">
                 <button id="btnValidate" class="btn btn-secondary" onclick="OnValidateClick" style="display:none">Validate License</button>
                 <button id="btnOnlineVerify" class="btn btn-secondary btn-small" onclick="VerifyOnline" style="display:none;margin-left:8px">Verify Online</button>
                 <div style="flex:1"></div>
-                <button id="btnNext1" class="btn btn-primary" disabled onclick="GoToStep 2">Next</button>
+                <button id="btnNext1" class="btn btn-primary btn-next-main" disabled onclick="GoToStep 2">Next &#8594;</button>
             </div>
         </div>
 
