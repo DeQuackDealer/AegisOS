@@ -336,7 +336,7 @@ Sub Window_OnLoad()
     quickFormat = True
     sysReqPassed = False
     selectedFeatures = "wallpaper_lite,stream_lite,security_lite,backup_lite"
-    CheckSystemRequirements
+    CheckSystemRequirements()
 End Sub
 
 Sub CheckSystemRequirements()
@@ -603,7 +603,7 @@ Sub GoToStep(stepNum)
         End If
     Next
     If stepNum = 2 Then
-        RefreshDrives
+        RefreshDrives()
     ElseIf stepNum = 3 Then
         document.getElementById("selectedDriveInfo").innerText = selectedDrive
         document.getElementById("confirmPartStyle").innerText = partitionStyle
@@ -631,8 +631,8 @@ Function IIf(cond, trueVal, falseVal)
 End Function
 
 Sub StartCreation()
-    GoToStep 4
-    CreateUSB
+    GoToStep(4)
+    CreateUSB()
 End Sub
 
 Sub CreateUSB()
@@ -813,7 +813,7 @@ Sub CheckProgress()
 End Sub
 
 Sub GoToStepFive()
-    GoToStep 5
+    GoToStep(5)
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
@@ -868,7 +868,7 @@ Sub ShowError(msg, detail)
         "<div style='font-size:10px;color:#22d3ee'><strong>Fix:</strong> " & errorFix & "</div>" & _
         "<div class='error-details'>" & detail & "</div></div>" & _
         "<div class='btn-row' style='justify-content:center'>" & _
-        "<button class='btn btn-secondary' onclick='GoToStep 1'>Try Again</button></div>"
+        "<button class='btn btn-secondary' onclick='GoToStep(1)'>Try Again</button></div>"
 End Sub
 
 Sub CloseApp()

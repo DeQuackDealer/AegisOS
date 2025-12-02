@@ -372,7 +372,7 @@ Sub Window_OnLoad()
     serverUrl = "https://aegis-os.replit.app"
     validationToken = ""
     isValidating = False
-    CheckSystemRequirements
+    CheckSystemRequirements()
 End Sub
 
 Sub CheckSystemRequirements()
@@ -1418,9 +1418,9 @@ Sub GoToStep(stepNum)
         End If
     Next
     If stepNum = 2 Then
-        SetupFeatureSelection
+        SetupFeatureSelection()
     ElseIf stepNum = 3 Then
-        RefreshDrives
+        RefreshDrives()
         document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
     ElseIf stepNum = 4 Then
         document.getElementById("confirmDrive").innerText = selectedDrive
@@ -1453,11 +1453,11 @@ Sub StartCreation()
     ' Anti-tampering: Verify license was properly validated before creation
     If Not VerifyCreationAuth() Then
         MsgBox "License validation required before proceeding." & vbCrLf & vbCrLf & "Please validate your license key first.", vbCritical, "Authorization Required"
-        GoToStep 1
+        GoToStep(1)
         Exit Sub
     End If
-    GoToStep 5
-    CreateUSB
+    GoToStep(5)
+    CreateUSB()
 End Sub
 
 Function VerifyCreationAuth()
@@ -1656,7 +1656,7 @@ Sub CheckProgress()
 End Sub
 
 Sub GoToStepSix()
-    GoToStep 6
+    GoToStep(6)
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
@@ -1711,7 +1711,7 @@ Sub ShowError(msg, detail)
         "<div style='font-size:10px;color:#f59e0b'><strong>Fix:</strong> " & errorFix & "</div>" & _
         "<div class='error-details'>" & detail & "</div></div>" & _
         "<div class='btn-row' style='justify-content:center'>" & _
-        "<button class='btn btn-secondary' onclick='GoToStep 1'>Try Again</button></div>"
+        "<button class='btn btn-secondary' onclick='GoToStep(1)'>Try Again</button></div>"
 End Sub
 
 Sub CloseApp()

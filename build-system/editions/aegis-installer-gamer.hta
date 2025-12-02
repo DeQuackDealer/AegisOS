@@ -261,8 +261,8 @@ Sub Window_OnLoad()
         End If
     End If
     
-    CheckSystemRequirements
-    SetupFeatureSelection
+    CheckSystemRequirements()
+    SetupFeatureSelection()
 End Sub
 
 Function IsAdmin()
@@ -619,7 +619,7 @@ Sub GoToStep(stepNum)
         End If
     Next
     If stepNum = 2 Then
-        RefreshDrives
+        RefreshDrives()
         document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & EDITION_NAME & "</span>"
     ElseIf stepNum = 3 Then
         document.getElementById("confirmDrive").innerText = selectedDrive
@@ -649,8 +649,8 @@ Function IIf(cond, trueVal, falseVal)
 End Function
 
 Sub StartCreation()
-    GoToStep 4
-    CreateUSB
+    GoToStep(4)
+    CreateUSB()
 End Sub
 
 Sub CreateUSB()
@@ -811,7 +811,7 @@ Sub CheckProgress()
 End Sub
 
 Sub GoToStepFive()
-    GoToStep 5
+    GoToStep(5)
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
@@ -838,7 +838,7 @@ End Sub
 Sub ShowError(errCode, errDetail)
     document.getElementById("progressContainer").innerHTML = _
         "<div class='error-box'><strong>&#10007; Error: " & errCode & "</strong><br>" & errDetail & "</div>" & _
-        "<div class='btn-row'><button class='btn btn-secondary' onclick='GoToStep 2'>Back</button></div>"
+        "<div class='btn-row'><button class='btn btn-secondary' onclick='GoToStep(2)'>Back</button></div>"
 End Sub
 
 Sub CloseApp()
