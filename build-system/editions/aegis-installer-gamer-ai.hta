@@ -43,32 +43,10 @@ body {
 .header-text h1 { font-size: 16px; font-weight: 600; }
 .header-text p { font-size: 11px; opacity: 0.9; }
 .content { flex: 1; padding: 15px 20px; overflow-y: auto; min-height: 0; }
-.step-nav { display: flex; justify-content: center; gap: 8px; margin-bottom: 15px; }
-.step-item { text-align: center; position: relative; }
-.step-num {
-    width: 26px; height: 26px; border-radius: 50%;
-    background: #2a2a4a; border: 2px solid #444;
-    display: flex; align-items: center; justify-content: center;
-    margin: 0 auto 3px; font-weight: 600; font-size: 10px;
-    transition: all 0.3s ease;
-}
-.step-item.active .step-num { 
-    background: linear-gradient(135deg, #c026d3, #d946ef); 
-    border-color: #d946ef; 
-    box-shadow: 0 0 10px rgba(217, 70, 239, 0.4);
-}
-.step-item.done .step-num { 
-    background: linear-gradient(135deg, #10b981, #34d399); 
-    border-color: #34d399;
-}
-.step-label { font-size: 9px; color: #a0a0a0; }
-.step-item.active .step-label { color: #d946ef; font-weight: 500; }
-.step-item.done .step-label { color: #34d399; }
-.step-connector {
-    position: absolute; top: 13px; left: 50%; width: 20px; height: 2px;
-    background: #333; margin-left: 13px;
-}
-.step-item.done .step-connector { background: #34d399; }
+.step-breadcrumb { display: flex; justify-content: space-between; gap: 4px; padding: 8px 0; border-bottom: 1px solid #1f2a40; margin-bottom: 10px; }
+.step-crumb { flex: 1; text-align: center; font-size: 10px; padding: 6px 4px; border-radius: 4px; background: #1a2438; color: #8ca0c8; white-space: nowrap; }
+.step-crumb.active { background: linear-gradient(135deg, #c026d3, #d946ef); color: #fff; font-weight: 600; }
+.step-crumb.done { background: #0f1d33; color: #d946ef; }
 .panel { display: none; }
 .panel.active { display: block; }
 .section-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
@@ -239,7 +217,7 @@ Dim selectedFeatures
 Dim hwid
 
 Sub Window_OnLoad()
-    window.resizeTo 720, 640
+    window.resizeTo 820, 700
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
@@ -623,14 +601,14 @@ Sub GoToStep(stepNum)
     If Not stepEl Is Nothing Then
         stepEl.className = "panel active"
     End If
-    Set steps = document.getElementsByClassName("step-item")
+    Set steps = document.getElementsByClassName("step-crumb")
     For i = 0 To steps.length - 1
         If i + 1 < stepNum Then
-            steps(i).className = "step-item done"
+            steps(i).className = "step-crumb done"
         ElseIf i + 1 = stepNum Then
-            steps(i).className = "step-item active"
+            steps(i).className = "step-crumb active"
         Else
-            steps(i).className = "step-item"
+            steps(i).className = "step-crumb"
         End If
     Next
     If stepNum = 2 Then
@@ -925,31 +903,12 @@ End Sub
         <div id="adminNotice" class="admin-notice" style="display:none">
             <strong>&#9888; Administrator Required</strong> - Right-click and "Run as Administrator" for full functionality.
         </div>
-        <div class="step-nav">
-            <div class="step-item active">
-                <div class="step-num">1</div>
-                <div class="step-label">Features</div>
-                <div class="step-connector"></div>
-            </div>
-            <div class="step-item">
-                <div class="step-num">2</div>
-                <div class="step-label">USB</div>
-                <div class="step-connector"></div>
-            </div>
-            <div class="step-item">
-                <div class="step-num">3</div>
-                <div class="step-label">Confirm</div>
-                <div class="step-connector"></div>
-            </div>
-            <div class="step-item">
-                <div class="step-num">4</div>
-                <div class="step-label">Create</div>
-                <div class="step-connector"></div>
-            </div>
-            <div class="step-item">
-                <div class="step-num">5</div>
-                <div class="step-label">Done</div>
-            </div>
+        <div class="step-breadcrumb">
+            <div class="step-crumb active" id="stepCrumb1">1. Features</div>
+            <div class="step-crumb" id="stepCrumb2">2. Select Drive</div>
+            <div class="step-crumb" id="stepCrumb3">3. Confirm</div>
+            <div class="step-crumb" id="stepCrumb4">4. Creating</div>
+            <div class="step-crumb" id="stepCrumb5">5. Done</div>
         </div>
         <div id="step1" class="panel active">
             <h2 class="section-title">Select Features <span class="edition-badge">Gamer + AI</span></h2>
