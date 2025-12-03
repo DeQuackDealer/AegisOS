@@ -7,13 +7,13 @@
     BORDER="thick"
     BORDERSTYLE="normal"
     CAPTION="yes"
-    MAXIMIZEBUTTON="yes"
+    MAXIMIZEBUTTON="no"
     MINIMIZEBUTTON="yes"
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
     VERSION="2.8"
-    SCROLL="yes"
+    SCROLL="no"
     INNERBORDER="no"
 />
 <style>
@@ -22,10 +22,10 @@ body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     color: #fff;
-    overflow-y: auto;
-    min-height: 100vh;
+    height: 100%;
+    overflow: hidden;
 }
-.container { height: 100%; display: flex; flex-direction: column; }
+.container { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .header {
     background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
     padding: 15px 20px;
@@ -61,7 +61,7 @@ body {
     background: linear-gradient(135deg, #10b981, #34d399); 
     border-color: #34d399;
 }
-.step-label { font-size: 8px; color: #888; }
+.step-label { font-size: 9px; color: #a0a0a0; }
 .step-item.active .step-label { color: #8b5cf6; font-weight: 500; }
 .step-item.done .step-label { color: #34d399; }
 .step-connector {
@@ -72,14 +72,14 @@ body {
 .panel { display: none; }
 .panel.active { display: block; }
 .section-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.section-desc { font-size: 12px; color: #aaa; margin-bottom: 12px; line-height: 1.3; }
+.section-desc { font-size: 12px; color: #c0c0c0; margin-bottom: 12px; line-height: 1.3; }
 .info-box {
     background: rgba(124, 58, 237, 0.15);
     border: 1px solid rgba(124, 58, 237, 0.3);
     border-radius: 6px; padding: 10px; margin-bottom: 10px;
 }
 .info-box h3 { font-size: 12px; margin-bottom: 5px; color: #8b5cf6; }
-.info-box ul { font-size: 11px; color: #aaa; padding-left: 16px; }
+.info-box ul { font-size: 11px; color: #c0c0c0; padding-left: 16px; }
 .info-box li { margin-bottom: 2px; }
 .form-group { margin-bottom: 10px; }
 .form-label { display: block; font-size: 11px; margin-bottom: 4px; color: #aaa; }
@@ -101,8 +101,8 @@ body {
 }
 .drive-info { flex: 1; }
 .drive-name { font-weight: 500; font-size: 12px; }
-.drive-size { font-size: 10px; color: #888; }
-.drive-details { font-size: 9px; color: #666; margin-top: 2px; }
+.drive-size { font-size: 10px; color: #b0b0b0; }
+.drive-details { font-size: 10px; color: #909090; margin-top: 2px; }
 .no-drives { padding: 20px; text-align: center; color: #888; font-size: 12px; }
 .btn {
     padding: 8px 16px; border-radius: 5px;
@@ -149,11 +149,11 @@ body {
 }
 .progress-percent { font-size: 28px; font-weight: 700; color: #8b5cf6; }
 .progress-status { font-size: 12px; color: #aaa; margin-top: 6px; }
-.progress-detail { font-size: 10px; color: #666; margin-top: 4px; }
+.progress-detail { font-size: 10px; color: #a0a0a0; margin-top: 4px; }
 .progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 10px; font-size: 10px; }
 .progress-stat { text-align: center; }
 .progress-stat-value { font-size: 12px; color: #8b5cf6; font-weight: 600; }
-.progress-stat-label { font-size: 8px; color: #666; margin-top: 1px; }
+.progress-stat-label { font-size: 9px; color: #909090; margin-top: 1px; }
 .success-container { text-align: center; padding: 15px; }
 .success-icon { font-size: 36px; margin-bottom: 12px; color: #10b981; }
 .success-title { font-size: 18px; color: #10b981; margin-bottom: 6px; }
@@ -222,7 +222,7 @@ body {
 .feature-card input { margin-top: 2px; accent-color: #8b5cf6; width: 14px; height: 14px; flex-shrink: 0; }
 .feature-card-content { flex: 1; min-width: 0; }
 .feature-card-name { font-size: 11px; font-weight: 500; color: #fff; }
-.feature-card-desc { font-size: 9px; color: #888; margin-top: 1px; }
+.feature-card-desc { font-size: 9px; color: #b0b0b0; margin-top: 1px; }
 .feature-actions { display: flex; gap: 6px; margin-bottom: 8px; }
 .feature-count { font-size: 10px; color: #888; margin-top: 6px; }
 </style>
@@ -239,7 +239,7 @@ Dim selectedFeatures
 Dim hwid
 
 Sub Window_OnLoad()
-    window.resizeTo 680, 780
+    window.resizeTo 720, 640
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
@@ -263,6 +263,17 @@ Sub Window_OnLoad()
     
     CheckSystemRequirements()
     SetupFeatureSelection()
+    
+    ' Bind navigation buttons
+    On Error Resume Next
+    Set document.getElementById("btnNext1").onclick = GetRef("GoToStepTwo")
+    Set document.getElementById("btnNext2").onclick = GetRef("GoToStepThree")
+    Set document.getElementById("btnConfirm").onclick = GetRef("StartCreation")
+    Set document.getElementById("btnRefresh").onclick = GetRef("RefreshDrives")
+    Set document.getElementById("btnBack2").onclick = GetRef("GoToStepOne")
+    Set document.getElementById("btnBack3").onclick = GetRef("GoToStepTwo")
+    Set document.getElementById("btnClose").onclick = GetRef("CloseApp")
+    On Error Goto 0
 End Sub
 
 Function IsAdmin()
@@ -630,7 +641,11 @@ Sub GoToStep(stepNum)
         document.getElementById("confirmQuickFmt").innerText = IIf(quickFormat, "Yes", "No")
         document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
     ElseIf stepNum = 4 Then
+        document.getElementById("progressBar").style.width = "0%"
         document.getElementById("progressBar").className = "progress-bar-fill animated"
+        document.getElementById("progressPercent").innerText = "0%"
+        document.getElementById("progressStatus").innerText = "Starting..."
+        document.getElementById("progressDetail").innerText = "Please wait"
         smoothProgress = 0
     End If
     On Error Goto 0
@@ -667,8 +682,8 @@ Sub CreateUSB()
     ts.Close
     Dim cmd
     cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & EDITION_NAME & """ -Features """ & selectedFeatures & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
-    shell.Run cmd, 0, False
     progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
+    shell.Run cmd, 0, False
 End Sub
 
 Function GetPowerShellCode()
@@ -822,6 +837,22 @@ Sub CheckProgress()
         End If
     End If
     On Error Goto 0
+End Sub
+
+Sub GoToStepOne()
+    GoToStep(1)
+End Sub
+
+Sub GoToStepTwo()
+    GoToStep(2)
+End Sub
+
+Sub GoToStepThree()
+    GoToStep(3)
+End Sub
+
+Sub GoToStepFour()
+    GoToStep(4)
 End Sub
 
 Sub GoToStepFive()
@@ -994,7 +1025,7 @@ End Sub
             </div>
             <div id="featureCount" class="feature-count">3 core + 7 optional features selected</div>
             <div class="sticky-buttons">
-                <button class="btn btn-primary" onclick="GoToStep(2)">Next: Select USB Drive &#8594;</button>
+                <button id="btnNext1" class="btn btn-primary" onclick="GoToStep(2)">Next: Select USB Drive &#8594;</button>
             </div>
         </div>
         <div id="step2" class="panel">
@@ -1007,7 +1038,7 @@ End Sub
                 <div class="no-drives">Click "Refresh" to scan for USB drives.</div>
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
-                <button class="btn btn-refresh" onclick="RefreshDrives()">&#8635; Refresh Drives</button>
+                <button id="btnRefresh" class="btn btn-refresh" onclick="RefreshDrives()">&#8635; Refresh Drives</button>
             </div>
             <div class="advanced-panel">
                 <h4>&#9881; Advanced Options</h4>
@@ -1028,7 +1059,7 @@ End Sub
                 </div>
             </div>
             <div class="btn-row">
-                <button class="btn btn-secondary" onclick="GoToStep(1)">&#8592; Back</button>
+                <button id="btnBack2" class="btn btn-secondary" onclick="GoToStep(1)">&#8592; Back</button>
                 <button id="btnNext2" class="btn btn-primary" onclick="GoToStep(3)" disabled>Next: Confirm &#8594;</button>
             </div>
         </div>
@@ -1049,8 +1080,8 @@ End Sub
                 <strong>&#9888; Final Warning:</strong> Clicking "Create USB" will erase all data on the selected drive. This action cannot be undone!
             </div>
             <div class="btn-row">
-                <button class="btn btn-secondary" onclick="GoToStep(2)">&#8592; Back</button>
-                <button class="btn btn-primary" onclick="StartCreation()">&#9889; Create USB</button>
+                <button id="btnBack3" class="btn btn-secondary" onclick="GoToStep(2)">&#8592; Back</button>
+                <button id="btnConfirm" class="btn btn-primary" onclick="StartCreation()">&#9889; Create USB</button>
             </div>
         </div>
         <div id="step4" class="panel">
@@ -1084,7 +1115,7 @@ End Sub
                     </ol>
                 </div>
                 <div class="btn-row" style="justify-content: center; margin-top: 20px;">
-                    <button class="btn btn-primary" onclick="CloseApp()">Close Installer</button>
+                    <button id="btnClose" class="btn btn-primary" onclick="CloseApp()">Close Installer</button>
                 </div>
             </div>
         </div>
