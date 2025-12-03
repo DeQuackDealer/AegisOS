@@ -746,10 +746,12 @@ Function GetPowerShellCode()
     
     code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
     code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
+    code = code & "Start-Sleep -Seconds 2" & vbCrLf
     code = code & "try { $src = [IO.File]::OpenRead($isoPath)" & vbCrLf
-    code = code & "  $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::None, 8MB, [IO.FileOptions]::WriteThrough)" & vbCrLf
+    code = code & "  $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 1MB, [IO.FileOptions]::WriteThrough)" & vbCrLf
+    code = code & "  $dst.Seek(0, [IO.SeekOrigin]::Begin) | Out-Null" & vbCrLf
     code = code & "} catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
-    code = code & "$buf = New-Object byte[] 8MB; $written = 0; $total = $src.Length" & vbCrLf
+    code = code & "$buf = New-Object byte[] 1MB; $written = 0; $total = $src.Length" & vbCrLf
     code = code & "$writeStart = Get-Date; $lastWriteUpdate = $writeStart" & vbCrLf
     code = code & "while (($read = $src.Read($buf, 0, $buf.Length)) -gt 0) {" & vbCrLf
     code = code & "  try { $dst.Write($buf, 0, $read) } catch { $dst.Close(); $src.Close(); Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
@@ -764,6 +766,14 @@ Function GetPowerShellCode()
     code = code & "    Write-P $mappedPct 'Writing...' ""$pct%"" $speedStr $etaStr ''" & vbCrLf
     code = code & "    $lastWriteUpdate = $now}}" & vbCrLf
     code = code & "$dst.Flush(); $dst.Close(); $src.Close()" & vbCrLf
+    code = code & "Write-P 95 'Verifying boot sector...' 'Checking write'" & vbCrLf
+    code = code & "Start-Sleep -Seconds 2" & vbCrLf
+    code = code & "$verifyStream = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)" & vbCrLf
+    code = code & "$verifyBuf = New-Object byte[] 512; $verifyStream.Seek(0, [IO.SeekOrigin]::Begin) | Out-Null" & vbCrLf
+    code = code & "$verifyStream.Read($verifyBuf, 0, 512) | Out-Null; $verifyStream.Close()" & vbCrLf
+    code = code & "$srcVerify = [IO.File]::OpenRead($isoPath); $srcBuf = New-Object byte[] 512" & vbCrLf
+    code = code & "$srcVerify.Read($srcBuf, 0, 512) | Out-Null; $srcVerify.Close()" & vbCrLf
+    code = code & "if ([System.Linq.Enumerable]::SequenceEqual([byte[]]$verifyBuf, [byte[]]$srcBuf)) { Write-P 96 'Boot sector verified!' '' } else { Write-P -1 'VERIFY_FAILED: Boot sector mismatch'; exit 1 }" & vbCrLf
     code = code & "Write-P 97 'Syncing...' 'Bringing disk online'" & vbCrLf
     code = code & "$dp2 = ""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp2.txt"" | Out-Null } catch { }" & vbCrLf
