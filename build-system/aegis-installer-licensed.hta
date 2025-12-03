@@ -1296,7 +1296,7 @@ Sub RefreshDrives()
                     If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive"
                     ReDim Preserve drives(driveCount)
                     drives(driveCount) = disk.Index
-                    html = html & "<div class='drive-item' onclick='SelectDrive " & driveCount & "'>"
+                    html = html & "<div class='drive-item' onclick='SelectDrive(" & driveCount & ")'>"
                     html = html & "<div class='drive-icon'>USB</div>"
                     html = html & "<div class='drive-info'>"
                     html = html & "<div class='drive-name'>" & modelName & "</div>"
@@ -1581,10 +1581,13 @@ Function GetPowerShellCode()
     code = code & "if (-not (Test-Path $isoPath) -or (Get-Item $isoPath).Length -lt 500MB) { Write-P -1 'DOWNLOAD_INCOMPLETE'; exit 1 }" & vbCrLf
     code = code & "Write-P 50 'Verifying integrity...' 'SHA256 checksum'" & vbCrLf
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
+    code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED: Expected $($expectedHash.Substring(0,16))... got $($hash.Substring(0,16))...""; exit 1 }" & vbCrLf
     code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
     code = code & "Write-P 54 'Preparing USB...' ""$PartitionStyle partition""" & vbCrLf
-    code = code & "$dp = ""select disk $DiskNumber`nclean""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
-    code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    code = code & "$dp = ""select disk $DiskNumber`nclean`nconvert $PartitionStyle`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
+    code = code & "$dpResult = & diskpart /s ""$tempDir\dp.txt"" 2>&1" & vbCrLf
+    code = code & "if ($LASTEXITCODE -ne 0) { Write-P -1 ""DISKPART_FAILED: $dpResult""; exit 1 }" & vbCrLf
+    code = code & "Start-Sleep -Milliseconds 500" & vbCrLf
     code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
     code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
     code = code & "try { $src = [IO.File]::OpenRead($isoPath)" & vbCrLf
