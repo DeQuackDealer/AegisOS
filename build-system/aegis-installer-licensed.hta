@@ -1583,10 +1583,9 @@ Function GetPowerShellCode()
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
     code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED: Expected $($expectedHash.Substring(0,16))... got $($hash.Substring(0,16))...""; exit 1 }" & vbCrLf
     code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
-    code = code & "Write-P 54 'Preparing USB...' ""$PartitionStyle partition""" & vbCrLf
-    code = code & "$dp = ""select disk $DiskNumber`nclean`nconvert $PartitionStyle`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
-    code = code & "$dpResult = & diskpart /s ""$tempDir\dp.txt"" 2>&1" & vbCrLf
-    code = code & "if ($LASTEXITCODE -ne 0) { Write-P -1 ""DISKPART_FAILED: $dpResult""; exit 1 }" & vbCrLf
+    code = code & "Write-P 54 'Preparing USB...' 'Clearing disk'" & vbCrLf
+    code = code & "$dp = ""select disk $DiskNumber`nclean`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
+    code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
     code = code & "Start-Sleep -Milliseconds 500" & vbCrLf
     code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
     code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
