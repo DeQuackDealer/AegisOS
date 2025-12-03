@@ -7165,6 +7165,61 @@ def admin_settings_page():
     """Serve admin settings page (redirect to dashboard for now)"""
     return redirect('/admin')
 
+@app.route('/admin/installers')
+@rate_limit(limit=100)
+def admin_installers_page():
+    """Serve admin installers page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'installers.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving admin installers: {e}")
+        return jsonify({'error': 'Admin page not found'}), 404
+
+@app.route('/admin/hta/<edition>')
+@rate_limit(limit=50)
+def admin_hta_download(edition):
+    """Direct HTA file download"""
+    edition = sanitize_input(edition.lower().replace('-', '_'))
+    
+    hta_files = {
+        'freemium': ('build-system', 'aegis-installer-freemium.hta'),
+        'licensed': ('build-system', 'aegis-installer-licensed.hta'),
+        'basic': ('build-system/editions', 'aegis-installer-basic.hta'),
+        'workplace': ('build-system/editions', 'aegis-installer-workplace.hta'),
+        'gamer': ('build-system/editions', 'aegis-installer-gamer.hta'),
+        'aidev': ('build-system/editions', 'aegis-installer-aidev.hta'),
+        'ai_developer': ('build-system/editions', 'aegis-installer-aidev.hta'),
+        'gamer_ai': ('build-system/editions', 'aegis-installer-gamer-ai.hta'),
+        'server': ('build-system/editions', 'aegis-installer-server.hta'),
+    }
+    
+    if edition not in hta_files:
+        return jsonify({'error': f'Unknown edition: {edition}'}), 404
+    
+    folder, filename = hta_files[edition]
+    filepath = os.path.join(BASE_DIR, '..', folder, filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': f'HTA file not found: {filename}'}), 404
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return Response(
+            content,
+            mimetype='application/hta',
+            headers={
+                'Content-Disposition': f'attachment; filename={filename}',
+                'Content-Type': 'application/hta; charset=utf-8'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error serving HTA file: {e}")
+        return jsonify({'error': 'Failed to serve HTA file'}), 500
+
 
 if __name__ == '__main__':
     # Load free period settings from database
