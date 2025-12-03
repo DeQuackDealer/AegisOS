@@ -12,8 +12,8 @@
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="2.8"
-    SCROLL="auto"
+    VERSION="3.0"
+    SCROLL="no"
     INNERBORDER="no"
 />
 <style>
@@ -22,190 +22,285 @@ body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     color: #fff;
-    height: 100%;
-    overflow-y: auto;
+    height: 100vh;
+    overflow: hidden;
+    margin: 0;
 }
-.container { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.header {
+.wizard {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+.wizard-header {
+    flex-shrink: 0;
     background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
-    padding: 15px 20px;
+    padding: 8px 12px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
+    gap: 8px;
 }
-.logo-svg { width: 42px; height: 42px; }
+.logo-svg { width: 36px; height: 36px; }
 .shield-animate { animation: shieldPulse 2s ease-in-out infinite; }
 @keyframes shieldPulse {
     0%, 100% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.5)); }
     50% { transform: scale(1.05); filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.8)); }
 }
-.header-text h1 { font-size: 16px; font-weight: 600; }
-.header-text p { font-size: 11px; opacity: 0.9; }
-.content { flex: 1; padding: 15px 20px; overflow-y: auto; min-height: 0; }
-.step-breadcrumb { display: flex; justify-content: space-between; gap: 4px; padding: 8px 0; border-bottom: 1px solid #1f2a40; margin-bottom: 10px; }
-.step-crumb { flex: 1; text-align: center; font-size: 10px; padding: 6px 4px; border-radius: 4px; background: #1a2438; color: #8ca0c8; }
-.step-crumb.active { background: linear-gradient(135deg, #0ea5e9, #22d3ee); color: #fff; font-weight: 600; }
+.header-text h1 { font-size: 14px; font-weight: 600; }
+.header-text p { font-size: 10px; opacity: 0.9; }
+.wizard-breadcrumb {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 4px 12px;
+    background: #12122a;
+    border-bottom: 1px solid #1f2a40;
+}
+.step-crumb {
+    flex: 1;
+    text-align: center;
+    font-size: 9px;
+    padding: 5px 3px;
+    border-radius: 4px;
+    background: #1a2438;
+    color: #8ca0c8;
+}
+.step-crumb.active {
+    background: linear-gradient(135deg, #0ea5e9, #22d3ee);
+    color: #fff;
+    font-weight: 600;
+}
 .step-crumb.done { background: #0f1d33; color: #22d3ee; }
-.panel { display: none; }
-.panel.active { display: block; }
-.section-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.section-desc { font-size: 12px; color: #c0c0c0; margin-bottom: 12px; line-height: 1.3; }
+.wizard-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;
+}
+.slide {
+    display: none;
+    padding: 8px 12px;
+    height: 100%;
+    overflow: hidden;
+}
+.slide.active { display: flex; flex-direction: column; }
+.wizard-footer {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid #333;
+    background: #12122a;
+}
+.section-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.section-desc { font-size: 10px; color: #b0b0b0; margin-bottom: 6px; line-height: 1.3; }
 .info-box {
     background: rgba(8, 145, 178, 0.15);
     border: 1px solid rgba(8, 145, 178, 0.3);
-    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    border-radius: 5px;
+    padding: 6px;
+    margin-bottom: 6px;
 }
-.info-box h3 { font-size: 12px; margin-bottom: 5px; color: #22d3ee; }
-.info-box ul { font-size: 11px; color: #c0c0c0; padding-left: 16px; }
-.info-box li { margin-bottom: 2px; }
+.info-box h3 { font-size: 10px; margin-bottom: 4px; color: #22d3ee; }
+.info-box ul { font-size: 9px; color: #b0b0b0; padding-left: 14px; margin: 0; }
+.info-box li { margin-bottom: 1px; }
 .drive-list {
-    background: #1e1e3a; border: 1px solid #333;
-    border-radius: 6px; max-height: 120px; overflow-y: auto; margin-bottom: 10px;
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    max-height: 80px;
+    overflow-y: auto;
+    margin-bottom: 6px;
 }
 .drive-item {
-    padding: 8px 10px; border-bottom: 1px solid #333;
-    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     transition: all 0.2s;
 }
 .drive-item:last-child { border-bottom: none; }
 .drive-item:hover { background: #2a2a4a; }
 .drive-item.selected { background: rgba(8, 145, 178, 0.3); border-left: 3px solid #22d3ee; }
 .drive-icon {
-    width: 28px; height: 28px; background: linear-gradient(135deg, #0891b2, #22d3ee); border-radius: 5px;
-    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #0891b2, #22d3ee);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: bold;
 }
 .drive-info { flex: 1; }
-.drive-name { font-weight: 500; font-size: 12px; }
-.drive-size { font-size: 10px; color: #b0b0b0; }
-.drive-details { font-size: 10px; color: #909090; margin-top: 2px; }
-.no-drives { padding: 20px; text-align: center; color: #888; font-size: 12px; }
+.drive-name { font-weight: 500; font-size: 11px; }
+.drive-size { font-size: 9px; color: #b0b0b0; }
+.drive-details { font-size: 8px; color: #909090; }
+.no-drives { padding: 15px; text-align: center; color: #888; font-size: 10px; }
 .btn {
-    padding: 8px 16px; border-radius: 5px;
-    font-weight: 600; cursor: pointer; border: none; font-size: 12px;
+    padding: 8px 16px;
+    border-radius: 5px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    font-size: 11px;
     transition: all 0.2s;
 }
 .btn-primary { background: linear-gradient(135deg, #0891b2, #06b6d4); color: white; }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(8, 145, 178, 0.4); }
 .btn-primary:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn-secondary { background: #2a2a4a; color: #aaa; border: 1px solid #444; }
-.btn-refresh { background: #1e1e3a; color: #22d3ee; padding: 5px 10px; font-size: 10px; }
-.btn-upgrade { background: linear-gradient(135deg, #b45309, #f59e0b); color: white; font-size: 11px; padding: 6px 12px; }
-.btn-upgrade:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(245, 158, 11, 0.4); }
-.btn-small { padding: 4px 10px; font-size: 10px; }
-.btn-row { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; align-items: center; }
-.progress-container { background: #1e1e3a; border-radius: 6px; padding: 15px; text-align: center; }
-.progress-bar-bg { 
-    height: 10px; background: #2a2a4a; border-radius: 5px; 
-    overflow: hidden; margin: 12px 0;
+.btn-secondary:hover { background: #3a3a5a; }
+.btn-refresh { background: #1e1e3a; color: #22d3ee; padding: 4px 8px; font-size: 9px; }
+.btn-upgrade { background: linear-gradient(135deg, #b45309, #f59e0b); color: white; font-size: 10px; padding: 5px 10px; }
+.btn-small { padding: 3px 8px; font-size: 9px; }
+.btn-create { background: linear-gradient(135deg, #16a34a, #22c55e); padding: 10px 24px; font-size: 12px; }
+.btn-create:hover { box-shadow: 0 3px 12px rgba(22, 197, 94, 0.4); }
+.btn-row { display: flex; gap: 6px; align-items: center; }
+.progress-container { background: #1e1e3a; border-radius: 5px; padding: 12px; text-align: center; }
+.progress-bar-bg {
+    height: 8px;
+    background: #2a2a4a;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 10px 0;
 }
 .progress-bar-fill {
-    height: 100%; 
+    height: 100%;
     background: linear-gradient(90deg, #0891b2, #22d3ee, #0891b2);
     background-size: 200% 100%;
-    width: 0%; 
-    transition: width 0.5s ease-out; 
-    border-radius: 5px;
+    width: 0%;
+    transition: width 0.5s ease-out;
+    border-radius: 4px;
 }
 .progress-bar-fill.animated { animation: shimmer 1.5s infinite linear; }
 @keyframes shimmer {
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
 }
-.progress-percent { font-size: 28px; font-weight: 700; color: #22d3ee; }
-.progress-status { font-size: 12px; color: #aaa; margin-top: 6px; }
-.progress-detail { font-size: 10px; color: #a0a0a0; margin-top: 4px; }
-.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 10px; font-size: 10px; }
+.progress-percent { font-size: 24px; font-weight: 700; color: #22d3ee; }
+.progress-status { font-size: 11px; color: #aaa; margin-top: 4px; }
+.progress-detail { font-size: 9px; color: #a0a0a0; margin-top: 2px; }
+.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 8px; font-size: 9px; }
 .progress-stat { text-align: center; }
-.progress-stat-value { font-size: 12px; color: #22d3ee; font-weight: 600; }
-.progress-stat-label { font-size: 9px; color: #909090; margin-top: 1px; }
-.verification-box {
-    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 6px; padding: 8px; margin-top: 10px; text-align: left;
-}
-.verification-title { font-size: 10px; color: #10b981; margin-bottom: 2px; }
-.verification-hash { font-size: 9px; color: #666; font-family: monospace; }
-.success-container { text-align: center; padding: 15px; }
-.success-icon { font-size: 36px; margin-bottom: 12px; color: #10b981; }
-.success-title { font-size: 18px; color: #10b981; margin-bottom: 6px; }
-.success-desc { font-size: 12px; color: #aaa; }
-.success-steps { background: #1e1e3a; border-radius: 6px; padding: 12px; margin-top: 12px; text-align: left; }
-.success-steps h3 { font-size: 12px; margin-bottom: 8px; }
-.success-steps ol { padding-left: 16px; font-size: 11px; color: #aaa; }
-.success-steps li { margin-bottom: 4px; }
+.progress-stat-value { font-size: 11px; color: #22d3ee; font-weight: 600; }
+.progress-stat-label { font-size: 8px; color: #909090; margin-top: 1px; }
+.success-container { text-align: center; padding: 10px; }
+.success-icon { font-size: 32px; margin-bottom: 8px; color: #10b981; }
+.success-title { font-size: 16px; color: #10b981; margin-bottom: 4px; }
+.success-desc { font-size: 11px; color: #aaa; }
+.success-steps { background: #1e1e3a; border-radius: 5px; padding: 10px; margin-top: 10px; text-align: left; }
+.success-steps h3 { font-size: 11px; margin-bottom: 6px; }
+.success-steps ol { padding-left: 14px; font-size: 10px; color: #aaa; margin: 0; }
+.success-steps li { margin-bottom: 3px; }
 .error-box {
-    background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 6px; padding: 10px; color: #f87171; margin-top: 10px; font-size: 12px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 5px;
+    padding: 8px;
+    color: #f87171;
+    font-size: 11px;
 }
-.error-details { font-size: 10px; color: #999; margin-top: 6px; font-family: monospace; }
+.error-details { font-size: 9px; color: #999; margin-top: 4px; font-family: monospace; }
 .warning-box {
-    background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 11px;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 5px;
+    padding: 8px;
+    margin-bottom: 8px;
+    font-size: 10px;
 }
 .warning-box strong { color: #fbbf24; }
 .admin-notice {
-    background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 5px; padding: 8px; margin-bottom: 10px; font-size: 10px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 4px;
+    padding: 6px;
+    margin-bottom: 8px;
+    font-size: 9px;
 }
 .admin-notice strong { color: #f87171; }
-.footer {
-    padding: 8px 15px; background: #12122a; border-top: 1px solid #333;
-    font-size: 9px; color: #666; text-align: center; flex-shrink: 0;
-}
 .sys-req-box {
-    background: #1e1e3a; border: 1px solid #333;
-    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 8px;
+    margin-bottom: 8px;
 }
-.sys-req-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
-.sys-req-icon { font-size: 14px; }
+.sys-req-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 10px; }
+.sys-req-icon { font-size: 12px; }
 .sys-req-pass { color: #10b981; }
 .sys-req-fail { color: #ef4444; }
 .sys-req-warn { color: #f59e0b; }
-.option-group { margin-bottom: 10px; }
-.option-label { font-size: 11px; color: #aaa; margin-bottom: 5px; display: block; }
-.radio-group { display: flex; gap: 15px; }
-.radio-item { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.option-group { margin-bottom: 8px; }
+.option-label { font-size: 10px; color: #aaa; margin-bottom: 4px; display: block; }
+.radio-group { display: flex; gap: 12px; }
+.radio-item { display: flex; align-items: center; gap: 4px; font-size: 10px; cursor: pointer; }
 .radio-item input { accent-color: #22d3ee; }
-.checkbox-item { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
-.checkbox-item input { accent-color: #22d3ee; width: 14px; height: 14px; }
+.checkbox-item { display: flex; align-items: center; gap: 5px; font-size: 10px; cursor: pointer; }
+.checkbox-item input { accent-color: #22d3ee; width: 12px; height: 12px; }
 .premium-card {
     background: linear-gradient(135deg, rgba(180, 83, 9, 0.2), rgba(245, 158, 11, 0.1));
     border: 1px solid rgba(180, 83, 9, 0.4);
-    border-radius: 6px; padding: 10px; margin-top: 10px;
+    border-radius: 5px;
+    padding: 8px;
+    margin-top: 8px;
 }
-.premium-card h4 { font-size: 11px; color: #f59e0b; margin-bottom: 6px; }
-.premium-features { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 8px; }
-.premium-feature { font-size: 10px; color: #aaa; display: flex; align-items: center; gap: 4px; }
-.premium-feature-icon { color: #f59e0b; font-size: 10px; }
-.upgrade-section { text-align: center; padding-top: 8px; border-top: 1px solid rgba(180, 83, 9, 0.3); }
-.upgrade-section p { font-size: 10px; color: #aaa; margin-bottom: 6px; }
-.est-time { font-size: 10px; color: #22d3ee; margin-top: 5px; font-style: italic; }
-.feature-section { margin-bottom: 12px; }
-.feature-section-title { font-size: 11px; color: #22d3ee; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
-.feature-section-title .icon { font-size: 12px; }
-.core-features { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px; margin-bottom: 10px; }
-.core-feature-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 10px; color: #aaa; }
-.core-feature-item .icon { color: #10b981; font-size: 11px; }
-.optional-features { background: #1e1e3a; border: 1px solid #333; border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; }
-.feature-card { display: flex; align-items: flex-start; gap: 8px; padding: 6px; border-bottom: 1px solid #333; transition: background 0.2s; }
+.premium-card h4 { font-size: 10px; color: #f59e0b; margin-bottom: 4px; }
+.premium-features { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; margin-bottom: 6px; }
+.premium-feature { font-size: 9px; color: #aaa; display: flex; align-items: center; gap: 3px; }
+.premium-feature-icon { color: #f59e0b; font-size: 9px; }
+.upgrade-section { text-align: center; padding-top: 6px; border-top: 1px solid rgba(180, 83, 9, 0.3); }
+.upgrade-section p { font-size: 9px; color: #aaa; margin-bottom: 4px; }
+.feature-section { margin-bottom: 6px; }
+.feature-section-title { font-size: 10px; color: #22d3ee; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
+.feature-section-title .icon { font-size: 10px; }
+.core-features {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 5px;
+    padding: 6px;
+    margin-bottom: 6px;
+}
+.core-feature-item { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 9px; color: #aaa; }
+.core-feature-item .icon { color: #10b981; font-size: 10px; }
+.optional-features {
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 6px;
+    max-height: 60px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+.feature-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px;
+    border-bottom: 1px solid #333;
+    transition: background 0.2s;
+}
 .feature-card:last-child { border-bottom: none; }
 .feature-card:hover { background: rgba(8, 145, 178, 0.1); }
-.feature-card input { margin-top: 2px; accent-color: #22d3ee; width: 14px; height: 14px; flex-shrink: 0; }
+.feature-card input { margin-top: 1px; accent-color: #22d3ee; width: 12px; height: 12px; flex-shrink: 0; }
 .feature-card-content { flex: 1; min-width: 0; }
-.feature-card-name { font-size: 11px; font-weight: 500; color: #fff; }
-.feature-card-desc { font-size: 9px; color: #b0b0b0; margin-top: 1px; }
-.feature-card-limit { font-size: 9px; color: #fbbf24; margin-top: 2px; font-style: italic; }
-.feature-card-badge { font-size: 8px; background: rgba(8, 145, 178, 0.3); color: #22d3ee; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
-.feature-card-badge.lite { background: rgba(100, 116, 139, 0.3); color: #94a3b8; }
-.feature-actions { display: flex; gap: 6px; margin-bottom: 8px; }
-.feature-count { font-size: 10px; color: #888; margin-top: 6px; }
-.upgrade-prompt {
-    background: linear-gradient(135deg, rgba(180, 83, 9, 0.15), rgba(245, 158, 11, 0.1));
-    border: 1px solid rgba(180, 83, 9, 0.3);
-    border-radius: 6px; padding: 10px; margin-top: 10px; text-align: center;
-}
-.upgrade-prompt p { font-size: 10px; color: #aaa; margin-bottom: 6px; }
-.upgrade-prompt strong { color: #f59e0b; }
+.feature-card-name { font-size: 10px; font-weight: 500; color: #fff; }
+.feature-card-desc { font-size: 8px; color: #b0b0b0; }
+.feature-card-limit { font-size: 8px; color: #fbbf24; font-style: italic; }
+.feature-card-badge { font-size: 7px; background: rgba(100, 116, 139, 0.3); color: #94a3b8; padding: 1px 3px; border-radius: 2px; margin-left: 3px; }
+.feature-actions { display: flex; gap: 4px; margin-bottom: 4px; }
+.feature-count { font-size: 9px; color: #888; margin-top: 4px; }
+.confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.confirm-item { background: #1e1e3a; border-radius: 5px; padding: 8px; }
+.confirm-label { font-size: 9px; color: #888; margin-bottom: 2px; }
+.confirm-value { font-size: 11px; color: #22d3ee; font-weight: 500; }
+.hidden { display: none !important; }
 </style>
 <script language="VBScript">
 Dim selectedDrive, selectedDriveNumber, drives(), driveCount
@@ -215,6 +310,7 @@ Dim partitionStyle, quickFormat
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
 Dim selectedFeatures
 Dim hwid
+Dim currentStep
 
 Function IsAdmin()
     On Error Resume Next
@@ -225,14 +321,10 @@ End Function
 Sub RestartAsAdmin()
     Dim shellApp, htaPath
     Set shellApp = CreateObject("Shell.Application")
-    ' Get proper file path - document.location.href can be malformed in HTA
     htaPath = document.location.pathname
-    ' Remove leading slash if present (file:///C:/path becomes /C:/path)
     If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2)
-    ' Decode URL-encoded characters
     htaPath = Replace(htaPath, "%20", " ")
     htaPath = Replace(htaPath, "%5C", "\\")
-    ' Use mshta with quoted path
     shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1
     window.close
 End Sub
@@ -246,10 +338,8 @@ End Sub
 Sub CollectHWID()
     Dim computerName, cpuId, macAddr, diskSerial, combined
     On Error Resume Next
-    
     computerName = CreateObject("WScript.Network").ComputerName
     If Len(computerName) = 0 Then computerName = "UNKNOWN"
-    
     cpuId = "UNKNOWN"
     Set wmiTemp = GetObject("winmgmts:\\.\root\cimv2")
     If Not wmiTemp Is Nothing Then
@@ -257,7 +347,6 @@ Sub CollectHWID()
         For Each cpu In cpuQuery
             If Not IsNull(cpu.ProcessorId) Then cpuId = cpu.ProcessorId
         Next
-        
         macAddr = "UNKNOWN"
         Set netQuery = wmiTemp.ExecQuery("SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True")
         For Each adapter In netQuery
@@ -266,7 +355,6 @@ Sub CollectHWID()
                 Exit For
             End If
         Next
-        
         diskSerial = "UNKNOWN"
         Set diskQuery = wmiTemp.ExecQuery("SELECT SerialNumber FROM Win32_DiskDrive")
         For Each disk In diskQuery
@@ -276,7 +364,6 @@ Sub CollectHWID()
             End If
         Next
     End If
-    
     combined = computerName & "|" & cpuId & "|" & macAddr & "|" & diskSerial
     hwid = SimpleHash(combined)
     On Error Goto 0
@@ -294,7 +381,6 @@ End Function
 
 Sub Window_OnLoad()
     CollectHWID
-    
     If Not IsAdmin() Then
         If MsgBox("This tool requires Administrator privileges to write to USB drives." & vbCrLf & vbCrLf & _
                   "Would you like to restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then
@@ -304,8 +390,7 @@ Sub Window_OnLoad()
             ShowAdminNotice
         End If
     End If
-    
-    window.resizeTo 820, 700
+    window.resizeTo 720, 640
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
@@ -314,18 +399,9 @@ Sub Window_OnLoad()
     quickFormat = True
     sysReqPassed = False
     selectedFeatures = "wallpaper_lite,stream_lite,security_lite,backup_lite"
+    currentStep = 1
     CheckSystemRequirements()
-    
-    ' Bind navigation buttons
-    On Error Resume Next
-    Set document.getElementById("btnNext1").onclick = GetRef("GoToStepTwo")
-    Set document.getElementById("btnNext2").onclick = GetRef("GoToStepThree")
-    Set document.getElementById("btnConfirm").onclick = GetRef("StartCreation")
-    Set document.getElementById("btnRefresh").onclick = GetRef("RefreshDrives")
-    Set document.getElementById("btnBack2").onclick = GetRef("GoToStepOne")
-    Set document.getElementById("btnBack3").onclick = GetRef("GoToStepTwo")
-    Set document.getElementById("btnClose").onclick = GetRef("CloseApp")
-    On Error Goto 0
+    UpdateFooterButtons()
 End Sub
 
 Sub CheckSystemRequirements()
@@ -368,29 +444,29 @@ Sub CheckSystemRequirements()
     diskSpace = freeSpaceGB
     winVersion = osVer
     If ramGB >= 4 Then
-        ramStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB (4GB+ required)"
+        ramStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB"
         sysReqPassed = True
     ElseIf ramGB >= 2 Then
-        ramStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> RAM: " & ramGB & " GB (4GB recommended)"
+        ramStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> RAM: " & ramGB & " GB"
         sysReqPassed = True
     Else
-        ramStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> RAM: " & ramGB & " GB (4GB required)"
+        ramStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> RAM: " & ramGB & " GB"
         sysReqPassed = False
     End If
     If freeSpaceGB >= 5 Then
-        diskStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Temp Space: " & freeSpaceGB & " GB (5GB+ required)"
+        diskStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Space: " & freeSpaceGB & " GB"
     ElseIf freeSpaceGB >= 3 Then
-        diskStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Temp Space: " & freeSpaceGB & " GB (5GB recommended)"
+        diskStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Space: " & freeSpaceGB & " GB"
     Else
-        diskStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Temp Space: " & freeSpaceGB & " GB (5GB required)"
+        diskStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Space: " & freeSpaceGB & " GB"
         sysReqPassed = False
     End If
     If InStr(osVer, "Windows 10") > 0 Or InStr(osVer, "Windows 11") > 0 Then
-        osStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> OS: Windows 10/11 detected"
+        osStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Win 10/11"
     ElseIf InStr(osVer, "Windows") > 0 Then
-        osStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> OS: " & Left(osVer, 30) & "..."
+        osStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Windows"
     Else
-        osStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> OS: Unknown"
+        osStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Unknown OS"
     End If
     document.getElementById("sysReqContent").innerHTML = _
         "<div class='sys-req-item'>" & ramStatus & "</div>" & _
@@ -466,7 +542,7 @@ Sub UpdateFeatureCount()
     For i = 0 To UBound(features)
         If Len(features(i)) > 0 Then count = count + 1
     Next
-    document.getElementById("featureCount").innerText = "3 core + " & count & " optional Lite features selected"
+    document.getElementById("featureCount").innerText = "3 core + " & count & " Lite features"
     On Error Goto 0
 End Sub
 
@@ -482,15 +558,13 @@ Sub RefreshDrives()
     End If
     If Err.Number <> 0 Then
         Err.Clear
-        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext2").disabled = True
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br>Run as Administrator.</div>"
         Exit Sub
     End If
     Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
     If Err.Number <> 0 Then
         Err.Clear
-        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext2").disabled = True
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.</div>"
         Exit Sub
     End If
     ReDim drives(0)
@@ -529,8 +603,7 @@ Sub RefreshDrives()
     document.getElementById("driveList").innerHTML = html
     selectedDrive = ""
     selectedDriveNumber = -1
-    document.getElementById("btnNext2").disabled = True
-    UpdateEstimatedTime
+    UpdateFooterButtons()
 End Sub
 
 Sub SelectDrive(index)
@@ -545,15 +618,8 @@ Sub SelectDrive(index)
     items(index).className = "drive-item selected"
     selectedDriveNumber = drives(index)
     selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
-    document.getElementById("btnNext2").disabled = False
-    UpdateEstimatedTime
+    UpdateFooterButtons()
     On Error Goto 0
-End Sub
-
-Sub UpdateEstimatedTime()
-    Dim estTime
-    estTime = "Estimated time: 15-30 minutes (depends on internet & USB speed)"
-    document.getElementById("estTimeDisplay").innerText = estTime
 End Sub
 
 Sub SetPartitionStyle(style)
@@ -571,15 +637,16 @@ Sub SetQuickFormat()
 End Sub
 
 Sub GoToStep(stepNum)
-    Dim panels, steps, i, stepEl
+    Dim slides, steps, i, stepEl
     On Error Resume Next
-    Set panels = document.getElementsByClassName("panel")
-    For i = 0 To panels.length - 1
-        panels(i).className = "panel"
+    currentStep = stepNum
+    Set slides = document.getElementsByClassName("slide")
+    For i = 0 To slides.length - 1
+        slides(i).className = "slide"
     Next
     Set stepEl = document.getElementById("step" & stepNum)
     If Not stepEl Is Nothing Then
-        stepEl.className = "panel active"
+        stepEl.className = "slide active"
     End If
     Set steps = document.getElementsByClassName("step-crumb")
     For i = 0 To steps.length - 1
@@ -594,7 +661,7 @@ Sub GoToStep(stepNum)
     If stepNum = 2 Then
         RefreshDrives()
     ElseIf stepNum = 3 Then
-        document.getElementById("selectedDriveInfo").innerText = selectedDrive
+        document.getElementById("confirmDrive").innerText = selectedDrive
         document.getElementById("confirmPartStyle").innerText = partitionStyle
         document.getElementById("confirmQuickFmt").innerText = IIf(quickFormat, "Yes", "No")
         document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
@@ -605,6 +672,41 @@ Sub GoToStep(stepNum)
         document.getElementById("progressStatus").innerText = "Starting..."
         document.getElementById("progressDetail").innerText = "Please wait"
         smoothProgress = 0
+    End If
+    UpdateFooterButtons()
+    On Error Goto 0
+End Sub
+
+Sub UpdateFooterButtons()
+    Dim btnBack, btnNext
+    On Error Resume Next
+    Set btnBack = document.getElementById("btnBack")
+    Set btnNext = document.getElementById("btnNext")
+    If currentStep = 1 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Next"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = False
+    ElseIf currentStep = 2 Then
+        btnBack.className = "btn btn-secondary"
+        btnNext.innerText = "Next"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = (selectedDriveNumber < 0)
+    ElseIf currentStep = 3 Then
+        btnBack.className = "btn btn-secondary"
+        btnNext.innerText = "Create USB"
+        btnNext.className = "btn btn-primary btn-create"
+        btnNext.disabled = False
+    ElseIf currentStep = 4 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Creating..."
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = True
+    ElseIf currentStep = 5 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Close"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = False
     End If
     On Error Goto 0
 End Sub
@@ -622,6 +724,26 @@ End Function
 Function IIf(cond, trueVal, falseVal)
     If cond Then IIf = trueVal Else IIf = falseVal
 End Function
+
+Sub OnBackClick()
+    If currentStep > 1 And currentStep < 4 Then
+        GoToStep(currentStep - 1)
+    End If
+End Sub
+
+Sub OnNextClick()
+    If currentStep = 1 Then
+        GoToStep(2)
+    ElseIf currentStep = 2 Then
+        If selectedDriveNumber >= 0 Then
+            GoToStep(3)
+        End If
+    ElseIf currentStep = 3 Then
+        StartCreation()
+    ElseIf currentStep = 5 Then
+        CloseApp()
+    End If
+End Sub
 
 Sub StartCreation()
     GoToStep(4)
@@ -716,7 +838,7 @@ Function GetPowerShellCode()
     code = code & "  try {" & vbCrLf
     code = code & "    if ($mirrorIndex -gt 0 -or $retryCount -gt 0) { Write-P 6 ""Mirror $($mirrorIndex+1), Attempt $($retryCount+1)..."" }" & vbCrLf
     code = code & "    $webRequest = [System.Net.HttpWebRequest]::Create($isoUrl)" & vbCrLf
-    code = code & "    $webRequest.UserAgent = 'AegisOS/2.8'; $webRequest.Timeout = 30000" & vbCrLf
+    code = code & "    $webRequest.UserAgent = 'AegisOS/3.0'; $webRequest.Timeout = 30000" & vbCrLf
     code = code & "    $response = $webRequest.GetResponse(); $totalBytes = $response.ContentLength" & vbCrLf
     code = code & "    $responseStream = $response.GetResponseStream(); $fileStream = [System.IO.File]::Create($isoPath)" & vbCrLf
     code = code & "    $buffer = New-Object byte[] 8MB; $downloadedBytes = 0" & vbCrLf
@@ -746,11 +868,9 @@ Function GetPowerShellCode()
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
     code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED: Expected $($expectedHash.Substring(0,16))... got $($hash.Substring(0,16))...""; exit 1 }" & vbCrLf
     code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
-    
     code = code & "Write-P 54 'Preparing USB...' 'Taking disk offline'" & vbCrLf
     code = code & "$dp = ""select disk $DiskNumber`nattributes disk clear readonly`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
-    
     code = code & "Write-P 56 'Writing to USB (Etcher-style)...' 'Do not remove USB!'" & vbCrLf
     code = code & "$physicalDrive = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
     code = code & "Start-Sleep -Seconds 2" & vbCrLf
@@ -817,22 +937,6 @@ Sub CheckProgress()
     On Error Goto 0
 End Sub
 
-Sub GoToStepOne()
-    GoToStep(1)
-End Sub
-
-Sub GoToStepTwo()
-    GoToStep(2)
-End Sub
-
-Sub GoToStepThree()
-    GoToStep(3)
-End Sub
-
-Sub GoToStepFour()
-    GoToStep(4)
-End Sub
-
 Sub GoToStepFive()
     GoToStep(5)
 End Sub
@@ -841,7 +945,6 @@ Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
     Dim delta, step
     If targetPct > smoothProgress Then
         delta = targetPct - smoothProgress
-        ' Fast jumps for large deltas, smooth for small
         If delta > 10 Then
             step = Int(delta / 2)
         ElseIf delta > 5 Then
@@ -893,13 +996,15 @@ Sub ShowError(msg, detail)
         errorFix = "Try again or contact support."
     End If
     document.getElementById("progressContainer").innerHTML = _
-        "<div style='font-size:36px;color:#ef4444;margin-bottom:12px'>&#10060;</div>" & _
-        "<div style='font-size:16px;color:#ef4444;margin-bottom:8px'>" & errorType & "</div>" & _
-        "<div class='error-box'><div style='margin-bottom:6px'>" & errorMsg & "</div>" & _
-        "<div style='font-size:10px;color:#22d3ee'><strong>Fix:</strong> " & errorFix & "</div>" & _
-        "<div class='error-details'>" & detail & "</div></div>" & _
-        "<div class='btn-row' style='justify-content:center'>" & _
-        "<button class='btn btn-secondary' onclick='GoToStep(1)'>Try Again</button></div>"
+        "<div style='font-size:32px;color:#ef4444;margin-bottom:8px'>&#10060;</div>" & _
+        "<div style='font-size:14px;color:#ef4444;margin-bottom:6px'>" & errorType & "</div>" & _
+        "<div class='error-box'><div style='margin-bottom:4px'>" & errorMsg & "</div>" & _
+        "<div style='font-size:9px;color:#22d3ee'><strong>Fix:</strong> " & errorFix & "</div>" & _
+        "<div class='error-details'>" & detail & "</div></div>"
+    currentStep = 1
+    UpdateFooterButtons()
+    document.getElementById("btnBack").className = "btn btn-secondary"
+    document.getElementById("btnBack").innerText = "Try Again"
 End Sub
 
 Sub CloseApp()
@@ -908,8 +1013,8 @@ End Sub
 </script>
 </head>
 <body>
-<div class="container">
-    <div class="header">
+<div class="wizard">
+    <div class="wizard-header">
         <svg class="logo-svg shield-animate" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M24 4L6 12v12c0 11 8 17 18 20 10-3 18-9 18-20V12L24 4z" fill="url(#shieldGrad)" stroke="#22d3ee" stroke-width="2"/>
             <path d="M17 24l5 5 9-10" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
@@ -917,204 +1022,179 @@ End Sub
         </svg>
         <div class="header-text">
             <h1>Aegis OS Media Creation Tool</h1>
-            <p>Create bootable USB - Freemium Edition (FREE)</p>
+            <p>Bootable USB Creator - Freemium Edition (FREE)</p>
         </div>
     </div>
 
-    <div class="content">
-        <div class="step-breadcrumb">
-            <div class="step-crumb active" id="stepCrumb1">1. Features</div>
-            <div class="step-crumb" id="stepCrumb2">2. Select Drive</div>
-            <div class="step-crumb" id="stepCrumb3">3. Confirm</div>
-            <div class="step-crumb" id="stepCrumb4">4. Creating</div>
-            <div class="step-crumb" id="stepCrumb5">5. Done</div>
-        </div>
+    <div class="wizard-breadcrumb">
+        <div class="step-crumb active">1. Features</div>
+        <div class="step-crumb">2. USB Drive</div>
+        <div class="step-crumb">3. Confirm</div>
+        <div class="step-crumb">4. Creating</div>
+        <div class="step-crumb">5. Done</div>
+    </div>
 
-        <div id="step1" class="panel active">
+    <div class="wizard-content">
+        <div id="step1" class="slide active">
             <div class="section-title">Select Features (Lite)</div>
-            <div class="section-desc">Choose which Aegis tools to install. Freemium includes Lite versions with limited features.</div>
+            <div class="section-desc">Choose Aegis tools. Freemium includes Lite versions with limited features.</div>
 
             <div id="adminNotice" class="admin-notice" style="display:none">
-                <strong>Note:</strong> Right-click and "Run as Administrator" for best results.
+                <strong>Note:</strong> Run as Administrator for best results.
             </div>
 
             <div class="sys-req-box">
-                <h3 style="font-size:11px;color:#22d3ee;margin-bottom:6px">System Requirements</h3>
-                <div id="sysReqContent">Checking...</div>
+                <div style="font-size:9px;color:#22d3ee;margin-bottom:4px;font-weight:600">System Check</div>
+                <div id="sysReqContent" style="display:flex;gap:12px;">Checking...</div>
             </div>
 
             <div class="feature-section">
                 <div class="feature-section-title"><span class="icon">&#128274;</span> Core Features (Always Installed)</div>
                 <div class="core-features">
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Control Center - Central management hub</div>
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis System Monitor - Real-time performance tracking</div>
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Update Manager - Automatic system updates</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Control Center</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> System Monitor</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Update Manager</div>
                 </div>
             </div>
 
-            <div class="feature-section">
-                <div class="feature-section-title"><span class="icon">&#9881;</span> Optional Features (Lite Versions)</div>
+            <div class="feature-section" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+                <div class="feature-section-title"><span class="icon">&#9881;</span> Optional Features (Lite)</div>
                 <div class="feature-actions">
-                    <button class="btn btn-secondary btn-small" onclick="SelectAllFeatures()">Select All</button>
-                    <button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures()">Deselect All</button>
+                    <button class="btn btn-secondary btn-small" onclick="SelectAllFeatures()">All</button>
+                    <button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures()">None</button>
                 </div>
                 <div class="optional-features">
                     <div class="feature-card">
                         <input type="checkbox" id="chk_wallpaper_lite" checked onclick="ToggleFeature('wallpaper_lite')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Wallpaper Engine Lite <span class="feature-card-badge lite">Lite</span></div>
-                            <div class="feature-card-desc">Static wallpapers and basic slideshows</div>
-                            <div class="feature-card-limit">&#9888; No video/animated wallpapers, no AI generation</div>
+                            <div class="feature-card-name">Wallpaper Engine <span class="feature-card-badge">Lite</span></div>
+                            <div class="feature-card-desc">Static wallpapers, basic slideshows</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_stream_lite" checked onclick="ToggleFeature('stream_lite')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Aegis Stream Lite <span class="feature-card-badge lite">Lite</span></div>
-                            <div class="feature-card-desc">Local game streaming to other devices</div>
-                            <div class="feature-card-limit">&#9888; 720p30 max, no audio, watermark overlay</div>
+                            <div class="feature-card-name">Aegis Stream <span class="feature-card-badge">Lite</span></div>
+                            <div class="feature-card-desc">Local streaming (720p30, watermark)</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_security_lite" checked onclick="ToggleFeature('security_lite')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Security Center + AI Security <span class="feature-card-badge lite">Lite</span></div>
-                            <div class="feature-card-desc">Basic firewall + AI-powered heuristic scanning</div>
-                            <div class="feature-card-limit">&#9888; Basic AI only - upgrade for behavioral AI, ML threat detection</div>
+                            <div class="feature-card-name">Security Center <span class="feature-card-badge">Lite</span></div>
+                            <div class="feature-card-desc">Basic firewall, virus scan</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_backup_lite" checked onclick="ToggleFeature('backup_lite')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Backup Lite <span class="feature-card-badge lite">Lite</span></div>
-                            <div class="feature-card-desc">Manual backup to local storage</div>
-                            <div class="feature-card-limit">&#9888; No scheduling, no cloud integration</div>
-                        </div>
-                    </div>
-                    <div class="feature-card" style="border-top:2px solid #0891b2;margin-top:6px;padding-top:8px">
-                        <input type="checkbox" id="chk_gaming_lite" onclick="ToggleFeature('gaming_lite')">
-                        <div class="feature-card-content">
-                            <div class="feature-card-name">Gaming Optimizer Lite <span class="feature-card-badge" style="background:rgba(249,115,22,0.3);color:#fb923c">Gamer</span></div>
-                            <div class="feature-card-desc">Basic game detection and simple performance mode</div>
-                            <div class="feature-card-limit">&#9888; No overclocking, no custom profiles, no advanced tweaks</div>
-                        </div>
-                    </div>
-                    <div class="feature-card">
-                        <input type="checkbox" id="chk_ai_lite" onclick="ToggleFeature('ai_lite')">
-                        <div class="feature-card-content">
-                            <div class="feature-card-name">AI Toolkit Lite <span class="feature-card-badge" style="background:rgba(139,92,246,0.3);color:#a78bfa">AI Dev</span></div>
-                            <div class="feature-card-desc">View AI models, basic inference (text/image)</div>
-                            <div class="feature-card-limit">&#9888; No training, no CUDA management, no model downloading</div>
-                        </div>
-                    </div>
-                    <div class="feature-card">
-                        <input type="checkbox" id="chk_workplace_lite" onclick="ToggleFeature('workplace_lite')">
-                        <div class="feature-card-content">
-                            <div class="feature-card-name">Workplace Tools Lite <span class="feature-card-badge" style="background:rgba(14,165,233,0.3);color:#38bdf8">Work</span></div>
-                            <div class="feature-card-desc">Meeting launcher, view-only remote desktop, expense tracker</div>
-                            <div class="feature-card-limit">&#9888; No scheduling, no remote control, 10 expense entries max</div>
+                            <div class="feature-card-name">Backup Pro <span class="feature-card-badge">Lite</span></div>
+                            <div class="feature-card-desc">Local backup only</div>
                         </div>
                     </div>
                 </div>
-                <div class="feature-count" id="featureCount">3 core + 4 optional Lite features selected</div>
+                <div id="featureCount" class="feature-count">3 core + 4 Lite features</div>
             </div>
-
-            <div class="upgrade-prompt">
-                <p><strong>Want full versions?</strong> Upgrade to Premium for unlimited streaming, video wallpapers, full security suite, cloud backups, and more!</p>
-                <button class="btn btn-upgrade" onclick="OpenUpgradeLink()">Upgrade to Premium</button>
-            </div>
-
-            <div class="btn-row">
-                <div style="flex:1"></div>
-                <button id="btnNext1" class="btn btn-primary" onclick="GoToStep(2)">Next</button>
-            </div>
-        </div>
-
-        <div id="step2" class="panel">
-            <div class="section-title">Select USB Drive</div>
-            <div class="section-desc">Choose a USB drive (4GB+). All data will be erased.</div>
-
-            <div id="driveList" class="drive-list"><div class="no-drives">Click Refresh to scan...</div></div>
-
-            <div class="option-group">
-                <label class="option-label">Partition Style</label>
-                <div class="radio-group">
-                    <label class="radio-item"><input type="radio" name="partStyle" checked onclick="SetPartitionStyle('GPT')"> GPT (UEFI)</label>
-                    <label class="radio-item"><input type="radio" name="partStyle" onclick="SetPartitionStyle('MBR')"> MBR (Legacy BIOS)</label>
-                </div>
-            </div>
-
-            <div class="option-group">
-                <label class="checkbox-item"><input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat()"> Quick Format (faster)</label>
-            </div>
-
-            <div class="est-time" id="estTimeDisplay">Estimated time: 15-30 minutes</div>
 
             <div class="premium-card">
-                <h4>&#9733; Premium Editions Include:</h4>
+                <h4>&#9733; Upgrade to Premium</h4>
                 <div class="premium-features">
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Full video wallpapers</div>
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> 4K streaming, no limits</div>
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Full antivirus suite</div>
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Cloud backups</div>
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Gaming optimizations</div>
-                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> AI/ML frameworks</div>
+                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Full AI toolkit</div>
+                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> 4K streaming</div>
+                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Cloud backup</div>
+                    <div class="premium-feature"><span class="premium-feature-icon">&#10003;</span> Priority support</div>
                 </div>
                 <div class="upgrade-section">
-                    <p>Unlock all features with a Premium license</p>
-                    <button class="btn btn-upgrade" onclick="OpenUpgradeLink()">Upgrade to Premium</button>
+                    <button class="btn btn-upgrade" onclick="OpenUpgradeLink()">Get Premium</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="step2" class="slide">
+            <div class="section-title">Select USB Drive</div>
+            <div class="section-desc">Select target drive. All data will be erased!</div>
+
+            <div class="warning-box">
+                <strong>&#9888; Warning:</strong> All data on the selected drive will be permanently deleted.
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:10px;color:#aaa;">Available USB Drives:</span>
+                <button class="btn btn-refresh" onclick="RefreshDrives()">&#8635; Refresh</button>
+            </div>
+
+            <div id="driveList" class="drive-list">
+                <div class="no-drives">Click Refresh to scan for USB drives.</div>
+            </div>
+
+            <div class="option-group">
+                <span class="option-label">Partition Style:</span>
+                <div class="radio-group">
+                    <label class="radio-item"><input type="radio" name="partStyle" checked onclick="SetPartitionStyle('GPT')"> GPT (UEFI)</label>
+                    <label class="radio-item"><input type="radio" name="partStyle" onclick="SetPartitionStyle('MBR')"> MBR (Legacy)</label>
                 </div>
             </div>
 
-            <div class="btn-row">
-                <button id="btnRefresh" class="btn btn-refresh" onclick="RefreshDrives()">Refresh</button>
-                <button id="btnBack2" class="btn btn-secondary" onclick="GoToStep(1)">Back</button>
-                <div style="flex:1"></div>
-                <button id="btnNext2" class="btn btn-primary" disabled onclick="GoToStep(3)">Next</button>
-            </div>
+            <label class="checkbox-item">
+                <input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat()">
+                Quick Format (faster)
+            </label>
         </div>
 
-        <div id="step3" class="panel">
-            <div class="section-title">Confirm Your Selection</div>
-            <div class="section-desc">Review the details below before proceeding.</div>
+        <div id="step3" class="slide">
+            <div class="section-title">Confirm Settings</div>
+            <div class="section-desc">Review your selections before creating the USB.</div>
 
             <div class="warning-box">
-                <strong>Warning:</strong> All data on the selected USB will be permanently deleted!
+                <strong>&#9888; Final Warning:</strong> This will erase all data on the selected drive!
+            </div>
+
+            <div class="confirm-grid">
+                <div class="confirm-item">
+                    <div class="confirm-label">Target Drive</div>
+                    <div class="confirm-value" id="confirmDrive">-</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Edition</div>
+                    <div class="confirm-value">Freemium</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Partition Style</div>
+                    <div class="confirm-value" id="confirmPartStyle">GPT</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Quick Format</div>
+                    <div class="confirm-value" id="confirmQuickFmt">Yes</div>
+                </div>
+            </div>
+
+            <div class="confirm-item" style="margin-bottom:8px;">
+                <div class="confirm-label">Features</div>
+                <div class="confirm-value" id="confirmFeatures">3 core + 4 Lite</div>
             </div>
 
             <div class="info-box">
-                <h3>Selected Drive</h3>
-                <p id="selectedDriveInfo" style="font-size:14px;margin-top:6px;color:#fff">-</p>
-            </div>
-
-            <div class="info-box">
-                <h3>Configuration</h3>
+                <h3>What happens next:</h3>
                 <ul>
-                    <li>Edition: <strong style="color:#22d3ee">Aegis OS Freemium (FREE)</strong></li>
-                    <li>Partition: <strong id="confirmPartStyle" style="color:#fff">GPT</strong></li>
-                    <li>Quick Format: <strong id="confirmQuickFmt" style="color:#fff">Yes</strong></li>
-                    <li>Features: <strong id="confirmFeatures" style="color:#fff">-</strong></li>
-                    <li>Download Size: ~2.9 GB</li>
-                    <li>SHA256 verification included</li>
+                    <li>Download Aegis OS (~2.9 GB)</li>
+                    <li>Verify file integrity (SHA256)</li>
+                    <li>Write bootable image to USB</li>
+                    <li>Estimated time: 15-30 minutes</li>
                 </ul>
-            </div>
-
-            <div class="btn-row">
-                <button id="btnBack3" class="btn btn-secondary" onclick="GoToStep(2)">Back</button>
-                <div style="flex:1"></div>
-                <button id="btnConfirm" class="btn btn-primary" onclick="StartCreation()">Create USB</button>
             </div>
         </div>
 
-        <div id="step4" class="panel">
+        <div id="step4" class="slide">
             <div class="section-title">Creating Bootable USB</div>
-            <div class="section-desc">Please wait while we create your installation media.</div>
+            <div class="section-desc">Do not remove the USB drive during this process.</div>
 
             <div id="progressContainer" class="progress-container">
                 <div class="progress-percent" id="progressPercent">0%</div>
-                <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div>
-                <div class="progress-status" id="progressStatus">Initializing...</div>
-                <div class="progress-detail" id="progressDetail"></div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill animated" id="progressBar"></div>
+                </div>
+                <div class="progress-status" id="progressStatus">Starting...</div>
+                <div class="progress-detail" id="progressDetail">Please wait</div>
                 <div class="progress-stats">
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statSpeed">--</div>
@@ -1122,7 +1202,7 @@ End Sub
                     </div>
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statETA">--</div>
-                        <div class="progress-stat-label">ETA</div>
+                        <div class="progress-stat-label">Remaining</div>
                     </div>
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statSize">--</div>
@@ -1130,51 +1210,36 @@ End Sub
                     </div>
                 </div>
             </div>
-
-            <div class="warning-box" style="margin-top:12px">
-                <strong>Do not remove the USB drive</strong> until complete.
-            </div>
         </div>
 
-        <div id="step5" class="panel">
+        <div id="step5" class="slide">
             <div class="success-container">
-                <svg class="logo-svg" style="width:48px;height:48px;margin-bottom:12px" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="24" cy="24" r="20" fill="#10b981" stroke="#34d399" stroke-width="2"/>
-                    <path d="M15 24l7 7 11-14" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                <div class="success-title">USB Creation Complete!</div>
-                <div class="success-desc">Your Aegis OS bootable USB is ready.</div>
-
-                <div class="verification-box">
-                    <div class="verification-title">&#10003; Download Verified</div>
-                    <div class="verification-hash">SHA256 checksum passed</div>
-                </div>
+                <div class="success-icon">&#10004;</div>
+                <div class="success-title">USB Created Successfully!</div>
+                <div class="success-desc">Your Aegis OS Freemium bootable USB is ready to use.</div>
 
                 <div class="success-steps">
                     <h3>Next Steps:</h3>
                     <ol>
                         <li>Safely eject the USB drive</li>
                         <li>Insert into target computer</li>
-                        <li>Restart and press F12/F2/DEL/ESC</li>
-                        <li>Select USB to boot</li>
-                        <li>Choose "Try" or "Install"</li>
+                        <li>Boot from USB (F12/F2/DEL at startup)</li>
+                        <li>Follow on-screen installation</li>
                     </ol>
                 </div>
 
-                <div class="upgrade-section" style="margin-top:12px">
-                    <p>Want more features? Upgrade to Premium!</p>
-                    <button class="btn btn-upgrade" onclick="OpenUpgradeLink()">Upgrade to Premium</button>
-                </div>
-
-                <div class="btn-row" style="justify-content:center">
-                    <button id="btnClose" class="btn btn-primary" onclick="CloseApp()">Finish</button>
+                <div class="premium-card" style="margin-top:12px;">
+                    <h4>&#9733; Want More Features?</h4>
+                    <p style="font-size:9px;color:#aaa;margin-bottom:6px;">Upgrade to a licensed edition for full features, AI tools, and priority support.</p>
+                    <button class="btn btn-upgrade" onclick="OpenUpgradeLink()">Upgrade Now</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="footer">
-        Aegis OS v2.8 - Commercial Software. Liability limited to purchase price.
+    <div class="wizard-footer">
+        <button id="btnBack" class="btn btn-secondary hidden" onclick="OnBackClick()">Back</button>
+        <button id="btnNext" class="btn btn-primary" onclick="OnNextClick()">Next</button>
     </div>
 </div>
 </body>

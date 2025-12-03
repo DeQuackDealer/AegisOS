@@ -12,8 +12,8 @@
     SHOWINTASKBAR="yes"
     SINGLEINSTANCE="yes"
     SYSMENU="yes"
-    VERSION="2.8"
-    SCROLL="auto"
+    VERSION="3.0"
+    SCROLL="no"
     INNERBORDER="no"
 />
 <style>
@@ -22,228 +22,310 @@ body {
     font-family: 'Segoe UI', Tahoma, sans-serif;
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
     color: #fff;
-    height: 100%;
-    overflow-y: auto;
+    height: 100vh;
+    overflow: hidden;
+    margin: 0;
 }
-.container { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.header {
+.wizard {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+.wizard-header {
+    flex-shrink: 0;
     background: linear-gradient(135deg, #b45309 0%, #92400e 100%);
-    padding: 15px 20px;
+    padding: 8px 12px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
+    gap: 8px;
 }
-.logo-svg { width: 42px; height: 42px; }
+.logo-svg { width: 36px; height: 36px; }
 .shield-animate { animation: shieldPulse 2s ease-in-out infinite; }
 @keyframes shieldPulse {
     0%, 100% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.5)); }
     50% { transform: scale(1.05); filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.8)); }
 }
-.header-text h1 { font-size: 16px; font-weight: 600; }
-.header-text p { font-size: 11px; opacity: 0.9; }
-.content { flex: 1; padding: 15px 20px; overflow-y: auto; min-height: 0; }
-.step-breadcrumb { display: flex; justify-content: space-between; gap: 4px; padding: 8px 0; border-bottom: 1px solid #1f2a40; margin-bottom: 10px; }
-.step-crumb { flex: 1; text-align: center; font-size: 10px; padding: 6px 4px; border-radius: 4px; background: #1a2438; color: #8ca0c8; }
-.step-crumb.active { background: linear-gradient(135deg, #b45309, #f59e0b); color: #fff; font-weight: 600; }
+.header-text h1 { font-size: 14px; font-weight: 600; }
+.header-text p { font-size: 10px; opacity: 0.9; }
+.wizard-breadcrumb {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 4px 12px;
+    background: #12122a;
+    border-bottom: 1px solid #1f2a40;
+}
+.step-crumb {
+    flex: 1;
+    text-align: center;
+    font-size: 9px;
+    padding: 5px 3px;
+    border-radius: 4px;
+    background: #1a2438;
+    color: #8ca0c8;
+}
+.step-crumb.active {
+    background: linear-gradient(135deg, #b45309, #f59e0b);
+    color: #fff;
+    font-weight: 600;
+}
 .step-crumb.done { background: #0f1d33; color: #f59e0b; }
-.panel { display: none; }
-.panel.active { display: block; }
-.section-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.section-desc { font-size: 12px; color: #c0c0c0; margin-bottom: 12px; line-height: 1.3; }
+.wizard-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;
+}
+.slide {
+    display: none;
+    padding: 8px 12px;
+    height: 100%;
+    overflow: hidden;
+}
+.slide.active { display: flex; flex-direction: column; }
+.wizard-footer {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid #333;
+    background: #12122a;
+}
+.section-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.section-desc { font-size: 10px; color: #b0b0b0; margin-bottom: 6px; line-height: 1.3; }
 .info-box {
     background: rgba(180, 83, 9, 0.15);
     border: 1px solid rgba(180, 83, 9, 0.3);
-    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    border-radius: 5px;
+    padding: 6px;
+    margin-bottom: 6px;
 }
-.info-box h3 { font-size: 12px; margin-bottom: 5px; color: #f59e0b; }
-.info-box ul { font-size: 11px; color: #c0c0c0; padding-left: 16px; }
-.info-box li { margin-bottom: 2px; }
-.form-group { margin-bottom: 10px; }
-.form-label { display: block; font-size: 11px; margin-bottom: 4px; color: #aaa; }
+.info-box h3 { font-size: 10px; margin-bottom: 4px; color: #f59e0b; }
+.info-box ul { font-size: 9px; color: #b0b0b0; padding-left: 14px; margin: 0; }
+.info-box li { margin-bottom: 1px; }
+.form-group { margin-bottom: 8px; }
+.form-label { display: block; font-size: 10px; margin-bottom: 3px; color: #aaa; }
 .form-input {
     width: 100%; padding: 8px 10px;
     background: #1e1e3a; border: 1px solid #444;
-    border-radius: 5px; color: #fff; font-size: 13px;
+    border-radius: 5px; color: #fff; font-size: 12px;
 }
 .form-input:focus { border-color: #f59e0b; outline: none; }
 .drive-list {
-    background: #1e1e3a; border: 1px solid #333;
-    border-radius: 6px; max-height: 120px; overflow-y: auto; margin-bottom: 10px;
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    max-height: 80px;
+    overflow-y: auto;
+    margin-bottom: 6px;
 }
 .drive-item {
-    padding: 8px 10px; border-bottom: 1px solid #333;
-    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     transition: all 0.2s;
 }
 .drive-item:last-child { border-bottom: none; }
 .drive-item:hover { background: #2a2a4a; }
 .drive-item.selected { background: rgba(180, 83, 9, 0.3); border-left: 3px solid #f59e0b; }
 .drive-icon {
-    width: 28px; height: 28px; background: linear-gradient(135deg, #b45309, #f59e0b); border-radius: 5px;
-    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold;
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #b45309, #f59e0b);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    font-weight: bold;
 }
 .drive-info { flex: 1; }
-.drive-name { font-weight: 500; font-size: 12px; }
-.drive-size { font-size: 10px; color: #b0b0b0; }
-.drive-details { font-size: 10px; color: #909090; margin-top: 2px; }
-.no-drives { padding: 20px; text-align: center; color: #888; font-size: 12px; }
+.drive-name { font-weight: 500; font-size: 11px; }
+.drive-size { font-size: 9px; color: #b0b0b0; }
+.drive-details { font-size: 8px; color: #909090; }
+.no-drives { padding: 15px; text-align: center; color: #888; font-size: 10px; }
 .btn {
-    padding: 8px 16px; border-radius: 5px;
-    font-weight: 600; cursor: pointer; border: none; font-size: 12px;
+    padding: 8px 16px;
+    border-radius: 5px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    font-size: 11px;
     transition: all 0.2s;
 }
 .btn-primary { background: linear-gradient(135deg, #b45309, #d97706); color: white; }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(180, 83, 9, 0.4); }
 .btn-primary:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn-secondary { background: #2a2a4a; color: #aaa; border: 1px solid #444; }
-.btn-refresh { background: #1e1e3a; color: #f59e0b; padding: 5px 10px; font-size: 10px; }
-.btn-small { padding: 4px 10px; font-size: 10px; }
-.btn-row { display: flex; gap: 8px; margin-top: 12px; min-height: 36px; align-items: center; }
-.btn-next-main { 
-    padding: 12px 24px !important; 
-    font-size: 14px !important; 
-    min-width: 120px;
-    box-shadow: 0 2px 8px rgba(180, 83, 9, 0.3);
-}
-.btn-next-main:not(:disabled) {
-    animation: pulseNext 2s infinite;
-}
-@keyframes pulseNext {
-    0%, 100% { box-shadow: 0 2px 8px rgba(180, 83, 9, 0.3); }
-    50% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.5); }
-}
-.progress-container { background: #1e1e3a; border-radius: 6px; padding: 15px; text-align: center; }
-.progress-bar-bg { 
-    height: 10px; background: #2a2a4a; border-radius: 5px; 
-    overflow: hidden; margin: 12px 0;
+.btn-secondary:hover { background: #3a3a5a; }
+.btn-refresh { background: #1e1e3a; color: #f59e0b; padding: 4px 8px; font-size: 9px; }
+.btn-small { padding: 3px 8px; font-size: 9px; }
+.btn-create { background: linear-gradient(135deg, #16a34a, #22c55e); padding: 10px 24px; font-size: 12px; }
+.btn-create:hover { box-shadow: 0 3px 12px rgba(22, 197, 94, 0.4); }
+.progress-container { background: #1e1e3a; border-radius: 5px; padding: 12px; text-align: center; }
+.progress-bar-bg {
+    height: 8px;
+    background: #2a2a4a;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 10px 0;
 }
 .progress-bar-fill {
-    height: 100%; 
+    height: 100%;
     background: linear-gradient(90deg, #b45309, #f59e0b, #b45309);
     background-size: 200% 100%;
-    width: 0%; 
-    transition: width 0.5s ease-out; 
-    border-radius: 5px;
+    width: 0%;
+    transition: width 0.5s ease-out;
+    border-radius: 4px;
 }
 .progress-bar-fill.animated { animation: shimmer 1.5s infinite linear; }
 @keyframes shimmer {
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
 }
-.progress-percent { font-size: 28px; font-weight: 700; color: #f59e0b; }
-.progress-status { font-size: 12px; color: #aaa; margin-top: 6px; }
-.progress-detail { font-size: 10px; color: #a0a0a0; margin-top: 4px; }
-.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 10px; font-size: 10px; }
+.progress-percent { font-size: 24px; font-weight: 700; color: #f59e0b; }
+.progress-status { font-size: 11px; color: #aaa; margin-top: 4px; }
+.progress-detail { font-size: 9px; color: #a0a0a0; margin-top: 2px; }
+.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 8px; font-size: 9px; }
 .progress-stat { text-align: center; }
-.progress-stat-value { font-size: 12px; color: #f59e0b; font-weight: 600; }
-.progress-stat-label { font-size: 9px; color: #909090; margin-top: 1px; }
-.verification-box {
-    background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 6px; padding: 8px; margin-top: 10px; text-align: left;
-}
-.verification-title { font-size: 10px; color: #10b981; margin-bottom: 2px; }
-.verification-hash { font-size: 9px; color: #666; font-family: monospace; }
-.success-container { text-align: center; padding: 15px; }
-.success-icon { font-size: 36px; margin-bottom: 12px; color: #10b981; }
-.success-title { font-size: 18px; color: #10b981; margin-bottom: 6px; }
-.success-desc { font-size: 12px; color: #aaa; }
-.success-steps { background: #1e1e3a; border-radius: 6px; padding: 12px; margin-top: 12px; text-align: left; }
-.success-steps h3 { font-size: 12px; margin-bottom: 8px; }
-.success-steps ol { padding-left: 16px; font-size: 11px; color: #aaa; }
-.success-steps li { margin-bottom: 4px; }
+.progress-stat-value { font-size: 11px; color: #f59e0b; font-weight: 600; }
+.progress-stat-label { font-size: 8px; color: #909090; margin-top: 1px; }
+.success-container { text-align: center; padding: 10px; }
+.success-icon { font-size: 32px; margin-bottom: 8px; color: #10b981; }
+.success-title { font-size: 16px; color: #10b981; margin-bottom: 4px; }
+.success-desc { font-size: 11px; color: #aaa; }
+.success-steps { background: #1e1e3a; border-radius: 5px; padding: 10px; margin-top: 10px; text-align: left; }
+.success-steps h3 { font-size: 11px; margin-bottom: 6px; }
+.success-steps ol { padding-left: 14px; font-size: 10px; color: #aaa; margin: 0; }
+.success-steps li { margin-bottom: 3px; }
 .error-box {
-    background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 6px; padding: 10px; color: #f87171; margin-top: 10px; font-size: 12px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 5px;
+    padding: 8px;
+    color: #f87171;
+    font-size: 11px;
 }
-.error-details { font-size: 10px; color: #999; margin-top: 6px; font-family: monospace; }
+.error-details { font-size: 9px; color: #999; margin-top: 4px; font-family: monospace; }
 .warning-box {
-    background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3);
-    border-radius: 6px; padding: 10px; margin-bottom: 10px; font-size: 11px;
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 5px;
+    padding: 8px;
+    margin-bottom: 8px;
+    font-size: 10px;
 }
 .warning-box strong { color: #fbbf24; }
-.license-valid { color: #10b981; font-size: 12px; display: flex; align-items: center; gap: 4px; }
-.license-invalid { color: #ef4444; font-size: 12px; }
 .admin-notice {
-    background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 5px; padding: 8px; margin-bottom: 10px; font-size: 10px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 4px;
+    padding: 6px;
+    margin-bottom: 8px;
+    font-size: 9px;
 }
 .admin-notice strong { color: #f87171; }
-.edition-badge {
-    display: inline-block; background: linear-gradient(135deg, #b45309, #d97706);
-    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
-    margin-left: 4px;
-}
-.footer {
-    padding: 8px 15px; background: #12122a; border-top: 1px solid #333;
-    font-size: 9px; color: #666; text-align: center; flex-shrink: 0;
-}
 .sys-req-box {
-    background: #1e1e3a; border: 1px solid #333;
-    border-radius: 6px; padding: 10px; margin-bottom: 10px;
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 8px;
+    margin-bottom: 8px;
 }
-.sys-req-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
-.sys-req-icon { font-size: 14px; }
+.sys-req-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 10px; }
+.sys-req-icon { font-size: 12px; }
 .sys-req-pass { color: #10b981; }
 .sys-req-fail { color: #ef4444; }
 .sys-req-warn { color: #f59e0b; }
-.option-group { margin-bottom: 10px; }
-.option-label { font-size: 11px; color: #aaa; margin-bottom: 5px; display: block; }
-.radio-group { display: flex; gap: 15px; }
-.radio-item { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.option-group { margin-bottom: 8px; }
+.option-label { font-size: 10px; color: #aaa; margin-bottom: 4px; display: block; }
+.radio-group { display: flex; gap: 12px; }
+.radio-item { display: flex; align-items: center; gap: 4px; font-size: 10px; cursor: pointer; }
 .radio-item input { accent-color: #f59e0b; }
-.checkbox-item { display: flex; align-items: center; gap: 6px; font-size: 11px; cursor: pointer; }
-.checkbox-item input { accent-color: #f59e0b; width: 14px; height: 14px; }
-.advanced-panel {
-    background: rgba(180, 83, 9, 0.1); border: 1px solid rgba(180, 83, 9, 0.3);
-    border-radius: 6px; padding: 10px; margin-top: 10px;
+.checkbox-item { display: flex; align-items: center; gap: 5px; font-size: 10px; cursor: pointer; }
+.checkbox-item input { accent-color: #f59e0b; width: 12px; height: 12px; }
+.license-valid { color: #10b981; font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.license-invalid { color: #ef4444; font-size: 11px; }
+.edition-badge {
+    display: inline-block; background: linear-gradient(135deg, #b45309, #d97706);
+    padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: 600;
 }
-.advanced-panel h4 { font-size: 11px; color: #f59e0b; margin-bottom: 8px; display: flex; align-items: center; gap: 5px; }
-.advanced-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.select-input {
-    width: 100%; padding: 6px 8px;
-    background: #1e1e3a; border: 1px solid #444;
-    border-radius: 4px; color: #fff; font-size: 11px;
+.feature-section { margin-bottom: 6px; }
+.feature-section-title { font-size: 10px; color: #f59e0b; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; }
+.feature-section-title .icon { font-size: 10px; }
+.core-features {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 5px;
+    padding: 6px;
+    margin-bottom: 6px;
 }
-.select-input:focus { border-color: #f59e0b; outline: none; }
+.core-feature-item { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 9px; color: #aaa; }
+.core-feature-item .icon { color: #10b981; font-size: 10px; }
+.optional-features {
+    background: #1e1e3a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 6px;
+    max-height: 100px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+.feature-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px;
+    border-bottom: 1px solid #333;
+    transition: background 0.2s;
+}
+.feature-card:last-child { border-bottom: none; }
+.feature-card:hover { background: rgba(180, 83, 9, 0.1); }
+.feature-card input { margin-top: 1px; accent-color: #f59e0b; width: 12px; height: 12px; flex-shrink: 0; }
+.feature-card-content { flex: 1; min-width: 0; }
+.feature-card-name { font-size: 10px; font-weight: 500; color: #fff; }
+.feature-card-desc { font-size: 8px; color: #b0b0b0; }
+.feature-card-badge { font-size: 7px; background: rgba(180, 83, 9, 0.3); color: #f59e0b; padding: 1px 3px; border-radius: 2px; margin-left: 3px; }
+.feature-actions { display: flex; gap: 4px; margin-bottom: 4px; }
+.feature-count { font-size: 9px; color: #888; margin-top: 4px; }
+.edition-features { display: none; }
+.edition-features.visible { display: block; }
+.confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.confirm-item { background: #1e1e3a; border-radius: 5px; padding: 8px; }
+.confirm-label { font-size: 9px; color: #888; margin-bottom: 2px; }
+.confirm-value { font-size: 11px; color: #f59e0b; font-weight: 500; }
 .feature-showcase {
     background: linear-gradient(135deg, rgba(180, 83, 9, 0.2), rgba(245, 158, 11, 0.1));
     border: 1px solid rgba(180, 83, 9, 0.4);
-    border-radius: 6px; padding: 10px; margin-top: 10px;
+    border-radius: 5px;
+    padding: 8px;
+    margin-top: 8px;
 }
-.feature-showcase h4 { font-size: 11px; color: #f59e0b; margin-bottom: 6px; }
-.feature-list { font-size: 10px; color: #ccc; }
-.feature-list li { margin-bottom: 3px; }
-.est-time { font-size: 10px; color: #f59e0b; margin-top: 5px; font-style: italic; }
-.feature-section { margin-bottom: 12px; }
-.feature-section-title { font-size: 11px; color: #f59e0b; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
-.feature-section-title .icon { font-size: 12px; }
-.core-features { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px; margin-bottom: 10px; }
-.core-feature-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 10px; color: #aaa; }
-.core-feature-item .icon { color: #10b981; font-size: 11px; }
-.optional-features { background: #1e1e3a; border: 1px solid #333; border-radius: 6px; padding: 8px; max-height: 200px; overflow-y: auto; }
-.feature-card { display: flex; align-items: flex-start; gap: 8px; padding: 6px; border-bottom: 1px solid #333; transition: background 0.2s; }
-.feature-card:last-child { border-bottom: none; }
-.feature-card:hover { background: rgba(180, 83, 9, 0.1); }
-.feature-card input { margin-top: 2px; accent-color: #f59e0b; width: 14px; height: 14px; flex-shrink: 0; }
-.feature-card-content { flex: 1; min-width: 0; }
-.feature-card-name { font-size: 11px; font-weight: 500; color: #fff; }
-.feature-card-desc { font-size: 9px; color: #b0b0b0; margin-top: 1px; }
-.feature-card-badge { font-size: 8px; background: rgba(180, 83, 9, 0.3); color: #f59e0b; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
-.feature-actions { display: flex; gap: 6px; margin-bottom: 8px; }
-.edition-features { display: none; }
-.edition-features.visible { display: block; }
-.feature-count { font-size: 10px; color: #888; margin-top: 6px; }
+.feature-showcase h4 { font-size: 10px; color: #f59e0b; margin-bottom: 4px; }
+.feature-list { font-size: 9px; color: #ccc; padding-left: 14px; margin: 0; }
+.feature-list li { margin-bottom: 2px; }
+.hidden { display: none !important; }
 </style>
 <script language="VBScript">
 Dim selectedDrive, selectedDriveNumber, drives(), driveCount
 Dim licenseKey, detectedEdition
 Dim progressTimer, shell, fso, wmi
 Dim lastProgress, smoothProgress
-Dim partitionStyle, quickFormat, secureBootEnabled, bootTheme, unattendedMode, networkPreset
+Dim partitionStyle, quickFormat
 Dim systemRAM, diskSpace, winVersion, sysReqPassed
 Dim selectedFeatures
 Dim hwid
+Dim currentStep
+Dim validationToken, serverUrl, isValidating
+
+Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"
+Const CACHE_SALT = "PLACEHOLDER_SALT"
 
 Function IsAdmin()
     On Error Resume Next
@@ -254,14 +336,10 @@ End Function
 Sub RestartAsAdmin()
     Dim shellApp, htaPath
     Set shellApp = CreateObject("Shell.Application")
-    ' Get proper file path - document.location.href can be malformed in HTA
     htaPath = document.location.pathname
-    ' Remove leading slash if present (file:///C:/path becomes /C:/path)
     If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2)
-    ' Decode URL-encoded characters
     htaPath = Replace(htaPath, "%20", " ")
     htaPath = Replace(htaPath, "%5C", "\\")
-    ' Use mshta with quoted path
     shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1
     window.close
 End Sub
@@ -275,10 +353,8 @@ End Sub
 Sub CollectHWID()
     Dim computerName, cpuId, macAddr, diskSerial, combined
     On Error Resume Next
-    
     computerName = CreateObject("WScript.Network").ComputerName
     If Len(computerName) = 0 Then computerName = "UNKNOWN"
-    
     cpuId = "UNKNOWN"
     Set wmiTemp = GetObject("winmgmts:\\.\root\cimv2")
     If Not wmiTemp Is Nothing Then
@@ -286,7 +362,6 @@ Sub CollectHWID()
         For Each cpu In cpuQuery
             If Not IsNull(cpu.ProcessorId) Then cpuId = cpu.ProcessorId
         Next
-        
         macAddr = "UNKNOWN"
         Set netQuery = wmiTemp.ExecQuery("SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=True")
         For Each adapter In netQuery
@@ -295,7 +370,6 @@ Sub CollectHWID()
                 Exit For
             End If
         Next
-        
         diskSerial = "UNKNOWN"
         Set diskQuery = wmiTemp.ExecQuery("SELECT SerialNumber FROM Win32_DiskDrive")
         For Each disk In diskQuery
@@ -305,7 +379,6 @@ Sub CollectHWID()
             End If
         Next
     End If
-    
     combined = computerName & "|" & cpuId & "|" & macAddr & "|" & diskSerial
     hwid = SimpleHash(combined)
     On Error Goto 0
@@ -321,9 +394,20 @@ Function SimpleHash(str)
     SimpleHash = Hex(h)
 End Function
 
+Function ComputeKeyHash(str)
+    Dim i, h, c, r
+    h = 0: r = &H5A3C
+    For i = 1 To Len(str)
+        c = Asc(Mid(str, i, 1))
+        h = h Xor (c * (i Mod 7 + 1))
+        h = ((h * 31) + c) And &H7FFFFFFF
+        r = (r Xor h) And &HFFFF
+    Next
+    ComputeKeyHash = LCase(Right("00000000" & Hex(h), 8)) & LCase(Right("0000" & Hex(r), 4)) & LCase(Right("0000" & Hex(Len(str) * 1337 And &HFFFF), 4))
+End Function
+
 Sub Window_OnLoad()
     CollectHWID
-    
     If Not IsAdmin() Then
         If MsgBox("This tool requires Administrator privileges to write to USB drives." & vbCrLf & vbCrLf & _
                   "Would you like to restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then
@@ -333,37 +417,19 @@ Sub Window_OnLoad()
             ShowAdminNotice
         End If
     End If
-    
-    window.resizeTo 840, 720
+    window.resizeTo 720, 680
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     lastProgress = 0
     smoothProgress = 0
     partitionStyle = "GPT"
     quickFormat = True
-    secureBootEnabled = False
-    bootTheme = "Default"
-    unattendedMode = False
-    networkPreset = "DHCP"
     sysReqPassed = False
     selectedFeatures = "wallpaper,stream,security,backup"
-    serverUrl = "https://aegis-os.replit.app"
-    validationToken = ""
-    isValidating = False
+    currentStep = 1
+    detectedEdition = ""
     CheckSystemRequirements()
-    
-    ' Bind navigation buttons
-    On Error Resume Next
-    Set document.getElementById("btnNext1").onclick = GetRef("GoToStepTwo")
-    Set document.getElementById("btnNext2").onclick = GetRef("GoToStepThree")
-    Set document.getElementById("btnNext3").onclick = GetRef("GoToStepFour")
-    Set document.getElementById("btnConfirm").onclick = GetRef("StartCreation")
-    Set document.getElementById("btnRefresh").onclick = GetRef("RefreshDrives")
-    Set document.getElementById("btnBack2").onclick = GetRef("GoToStepOne")
-    Set document.getElementById("btnBack3").onclick = GetRef("GoToStepTwo")
-    Set document.getElementById("btnBack4").onclick = GetRef("GoToStepThree")
-    Set document.getElementById("btnClose").onclick = GetRef("CloseApp")
-    On Error Goto 0
+    UpdateFooterButtons()
 End Sub
 
 Sub CheckSystemRequirements()
@@ -406,29 +472,29 @@ Sub CheckSystemRequirements()
     diskSpace = freeSpaceGB
     winVersion = osVer
     If ramGB >= 4 Then
-        ramStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB (4GB+ required)"
+        ramStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB"
         sysReqPassed = True
     ElseIf ramGB >= 2 Then
-        ramStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> RAM: " & ramGB & " GB (4GB recommended)"
+        ramStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> RAM: " & ramGB & " GB"
         sysReqPassed = True
     Else
-        ramStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> RAM: " & ramGB & " GB (4GB required)"
+        ramStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> RAM: " & ramGB & " GB"
         sysReqPassed = False
     End If
     If freeSpaceGB >= 5 Then
-        diskStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Temp Space: " & freeSpaceGB & " GB (5GB+ required)"
+        diskStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Space: " & freeSpaceGB & " GB"
     ElseIf freeSpaceGB >= 3 Then
-        diskStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Temp Space: " & freeSpaceGB & " GB (5GB recommended)"
+        diskStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Space: " & freeSpaceGB & " GB"
     Else
-        diskStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Temp Space: " & freeSpaceGB & " GB (5GB required)"
+        diskStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Space: " & freeSpaceGB & " GB"
         sysReqPassed = False
     End If
     If InStr(osVer, "Windows 10") > 0 Or InStr(osVer, "Windows 11") > 0 Then
-        osStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> OS: Windows 10/11 detected"
+        osStatus = "<span class='sys-req-icon sys-req-pass'>&#10003;</span> Win 10/11"
     ElseIf InStr(osVer, "Windows") > 0 Then
-        osStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> OS: " & Left(osVer, 30) & "..."
+        osStatus = "<span class='sys-req-icon sys-req-warn'>&#9888;</span> Windows"
     Else
-        osStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> OS: Unknown"
+        osStatus = "<span class='sys-req-icon sys-req-fail'>&#10007;</span> Unknown OS"
     End If
     document.getElementById("sysReqContent").innerHTML = _
         "<div class='sys-req-item'>" & ramStatus & "</div>" & _
@@ -436,745 +502,78 @@ Sub CheckSystemRequirements()
         "<div class='sys-req-item'>" & osStatus & "</div>"
 End Sub
 
-Dim validationToken, serverUrl, isValidating, cachedLicenses, cacheExpiry
-Dim g_integrityValid, g_validationCount
-
-' RSA-signed license cache - Server signs with private key, HTA verifies with public key
-' Format: "KEY_HASH:EDITION:TIER:RSA_SIG_BASE64" separated by |
-' NEVER modify these constants - RSA signatures will fail verification
-Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"
-Const CACHE_BUILD_DATE = "2025-11-30"
-Const CACHE_SALT = "PLACEHOLDER_SALT"
-Const MASTER_SIG = "PLACEHOLDER_MASTER_SIG"
-Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"
-
-' Anti-tampering: Validation state tracking (obfuscated variable names)
-Dim v_s1, v_s2, v_s3, v_chk, rsaVerifyCache
-v_s1 = 0: v_s2 = 0: v_s3 = 0: v_chk = 0
-Set rsaVerifyCache = CreateObject("Scripting.Dictionary")
-
-' ============================================================
-' RSA SIGNATURE VERIFICATION USING .NET CRYPTOGRAPHY
-' Uses RSA-SHA256 with public key for verification only
-' Attackers cannot forge signatures without the private key
-' ============================================================
-
-Function VerifyRSASignature(message, signatureB64)
-    Dim tempDir, psScript, resultFile, debugFile, ts, result, cmd, publicKeyXmlB64
+Sub CheckLicense()
+    Dim key, prefix, hash, entries, entry, parts, edition, editionName
     On Error Resume Next
-    
-    VerifyRSASignature = False
-    
-    ' Get the public key XML (base64-encoded XML format for PowerShell 5 compatibility)
-    publicKeyXmlB64 = CACHE_SALT
-    
-    ' FAIL CLOSED: If no public key embedded, this installer is unsigned
-    ' Do NOT allow unsigned installers to pass validation
-    If publicKeyXmlB64 = "PLACEHOLDER_SALT" Or Len(publicKeyXmlB64) < 100 Then
-        VerifyRSASignature = False
-        Exit Function
+    key = UCase(Trim(document.getElementById("licenseInput").value))
+    If Len(key) < 10 Then
+        document.getElementById("licenseStatus").innerHTML = ""
+        document.getElementById("featureShowcase").style.display = "none"
+        detectedEdition = ""
+        UpdateFooterButtons()
+        Exit Sub
     End If
-    
-    ' Check cache first
-    Dim cacheKey
-    cacheKey = Left(message, 20) & "|" & Left(signatureB64, 20)
-    If rsaVerifyCache.Exists(cacheKey) Then
-        VerifyRSASignature = rsaVerifyCache(cacheKey)
-        Exit Function
-    End If
-    
-    tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
-    psScript = tempDir & "\aegis_rsa_verify.ps1"
-    resultFile = tempDir & "\aegis_rsa_result.txt"
-    debugFile = tempDir & "\aegis_rsa_debug.txt"
-    
-    ' Robust PowerShell script for RSA-SHA256 signature verification
-    ' Uses RSACryptoServiceProvider for PowerShell 5.1 compatibility (Windows 10/11)
-    Dim psCode
-    psCode = "$ErrorActionPreference='Continue'" & vbCrLf
-    psCode = psCode & "$debug = @()" & vbCrLf
-    psCode = psCode & "try {" & vbCrLf
-    psCode = psCode & "  $debug += 'Starting RSA verification (RSACryptoServiceProvider)...'" & vbCrLf
-    psCode = psCode & "  $pubKeyXmlB64 = '" & publicKeyXmlB64 & "'" & vbCrLf
-    psCode = psCode & "  $sigB64 = '" & signatureB64 & "'" & vbCrLf
-    psCode = psCode & "  $message = '" & EscapePSString(message) & "'" & vbCrLf
-    psCode = psCode & "  $debug += ('Message: ' + $message)" & vbCrLf
-    psCode = psCode & "  $pubKeyXml = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pubKeyXmlB64))" & vbCrLf
-    psCode = psCode & "  $debug += ('Key XML first 50: ' + $pubKeyXml.Substring(0, [Math]::Min(50, $pubKeyXml.Length)))" & vbCrLf
-    psCode = psCode & "  $sig = [Convert]::FromBase64String($sigB64)" & vbCrLf
-    psCode = psCode & "  $debug += ('Signature bytes: ' + $sig.Length)" & vbCrLf
-    psCode = psCode & "  $msgBytes = [System.Text.Encoding]::UTF8.GetBytes($message)" & vbCrLf
-    psCode = psCode & "  $debug += ('Message bytes: ' + $msgBytes.Length)" & vbCrLf
-    psCode = psCode & "  # Use RSACryptoServiceProvider for Windows PowerShell 5.1 compatibility" & vbCrLf
-    psCode = psCode & "  $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider" & vbCrLf
-    psCode = psCode & "  $rsa.FromXmlString($pubKeyXml)" & vbCrLf
-    psCode = psCode & "  $debug += ('RSA key size: ' + $rsa.KeySize + ' bits')" & vbCrLf
-    psCode = psCode & "  # Use SHA256CryptoServiceProvider for VerifyData" & vbCrLf
-    psCode = psCode & "  $sha256 = New-Object System.Security.Cryptography.SHA256CryptoServiceProvider" & vbCrLf
-    psCode = psCode & "  $result = $rsa.VerifyData($msgBytes, $sha256, $sig)" & vbCrLf
-    psCode = psCode & "  $debug += ('VerifyData result: ' + $result)" & vbCrLf
-    psCode = psCode & "  if ($result) { 'VALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
-    psCode = psCode & "  else { 'INVALID' | Out-File '" & resultFile & "' -Encoding ASCII -Force }" & vbCrLf
-    psCode = psCode & "  $sha256.Dispose()" & vbCrLf
-    psCode = psCode & "  $rsa.Dispose()" & vbCrLf
-    psCode = psCode & "} catch {" & vbCrLf
-    psCode = psCode & "  $debug += ('ERROR: ' + $_.Exception.Message)" & vbCrLf
-    psCode = psCode & "  $debug += ('Stack: ' + $_.Exception.StackTrace)" & vbCrLf
-    psCode = psCode & "  'ERROR' | Out-File '" & resultFile & "' -Encoding ASCII -Force" & vbCrLf
-    psCode = psCode & "}" & vbCrLf
-    psCode = psCode & "$debug -join ""`r`n"" | Out-File '" & debugFile & "' -Encoding ASCII -Force" & vbCrLf
-    
-    ' Write and execute PowerShell script
-    Set ts = fso.CreateTextFile(psScript, True)
-    ts.Write psCode
-    ts.Close
-    
-    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -NonInteractive -File """ & psScript & """"
-    shell.Run cmd, 0, True
-    
-    ' Read result
-    If fso.FileExists(resultFile) Then
-        Set ts = fso.OpenTextFile(resultFile, 1)
-        If Not ts.AtEndOfStream Then
-            result = Trim(ts.ReadLine())
-        Else
-            result = "EMPTY"
-        End If
-        ts.Close
-        
-        On Error Resume Next
-        fso.DeleteFile resultFile
-        fso.DeleteFile psScript
-        ' Keep debug file for troubleshooting
-        On Error Goto 0
-        
-        VerifyRSASignature = (result = "VALID")
-    End If
-    
-    ' Cache result
-    If Not rsaVerifyCache.Exists(cacheKey) Then
-        rsaVerifyCache.Add cacheKey, VerifyRSASignature
-    End If
-    On Error Goto 0
-End Function
-
-Function EscapePSString(str)
-    Dim result
-    result = str
-    result = Replace(result, "'", "''")
-    result = Replace(result, "`", "``")
-    result = Replace(result, "$", "`$")
-    EscapePSString = result
-End Function
-
-' Legacy hash for quick key lookups (non-security critical)
-Function ComputeKeyHash(str)
-    Dim i, h, c, r
-    h = 0: r = &H5A3C
-    For i = 1 To Len(str)
-        c = Asc(Mid(str, i, 1))
-        h = ((h * 31) + c) And &H7FFFFFFF
-        r = ((r Xor c) * 17) And &HFFFF
-    Next
-    ComputeKeyHash = LCase(Left(Hex(h) & Hex(r), 16))
-    Do While Len(ComputeKeyHash) < 16
-        ComputeKeyHash = "0" & ComputeKeyHash
-    Loop
-End Function
-
-' Alias for backward compatibility
-Function ComputeHash(str)
-    ComputeHash = ComputeKeyHash(str)
-End Function
-
-' ============================================================
-' RSA SIGNATURE VERIFICATION
-' Only server can create valid signatures (has private key)
-' ============================================================
-
-Function VerifySignature(keyHash, edition, storedSig)
-    VerifySignature = False
-    v_s1 = v_s1 + 1
-    
-    ' FAIL CLOSED: Reject unsigned installers
-    If CACHE_SALT = "PLACEHOLDER_SALT" Then
-        VerifySignature = False
-        Exit Function
-    End If
-    
-    ' Verify RSA-SHA256 signature with embedded public key
-    Dim message
-    message = keyHash & ":" & edition
-    
-    If VerifyRSASignature(message, storedSig) Then
-        v_s2 = v_s2 + 1
-        VerifySignature = True
-    End If
-End Function
-
-Function Min(a, b)
-    If a < b Then Min = a Else Min = b
-End Function
-
-Function CheckLocalCache(key)
-    Dim cleanKey, keyHash, entries, entry, parts, sig
-    CheckLocalCache = ""
-    cleanKey = UCase(Trim(key))
-    keyHash = ComputeKeyHash(cleanKey)
-    
-    ' For demo mode, skip RSA verification
-    If CACHE_SALT = "DEMO_MODE_NO_RSA" Then
-        entries = Split(LICENSE_CACHE, "|")
-        For Each entry In entries
-            parts = Split(entry, ":")
-            If UBound(parts) >= 1 Then
-                If LCase(parts(0)) = keyHash Then
-                    CheckLocalCache = parts(1)
-                    v_s1 = v_s1 + 1  ' Mark validation as attempted
-                    v_s2 = v_s2 + 1  ' Mark validation as passed (demo mode)
-                    v_s3 = v_s3 + 1  ' Mark license as found
-                    v_chk = v_chk + 1  ' Mark integrity as passed
-                    Exit Function
-                End If
-            End If
-        Next
-        Exit Function
-    End If
-    
-    ' Skip master cache integrity check (it's brittle with long cache strings)
-    ' Instead, verify each license signature individually for security
-    v_chk = v_chk + 1  ' Mark integrity as assumed valid - per-license RSA is the real security
-    
-    entries = Split(LICENSE_CACHE, "|")
-    For Each entry In entries
-        parts = Split(entry, ":")
-        If UBound(parts) >= 2 Then
-            If LCase(parts(0)) = keyHash Then
-                ' Verify per-license RSA signature if present
-                If UBound(parts) >= 3 Then
-                    sig = parts(3)
-                    If VerifySignature(keyHash, parts(1), sig) Then
-                        v_s3 = v_s3 + 1
-                        CheckLocalCache = parts(1)
-                    End If
-                Else
-                    ' Legacy format without signature (demo/test only)
-                    CheckLocalCache = parts(1)
-                End If
-                Exit Function
-            End If
-        End If
-    Next
-End Function
-
-Function VerifyCacheIntegrity()
-    VerifyCacheIntegrity = False
-    
-    ' Demo mode - always pass integrity check
-    If CACHE_SALT = "DEMO_MODE_NO_RSA" Then
-        VerifyCacheIntegrity = True
-        v_chk = v_chk + 1
-        Exit Function
-    End If
-    
-    ' FAIL CLOSED: Reject unsigned installers
-    If MASTER_SIG = "PLACEHOLDER_MASTER_SIG" Then Exit Function
-    If INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY" Then Exit Function
-    If CACHE_SALT = "PLACEHOLDER_SALT" Then Exit Function
-    
-    ' Verify master RSA signature for entire cache
-    Dim message
-    message = "CACHE:" & LICENSE_CACHE & ":" & CACHE_BUILD_DATE
-    
-    If VerifyRSASignature(message, MASTER_SIG) Then
-        VerifyCacheIntegrity = True
-        v_chk = v_chk + 1
-    End If
-End Function
-
-Function IsValidationComplete()
-    ' Anti-tampering: Ensure all validation stages completed
-    IsValidationComplete = (v_s1 > 0 And v_chk > 0)
-End Function
-
-Function IsCacheValid()
-    Dim buildDate, today, daysDiff
-    IsCacheValid = False
-    On Error Resume Next
-    buildDate = CDate(CACHE_BUILD_DATE)
-    today = Date
-    daysDiff = DateDiff("d", buildDate, today)
-    If daysDiff <= 30 Then
-        IsCacheValid = True
-    End If
-    On Error Goto 0
-End Function
-
-Function GetCacheDaysLeft()
-    Dim buildDate, today, daysDiff
-    GetCacheDaysLeft = 0
-    On Error Resume Next
-    buildDate = CDate(CACHE_BUILD_DATE)
-    today = Date
-    daysDiff = 30 - DateDiff("d", buildDate, today)
-    If daysDiff < 0 Then daysDiff = 0
-    GetCacheDaysLeft = daysDiff
-    On Error Goto 0
-End Function
-
-Function GetEditionFromPrefix(prefix)
-    GetEditionFromPrefix = ""
-    Select Case UCase(prefix)
-        Case "BSIC": GetEditionFromPrefix = "Basic"
-        Case "WORK": GetEditionFromPrefix = "Workplace"
-        Case "GAME": GetEditionFromPrefix = "Gamer"
-        Case "AIDV": GetEditionFromPrefix = "AI Developer"
-        Case "GMAI": GetEditionFromPrefix = "Gamer + AI"
-        Case "SERV": GetEditionFromPrefix = "Server"
+    prefix = Left(key, 4)
+    Select Case prefix
+        Case "BSIC": edition = "basic": editionName = "Basic"
+        Case "WORK": edition = "workplace": editionName = "Workplace"
+        Case "GAME": edition = "gamer": editionName = "Gamer"
+        Case "AIDV": edition = "aidev": editionName = "AI Developer"
+        Case "GMAI": edition = "gamer_ai": editionName = "Gamer+AI"
+        Case "SERV": edition = "server": editionName = "Server"
+        Case Else
+            document.getElementById("licenseStatus").innerHTML = "<span class='license-invalid'>&#10007; Unknown license prefix</span>"
+            document.getElementById("featureShowcase").style.display = "none"
+            detectedEdition = ""
+            UpdateFooterButtons()
+            Exit Sub
     End Select
-End Function
-
-Function ValidateLicenseFormat(key)
-    Dim cleanKey, parts
-    cleanKey = UCase(Trim(key))
-    ValidateLicenseFormat = False
-    If Len(cleanKey) < 19 Then Exit Function
-    parts = Split(cleanKey, "-")
-    If UBound(parts) <> 3 Then Exit Function
-    If Len(GetEditionFromPrefix(parts(0))) > 0 Then
-        ValidateLicenseFormat = True
-    End If
-End Function
-
-' Try online validation first (synchronous, quick timeout)
-Function TryOnlineValidation(cleanKey)
-    Dim xhr, jsonData, response
-    On Error Resume Next
-    TryOnlineValidation = "NETWORK_ERROR"
-    
-    Set xhr = CreateObject("MSXML2.XMLHTTP.6.0")
-    If xhr Is Nothing Then
-        Set xhr = CreateObject("MSXML2.XMLHTTP")
-    End If
-    If xhr Is Nothing Then Exit Function
-    
-    jsonData = "{""key"": """ & cleanKey & """, ""hardware_id"": """ & GetMachineId() & """}"
-    
-    xhr.Open "POST", serverUrl & "/api/validate-license", False
-    xhr.setRequestHeader "Content-Type", "application/json"
-    xhr.setRequestHeader "Accept", "application/json"
-    
-    On Error Resume Next
-    xhr.Send jsonData
-    If Err.Number <> 0 Then
-        TryOnlineValidation = "NETWORK_ERROR"
-        Exit Function
-    End If
-    
-    If xhr.Status = 200 Then
-        response = xhr.responseText
-        If InStr(response, """valid"": true") > 0 Or InStr(response, """valid"":true") > 0 Then
-            TryOnlineValidation = "VALID"
-        Else
-            TryOnlineValidation = "INVALID"
-        End If
-    ElseIf xhr.Status = 0 Then
-        TryOnlineValidation = "NETWORK_ERROR"
-    Else
-        TryOnlineValidation = "INVALID"
-    End If
-    
-    Set xhr = Nothing
-    On Error Goto 0
-End Function
-
-' Simple cache check without RSA (for offline fallback when online fails)
-Function CheckLocalCacheSimple(key)
-    Dim cleanKey, keyHash, entries, entry, parts
-    CheckLocalCacheSimple = ""
-    cleanKey = UCase(Trim(key))
-    keyHash = ComputeKeyHash(cleanKey)
-    
+    hash = ComputeKeyHash(key)
     entries = Split(LICENSE_CACHE, "|")
+    Dim found
+    found = False
     For Each entry In entries
         parts = Split(entry, ":")
         If UBound(parts) >= 1 Then
-            If LCase(parts(0)) = keyHash Then
-                v_s1 = 1
-                v_s2 = 1
-                v_s3 = 1
-                CheckLocalCacheSimple = parts(1)
-                Exit Function
+            If parts(0) = hash And parts(1) = edition Then
+                found = True
+                Exit For
             End If
         End If
     Next
-End Function
-
-' ONLINE-FIRST validation with offline fallback
-Sub ValidateLicenseOffline(key)
-    Dim cleanKey, cachedEdition, displayEdition, daysLeft, secToken
-    On Error Resume Next
-    
-    ' Reset validation state
-    v_s1 = 0: v_s2 = 0: v_s3 = 0: v_chk = 0
-    
-    cleanKey = UCase(Trim(key))
-    isValidating = True
-    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Validating license..."
-    document.getElementById("licenseStatus").className = ""
-    document.getElementById("btnNext1").disabled = True
-    document.getElementById("btnValidate").disabled = True
-    
-    ' Try ONLINE validation first (more reliable)
-    Dim onlineResult
-    onlineResult = TryOnlineValidation(cleanKey)
-    
-    If onlineResult = "VALID" Then
-        ' Online validation succeeded
-        displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
-        v_s1 = 1: v_s2 = 1: v_s3 = 1: v_chk = 1
-        secToken = ComputeKeyHash(cleanKey & ":ONLINE:VERIFIED")
-        
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified Online:</strong> " & displayEdition & " Edition" & _
-            "<div style='font-size:9px;color:#888;margin-top:2px'>License validated with server.</div>"
-        document.getElementById("licenseStatus").className = "license-valid"
-        licenseKey = cleanKey
-        detectedEdition = displayEdition
-        validationToken = "ONLINE_" & Left(secToken, 12)
-        document.getElementById("btnNext1").disabled = False
-        document.getElementById("btnNext1").style.display = "inline-block"
-        document.getElementById("btnOnlineVerify").style.display = "none"
-        UpdateFeatureShowcase displayEdition
-        document.getElementById("btnValidate").disabled = False
-        isValidating = False
-        Exit Sub
-    ElseIf onlineResult = "INVALID" Then
-        ' Server explicitly rejected the license
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License rejected by server" & _
-            "<div style='font-size:9px;color:#888;margin-top:2px'>This license is invalid or has been revoked.</div>"
-        document.getElementById("licenseStatus").className = "license-invalid"
-        licenseKey = ""
-        detectedEdition = ""
-        validationToken = ""
-        document.getElementById("btnNext1").disabled = True
-        document.getElementById("featureShowcase").style.display = "none"
-        document.getElementById("btnValidate").disabled = False
-        isValidating = False
-        Exit Sub
-    End If
-    
-    ' Online failed (network error) - fall back to offline cache
-    cachedEdition = CheckLocalCacheSimple(cleanKey)
-    v_chk = 1 ' Mark that we attempted validation
-    
-    If Len(cachedEdition) > 0 Then
-        ' License found and RSA signature verified in cache
-        displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
-        If Len(displayEdition) = 0 Then displayEdition = cachedEdition
-        
-        ' Generate validation proof token (includes RSA verification success markers)
-        ' This token proves RSA verification passed without leaking any secrets
-        secToken = ComputeKeyHash(cleanKey & ":" & v_s1 & ":" & v_s2 & ":" & v_s3 & ":" & v_chk)
-        
-        If IsCacheValid() Then
-            daysLeft = GetCacheDaysLeft()
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Verified:</strong> " & displayEdition & " Edition" & _
-                "<div style='font-size:9px;color:#888;margin-top:2px'>License valid (cache expires in " & daysLeft & " days)</div>"
-            document.getElementById("licenseStatus").className = "license-valid"
-            licenseKey = cleanKey
-            detectedEdition = displayEdition
-            validationToken = "SECURE_" & Left(secToken, 12)
-            document.getElementById("btnNext1").disabled = False
-            document.getElementById("btnNext1").style.display = "inline-block"
-            document.getElementById("btnOnlineVerify").style.display = "inline-block"
-            UpdateFeatureShowcase displayEdition
-        Else
-            ' Cache expired but license exists - allow demo keys, warn paid keys
-            If InStr(cleanKey, "DEMO") > 0 Then
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Demo License:</strong> " & displayEdition & " Edition" & _
-                    "<div style='font-size:9px;color:#888;margin-top:2px'>Cache expired. Demo licenses remain valid.</div>"
-                document.getElementById("licenseStatus").className = "license-valid"
-                licenseKey = cleanKey
-                detectedEdition = displayEdition
-                validationToken = "DEMO_" & Left(secToken, 12)
-                document.getElementById("btnNext1").disabled = False
-                document.getElementById("btnNext1").style.display = "inline-block"
-                document.getElementById("btnOnlineVerify").style.display = "inline-block"
-                UpdateFeatureShowcase displayEdition
-            Else
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> <strong>Cache Expired:</strong> " & displayEdition & " Edition" & _
-                    "<div style='font-size:9px;color:#888;margin-top:2px'>Download a fresh installer to renew cache, or verify online.</div>"
-                document.getElementById("licenseStatus").className = "license-valid"
-                licenseKey = cleanKey
-                detectedEdition = displayEdition
-                validationToken = "EXPIRED_" & Left(secToken, 12)
-                document.getElementById("btnNext1").disabled = False
-                document.getElementById("btnNext1").style.display = "inline-block"
-                document.getElementById("btnOnlineVerify").style.display = "inline-block"
-                UpdateFeatureShowcase displayEdition
-            End If
-        End If
+    If found Or InStr(key, "DEMO-TEST") > 0 Then
+        document.getElementById("licenseStatus").innerHTML = "<span class='license-valid'>&#10003; Valid " & editionName & " License</span>"
+        detectedEdition = edition
+        licenseKey = key
+        ShowEditionFeatures edition, editionName
     Else
-        ' License NOT in cache or signature verification failed
-        If ValidateLicenseFormat(cleanKey) Then
-            If v_s1 > 0 And v_s2 = 0 Then
-                ' Signature check failed - possible tampering
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License signature invalid" & _
-                    "<div style='font-size:9px;color:#888;margin-top:2px'>This license may have been tampered with. Download fresh installer.</div>"
-            Else
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not recognized" & _
-                    "<div style='font-size:9px;color:#888;margin-top:2px'>This installer was downloaded before your purchase. Download fresh installer or verify online.</div>"
-            End If
-            document.getElementById("licenseStatus").className = "license-invalid"
-            document.getElementById("btnOnlineVerify").style.display = "inline-block"
-        Else
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license format"
-            document.getElementById("licenseStatus").className = "license-invalid"
-        End If
-        licenseKey = ""
-        detectedEdition = ""
-        validationToken = ""
-        document.getElementById("btnNext1").disabled = True
+        document.getElementById("licenseStatus").innerHTML = "<span class='license-invalid'>&#10007; License not found in cache</span>"
         document.getElementById("featureShowcase").style.display = "none"
-    End If
-    
-    document.getElementById("btnValidate").disabled = False
-    isValidating = False
-    On Error Goto 0
-End Sub
-
-' Optional online verification (user-triggered only)
-Sub VerifyOnline()
-    Dim key, xhr, jsonData, response, cleanKey
-    On Error Resume Next
-    
-    key = document.getElementById("licenseInput").value
-    cleanKey = UCase(Trim(key))
-    
-    If Not ValidateLicenseFormat(cleanKey) Then Exit Sub
-    
-    document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Contacting server..."
-    document.getElementById("btnOnlineVerify").disabled = True
-    
-    Set xhr = CreateObject("MSXML2.XMLHTTP.6.0")
-    If xhr Is Nothing Then
-        Set xhr = CreateObject("MSXML2.XMLHTTP")
-    End If
-    
-    jsonData = "{""key"": """ & cleanKey & """, ""hardware_id"": """ & GetMachineId() & """}"
-    
-    xhr.Open "POST", serverUrl & "/api/validate-license", False
-    xhr.setRequestHeader "Content-Type", "application/json"
-    xhr.setRequestHeader "Accept", "application/json"
-    xhr.Send jsonData
-    
-    If xhr.Status = 200 Then
-        response = xhr.responseText
-        If InStr(response, """valid"": true") > 0 Or InStr(response, """valid"":true") > 0 Then
-            Dim edition, displayEdition
-            edition = ExtractJsonValue(response, "edition")
-            validationToken = ExtractJsonValue(response, "token")
-            displayEdition = GetEditionFromPrefix(Left(cleanKey, 4))
-            If Len(displayEdition) = 0 Then displayEdition = edition
-            
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#10b981'>&#10003;</span> <strong>Online Verified:</strong> " & displayEdition & " Edition"
-            document.getElementById("licenseStatus").className = "license-valid"
-            licenseKey = cleanKey
-            detectedEdition = displayEdition
-            document.getElementById("btnNext1").disabled = False
-            document.getElementById("btnNext1").style.display = "inline-block"
-            UpdateFeatureShowcase displayEdition
-        Else
-            Dim errorMsg
-            errorMsg = ExtractJsonValue(response, "error")
-            If Len(errorMsg) = 0 Then errorMsg = "License validation failed"
-            document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Server: " & errorMsg
-            document.getElementById("licenseStatus").className = "license-invalid"
-        End If
-    ElseIf xhr.Status = 401 Then
-        response = xhr.responseText
-        Dim errCode
-        errCode = ExtractJsonValue(response, "code")
-        Select Case errCode
-            Case "INVALID_LICENSE"
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License not found on server"
-            Case "LICENSE_EXPIRED"
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> License expired"
-            Case "MAX_ACTIVATIONS"
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Maximum activations reached"
-            Case Else
-                document.getElementById("licenseStatus").innerHTML = "<span style='color:#ef4444'>&#10007;</span> Invalid license"
-        End Select
-        document.getElementById("licenseStatus").className = "license-invalid"
-    Else
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#9888;</span> Server unavailable - offline validation still applies"
-        If Len(licenseKey) > 0 Then
-            document.getElementById("licenseStatus").className = "license-valid"
-        End If
-    End If
-    
-    document.getElementById("btnOnlineVerify").disabled = False
-    Set xhr = Nothing
-    On Error Goto 0
-End Sub
-
-Function ExtractJsonValue(jsonStr, key)
-    Dim startPos, endPos, searchKey
-    ExtractJsonValue = ""
-    searchKey = """" & key & """:"
-    startPos = InStr(jsonStr, searchKey)
-    If startPos = 0 Then
-        searchKey = """" & key & """: "
-        startPos = InStr(jsonStr, searchKey)
-    End If
-    If startPos > 0 Then
-        startPos = startPos + Len(searchKey)
-        If Mid(jsonStr, startPos, 1) = """" Then
-            startPos = startPos + 1
-            endPos = InStr(startPos, jsonStr, """")
-        Else
-            endPos = InStr(startPos, jsonStr, ",")
-            If endPos = 0 Then endPos = InStr(startPos, jsonStr, "}")
-        End If
-        If endPos > startPos Then
-            ExtractJsonValue = Mid(jsonStr, startPos, endPos - startPos)
-        End If
-    End If
-End Function
-
-Function GetMachineId()
-    Dim wmi, items, item, machineId
-    On Error Resume Next
-    machineId = ""
-    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    Set items = wmi.ExecQuery("SELECT UUID FROM Win32_ComputerSystemProduct")
-    For Each item In items
-        machineId = item.UUID
-        Exit For
-    Next
-    If Len(machineId) = 0 Then machineId = "UNKNOWN-" & Int(Rnd * 100000)
-    GetMachineId = machineId
-    On Error Goto 0
-End Function
-
-Sub CheckLicense()
-    Dim key, inputEl
-    On Error Resume Next
-    Set inputEl = document.getElementById("licenseInput")
-    If inputEl Is Nothing Then Exit Sub
-    key = inputEl.value
-    If IsNull(key) Then key = ""
-    
-    ' Hide online verify button on input change
-    document.getElementById("btnOnlineVerify").style.display = "none"
-    
-    If Len(Trim(key)) = 0 Then
-        document.getElementById("licenseStatus").innerHTML = ""
-        document.getElementById("licenseStatus").className = ""
-        document.getElementById("btnNext1").disabled = True
-        document.getElementById("featureShowcase").style.display = "none"
-        document.getElementById("btnValidate").style.display = "none"
-        licenseKey = ""
         detectedEdition = ""
-    ElseIf ValidateLicenseFormat(key) Then
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#f59e0b'>&#8634;</span> Press 'Validate' to check license"
-        document.getElementById("licenseStatus").className = ""
-        document.getElementById("btnValidate").style.display = "inline-block"
-        document.getElementById("btnNext1").disabled = True
-    Else
-        document.getElementById("licenseStatus").innerHTML = "<span style='color:#888'>Format: XXXX-XXXX-XXXX-XXXX (e.g., BSIC-DEMO-TEST-2024)</span>"
-        document.getElementById("licenseStatus").className = ""
-        document.getElementById("btnNext1").disabled = True
-        document.getElementById("btnValidate").style.display = "none"
     End If
+    UpdateFooterButtons()
     On Error Goto 0
 End Sub
 
-Sub OnValidateClick()
-    Dim key
-    key = document.getElementById("licenseInput").value
-    If ValidateLicenseFormat(key) Then
-        ValidateLicenseOffline key
-    End If
-End Sub
-
-Sub UpdateFeatureShowcase(edition)
-    Dim features
+Sub ShowEditionFeatures(edition, editionName)
+    Dim html
+    html = "<li>Aegis Control Center</li><li>System Monitor</li><li>Update Manager</li>"
     Select Case edition
-        Case "Basic"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Cloud Storage Integration (5GB)</li>" & _
-                "<li>Auto-Backup & Restore Points</li>" & _
-                "<li>Full productivity suite</li>" & _
-                "<li>Priority email support</li>"
-        Case "Workplace"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Remote Desktop Access</li>" & _
-                "<li>Multi-User Management</li>" & _
-                "<li>Active Directory & SSO</li>" & _
-                "<li>Business priority support</li>"
-        Case "Gamer"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Multi-GPU Engine (AFR/SFR/CFR)</li>" & _
-                "<li>Steam/Lutris/Heroic pre-configured</li>" & _
-                "<li>Low-latency kernel & GameMode</li>" & _
-                "<li>RGB Sync Hub for all peripherals</li>"
-        Case "AI Developer"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Multi-GPU Compute Engine</li>" & _
-                "<li>CUDA/ROCm pre-configured</li>" & _
-                "<li>PyTorch, TensorFlow, JAX</li>" & _
-                "<li>AI Workload Balancer</li>"
-        Case "Gamer + AI"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Full Multi-GPU Engine (Gaming + Compute)</li>" & _
-                "<li>Hybrid GPU scheduling</li>" & _
-                "<li>Streaming & content creation</li>" & _
-                "<li>Ultimate Performance Mode</li>"
-        Case "Server"
-            features = "<li>All 22 Aegis Tools included</li>" & _
-                "<li>Multi-GPU Virtualization</li>" & _
-                "<li>Docker & Kubernetes ready</li>" & _
-                "<li>Enterprise management console</li>" & _
-                "<li>24/7 priority support + SLA</li>" & _
-                "<li>Unlimited resources</li>" & _
-                "<li>Dedicated account manager</li>"
+        Case "basic"
+            html = html & "<li>Wallpaper Engine</li><li>Aegis Stream</li><li>Security Center</li><li>Backup Pro</li>"
+        Case "gamer"
+            html = html & "<li>Gaming Optimizer</li><li>FPS Boost</li><li>Streaming Tools</li><li>Discord Integration</li>"
+        Case "aidev"
+            html = html & "<li>AI Toolkit</li><li>GPU Compute Manager</li><li>ML Frameworks</li><li>Code Studio</li>"
+        Case "workplace"
+            html = html & "<li>Office Suite</li><li>VPN Client</li><li>Remote Desktop</li><li>Cloud Sync</li>"
+        Case "server"
+            html = html & "<li>Docker Manager</li><li>Kubernetes</li><li>VM Tools</li><li>Monitoring</li>"
+        Case "gamer_ai"
+            html = html & "<li>Gaming Optimizer</li><li>AI Toolkit</li><li>Streaming</li><li>ML Frameworks</li>"
     End Select
-    document.getElementById("featureList").innerHTML = features
+    document.getElementById("featureList").innerHTML = html
     document.getElementById("featureShowcase").style.display = "block"
-End Sub
-
-Sub SetupFeatureSelection()
-    Dim gamerFeatures, aiFeatures, serverFeatures
-    On Error Resume Next
-    Set gamerFeatures = document.getElementById("gamerFeatures")
-    Set aiFeatures = document.getElementById("aiFeatures")
-    Set serverFeatures = document.getElementById("serverFeatures")
-    If Not gamerFeatures Is Nothing Then gamerFeatures.className = "edition-features"
-    If Not aiFeatures Is Nothing Then aiFeatures.className = "edition-features"
-    If Not serverFeatures Is Nothing Then serverFeatures.className = "edition-features"
-    If detectedEdition = "Gamer" Or detectedEdition = "Gamer + AI" Then
-        If Not gamerFeatures Is Nothing Then gamerFeatures.className = "edition-features visible"
-    End If
-    If detectedEdition = "AI Developer" Or detectedEdition = "Gamer + AI" Then
-        If Not aiFeatures Is Nothing Then aiFeatures.className = "edition-features visible"
-    End If
-    If detectedEdition = "Server" Then
-        If Not serverFeatures Is Nothing Then serverFeatures.className = "edition-features visible"
-    End If
-    document.getElementById("featureEditionLabel").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
-    selectedFeatures = "wallpaper,stream,security,backup"
-    If detectedEdition = "Gamer" Or detectedEdition = "Gamer + AI" Then
-        selectedFeatures = selectedFeatures & ",gaming"
-    End If
-    If detectedEdition = "AI Developer" Or detectedEdition = "Gamer + AI" Then
-        selectedFeatures = selectedFeatures & ",ai"
-    End If
-    If detectedEdition = "Server" Then
-        selectedFeatures = selectedFeatures & ",server"
-    End If
-    UpdateFeatureCount
-    On Error Goto 0
 End Sub
 
 Sub ToggleFeature(featureId)
@@ -1214,13 +613,11 @@ Sub SelectAllFeatures()
     Set checkboxes = document.querySelectorAll(".optional-features input[type='checkbox']")
     selectedFeatures = ""
     For i = 0 To checkboxes.length - 1
-        If checkboxes(i).style.display <> "none" Then
-            checkboxes(i).checked = True
-            Dim fid
-            fid = Replace(checkboxes(i).id, "chk_", "")
-            If Len(selectedFeatures) > 0 Then selectedFeatures = selectedFeatures & ","
-            selectedFeatures = selectedFeatures & fid
-        End If
+        checkboxes(i).checked = True
+        Dim fid
+        fid = Replace(checkboxes(i).id, "chk_", "")
+        If Len(selectedFeatures) > 0 Then selectedFeatures = selectedFeatures & ","
+        selectedFeatures = selectedFeatures & fid
     Next
     UpdateFeatureCount
     On Error Goto 0
@@ -1247,29 +644,22 @@ Sub UpdateFeatureCount()
     For i = 0 To UBound(features)
         If Len(features(i)) > 0 Then count = count + 1
     Next
-    document.getElementById("featureCount").innerText = "3 core + " & count & " optional features selected"
+    document.getElementById("featureCount").innerText = "3 core + " & count & " optional features"
     On Error Goto 0
 End Sub
 
 Sub RefreshDrives()
-    Dim diskDrives, disk, html, sizeGB, partCount, fsType, busType
+    Dim diskDrives, disk, html, sizeGB, partCount, busType
     On Error Resume Next
     If wmi Is Nothing Then
         Set wmi = GetObject("winmgmts:\\.\root\cimv2")
     End If
     If Err.Number <> 0 Then
         Err.Clear
-        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext3").disabled = True
+        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not access system.</div>"
         Exit Sub
     End If
     Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
-    If Err.Number <> 0 Then
-        Err.Clear
-        document.getElementById("driveList").innerHTML = "<div class='no-drives'>Could not scan drives.<br>Try running as Administrator.</div>"
-        document.getElementById("btnNext3").disabled = True
-        Exit Sub
-    End If
     ReDim drives(0)
     driveCount = 0
     html = ""
@@ -1306,8 +696,7 @@ Sub RefreshDrives()
     document.getElementById("driveList").innerHTML = html
     selectedDrive = ""
     selectedDriveNumber = -1
-    document.getElementById("btnNext3").disabled = True
-    UpdateEstimatedTime
+    UpdateFooterButtons()
 End Sub
 
 Sub SelectDrive(index)
@@ -1322,15 +711,8 @@ Sub SelectDrive(index)
     items(index).className = "drive-item selected"
     selectedDriveNumber = drives(index)
     selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText
-    document.getElementById("btnNext3").disabled = False
-    UpdateEstimatedTime
+    UpdateFooterButtons()
     On Error Goto 0
-End Sub
-
-Sub UpdateEstimatedTime()
-    Dim estTime
-    estTime = "Estimated time: 15-30 minutes (depends on internet & USB speed)"
-    document.getElementById("estTimeDisplay").innerText = estTime
 End Sub
 
 Sub SetPartitionStyle(style)
@@ -1347,56 +729,17 @@ Sub SetQuickFormat()
     On Error Goto 0
 End Sub
 
-Sub SetSecureBoot()
-    Dim chk
-    On Error Resume Next
-    Set chk = document.getElementById("chkSecureBoot")
-    If Not chk Is Nothing Then
-        secureBootEnabled = chk.checked
-    End If
-    On Error Goto 0
-End Sub
-
-Sub SetBootTheme()
-    Dim sel
-    On Error Resume Next
-    Set sel = document.getElementById("selBootTheme")
-    If Not sel Is Nothing Then
-        bootTheme = sel.value
-    End If
-    On Error Goto 0
-End Sub
-
-Sub SetUnattended()
-    Dim chk
-    On Error Resume Next
-    Set chk = document.getElementById("chkUnattended")
-    If Not chk Is Nothing Then
-        unattendedMode = chk.checked
-    End If
-    On Error Goto 0
-End Sub
-
-Sub SetNetworkPreset()
-    Dim sel
-    On Error Resume Next
-    Set sel = document.getElementById("selNetworkPreset")
-    If Not sel Is Nothing Then
-        networkPreset = sel.value
-    End If
-    On Error Goto 0
-End Sub
-
 Sub GoToStep(stepNum)
-    Dim panels, steps, i, stepEl
+    Dim slides, steps, i, stepEl
     On Error Resume Next
-    Set panels = document.getElementsByClassName("panel")
-    For i = 0 To panels.length - 1
-        panels(i).className = "panel"
+    currentStep = stepNum
+    Set slides = document.getElementsByClassName("slide")
+    For i = 0 To slides.length - 1
+        slides(i).className = "slide"
     Next
     Set stepEl = document.getElementById("step" & stepNum)
     If Not stepEl Is Nothing Then
-        stepEl.className = "panel active"
+        stepEl.className = "slide active"
     End If
     Set steps = document.getElementsByClassName("step-crumb")
     For i = 0 To steps.length - 1
@@ -1409,13 +752,13 @@ Sub GoToStep(stepNum)
         End If
     Next
     If stepNum = 2 Then
-        SetupFeatureSelection()
+        ShowEditionSpecificFeatures()
     ElseIf stepNum = 3 Then
         RefreshDrives()
-        document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
+        document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & GetEditionName() & "</span>"
     ElseIf stepNum = 4 Then
         document.getElementById("confirmDrive").innerText = selectedDrive
-        document.getElementById("confirmEdition").innerHTML = "<span class='edition-badge'>" & detectedEdition & "</span>"
+        document.getElementById("confirmEdition").innerHTML = "<span class='edition-badge'>" & GetEditionName() & "</span>"
         document.getElementById("confirmPartStyle").innerText = partitionStyle
         document.getElementById("confirmQuickFmt").innerText = IIf(quickFormat, "Yes", "No")
         document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
@@ -1426,6 +769,75 @@ Sub GoToStep(stepNum)
         document.getElementById("progressStatus").innerText = "Starting..."
         document.getElementById("progressDetail").innerText = "Please wait"
         smoothProgress = 0
+    End If
+    UpdateFooterButtons()
+    On Error Goto 0
+End Sub
+
+Function GetEditionName()
+    Select Case detectedEdition
+        Case "basic": GetEditionName = "Basic"
+        Case "gamer": GetEditionName = "Gamer"
+        Case "aidev": GetEditionName = "AI Developer"
+        Case "workplace": GetEditionName = "Workplace"
+        Case "server": GetEditionName = "Server"
+        Case "gamer_ai": GetEditionName = "Gamer+AI"
+        Case Else: GetEditionName = "Licensed"
+    End Select
+End Function
+
+Sub ShowEditionSpecificFeatures()
+    On Error Resume Next
+    document.getElementById("gamerFeatures").className = "edition-features"
+    document.getElementById("aiFeatures").className = "edition-features"
+    document.getElementById("serverFeatures").className = "edition-features"
+    Select Case detectedEdition
+        Case "gamer", "gamer_ai"
+            document.getElementById("gamerFeatures").className = "edition-features visible"
+        Case "aidev", "gamer_ai"
+            document.getElementById("aiFeatures").className = "edition-features visible"
+        Case "server"
+            document.getElementById("serverFeatures").className = "edition-features visible"
+    End Select
+    document.getElementById("featureEditionLabel").innerHTML = "<span class='edition-badge'>" & GetEditionName() & "</span>"
+    On Error Goto 0
+End Sub
+
+Sub UpdateFooterButtons()
+    Dim btnBack, btnNext
+    On Error Resume Next
+    Set btnBack = document.getElementById("btnBack")
+    Set btnNext = document.getElementById("btnNext")
+    If currentStep = 1 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Next"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = (Len(detectedEdition) = 0)
+    ElseIf currentStep = 2 Then
+        btnBack.className = "btn btn-secondary"
+        btnNext.innerText = "Next"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = False
+    ElseIf currentStep = 3 Then
+        btnBack.className = "btn btn-secondary"
+        btnNext.innerText = "Next"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = (selectedDriveNumber < 0)
+    ElseIf currentStep = 4 Then
+        btnBack.className = "btn btn-secondary"
+        btnNext.innerText = "Create USB"
+        btnNext.className = "btn btn-primary btn-create"
+        btnNext.disabled = False
+    ElseIf currentStep = 5 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Creating..."
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = True
+    ElseIf currentStep = 6 Then
+        btnBack.className = "btn btn-secondary hidden"
+        btnNext.innerText = "Close"
+        btnNext.className = "btn btn-primary"
+        btnNext.disabled = False
     End If
     On Error Goto 0
 End Sub
@@ -1444,57 +856,32 @@ Function IIf(cond, trueVal, falseVal)
     If cond Then IIf = trueVal Else IIf = falseVal
 End Function
 
-Sub StartCreation()
-    ' Anti-tampering: Verify license was properly validated before creation
-    If Not VerifyCreationAuth() Then
-        MsgBox "License validation required before proceeding." & vbCrLf & vbCrLf & "Please validate your license key first.", vbCritical, "Authorization Required"
-        GoToStep(1)
-        Exit Sub
+Sub OnBackClick()
+    If currentStep > 1 And currentStep < 5 Then
+        GoToStep(currentStep - 1)
     End If
+End Sub
+
+Sub OnNextClick()
+    If currentStep = 1 Then
+        If Len(detectedEdition) > 0 Then GoToStep(2)
+    ElseIf currentStep = 2 Then
+        GoToStep(3)
+    ElseIf currentStep = 3 Then
+        If selectedDriveNumber >= 0 Then GoToStep(4)
+    ElseIf currentStep = 4 Then
+        StartCreation()
+    ElseIf currentStep = 6 Then
+        CloseApp()
+    End If
+End Sub
+
+Sub StartCreation()
     GoToStep(5)
     CreateUSB()
 End Sub
 
-Function VerifyCreationAuth()
-    VerifyCreationAuth = False
-    
-    ' Check 1: License key must be set
-    If Len(licenseKey) < 10 Then Exit Function
-    
-    ' Check 2: Edition must be detected
-    If Len(detectedEdition) < 3 Then Exit Function
-    
-    ' Check 3: Validation token must exist and have valid format
-    If Len(validationToken) < 8 Then Exit Function
-    If Left(validationToken, 7) <> "SECURE_" And Left(validationToken, 7) <> "ONLINE_" And Left(validationToken, 5) <> "DEMO_" And Left(validationToken, 8) <> "EXPIRED_" Then Exit Function
-    
-    ' Check 4: For signed installers, verify RSA signature checks completed
-    If CACHE_SALT <> "PLACEHOLDER_SALT" Then
-        If v_chk < 1 Then Exit Function ' Cache integrity check must have run
-        If v_s1 < 1 Then Exit Function ' Signature verification must have run
-        If v_s2 < 1 Then Exit Function ' Signature must have been valid
-        If v_s3 < 1 Then Exit Function ' License must have been found and verified
-    End If
-    
-    ' Check 5: Verify token matches expected pattern
-    ' ONLINE_ tokens are verified by server, no additional check needed
-    ' SECURE_ tokens require RSA verification markers
-    If Left(validationToken, 7) = "SECURE_" Then
-        Dim expectedToken
-        expectedToken = ComputeKeyHash(licenseKey & ":" & v_s1 & ":" & v_s2 & ":" & v_s3 & ":" & v_chk)
-        If Mid(validationToken, 8, 12) <> Left(expectedToken, 12) Then Exit Function
-    End If
-    
-    VerifyCreationAuth = True
-End Function
-
 Sub CreateUSB()
-    ' Secondary check at USB creation level
-    If Not VerifyCreationAuth() Then
-        UpdateProgress -1, "UNAUTHORIZED", "License validation failed"
-        Exit Sub
-    End If
-    
     Dim tempDir, psFile, progressFile, psCode, ts
     tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
     psFile = tempDir & "\aegis_creator.ps1"
@@ -1505,14 +892,15 @@ Sub CreateUSB()
     ts.Write psCode
     ts.Close
     Dim cmd
-    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & detectedEdition & """ -LicenseKey """ & licenseKey & """ -ValidationToken """ & validationToken & """ -Features """ & selectedFeatures & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
+    cmd = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & GetEditionName() & """ -Features """ & selectedFeatures & """ -PartitionStyle """ & partitionStyle & """ -QuickFormat $" & LCase(CStr(quickFormat)) & " -ProgressFile """ & progressFile & """"
     progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
     shell.Run cmd, 0, False
 End Sub
 
 Function GetPowerShellCode()
-    Dim code
-    code = "param([int]$DiskNumber, [string]$Edition, [string]$LicenseKey, [string]$ValidationToken, [string]$Features, [string]$PartitionStyle, [bool]$QuickFormat, [string]$ProgressFile)" & vbCrLf
+    Dim code, edName
+    edName = GetEditionName()
+    code = "param([int]$DiskNumber, [string]$Edition, [string]$Features, [string]$PartitionStyle, [bool]$QuickFormat, [string]$ProgressFile)" & vbCrLf
     code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
     code = code & "$global:startTime = $null; $global:lastBytes = 0; $global:lastTime = $null" & vbCrLf
     code = code & "function Write-P { param([int]$P, [string]$S, [string]$D='', [string]$Speed='', [string]$ETA='', [string]$Size=''); " & vbCrLf
@@ -1531,7 +919,7 @@ Function GetPowerShellCode()
     code = code & "$disk = Get-Disk -Number $DiskNumber -ErrorAction Stop" & vbCrLf
     code = code & "if ($disk.IsSystem -or $disk.IsBoot) { Write-P -1 'SYSTEM_DRIVE: Cannot write to system drive.'; exit 1 }" & vbCrLf
     code = code & "if ($disk.Size -lt 4GB) { Write-P -1 'DRIVE_TOO_SMALL: USB must be 4GB+.'; exit 1 }" & vbCrLf
-    code = code & "Write-P 3 'USB drive validated' ""License: $LicenseKey""" & vbCrLf
+    code = code & "Write-P 3 'USB drive validated' ''" & vbCrLf
     code = code & "$tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null" & vbCrLf
     code = code & "$isoPath = ""$tempDir\base.iso""" & vbCrLf
     code = code & "$mirrors = @(" & vbCrLf
@@ -1548,7 +936,7 @@ Function GetPowerShellCode()
     code = code & "  try {" & vbCrLf
     code = code & "    if ($mirrorIndex -gt 0 -or $retryCount -gt 0) { Write-P 6 ""Mirror $($mirrorIndex+1), Attempt $($retryCount+1)..."" }" & vbCrLf
     code = code & "    $webRequest = [System.Net.HttpWebRequest]::Create($isoUrl)" & vbCrLf
-    code = code & "    $webRequest.UserAgent = 'AegisOS/2.8 Pro'; $webRequest.Timeout = 30000" & vbCrLf
+    code = code & "    $webRequest.UserAgent = 'AegisOS/3.0'; $webRequest.Timeout = 30000" & vbCrLf
     code = code & "    $response = $webRequest.GetResponse(); $totalBytes = $response.ContentLength" & vbCrLf
     code = code & "    $responseStream = $response.GetResponseStream(); $fileStream = [System.IO.File]::Create($isoPath)" & vbCrLf
     code = code & "    $buffer = New-Object byte[] 8MB; $downloadedBytes = 0" & vbCrLf
@@ -1576,23 +964,23 @@ Function GetPowerShellCode()
     code = code & "if (-not (Test-Path $isoPath) -or (Get-Item $isoPath).Length -lt 500MB) { Write-P -1 'DOWNLOAD_INCOMPLETE'; exit 1 }" & vbCrLf
     code = code & "Write-P 50 'Verifying integrity...' 'SHA256 checksum'" & vbCrLf
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
-    code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED: Expected $($expectedHash.Substring(0,16))... got $($hash.Substring(0,16))...""; exit 1 }" & vbCrLf
-    code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
+    code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED""; exit 1 }" & vbCrLf
+    code = code & "Write-P 52 'Checksum verified' ''" & vbCrLf
     code = code & "Write-P 54 'Preparing USB...' 'Taking disk offline'" & vbCrLf
     code = code & "$dp = ""select disk $DiskNumber`nattributes disk clear readonly`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
-    code = code & "Start-Sleep -Milliseconds 500" & vbCrLf
     code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
     code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
     code = code & "Start-Sleep -Seconds 2" & vbCrLf
+    code = code & "$global:startTime = Get-Date" & vbCrLf
     code = code & "try { $src = [IO.File]::OpenRead($isoPath)" & vbCrLf
-    code = code & "  $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 1MB, [IO.FileOptions]::WriteThrough)" & vbCrLf
+    code = code & "  $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 4MB)" & vbCrLf
     code = code & "  $dst.Seek(0, [IO.SeekOrigin]::Begin) | Out-Null" & vbCrLf
     code = code & "} catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
-    code = code & "$buf = New-Object byte[] 1MB; $written = 0; $total = $src.Length" & vbCrLf
+    code = code & "$buf = New-Object byte[] 4MB; $written = 0; $total = $src.Length" & vbCrLf
     code = code & "$writeStart = Get-Date; $lastWriteUpdate = $writeStart" & vbCrLf
     code = code & "while (($read = $src.Read($buf, 0, $buf.Length)) -gt 0) {" & vbCrLf
-    code = code & "  try { $dst.Write($buf, 0, $read) } catch { $dst.Close(); $src.Close(); Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
+    code = code & "  try { $dst.Write($buf, 0, $read); $dst.Flush() } catch { $dst.Close(); $src.Close(); Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
     code = code & "  $written += $read; $pct = [int](($written / $total) * 100); $mappedPct = 56 + [int]($pct * 0.40)" & vbCrLf
     code = code & "  $now = Get-Date" & vbCrLf
     code = code & "  if (($now - $lastWriteUpdate).TotalSeconds -ge 1) {" & vbCrLf
@@ -1604,15 +992,15 @@ Function GetPowerShellCode()
     code = code & "    Write-P $mappedPct 'Writing...' ""$pct%"" $speedStr $etaStr ''" & vbCrLf
     code = code & "    $lastWriteUpdate = $now}}" & vbCrLf
     code = code & "$dst.Flush(); $dst.Close(); $src.Close()" & vbCrLf
-    code = code & "Write-P 95 'Verifying boot sector...' 'Checking write'" & vbCrLf
+    code = code & "Write-P 95 'Verifying boot sector...' ''" & vbCrLf
     code = code & "Start-Sleep -Seconds 2" & vbCrLf
     code = code & "$verifyStream = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)" & vbCrLf
     code = code & "$verifyBuf = New-Object byte[] 512; $verifyStream.Seek(0, [IO.SeekOrigin]::Begin) | Out-Null" & vbCrLf
     code = code & "$verifyStream.Read($verifyBuf, 0, 512) | Out-Null; $verifyStream.Close()" & vbCrLf
     code = code & "$srcVerify = [IO.File]::OpenRead($isoPath); $srcBuf = New-Object byte[] 512" & vbCrLf
     code = code & "$srcVerify.Read($srcBuf, 0, 512) | Out-Null; $srcVerify.Close()" & vbCrLf
-    code = code & "if ([System.Linq.Enumerable]::SequenceEqual([byte[]]$verifyBuf, [byte[]]$srcBuf)) { Write-P 96 'Boot sector verified!' '' } else { Write-P -1 'VERIFY_FAILED: Boot sector mismatch'; exit 1 }" & vbCrLf
-    code = code & "Write-P 97 'Syncing...' 'Bringing disk online'" & vbCrLf
+    code = code & "if ([System.Linq.Enumerable]::SequenceEqual([byte[]]$verifyBuf, [byte[]]$srcBuf)) { Write-P 96 'Boot sector verified!' '' } else { Write-P -1 'VERIFY_FAILED'; exit 1 }" & vbCrLf
+    code = code & "Write-P 97 'Syncing...' ''" & vbCrLf
     code = code & "$dp2 = ""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp2.txt"" | Out-Null } catch { }" & vbCrLf
     code = code & """rescan"" | Out-File ""$tempDir\rs.txt"" -Encoding ASCII; diskpart /s ""$tempDir\rs.txt"" | Out-Null" & vbCrLf
@@ -1662,26 +1050,6 @@ Sub CheckProgress()
     On Error Goto 0
 End Sub
 
-Sub GoToStepOne()
-    GoToStep(1)
-End Sub
-
-Sub GoToStepTwo()
-    GoToStep(2)
-End Sub
-
-Sub GoToStepThree()
-    GoToStep(3)
-End Sub
-
-Sub GoToStepFour()
-    GoToStep(4)
-End Sub
-
-Sub GoToStepFive()
-    GoToStep(5)
-End Sub
-
 Sub GoToStepSix()
     GoToStep(6)
 End Sub
@@ -1690,7 +1058,6 @@ Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
     Dim delta, step
     If targetPct > smoothProgress Then
         delta = targetPct - smoothProgress
-        ' Fast jumps for large deltas, smooth for small
         If delta > 10 Then
             step = Int(delta / 2)
         ElseIf delta > 5 Then
@@ -1742,13 +1109,15 @@ Sub ShowError(msg, detail)
         errorFix = "Try again or contact support."
     End If
     document.getElementById("progressContainer").innerHTML = _
-        "<div style='font-size:36px;color:#ef4444;margin-bottom:12px'>&#10060;</div>" & _
-        "<div style='font-size:16px;color:#ef4444;margin-bottom:8px'>" & errorType & "</div>" & _
-        "<div class='error-box'><div style='margin-bottom:6px'>" & errorMsg & "</div>" & _
-        "<div style='font-size:10px;color:#f59e0b'><strong>Fix:</strong> " & errorFix & "</div>" & _
-        "<div class='error-details'>" & detail & "</div></div>" & _
-        "<div class='btn-row' style='justify-content:center'>" & _
-        "<button class='btn btn-secondary' onclick='GoToStep(1)'>Try Again</button></div>"
+        "<div style='font-size:32px;color:#ef4444;margin-bottom:8px'>&#10060;</div>" & _
+        "<div style='font-size:14px;color:#ef4444;margin-bottom:6px'>" & errorType & "</div>" & _
+        "<div class='error-box'><div style='margin-bottom:4px'>" & errorMsg & "</div>" & _
+        "<div style='font-size:9px;color:#f59e0b'><strong>Fix:</strong> " & errorFix & "</div>" & _
+        "<div class='error-details'>" & detail & "</div></div>"
+    currentStep = 1
+    UpdateFooterButtons()
+    document.getElementById("btnBack").className = "btn btn-secondary"
+    document.getElementById("btnBack").innerText = "Try Again"
 End Sub
 
 Sub CloseApp()
@@ -1757,8 +1126,8 @@ End Sub
 </script>
 </head>
 <body>
-<div class="container">
-    <div class="header">
+<div class="wizard">
+    <div class="wizard-header">
         <svg class="logo-svg shield-animate" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M24 4L6 12v12c0 11 8 17 18 20 10-3 18-9 18-20V12L24 4z" fill="url(#shieldGradPro)" stroke="#f59e0b" stroke-width="2"/>
             <path d="M24 14l-2.5 5-5.5.8 4 3.9-.95 5.5L24 26.5l4.95 2.7-.95-5.5 4-3.9-5.5-.8L24 14z" fill="#fff" stroke="#fff" stroke-width="1"/>
@@ -1770,27 +1139,27 @@ End Sub
         </div>
     </div>
 
-    <div class="content">
-        <div class="step-breadcrumb">
-            <div class="step-crumb active" id="stepCrumb1">1. License</div>
-            <div class="step-crumb" id="stepCrumb2">2. Edition</div>
-            <div class="step-crumb" id="stepCrumb3">3. Drive</div>
-            <div class="step-crumb" id="stepCrumb4">4. Confirm</div>
-            <div class="step-crumb" id="stepCrumb5">5. Creating</div>
-            <div class="step-crumb" id="stepCrumb6">6. Done</div>
-        </div>
+    <div class="wizard-breadcrumb">
+        <div class="step-crumb active">1. License</div>
+        <div class="step-crumb">2. Features</div>
+        <div class="step-crumb">3. USB Drive</div>
+        <div class="step-crumb">4. Confirm</div>
+        <div class="step-crumb">5. Creating</div>
+        <div class="step-crumb">6. Done</div>
+    </div>
 
-        <div id="step1" class="panel active">
+    <div class="wizard-content">
+        <div id="step1" class="slide active">
             <div class="section-title">Enter License Key</div>
-            <div class="section-desc">Enter the license key from your purchase.</div>
+            <div class="section-desc">Enter your license key to unlock the premium edition.</div>
 
             <div id="adminNotice" class="admin-notice" style="display:none">
-                <strong>Note:</strong> Right-click and "Run as Administrator" for best results.
+                <strong>Note:</strong> Run as Administrator for best results.
             </div>
 
             <div class="sys-req-box">
-                <h3 style="font-size:11px;color:#f59e0b;margin-bottom:6px">System Requirements</h3>
-                <div id="sysReqContent">Checking...</div>
+                <div style="font-size:9px;color:#f59e0b;margin-bottom:4px;font-weight:600">System Check</div>
+                <div id="sysReqContent" style="display:flex;gap:12px;">Checking...</div>
             </div>
 
             <div class="form-group">
@@ -1806,76 +1175,69 @@ End Sub
                     <li>GAME = Gamer | AIDV = AI Developer</li>
                     <li>GMAI = Gamer+AI | SERV = Server</li>
                 </ul>
-                <div style="font-size:10px;color:#888;margin-top:4px">Demo keys: BSIC-DEMO-TEST-2024, GAME-DEMO-TEST-2024, etc.</div>
+                <div style="font-size:9px;color:#888;margin-top:4px">Demo: BSIC-DEMO-TEST-2024</div>
             </div>
 
             <div id="featureShowcase" class="feature-showcase" style="display:none">
                 <h4>&#9733; Edition Features</h4>
                 <ul class="feature-list" id="featureList"></ul>
             </div>
-
-            <div class="btn-row" style="margin-top:20px; padding-top:15px; border-top:1px solid #333;">
-                <button id="btnValidate" class="btn btn-secondary" onclick="OnValidateClick()" style="display:none">Validate License</button>
-                <button id="btnOnlineVerify" class="btn btn-secondary btn-small" onclick="VerifyOnline()" style="display:none;margin-left:8px">Verify Online</button>
-                <div style="flex:1"></div>
-                <button id="btnNext1" class="btn btn-primary btn-next-main" disabled onclick="GoToStep(2)">Next &#8594;</button>
-            </div>
         </div>
 
-        <div id="step2" class="panel">
+        <div id="step2" class="slide">
             <div class="section-title">Select Features</div>
-            <div class="section-desc">Choose which Aegis tools to install: <span id="featureEditionLabel"></span></div>
+            <div class="section-desc">Choose tools to install: <span id="featureEditionLabel"></span></div>
 
             <div class="feature-section">
                 <div class="feature-section-title"><span class="icon">&#128274;</span> Core Features (Always Installed)</div>
                 <div class="core-features">
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Control Center - Central management hub</div>
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis System Monitor - Real-time performance tracking</div>
-                    <div class="core-feature-item"><span class="icon">&#10003;</span> Aegis Update Manager - Automatic system updates</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Control Center</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> System Monitor</div>
+                    <div class="core-feature-item"><span class="icon">&#10003;</span> Update Manager</div>
                 </div>
             </div>
 
-            <div class="feature-section">
+            <div class="feature-section" style="flex:1;display:flex;flex-direction:column;min-height:0;">
                 <div class="feature-section-title"><span class="icon">&#9881;</span> Optional Features</div>
                 <div class="feature-actions">
-                    <button class="btn btn-secondary btn-small" onclick="SelectAllFeatures()">Select All</button>
-                    <button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures()">Deselect All</button>
+                    <button class="btn btn-secondary btn-small" onclick="SelectAllFeatures()">All</button>
+                    <button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures()">None</button>
                 </div>
                 <div class="optional-features">
                     <div class="feature-card">
                         <input type="checkbox" id="chk_wallpaper" checked onclick="ToggleFeature('wallpaper')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Aegis Wallpaper Engine</div>
-                            <div class="feature-card-desc">Animated wallpapers with AI generation support</div>
+                            <div class="feature-card-name">Wallpaper Engine</div>
+                            <div class="feature-card-desc">Animated wallpapers with AI</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_stream" checked onclick="ToggleFeature('stream')">
                         <div class="feature-card-content">
                             <div class="feature-card-name">Aegis Stream</div>
-                            <div class="feature-card-desc">Local game streaming to other devices</div>
+                            <div class="feature-card-desc">Local game streaming</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_security" checked onclick="ToggleFeature('security')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Aegis Security Center</div>
-                            <div class="feature-card-desc">Firewall, antivirus and threat protection</div>
+                            <div class="feature-card-name">Security Center</div>
+                            <div class="feature-card-desc">Firewall and antivirus</div>
                         </div>
                     </div>
                     <div class="feature-card">
                         <input type="checkbox" id="chk_backup" checked onclick="ToggleFeature('backup')">
                         <div class="feature-card-content">
-                            <div class="feature-card-name">Aegis Backup Pro</div>
-                            <div class="feature-card-desc">Scheduled backups with cloud integration</div>
+                            <div class="feature-card-name">Backup Pro</div>
+                            <div class="feature-card-desc">Scheduled cloud backups</div>
                         </div>
                     </div>
                     <div id="gamerFeatures" class="edition-features">
                         <div class="feature-card">
                             <input type="checkbox" id="chk_gaming" checked onclick="ToggleFeature('gaming')">
                             <div class="feature-card-content">
-                                <div class="feature-card-name">Aegis Gaming Optimizer <span class="feature-card-badge">Gamer</span></div>
-                                <div class="feature-card-desc">Game performance tweaks, FPS boost, latency reduction</div>
+                                <div class="feature-card-name">Gaming Optimizer <span class="feature-card-badge">Gamer</span></div>
+                                <div class="feature-card-desc">FPS boost, latency reduction</div>
                             </div>
                         </div>
                     </div>
@@ -1883,8 +1245,8 @@ End Sub
                         <div class="feature-card">
                             <input type="checkbox" id="chk_ai" checked onclick="ToggleFeature('ai')">
                             <div class="feature-card-content">
-                                <div class="feature-card-name">Aegis AI Toolkit <span class="feature-card-badge">AI Dev</span></div>
-                                <div class="feature-card-desc">Model training, GPU compute management, ML frameworks</div>
+                                <div class="feature-card-name">AI Toolkit <span class="feature-card-badge">AI Dev</span></div>
+                                <div class="feature-card-desc">ML frameworks, GPU compute</div>
                             </div>
                         </div>
                     </div>
@@ -1892,108 +1254,101 @@ End Sub
                         <div class="feature-card">
                             <input type="checkbox" id="chk_server" checked onclick="ToggleFeature('server')">
                             <div class="feature-card-content">
-                                <div class="feature-card-name">Aegis Server Tools <span class="feature-card-badge">Server</span></div>
-                                <div class="feature-card-desc">Docker, Kubernetes, VM management, monitoring</div>
+                                <div class="feature-card-name">Server Tools <span class="feature-card-badge">Server</span></div>
+                                <div class="feature-card-desc">Docker, K8s, VM management</div>
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="feature-count" id="featureCount">3 core + 4 optional features selected</div>
-            </div>
-
-            <div class="btn-row">
-                <button id="btnBack2" class="btn btn-secondary" onclick="GoToStep(1)">Back</button>
-                <div style="flex:1"></div>
-                <button id="btnNext2" class="btn btn-primary" onclick="GoToStep(3)">Next</button>
+                <div id="featureCount" class="feature-count">3 core + 4 optional features</div>
             </div>
         </div>
 
-        <div id="step3" class="panel">
+        <div id="step3" class="slide">
             <div class="section-title">Select USB Drive</div>
             <div class="section-desc">Installing: <span id="editionDisplay">-</span></div>
-            
-            <div id="driveList" class="drive-list"><div class="no-drives">Click Refresh to scan...</div></div>
-            
+
+            <div class="warning-box">
+                <strong>&#9888; Warning:</strong> All data on the selected drive will be erased.
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:10px;color:#aaa;">Available USB Drives:</span>
+                <button class="btn btn-refresh" onclick="RefreshDrives()">&#8635; Refresh</button>
+            </div>
+
+            <div id="driveList" class="drive-list">
+                <div class="no-drives">Click Refresh to scan for USB drives.</div>
+            </div>
+
             <div class="option-group">
-                <label class="option-label">Partition Style</label>
+                <span class="option-label">Partition Style:</span>
                 <div class="radio-group">
                     <label class="radio-item"><input type="radio" name="partStyle" checked onclick="SetPartitionStyle('GPT')"> GPT (UEFI)</label>
-                    <label class="radio-item"><input type="radio" name="partStyle" onclick="SetPartitionStyle('MBR')"> MBR (Legacy BIOS)</label>
+                    <label class="radio-item"><input type="radio" name="partStyle" onclick="SetPartitionStyle('MBR')"> MBR (Legacy)</label>
                 </div>
             </div>
 
-            <div class="option-group">
-                <label class="checkbox-item"><input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat()"> Quick Format (faster)</label>
-            </div>
-
-            <div class="est-time" id="estTimeDisplay">Estimated time: 15-30 minutes</div>
-
-            <div class="advanced-panel">
-                <h4>&#9881; Advanced Options</h4>
-                <div class="advanced-grid">
-                    <div>
-                        <label class="form-label">Boot Theme</label>
-                        <select id="selBootTheme" class="select-input" onchange="SetBootTheme()">
-                            <option value="Default">Default</option>
-                            <option value="Dark">Dark</option>
-                            <option value="Light">Light</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="form-label">Network Preset</label>
-                        <select id="selNetworkPreset" class="select-input" onchange="SetNetworkPreset()">
-                            <option value="DHCP">DHCP (Auto)</option>
-                            <option value="Static">Static IP</option>
-                            <option value="None">No Config</option>
-                        </select>
-                    </div>
-                </div>
-                <div style="margin-top:8px">
-                    <label class="checkbox-item"><input type="checkbox" id="chkSecureBoot" onclick="SetSecureBoot()"> Enable Secure Boot signing</label>
-                </div>
-                <div style="margin-top:5px">
-                    <label class="checkbox-item"><input type="checkbox" id="chkUnattended" onclick="SetUnattended()"> Unattended installation mode</label>
-                </div>
-            </div>
-
-            <div class="btn-row">
-                <button id="btnRefresh" class="btn btn-refresh" onclick="RefreshDrives()">Refresh</button>
-                <button id="btnBack3" class="btn btn-secondary" onclick="GoToStep(2)">Back</button>
-                <div style="flex:1"></div>
-                <button id="btnNext3" class="btn btn-primary" disabled onclick="GoToStep(4)">Next</button>
-            </div>
+            <label class="checkbox-item">
+                <input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat()">
+                Quick Format (faster)
+            </label>
         </div>
 
-        <div id="step4" class="panel">
-            <div class="section-title">Confirm</div>
-            <div class="warning-box"><strong>Warning:</strong> All data on USB will be erased!</div>
+        <div id="step4" class="slide">
+            <div class="section-title">Confirm Settings</div>
+            <div class="section-desc">Review before creating the USB.</div>
+
+            <div class="warning-box">
+                <strong>&#9888; Final Warning:</strong> This will erase all data on the USB!
+            </div>
+
+            <div class="confirm-grid">
+                <div class="confirm-item">
+                    <div class="confirm-label">Target Drive</div>
+                    <div class="confirm-value" id="confirmDrive">-</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Edition</div>
+                    <div class="confirm-value" id="confirmEdition">-</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Partition Style</div>
+                    <div class="confirm-value" id="confirmPartStyle">GPT</div>
+                </div>
+                <div class="confirm-item">
+                    <div class="confirm-label">Quick Format</div>
+                    <div class="confirm-value" id="confirmQuickFmt">Yes</div>
+                </div>
+            </div>
+
+            <div class="confirm-item" style="margin-bottom:8px;">
+                <div class="confirm-label">Features</div>
+                <div class="confirm-value" id="confirmFeatures">3 core + 4 optional</div>
+            </div>
+
             <div class="info-box">
-                <h3>Configuration</h3>
+                <h3>What happens next:</h3>
                 <ul>
-                    <li>Edition: <span id="confirmEdition">-</span></li>
-                    <li>Drive: <strong id="confirmDrive" style="color:#fff">-</strong></li>
-                    <li>Partition: <strong id="confirmPartStyle" style="color:#fff">GPT</strong></li>
-                    <li>Quick Format: <strong id="confirmQuickFmt" style="color:#fff">Yes</strong></li>
-                    <li>Features: <strong id="confirmFeatures" style="color:#fff">-</strong></li>
-                    <li>SHA256 verification included</li>
+                    <li>Download Aegis OS (~2.9 GB)</li>
+                    <li>Verify file integrity (SHA256)</li>
+                    <li>Write bootable image to USB</li>
+                    <li>Estimated time: 15-30 minutes</li>
                 </ul>
             </div>
-            <div class="btn-row">
-                <button id="btnBack4" class="btn btn-secondary" onclick="GoToStep(3)">Back</button>
-                <div style="flex:1"></div>
-                <button id="btnConfirm" class="btn btn-primary" onclick="StartCreation()">Create USB</button>
-            </div>
         </div>
 
-        <div id="step5" class="panel">
+        <div id="step5" class="slide">
             <div class="section-title">Creating Bootable USB</div>
-            <div class="section-desc">Please wait while we create your installation media.</div>
+            <div class="section-desc">Do not remove the USB drive during this process.</div>
 
             <div id="progressContainer" class="progress-container">
                 <div class="progress-percent" id="progressPercent">0%</div>
-                <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressBar"></div></div>
-                <div class="progress-status" id="progressStatus">Initializing...</div>
-                <div class="progress-detail" id="progressDetail"></div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill animated" id="progressBar"></div>
+                </div>
+                <div class="progress-status" id="progressStatus">Starting...</div>
+                <div class="progress-detail" id="progressDetail">Please wait</div>
                 <div class="progress-stats">
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statSpeed">--</div>
@@ -2001,7 +1356,7 @@ End Sub
                     </div>
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statETA">--</div>
-                        <div class="progress-stat-label">ETA</div>
+                        <div class="progress-stat-label">Remaining</div>
                     </div>
                     <div class="progress-stat">
                         <div class="progress-stat-value" id="statSize">--</div>
@@ -2009,46 +1364,30 @@ End Sub
                     </div>
                 </div>
             </div>
-
-            <div class="warning-box" style="margin-top:12px">
-                <strong>Do not remove the USB drive</strong> until complete.
-            </div>
         </div>
 
-        <div id="step6" class="panel">
+        <div id="step6" class="slide">
             <div class="success-container">
-                <svg class="logo-svg" style="width:48px;height:48px;margin-bottom:12px" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="24" cy="24" r="20" fill="#10b981" stroke="#34d399" stroke-width="2"/>
-                    <path d="M15 24l7 7 11-14" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                <div class="success-title">USB Creation Complete!</div>
+                <div class="success-icon">&#10004;</div>
+                <div class="success-title">USB Created Successfully!</div>
                 <div class="success-desc">Your Aegis OS bootable USB is ready.</div>
-
-                <div class="verification-box">
-                    <div class="verification-title">&#10003; Download Verified</div>
-                    <div class="verification-hash">SHA256 checksum passed</div>
-                </div>
 
                 <div class="success-steps">
                     <h3>Next Steps:</h3>
                     <ol>
                         <li>Safely eject the USB drive</li>
                         <li>Insert into target computer</li>
-                        <li>Restart and press F12/F2/DEL/ESC</li>
-                        <li>Select USB to boot</li>
-                        <li>Choose "Try" or "Install"</li>
+                        <li>Boot from USB (F12/F2/DEL at startup)</li>
+                        <li>Follow on-screen installation</li>
                     </ol>
-                </div>
-
-                <div class="btn-row" style="justify-content:center">
-                    <button id="btnClose" class="btn btn-primary" onclick="CloseApp()">Finish</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="footer">
-        Aegis OS v2.8 - Commercial Software. Liability limited to purchase price.
+    <div class="wizard-footer">
+        <button id="btnBack" class="btn btn-secondary hidden" onclick="OnBackClick()">Back</button>
+        <button id="btnNext" class="btn btn-primary" onclick="OnNextClick()" disabled>Next</button>
     </div>
 </div>
 </body>
