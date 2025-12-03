@@ -738,11 +738,11 @@ Function GetPowerShellCode()
     code = code & "Write-P 50 'Verifying integrity...' 'SHA256 checksum'" & vbCrLf
     code = code & "$hash = (Get-FileHash -Path $isoPath -Algorithm SHA256).Hash" & vbCrLf
     code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
-    code = code & "Start-Sleep 1" & vbCrLf
+    
     code = code & "Write-P 54 'Preparing USB...' ""$PartitionStyle partition""" & vbCrLf
     code = code & "$dp = ""select disk $DiskNumber`nclean""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
-    code = code & "Start-Sleep 2" & vbCrLf
+    
     code = code & "Write-P 56 'Writing to USB...' 'Do not remove!'" & vbCrLf
     code = code & "$phys = '\\.\PhysicalDrive' + $DiskNumber" & vbCrLf
     code = code & "try { $src = [IO.File]::OpenRead($isoPath)" & vbCrLf
@@ -817,8 +817,18 @@ Sub GoToStepFive()
 End Sub
 
 Sub UpdateProgressSmooth(targetPct, status, detail, speed, eta, size)
+    Dim delta, step
     If targetPct > smoothProgress Then
-        smoothProgress = smoothProgress + 1
+        delta = targetPct - smoothProgress
+        ' Fast jumps for large deltas, smooth for small
+        If delta > 10 Then
+            step = Int(delta / 2)
+        ElseIf delta > 5 Then
+            step = 3
+        Else
+            step = 2
+        End If
+        smoothProgress = smoothProgress + step
         If smoothProgress > targetPct Then smoothProgress = targetPct
     End If
     UpdateProgress smoothProgress, status, detail, speed, eta, size
