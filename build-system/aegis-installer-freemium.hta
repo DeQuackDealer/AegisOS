@@ -753,8 +753,8 @@ Function GetPowerShellCode()
     code = code & "if ($hash -ne $expectedHash) { Write-P -1 ""CHECKSUM_FAILED: Expected $($expectedHash.Substring(0,16))... got $($hash.Substring(0,16))...""; exit 1 }" & vbCrLf
     code = code & "Write-P 52 'Checksum verified' ""SHA256: $($hash.Substring(0,16))...""" & vbCrLf
     
-    code = code & "Write-P 54 'Preparing USB...' ""$PartitionStyle partition""" & vbCrLf
-    code = code & "$dp = ""select disk $DiskNumber`nclean""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
+    code = code & "Write-P 54 'Preparing USB...' 'Taking disk offline'" & vbCrLf
+    code = code & "$dp = ""select disk $DiskNumber`nattributes disk clear readonly`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII" & vbCrLf
     code = code & "try { diskpart /s ""$tempDir\dp.txt"" | Out-Null } catch { Write-P -1 (Get-DetailedError $_); exit 1 }" & vbCrLf
     
     code = code & "Write-P 56 'Writing to USB (Etcher-style)...' 'Do not remove USB!'" & vbCrLf
@@ -764,8 +764,9 @@ Function GetPowerShellCode()
     code = code & "  Write-P -1 'USB_WRITE_FAILED: Could not write ISO to USB drive'" & vbCrLf
     code = code & "  exit 1" & vbCrLf
     code = code & "}" & vbCrLf
-    code = code & "Write-P 97 'Syncing...' 'Finalizing'" & vbCrLf
-    code = code & "Start-Sleep 3" & vbCrLf
+    code = code & "Write-P 97 'Syncing...' 'Bringing disk online'" & vbCrLf
+    code = code & "$dp2 = ""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII" & vbCrLf
+    code = code & "try { diskpart /s ""$tempDir\dp2.txt"" | Out-Null } catch { }" & vbCrLf
     code = code & """rescan"" | Out-File ""$tempDir\rs.txt"" -Encoding ASCII; diskpart /s ""$tempDir\rs.txt"" | Out-Null" & vbCrLf
     code = code & "Write-P 99 'Cleaning up...' ''" & vbCrLf
     code = code & "Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue" & vbCrLf
