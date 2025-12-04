@@ -1,298 +1,43 @@
 <html>
 <head>
-<title>Aegis OS Workplace Edition Installer</title>
-<HTA:APPLICATION ID="AegisWorkplaceInstaller" APPLICATIONNAME="Aegis OS Workplace Edition Installer" BORDER="thick" BORDERSTYLE="normal" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="3.0" SCROLL="no" INNERBORDER="no"/>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Segoe UI', Tahoma, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; height: 100vh; overflow: hidden; margin: 0; }
-.wizard { display: flex; flex-direction: column; height: 100vh; }
-.wizard-header { flex-shrink: 0; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); padding: 8px 12px; display: flex; align-items: center; gap: 8px; }
-.logo-svg { width: 36px; height: 36px; }
-.shield-animate { animation: shieldPulse 2s ease-in-out infinite; }
-@keyframes shieldPulse { 0%, 100% { transform: scale(1); filter: drop-shadow(0 0 3px rgba(59, 130, 246, 0.5)); } 50% { transform: scale(1.05); filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8)); } }
-.header-text h1 { font-size: 14px; font-weight: 600; }
-.header-text p { font-size: 10px; opacity: 0.9; }
-.wizard-breadcrumb { flex-shrink: 0; display: flex; justify-content: space-between; gap: 4px; padding: 4px 12px; background: #12122a; border-bottom: 1px solid #1f2a40; }
-.step-crumb { flex: 1; text-align: center; font-size: 9px; padding: 5px 3px; border-radius: 4px; background: #1a2438; color: #8ca0c8; }
-.step-crumb.active { background: linear-gradient(135deg, #2563eb, #3b82f6); color: #fff; font-weight: 600; }
-.step-crumb.done { background: #0f1d33; color: #3b82f6; }
-.wizard-content { flex: 1; overflow: hidden; position: relative; min-height: 0; }
-.slide { display: none; padding: 8px 12px; height: 100%; overflow: hidden; }
-.slide.active { display: flex; flex-direction: column; }
-.wizard-footer { flex-shrink: 0; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #333; background: #12122a; }
-.section-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
-.section-desc { font-size: 10px; color: #b0b0b0; margin-bottom: 6px; }
-.info-box { background: rgba(37, 99, 235, 0.15); border: 1px solid rgba(37, 99, 235, 0.3); border-radius: 5px; padding: 6px; margin-bottom: 6px; }
-.info-box h3 { font-size: 10px; margin-bottom: 4px; color: #3b82f6; }
-.info-box ul { font-size: 9px; color: #b0b0b0; padding-left: 14px; margin: 0; }
-.drive-list { background: #1e1e3a; border: 1px solid #333; border-radius: 5px; max-height: 80px; overflow-y: auto; margin-bottom: 6px; }
-.drive-item { padding: 6px 8px; border-bottom: 1px solid #333; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-.drive-item:last-child { border-bottom: none; }
-.drive-item:hover { background: #2a2a4a; }
-.drive-item.selected { background: rgba(37, 99, 235, 0.3); border-left: 3px solid #3b82f6; }
-.drive-icon { width: 24px; height: 24px; background: linear-gradient(135deg, #2563eb, #3b82f6); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: bold; }
-.drive-info { flex: 1; }
-.drive-name { font-weight: 500; font-size: 11px; }
-.drive-size { font-size: 9px; color: #b0b0b0; }
-.no-drives { padding: 15px; text-align: center; color: #888; font-size: 10px; }
-.btn { padding: 8px 16px; border-radius: 5px; font-weight: 600; cursor: pointer; border: none; font-size: 11px; transition: all 0.2s; }
-.btn-primary { background: linear-gradient(135deg, #2563eb, #3b82f6); color: white; }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 3px 12px rgba(37, 99, 235, 0.4); }
-.btn-primary:disabled { background: #444; cursor: not-allowed; }
-.btn-secondary { background: #2a2a4a; color: #aaa; border: 1px solid #444; }
-.btn-refresh { background: #1e1e3a; color: #3b82f6; padding: 4px 8px; font-size: 9px; }
-.btn-small { padding: 3px 8px; font-size: 9px; }
-.btn-create { background: linear-gradient(135deg, #16a34a, #22c55e); padding: 10px 24px; font-size: 12px; }
-.progress-container { background: #1e1e3a; border-radius: 5px; padding: 12px; text-align: center; }
-.progress-bar-bg { height: 8px; background: #2a2a4a; border-radius: 4px; overflow: hidden; margin: 10px 0; }
-.progress-bar-fill { height: 100%; background: linear-gradient(90deg, #2563eb, #3b82f6, #2563eb); background-size: 200% 100%; width: 0%; transition: width 0.5s; border-radius: 4px; }
-.progress-bar-fill.animated { animation: shimmer 1.5s infinite linear; }
-@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-.progress-percent { font-size: 24px; font-weight: 700; color: #3b82f6; }
-.progress-status { font-size: 11px; color: #aaa; margin-top: 4px; }
-.progress-detail { font-size: 9px; color: #a0a0a0; margin-top: 2px; }
-.progress-stats { display: flex; justify-content: center; gap: 12px; margin-top: 8px; }
-.progress-stat { text-align: center; }
-.progress-stat-value { font-size: 11px; color: #3b82f6; font-weight: 600; }
-.progress-stat-label { font-size: 8px; color: #909090; }
-.success-container { text-align: center; padding: 10px; }
-.success-icon { font-size: 32px; margin-bottom: 8px; color: #10b981; }
-.success-title { font-size: 16px; color: #10b981; margin-bottom: 4px; }
-.success-desc { font-size: 11px; color: #aaa; }
-.success-steps { background: #1e1e3a; border-radius: 5px; padding: 10px; margin-top: 10px; text-align: left; }
-.success-steps h3 { font-size: 11px; margin-bottom: 6px; }
-.success-steps ol { padding-left: 14px; font-size: 10px; color: #aaa; margin: 0; }
-.error-box { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 5px; padding: 8px; color: #f87171; font-size: 11px; }
-.warning-box { background: rgba(37, 99, 235, 0.15); border: 1px solid rgba(37, 99, 235, 0.3); border-radius: 5px; padding: 8px; margin-bottom: 8px; font-size: 10px; }
-.warning-box strong { color: #60a5fa; }
-.sys-req-box { background: #1e1e3a; border: 1px solid #333; border-radius: 5px; padding: 8px; margin-bottom: 8px; }
-.sys-req-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 10px; }
-.sys-req-pass { color: #10b981; }
-.sys-req-warn { color: #3b82f6; }
-.option-group { margin-bottom: 8px; }
-.option-label { font-size: 10px; color: #aaa; margin-bottom: 4px; display: block; }
-.radio-group { display: flex; gap: 12px; }
-.radio-item { display: flex; align-items: center; gap: 4px; font-size: 10px; cursor: pointer; }
-.radio-item input { accent-color: #3b82f6; }
-.checkbox-item { display: flex; align-items: center; gap: 5px; font-size: 10px; cursor: pointer; }
-.checkbox-item input { accent-color: #3b82f6; width: 12px; height: 12px; }
-.edition-badge { display: inline-block; background: linear-gradient(135deg, #2563eb, #3b82f6); padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: 600; }
-.feature-section { margin-bottom: 6px; }
-.feature-section-title { font-size: 10px; color: #3b82f6; margin-bottom: 4px; }
-.core-features { background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 5px; padding: 6px; margin-bottom: 6px; }
-.core-feature-item { display: flex; align-items: center; gap: 5px; padding: 2px 0; font-size: 9px; color: #aaa; }
-.core-feature-item .icon { color: #10b981; font-size: 10px; }
-.optional-features { background: #1e1e3a; border: 1px solid #333; border-radius: 5px; padding: 6px; max-height: 60px; overflow-y: auto; flex: 1; }
-.feature-card { display: flex; align-items: flex-start; gap: 6px; padding: 4px; border-bottom: 1px solid #333; }
-.feature-card:last-child { border-bottom: none; }
-.feature-card:hover { background: rgba(37, 99, 235, 0.1); }
-.feature-card input { accent-color: #3b82f6; width: 12px; height: 12px; }
-.feature-card-content { flex: 1; }
-.feature-card-name { font-size: 10px; font-weight: 500; color: #fff; }
-.feature-card-desc { font-size: 8px; color: #b0b0b0; }
-.feature-actions { display: flex; gap: 4px; margin-bottom: 4px; }
-.feature-count { font-size: 9px; color: #888; margin-top: 4px; }
-.confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-.confirm-item { background: #1e1e3a; border-radius: 5px; padding: 8px; }
-.confirm-label { font-size: 9px; color: #888; margin-bottom: 2px; }
-.confirm-value { font-size: 11px; color: #3b82f6; font-weight: 500; }
-.hidden { display: none !important; }
-</style>
+<title>Aegis OS Media Creation Tool - Workplace Edition</title>
+<HTA:APPLICATION ID="AegisWorkplaceInstaller" APPLICATIONNAME="Aegis OS Workplace Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="3.0" SCROLL="no"/>
 <script language="VBScript">
-Const EDITION = "workplace"
-Const EDITION_NAME = "Workplace"
-Dim selectedDrive, selectedDriveNumber, drives(), driveCount, progressTimer, shell, fso, wmi
-Dim smoothProgress, partitionStyle, quickFormat, sysReqPassed, selectedFeatures, currentStep
+Dim selectedDrive, selectedDriveNumber, drives(), driveCount, progressTimer, shell, fso, wmi, smoothProgress, partitionStyle, currentStep
+Const EDITION = "workplace": Const EDITION_NAME = "Workplace"
 
-Sub Window_OnLoad()
-    window.resizeTo 720, 640
-    Set shell = CreateObject("WScript.Shell"): Set fso = CreateObject("Scripting.FileSystemObject")
-    smoothProgress = 0: partitionStyle = "GPT": quickFormat = True: sysReqPassed = False
-    selectedFeatures = "office,vpn,remote,cloud": currentStep = 1
-    CheckSystemRequirements(): UpdateFooterButtons()
-End Sub
-
-Sub CheckSystemRequirements()
-    Dim ramGB, freeSpaceGB
-    On Error Resume Next
-    Set wmi = GetObject("winmgmts:\\.\root\cimv2"): ramGB = 0: freeSpaceGB = 0
-    For Each mem In wmi.ExecQuery("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem"): ramGB = Round(mem.TotalPhysicalMemory / 1073741824, 1): Next
-    Set drv = fso.GetDrive(fso.GetDriveName(shell.ExpandEnvironmentStrings("%TEMP%")))
-    If Not drv Is Nothing Then freeSpaceGB = Round(drv.FreeSpace / 1073741824, 1)
-    On Error Goto 0
-    Dim html: html = "<div class='sys-req-item'><span class='sys-req-pass'>&#10003;</span> RAM: " & ramGB & " GB</div>"
-    html = html & "<div class='sys-req-item'><span class='" & IIf(freeSpaceGB >= 5, "sys-req-pass", "sys-req-warn") & "'>" & IIf(freeSpaceGB >= 5, "&#10003;", "&#9888;") & "</span> Space: " & freeSpaceGB & " GB</div>"
-    document.getElementById("sysReqContent").innerHTML = html
-    sysReqPassed = (freeSpaceGB >= 5)
-End Sub
-
-Sub ToggleFeature(f): UpdateFeatures(): End Sub
-Sub SelectAllFeatures(): Dim c, i: Set c = document.querySelectorAll(".optional-features input"): For i = 0 To c.length - 1: c(i).checked = True: Next: UpdateFeatures(): End Sub
-Sub DeselectAllFeatures(): Dim c, i: Set c = document.querySelectorAll(".optional-features input"): For i = 0 To c.length - 1: c(i).checked = False: Next: UpdateFeatures(): End Sub
-Sub UpdateFeatures()
-    Dim c, i, s: Set c = document.querySelectorAll(".optional-features input"): s = ""
-    For i = 0 To c.length - 1: If c(i).checked Then: If Len(s) > 0 Then s = s & ",": s = s & Replace(c(i).id, "chk_", ""): End If: Next
-    selectedFeatures = s: UpdateFeatureCount
-End Sub
-Sub UpdateFeatureCount(): Dim f, c, i: f = Split(selectedFeatures, ","): c = 0: For i = 0 To UBound(f): If Len(f(i)) > 0 Then c = c + 1: Next: document.getElementById("featureCount").innerText = "3 core + " & c & " optional": End Sub
-
-Sub RefreshDrives()
-    On Error Resume Next
-    If wmi Is Nothing Then Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    ReDim drives(0): driveCount = 0: Dim html: html = ""
-    For Each disk In wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
-        If disk.Size > 0 And InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
-            ReDim Preserve drives(driveCount): drives(driveCount) = disk.Index
-            html = html & "<div class='drive-item' onclick='SelectDrive(" & driveCount & ")'><div class='drive-icon'>USB</div><div class='drive-info'><div class='drive-name'>" & disk.Model & "</div><div class='drive-size'>" & FormatNumber(disk.Size / 1073741824, 1) & " GB</div></div></div>"
-            driveCount = driveCount + 1
-        End If
-    Next
-    On Error Goto 0
-    If driveCount = 0 Then html = "<div class='no-drives'>No USB drives. Click Refresh.</div>"
-    document.getElementById("driveList").innerHTML = html: selectedDrive = "": selectedDriveNumber = -1: UpdateFooterButtons()
-End Sub
-
-Sub SelectDrive(index)
-    Dim items, i: Set items = document.getElementsByClassName("drive-item")
-    For i = 0 To items.length - 1: items(i).className = "drive-item": Next
-    items(index).className = "drive-item selected": selectedDriveNumber = drives(index)
-    selectedDrive = items(index).getElementsByClassName("drive-name")(0).innerText: UpdateFooterButtons()
-End Sub
-
-Sub SetPartitionStyle(s): partitionStyle = s: End Sub
-Sub SetQuickFormat(): quickFormat = document.getElementById("chkQuickFormat").checked: End Sub
-
-Sub GoToStep(n)
-    currentStep = n: Dim s, i: Set s = document.getElementsByClassName("slide")
-    For i = 0 To s.length - 1: s(i).className = "slide": Next: document.getElementById("step" & n).className = "slide active"
-    Set s = document.getElementsByClassName("step-crumb")
-    For i = 0 To s.length - 1: If i + 1 < n Then s(i).className = "step-crumb done" ElseIf i + 1 = n Then s(i).className = "step-crumb active" Else s(i).className = "step-crumb": Next
-    If n = 2 Then RefreshDrives(): document.getElementById("editionDisplay").innerHTML = "<span class='edition-badge'>" & EDITION_NAME & "</span>"
-    If n = 3 Then document.getElementById("confirmDrive").innerText = selectedDrive: document.getElementById("confirmEdition").innerHTML = "<span class='edition-badge'>" & EDITION_NAME & "</span>": document.getElementById("confirmPartStyle").innerText = partitionStyle: document.getElementById("confirmFeatures").innerText = GetFeatureCountText()
-    If n = 4 Then document.getElementById("progressBar").style.width = "0%": document.getElementById("progressPercent").innerText = "0%": smoothProgress = 0
-    UpdateFooterButtons()
-End Sub
-
-Sub UpdateFooterButtons()
-    Dim b, n: Set b = document.getElementById("btnBack"): Set n = document.getElementById("btnNext")
-    If currentStep = 1 Then b.className = "btn btn-secondary hidden": n.innerText = "Next": n.disabled = False
-    ElseIf currentStep = 2 Then b.className = "btn btn-secondary": n.innerText = "Next": n.disabled = (selectedDriveNumber < 0)
-    ElseIf currentStep = 3 Then b.className = "btn btn-secondary": n.innerText = "Create USB": n.className = "btn btn-primary btn-create": n.disabled = False
-    ElseIf currentStep = 4 Then b.className = "btn btn-secondary hidden": n.innerText = "Creating...": n.disabled = True
-    ElseIf currentStep = 5 Then b.className = "btn btn-secondary hidden": n.innerText = "Close": n.disabled = False
-    End If
-End Sub
-
-Function GetFeatureCountText(): Dim f, c, i: f = Split(selectedFeatures, ","): c = 0: For i = 0 To UBound(f): If Len(f(i)) > 0 Then c = c + 1: Next: GetFeatureCountText = "3 core + " & c & " optional": End Function
-Function IIf(c, t, f): If c Then IIf = t Else IIf = f: End Function
-Sub OnBackClick(): If currentStep > 1 And currentStep < 4 Then GoToStep(currentStep - 1): End Sub
-Sub OnNextClick(): If currentStep = 1 Then GoToStep(2) ElseIf currentStep = 2 And selectedDriveNumber >= 0 Then GoToStep(3) ElseIf currentStep = 3 Then StartCreation() ElseIf currentStep = 5 Then window.close(): End Sub
-Sub StartCreation(): GoToStep(4): CreateUSB(): End Sub
-
-Sub CreateUSB()
-    Dim tempDir, psFile, progressFile, ts
-    tempDir = shell.ExpandEnvironmentStrings("%TEMP%"): psFile = tempDir & "\aegis_creator.ps1": progressFile = tempDir & "\aegis_progress.txt"
-    If fso.FileExists(progressFile) Then fso.DeleteFile progressFile
-    Set ts = fso.CreateTextFile(psFile, True): ts.Write GetPowerShellCode(): ts.Close
-    progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
-    shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -Edition """ & EDITION_NAME & """ -ProgressFile """ & progressFile & """", 0, False
-End Sub
-
-Function GetPowerShellCode()
-    Dim c: c = "param([int]$DiskNumber, [string]$Edition, [string]$ProgressFile)" & vbCrLf
-    c = c & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
-    c = c & "try { Write-P 0 'Initializing...' ""$Edition""" & vbCrLf
-    c = c & "$disk = Get-Disk -Number $DiskNumber; if ($disk.IsSystem) { Write-P -1 'SYSTEM_DRIVE'; exit 1 }" & vbCrLf
-    c = c & "$tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null" & vbCrLf
-    c = c & "$isoPath = ""$tempDir\base.iso""; $isoUrl = 'https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso'" & vbCrLf
-    c = c & "Write-P 5 'Downloading...' ""Aegis OS $Edition""" & vbCrLf
-    c = c & "$webRequest = [System.Net.HttpWebRequest]::Create($isoUrl); $response = $webRequest.GetResponse(); $totalBytes = $response.ContentLength" & vbCrLf
-    c = c & "$responseStream = $response.GetResponseStream(); $fileStream = [System.IO.File]::Create($isoPath)" & vbCrLf
-    c = c & "$buffer = New-Object byte[] 8MB; $downloadedBytes = 0; $lastTime = Get-Date" & vbCrLf
-    c = c & "while (($bytesRead = $responseStream.Read($buffer, 0, $buffer.Length)) -gt 0) {" & vbCrLf
-    c = c & "  $fileStream.Write($buffer, 0, $bytesRead); $downloadedBytes += $bytesRead; $pct = [int](($downloadedBytes / $totalBytes) * 100)" & vbCrLf
-    c = c & "  if ((Get-Date) - $lastTime).TotalSeconds -ge 1) { Write-P (8 + [int]($pct * 0.40)) 'Downloading...' ""$pct%""; $lastTime = Get-Date }}" & vbCrLf
-    c = c & "$fileStream.Close(); $responseStream.Close()" & vbCrLf
-    c = c & "Write-P 50 'Verifying...' 'SHA256'" & vbCrLf
-    c = c & "Write-P 54 'Preparing USB...' ''; $dp = ""select disk $DiskNumber`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp.txt"" | Out-Null" & vbCrLf
-    c = c & "Write-P 56 'Writing...' 'Do not remove!'; $phys = '\\.\PhysicalDrive' + $DiskNumber; Start-Sleep -Seconds 2" & vbCrLf
-    c = c & "$src = [IO.File]::OpenRead($isoPath); $dst = New-Object IO.FileStream($phys, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None, 4MB)" & vbCrLf
-    c = c & "$buf = New-Object byte[] 4MB; $written = 0; $total = $src.Length; $lastUpdate = Get-Date" & vbCrLf
-    c = c & "while (($read = $src.Read($buf, 0, $buf.Length)) -gt 0) { $dst.Write($buf, 0, $read); $written += $read; $pct = [int](($written / $total) * 100)" & vbCrLf
-    c = c & "  if ((Get-Date) - $lastUpdate).TotalSeconds -ge 1) { Write-P (56 + [int]($pct * 0.40)) 'Writing...' ""$pct%""; $lastUpdate = Get-Date }}" & vbCrLf
-    c = c & "$dst.Close(); $src.Close()" & vbCrLf
-    c = c & "$dp2 = ""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp2.txt"" | Out-Null" & vbCrLf
-    c = c & "Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue" & vbCrLf
-    c = c & "Write-P 100 ""SUCCESS! Aegis OS $Edition ready!"" 'Safe to remove.'" & vbCrLf
-    c = c & "} catch { Write-P -1 $_.Exception.Message; exit 1 }" & vbCrLf
-    GetPowerShellCode = c
-End Function
-
-Sub CheckProgress()
-    On Error Resume Next
-    Dim progressFile, ts, line, parts, pct
-    progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
-    If fso.FileExists(progressFile) Then
-        Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close
-        parts = Split(line, "|"): If IsNumeric(parts(0)) Then pct = CInt(parts(0)) Else pct = 0
-        If pct = -1 Then window.clearInterval progressTimer: ShowError parts(1), ""
-        ElseIf pct = 100 Then window.clearInterval progressTimer: UpdateProgress 100, parts(1), "": window.setTimeout GetRef("GoToStepFive"), 1500
-        Else If pct > smoothProgress Then smoothProgress = smoothProgress + 2: If smoothProgress > pct Then smoothProgress = pct: UpdateProgress smoothProgress, parts(1), IIf(UBound(parts) >= 2, parts(2), "")
-    End If
-    On Error Goto 0
-End Sub
-
-Sub GoToStepFive(): GoToStep(5): End Sub
-Sub UpdateProgress(pct, status, detail): document.getElementById("progressBar").style.width = pct & "%": document.getElementById("progressPercent").innerText = pct & "%": document.getElementById("progressStatus").innerText = status: document.getElementById("progressDetail").innerText = detail: End Sub
-Sub ShowError(msg, detail): document.getElementById("progressContainer").innerHTML = "<div style='font-size:32px;color:#ef4444'>&#10060;</div><div style='color:#ef4444;margin:8px'>Error</div><div class='error-box'>" & msg & "</div>": currentStep = 1: UpdateFooterButtons(): End Sub
+Function IsAdmin(): On Error Resume Next: IsAdmin = (CreateObject("WScript.Shell").Run("net session", 0, True) = 0): On Error Goto 0: End Function
+Sub RestartAsAdmin(): Dim shellApp, htaPath: Set shellApp = CreateObject("Shell.Application"): htaPath = document.location.pathname: If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2): htaPath = Replace(htaPath, "%20", " "): shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1: window.close: End Sub
+Sub Window_OnLoad(): If Not IsAdmin() Then If MsgBox("Administrator privileges required." & vbCrLf & vbCrLf & "Restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then RestartAsAdmin: Exit Sub Else document.getElementById("adminNotice").style.display = "": window.resizeTo 720, 500: Set shell = CreateObject("WScript.Shell"): Set fso = CreateObject("Scripting.FileSystemObject"): smoothProgress = 0: partitionStyle = "GPT": currentStep = 1: CheckSystemRequirements: UpdateStepIndicator: UpdateButtons: End Sub
+Sub CheckSystemRequirements(): Dim ramGB, freeSpaceGB, osVer, html: On Error Resume Next: Set wmi = GetObject("winmgmts:\\.\root\cimv2"): ramGB = 0: freeSpaceGB = 0: osVer = "": For Each mem In wmi.ExecQuery("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem"): ramGB = Round(mem.TotalPhysicalMemory / 1073741824, 1): Next: For Each os In wmi.ExecQuery("SELECT Caption FROM Win32_OperatingSystem"): osVer = os.Caption: Next: Set drv = fso.GetDrive(fso.GetDriveName(shell.ExpandEnvironmentStrings("%TEMP%"))): If Not drv Is Nothing Then freeSpaceGB = Round(drv.FreeSpace / 1073741824, 1): On Error Goto 0: document.getElementById("sysReqContent").innerHTML = "<tr><td>RAM:</td><td><b>" & ramGB & " GB</b></td></tr><tr><td>Free Space:</td><td><b>" & freeSpaceGB & " GB</b></td></tr><tr><td>Windows:</td><td><b>" & osVer & "</b></td></tr>": End Sub
+Sub RefreshDrives(): Dim diskDrives, disk, html, sizeGB, modelName: On Error Resume Next: If wmi Is Nothing Then Set wmi = GetObject("winmgmts:\\.\root\cimv2"): Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'"): ReDim drives(0): driveCount = 0: html = "": For Each disk In diskDrives: If disk.Size > 0 And InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then sizeGB = FormatNumber(disk.Size / 1073741824, 1): modelName = disk.Model: If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive": ReDim Preserve drives(driveCount): drives(driveCount) = disk.Index: html = html & "<tr id=""drive" & driveCount & """ onclick=""SelectDrive(" & driveCount & ")"" style=""cursor:pointer;""><td style=""padding:8px;border-bottom:1px solid #D4D0C8;""><b>" & modelName & "</b></td><td style=""padding:8px;border-bottom:1px solid #D4D0C8;"" align=""center"">" & sizeGB & " GB</td><td style=""padding:8px;border-bottom:1px solid #D4D0C8;"" align=""center"">Disk " & disk.Index & "</td></tr>": driveCount = driveCount + 1: End If: Next: On Error Goto 0: If driveCount = 0 Then html = "<tr><td colspan=""3"" align=""center"" style=""padding:20px;color:#808080;"">No USB drives detected.</td></tr>": document.getElementById("driveList").innerHTML = html: selectedDrive = "": selectedDriveNumber = -1: UpdateButtons: End Sub
+Sub SelectDrive(index): Dim i, row: On Error Resume Next: For i = 0 To driveCount - 1: Set row = document.getElementById("drive" & i): If Not row Is Nothing Then row.style.backgroundColor = "": Next: Set row = document.getElementById("drive" & index): If Not row Is Nothing Then row.style.backgroundColor = "#D8E8F8": selectedDriveNumber = drives(index): selectedDrive = row.cells(0).innerText: UpdateButtons: On Error Goto 0: End Sub
+Sub SetPartitionStyle(style): partitionStyle = style: End Sub
+Sub ShowStep(stepNum): Dim i: On Error Resume Next: For i = 1 To 5: document.getElementById("step" & i).style.display = "none": Next: document.getElementById("step" & stepNum).style.display = "": currentStep = stepNum: If stepNum = 2 Then RefreshDrives: If stepNum = 3 Then document.getElementById("confirmDrive").innerText = selectedDrive: document.getElementById("confirmPartStyle").innerText = partitionStyle: If stepNum = 4 Then document.getElementById("progressBar").style.width = "0%": document.getElementById("progressPercent").innerText = "0%": document.getElementById("progressStatus").innerText = "Starting...": smoothProgress = 0: UpdateStepIndicator: UpdateButtons: On Error Goto 0: End Sub
+Sub UpdateStepIndicator(): document.getElementById("stepIndicator").innerText = "Step " & currentStep & " of 5: " & Array("Welcome", "USB Drive", "Confirm", "Creating", "Done")(currentStep - 1): End Sub
+Sub UpdateButtons(): On Error Resume Next: document.getElementById("btnBack").disabled = (currentStep = 1 Or currentStep = 4 Or currentStep = 5): If currentStep = 3 Then document.getElementById("btnNext").value = "Create USB" ElseIf currentStep = 5 Then document.getElementById("btnNext").value = "Close" Else document.getElementById("btnNext").value = "Next >": document.getElementById("btnNext").disabled = (currentStep = 2 And selectedDriveNumber < 0) Or currentStep = 4: On Error Goto 0: End Sub
+Sub GoBack(): If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1): End Sub
+Sub GoNext(): If currentStep = 1 Then ShowStep 2 ElseIf currentStep = 2 And selectedDriveNumber >= 0 Then ShowStep 3 ElseIf currentStep = 3 Then ShowStep 4: CreateUSB ElseIf currentStep = 5 Then window.close: End Sub
+Sub CreateUSB(): Dim tempDir, psFile, progressFile, psCode, ts: tempDir = shell.ExpandEnvironmentStrings("%TEMP%"): psFile = tempDir & "\aegis_creator.ps1": progressFile = tempDir & "\aegis_progress.txt": If fso.FileExists(progressFile) Then fso.DeleteFile progressFile: psCode = GetPowerShellCode(): Set ts = fso.CreateTextFile(psFile, True): ts.Write psCode: ts.Close: progressTimer = window.setInterval(GetRef("CheckProgress"), 500): shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -PartitionStyle """ & partitionStyle & """ -ProgressFile """ & progressFile & """", 0, False: End Sub
+Function GetPowerShellCode(): Dim code: code = "param([int]$DiskNumber, [string]$PartitionStyle, [string]$ProgressFile)" & vbCrLf & "$ErrorActionPreference = 'Stop'" & vbCrLf & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf & "function Write-ISOToUSB { param([string]$IsoPath, [string]$UsbPath); $bs=4MB; $is=[IO.File]::OpenRead($IsoPath); $tb=$is.Length; $us=New-Object IO.FileStream($UsbPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,$bs); $bf=New-Object byte[] $bs; $bw=0; $lu=Get-Date; while(($br=$is.Read($bf,0,$bf.Length)) -gt 0){$us.Write($bf,0,$br);$us.Flush();$bw+=$br;if(((Get-Date)-$lu).TotalSeconds -ge 1){$p=[int](($bw/$tb)*100);Write-P (56+[int]($p*0.40)) ""Writing: $p%"";$lu=Get-Date}};$is.Close();$us.Close();return $true }" & vbCrLf & "try { Write-P 0 'Initializing...' 'Aegis OS Workplace'; $disk = Get-Disk -Number $DiskNumber; if ($disk.IsSystem -or $disk.IsBoot) { Write-P -1 'SYSTEM_DRIVE'; exit 1 }; Write-P 3 'USB validated' ''; $tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null; $isoPath = ""$tempDir\base.iso""; $mirrors = @('https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso','https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'); $expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'; Write-P 5 'Downloading...' 'Aegis OS Workplace (~2.9 GB)'; foreach ($url in $mirrors) { try { $web=[Net.HttpWebRequest]::Create($url);$web.UserAgent='AegisOS/3.0';$resp=$web.GetResponse();$total=$resp.ContentLength;$rs=$resp.GetResponseStream();$fs=[IO.File]::Create($isoPath);$buf=New-Object byte[] 8MB;$dl=0;$lt=Get-Date;while(($br=$rs.Read($buf,0,$buf.Length)) -gt 0){$fs.Write($buf,0,$br);$dl+=$br;if(((Get-Date)-$lt).TotalSeconds -ge 1){$p=[int](($dl/$total)*100);Write-P (8+[int]($p*0.40)) ""Downloading: $p%"";$lt=Get-Date}};$fs.Close();$rs.Close();break } catch { continue }}; if (-not (Test-Path $isoPath)) { Write-P -1 'DOWNLOAD_FAILED'; exit 1 }; Write-P 50 'Verifying...' 'SHA256'; $hash=(Get-FileHash $isoPath -Algorithm SHA256).Hash; if ($hash -ne $expectedHash) { Write-P -1 'CHECKSUM_FAILED'; exit 1 }; Write-P 54 'Preparing USB...' ''; $dp=""select disk $DiskNumber`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp.txt"" | Out-Null; Write-P 56 'Writing...' 'Do not remove USB!'; Start-Sleep 2; Write-ISOToUSB $isoPath ""\\.\PhysicalDrive$DiskNumber"" | Out-Null; Write-P 97 'Finishing...' ''; $dp2=""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp2.txt"" | Out-Null; Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue; Write-P 100 'SUCCESS!' 'Safe to remove USB.' } catch { Write-P -1 $_.Exception.Message; exit 1 }" & vbCrLf: GetPowerShellCode = code: End Function
+Sub CheckProgress(): Dim progressFile, ts, line, parts, pct, status, detail: On Error Resume Next: progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt": If fso.FileExists(progressFile) Then Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close: parts = Split(line, "|"): pct = CInt(parts(0)): status = "": detail = "": If UBound(parts) >= 1 Then status = parts(1): If UBound(parts) >= 2 Then detail = parts(2): If pct = -1 Then window.clearInterval progressTimer: ShowError status, detail ElseIf pct = 100 Then window.clearInterval progressTimer: UpdateProgress 100, status, detail: window.setTimeout GetRef("GoToStepFive"), 1500 Else UpdateProgress pct, status, detail: On Error Goto 0: End Sub
+Sub GoToStepFive(): ShowStep 5: End Sub
+Sub UpdateProgress(pct, status, detail): document.getElementById("progressBar").style.width = pct & "%": document.getElementById("progressPercent").innerText = pct & "%": document.getElementById("progressStatus").innerText = status: If Len(detail) > 0 Then document.getElementById("progressDetail").innerText = detail: End Sub
+Sub ShowError(msg, detail): document.getElementById("progressContainer").innerHTML = "<table width=""100%"" cellpadding=""10"" bgcolor=""#FFF0F0"" style=""border:2px solid #CC0000;""><tr><td align=""center""><font size=""4"" color=""#CC0000""><b>Error</b></font><br><br>" & msg & "</td></tr></table>": currentStep = 1: UpdateButtons: document.getElementById("btnBack").disabled = False: document.getElementById("btnBack").value = "Try Again": End Sub
 </script>
 </head>
-<body>
-<div class="wizard">
-    <div class="wizard-header">
-        <svg class="logo-svg shield-animate" viewBox="0 0 48 48" fill="none"><path d="M24 4L6 12v12c0 11 8 17 18 20 10-3 18-9 18-20V12L24 4z" fill="url(#sg)" stroke="#3b82f6" stroke-width="2"/><path d="M17 24l5 5 9-10" stroke="#fff" stroke-width="3" stroke-linecap="round"/><defs><linearGradient id="sg" x1="6" y1="4" x2="42" y2="44"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs></svg>
-        <div class="header-text"><h1>Aegis OS Workplace Edition</h1><p>Business and productivity platform</p></div>
-    </div>
-    <div class="wizard-breadcrumb"><div class="step-crumb active">1. Features</div><div class="step-crumb">2. USB Drive</div><div class="step-crumb">3. Confirm</div><div class="step-crumb">4. Creating</div><div class="step-crumb">5. Done</div></div>
-    <div class="wizard-content">
-        <div id="step1" class="slide active">
-            <div class="section-title">Select Features <span class="edition-badge">Workplace</span></div>
-            <div class="section-desc">Business productivity tools included.</div>
-            <div class="sys-req-box"><div style="font-size:9px;color:#3b82f6;margin-bottom:4px;font-weight:600">System Check</div><div id="sysReqContent" style="display:flex;gap:12px;">Checking...</div></div>
-            <div class="feature-section"><div class="feature-section-title">Core Features</div><div class="core-features"><div class="core-feature-item"><span class="icon">&#10003;</span> Aegis OS Base</div><div class="core-feature-item"><span class="icon">&#10003;</span> Security Hardened</div><div class="core-feature-item"><span class="icon">&#10003;</span> Office Ready</div></div></div>
-            <div class="feature-section" style="flex:1;display:flex;flex-direction:column;"><div class="feature-section-title">Workplace Features</div><div class="feature-actions"><button class="btn btn-secondary btn-small" onclick="SelectAllFeatures()">All</button><button class="btn btn-secondary btn-small" onclick="DeselectAllFeatures()">None</button></div>
-                <div class="optional-features">
-                    <div class="feature-card"><input type="checkbox" id="chk_office" checked onclick="ToggleFeature('office')"><div class="feature-card-content"><div class="feature-card-name">Office Suite</div><div class="feature-card-desc">LibreOffice with templates</div></div></div>
-                    <div class="feature-card"><input type="checkbox" id="chk_vpn" checked onclick="ToggleFeature('vpn')"><div class="feature-card-content"><div class="feature-card-name">VPN Client</div><div class="feature-card-desc">Secure remote access</div></div></div>
-                    <div class="feature-card"><input type="checkbox" id="chk_remote" checked onclick="ToggleFeature('remote')"><div class="feature-card-content"><div class="feature-card-name">Remote Desktop</div><div class="feature-card-desc">RDP/VNC client</div></div></div>
-                    <div class="feature-card"><input type="checkbox" id="chk_cloud" checked onclick="ToggleFeature('cloud')"><div class="feature-card-content"><div class="feature-card-name">Cloud Sync</div><div class="feature-card-desc">OneDrive, Google Drive</div></div></div>
-                </div>
-                <div id="featureCount" class="feature-count">3 core + 4 optional</div>
-            </div>
-        </div>
-        <div id="step2" class="slide">
-            <div class="section-title">Select USB Drive</div><div class="section-desc">Installing: <span id="editionDisplay">-</span></div>
-            <div class="warning-box"><strong>&#9888; Warning:</strong> All data will be erased.</div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-size:10px;color:#aaa;">USB Drives:</span><button class="btn btn-refresh" onclick="RefreshDrives()">&#8635; Refresh</button></div>
-            <div id="driveList" class="drive-list"><div class="no-drives">Click Refresh.</div></div>
-            <div class="option-group"><span class="option-label">Partition Style:</span><div class="radio-group"><label class="radio-item"><input type="radio" name="ps" checked onclick="SetPartitionStyle('GPT')"> GPT</label><label class="radio-item"><input type="radio" name="ps" onclick="SetPartitionStyle('MBR')"> MBR</label></div></div>
-            <label class="checkbox-item"><input type="checkbox" id="chkQuickFormat" checked onclick="SetQuickFormat()"> Quick Format</label>
-        </div>
-        <div id="step3" class="slide">
-            <div class="section-title">Confirm Settings</div>
-            <div class="warning-box"><strong>&#9888; Final Warning:</strong> All data will be erased!</div>
-            <div class="confirm-grid"><div class="confirm-item"><div class="confirm-label">Target Drive</div><div class="confirm-value" id="confirmDrive">-</div></div><div class="confirm-item"><div class="confirm-label">Edition</div><div class="confirm-value" id="confirmEdition">-</div></div><div class="confirm-item"><div class="confirm-label">Partition</div><div class="confirm-value" id="confirmPartStyle">GPT</div></div><div class="confirm-item"><div class="confirm-label">Features</div><div class="confirm-value" id="confirmFeatures">-</div></div></div>
-            <div class="info-box"><h3>What happens:</h3><ul><li>Download (~2.9 GB)</li><li>Verify SHA256</li><li>Write to USB</li><li>~15-30 min</li></ul></div>
-        </div>
-        <div id="step4" class="slide">
-            <div class="section-title">Creating USB</div><div class="section-desc">Do not remove USB.</div>
-            <div id="progressContainer" class="progress-container"><div class="progress-percent" id="progressPercent">0%</div><div class="progress-bar-bg"><div class="progress-bar-fill animated" id="progressBar"></div></div><div class="progress-status" id="progressStatus">Starting...</div><div class="progress-detail" id="progressDetail"></div></div>
-        </div>
-        <div id="step5" class="slide">
-            <div class="success-container"><div class="success-icon">&#10004;</div><div class="success-title">USB Created!</div><div class="success-desc">Aegis OS Workplace ready.</div><div class="success-steps"><h3>Next Steps:</h3><ol><li>Eject USB</li><li>Boot from USB</li><li>Install Aegis OS</li></ol></div></div>
-        </div>
-    </div>
-    <div class="wizard-footer"><button id="btnBack" class="btn btn-secondary hidden" onclick="OnBackClick()">Back</button><button id="btnNext" class="btn btn-primary" onclick="OnNextClick()">Next</button></div>
-</div>
+<body bgcolor="#ECE9D8" style="margin:0;padding:0;font-family:Tahoma,Arial,sans-serif;font-size:12px;">
+<table width="100%" height="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr><td height="50" bgcolor="#336699" style="padding:10px 15px;color:white;"><font size="4"><b>Aegis OS Media Creation Tool</b></font><br><font size="2">Workplace Edition</font></td></tr>
+    <tr><td height="28" bgcolor="#D4D0C8" style="padding:5px 15px;border-bottom:1px solid #808080;"><span id="stepIndicator">Step 1 of 5: Welcome</span></td></tr>
+    <tr><td valign="top" style="padding:15px;">
+        <div id="step1"><table id="adminNotice" width="100%" cellpadding="8" bgcolor="#FFFACD" style="display:none;border:1px solid #CC6600;margin-bottom:10px;"><tr><td><font color="#CC6600"><b>Note:</b> Run as Administrator.</font></td></tr></table><font size="3"><b>Welcome to Aegis OS Workplace</b></font><br><br><table width="100%" cellpadding="8" bgcolor="#E8F0F8" style="border:1px solid #336699;"><tr><td><b>Workplace Features:</b><br><br>&#10003; Office Suite Integration<br>&#10003; VPN Client<br>&#10003; Remote Desktop<br>&#10003; Cloud Sync<br>&#10003; Document Management<br>&#10003; Team Collaboration</td></tr></table><br><table width="100%" cellpadding="5" bgcolor="#F5F5F5" style="border:1px solid #808080;"><tr bgcolor="#D4D0C8"><td colspan="2"><b>System Check</b></td></tr><tbody id="sysReqContent"><tr><td colspan="2">Checking...</td></tr></tbody></table></div>
+        <div id="step2" style="display:none;"><font size="3"><b>Select USB Drive</b></font><br><font color="#808080">All data will be erased.</font><br><br><table width="100%" bgcolor="#FFFFFF" style="border:1px solid #808080;"><tr bgcolor="#D4D0C8"><td style="padding:8px;"><b>Drive</b></td><td style="padding:8px;" align="center" width="80"><b>Size</b></td><td style="padding:8px;" align="center" width="80"><b>Disk #</b></td></tr><tbody id="driveList"><tr><td colspan="3" align="center" style="padding:20px;color:#808080;">Click Refresh</td></tr></tbody></table><br><input type="button" value="Refresh" onclick="RefreshDrives()" style="width:100px;height:26px;"><br><br><table width="100%" cellpadding="5" bgcolor="#F5F5F5" style="border:1px solid #808080;"><tr bgcolor="#D4D0C8"><td colspan="2"><b>Options</b></td></tr><tr><td width="120">Partition:</td><td><input type="radio" name="ps" checked onclick="SetPartitionStyle('GPT')"> GPT &nbsp;<input type="radio" name="ps" onclick="SetPartitionStyle('MBR')"> MBR</td></tr></table><br><table width="100%" cellpadding="8" bgcolor="#FFF0F0" style="border:1px solid #CC0000;"><tr><td><font color="#CC0000"><b>Warning:</b> All data will be erased!</font></td></tr></table></div>
+        <div id="step3" style="display:none;"><font size="3"><b>Confirm Settings</b></font><br><br><table width="100%" cellpadding="8" bgcolor="#F5F5F5" style="border:1px solid #808080;"><tr bgcolor="#D4D0C8"><td colspan="2"><b>Summary</b></td></tr><tr><td width="140">Edition:</td><td><b>Aegis OS Workplace</b></td></tr><tr><td>USB Drive:</td><td><b><span id="confirmDrive">-</span></b></td></tr><tr><td>Partition:</td><td><b><span id="confirmPartStyle">GPT</span></b></td></tr></table><br><table width="100%" cellpadding="8" bgcolor="#E8F5FF" style="border:1px solid #0066CC;"><tr><td><font color="#0066CC"><b>Ready!</b></font> Click Create USB to begin.</td></tr></table></div>
+        <div id="step4" style="display:none;"><font size="3"><b>Creating USB</b></font><br><br><div id="progressContainer"><table width="100%" cellpadding="10" bgcolor="#F5F5F5" style="border:1px solid #808080;"><tr><td align="center"><font size="5"><b><span id="progressPercent">0%</span></b></font><br><br><table width="90%" height="20" bgcolor="#D4D0C8" style="border:1px solid #808080;"><tr><td><div id="progressBar" style="width:0%;height:18px;background:#336699;"></div></td></tr></table><br><span id="progressStatus">Starting...</span><br><font color="#808080"><span id="progressDetail"></span></font></td></tr></table></div><br><table width="100%" cellpadding="8" bgcolor="#FFFACD" style="border:1px solid #CC6600;"><tr><td><font color="#CC6600"><b>Do not remove USB!</b></font></td></tr></table></div>
+        <div id="step5" style="display:none;"><table width="100%" cellpadding="15" bgcolor="#E8F5E8" style="border:2px solid #228B22;"><tr><td align="center"><font size="5" color="#228B22"><b>&#10004; Success!</b></font><br><br><font size="3"><b>Aegis OS Workplace Ready</b></font></td></tr></table><br><table width="100%" cellpadding="8" bgcolor="#F5F5F5" style="border:1px solid #808080;"><tr bgcolor="#D4D0C8"><td><b>Next Steps:</b></td></tr><tr><td><ol><li>Remove USB safely</li><li>Insert into target PC</li><li>Boot from USB</li><li>Follow installer</li></ol></td></tr></table></div>
+    </td></tr>
+    <tr><td height="50" bgcolor="#D4D0C8" style="padding:10px 15px;border-top:1px solid #808080;" align="right"><input type="button" id="btnBack" value="< Back" style="width:85px;height:28px;" onclick="GoBack()" disabled><input type="button" id="btnNext" value="Next >" style="width:100px;height:28px;margin-left:8px;font-weight:bold;" onclick="GoNext()"><input type="button" value="Cancel" style="width:85px;height:28px;margin-left:20px;" onclick="window.close()"></td></tr>
+</table>
 </body>
 </html>
