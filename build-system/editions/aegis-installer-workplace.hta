@@ -15,12 +15,52 @@ Sub SelectDrive(index): Dim i, row: On Error Resume Next: For i = 0 To driveCoun
 Sub SetPartitionStyle(style): partitionStyle = style: End Sub
 Sub ShowStep(stepNum): Dim i: On Error Resume Next: For i = 1 To 5: document.getElementById("step" & i).style.display = "none": Next: document.getElementById("step" & stepNum).style.display = "": currentStep = stepNum: If stepNum = 2 Then RefreshDrives: If stepNum = 3 Then document.getElementById("confirmDrive").innerText = selectedDrive: document.getElementById("confirmPartStyle").innerText = partitionStyle: If stepNum = 4 Then document.getElementById("progressBar").style.width = "0%": document.getElementById("progressPercent").innerText = "0%": document.getElementById("progressStatus").innerText = "Starting...": smoothProgress = 0: UpdateStepIndicator: UpdateButtons: On Error Goto 0: End Sub
 Sub UpdateStepIndicator(): document.getElementById("stepIndicator").innerText = "Step " & currentStep & " of 5: " & Array("Welcome", "USB Drive", "Confirm", "Creating", "Done")(currentStep - 1): End Sub
-Sub UpdateButtons(): On Error Resume Next: document.getElementById("btnBack").disabled = (currentStep = 1 Or currentStep = 4 Or currentStep = 5): If currentStep = 3 Then document.getElementById("btnNext").value = "Create USB" ElseIf currentStep = 5 Then document.getElementById("btnNext").value = "Close" Else document.getElementById("btnNext").value = "Next >": document.getElementById("btnNext").disabled = (currentStep = 2 And selectedDriveNumber < 0) Or currentStep = 4: On Error Goto 0: End Sub
-Sub GoBack(): If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1): End Sub
-Sub GoNext(): If currentStep = 1 Then ShowStep 2 ElseIf currentStep = 2 And selectedDriveNumber >= 0 Then ShowStep 3 ElseIf currentStep = 3 Then ShowStep 4: CreateUSB ElseIf currentStep = 5 Then window.close: End Sub
+Sub UpdateButtons()
+    On Error Resume Next
+    document.getElementById("btnBack").disabled = (currentStep = 1 Or currentStep = 4 Or currentStep = 5)
+    Select Case currentStep
+        Case 3: document.getElementById("btnNext").value = "Create USB"
+        Case 5: document.getElementById("btnNext").value = "Close"
+        Case Else: document.getElementById("btnNext").value = "Next >"
+    End Select
+    document.getElementById("btnNext").disabled = (currentStep = 2 And selectedDriveNumber < 0) Or currentStep = 4
+    On Error Goto 0
+End Sub
+
+Sub GoBack()
+    If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1)
+End Sub
+
+Sub GoNext()
+    Select Case currentStep
+        Case 1: ShowStep 2
+        Case 2: If selectedDriveNumber >= 0 Then ShowStep 3
+        Case 3: ShowStep 4: CreateUSB
+        Case 5: window.close
+    End Select
+End Sub
 Sub CreateUSB(): Dim tempDir, psFile, progressFile, psCode, ts: tempDir = shell.ExpandEnvironmentStrings("%TEMP%"): psFile = tempDir & "\aegis_creator.ps1": progressFile = tempDir & "\aegis_progress.txt": If fso.FileExists(progressFile) Then fso.DeleteFile progressFile: psCode = GetPowerShellCode(): Set ts = fso.CreateTextFile(psFile, True): ts.Write psCode: ts.Close: progressTimer = window.setInterval(GetRef("CheckProgress"), 500): shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -PartitionStyle """ & partitionStyle & """ -ProgressFile """ & progressFile & """", 0, False: End Sub
 Function GetPowerShellCode(): Dim code: code = "param([int]$DiskNumber, [string]$PartitionStyle, [string]$ProgressFile)" & vbCrLf & "$ErrorActionPreference = 'Stop'" & vbCrLf & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf & "function Write-ISOToUSB { param([string]$IsoPath, [string]$UsbPath); $bs=4MB; $is=[IO.File]::OpenRead($IsoPath); $tb=$is.Length; $us=New-Object IO.FileStream($UsbPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,$bs); $bf=New-Object byte[] $bs; $bw=0; $lu=Get-Date; while(($br=$is.Read($bf,0,$bf.Length)) -gt 0){$us.Write($bf,0,$br);$us.Flush();$bw+=$br;if(((Get-Date)-$lu).TotalSeconds -ge 1){$p=[int](($bw/$tb)*100);Write-P (56+[int]($p*0.40)) ""Writing: $p%"";$lu=Get-Date}};$is.Close();$us.Close();return $true }" & vbCrLf & "try { Write-P 0 'Initializing...' 'Aegis OS Workplace'; $disk = Get-Disk -Number $DiskNumber; if ($disk.IsSystem -or $disk.IsBoot) { Write-P -1 'SYSTEM_DRIVE'; exit 1 }; Write-P 3 'USB validated' ''; $tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null; $isoPath = ""$tempDir\base.iso""; $mirrors = @('https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso','https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso'); $expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'; Write-P 5 'Downloading...' 'Aegis OS Workplace (~2.9 GB)'; foreach ($url in $mirrors) { try { $web=[Net.HttpWebRequest]::Create($url);$web.UserAgent='AegisOS/3.0';$resp=$web.GetResponse();$total=$resp.ContentLength;$rs=$resp.GetResponseStream();$fs=[IO.File]::Create($isoPath);$buf=New-Object byte[] 8MB;$dl=0;$lt=Get-Date;while(($br=$rs.Read($buf,0,$buf.Length)) -gt 0){$fs.Write($buf,0,$br);$dl+=$br;if(((Get-Date)-$lt).TotalSeconds -ge 1){$p=[int](($dl/$total)*100);Write-P (8+[int]($p*0.40)) ""Downloading: $p%"";$lt=Get-Date}};$fs.Close();$rs.Close();break } catch { continue }}; if (-not (Test-Path $isoPath)) { Write-P -1 'DOWNLOAD_FAILED'; exit 1 }; Write-P 50 'Verifying...' 'SHA256'; $hash=(Get-FileHash $isoPath -Algorithm SHA256).Hash; if ($hash -ne $expectedHash) { Write-P -1 'CHECKSUM_FAILED'; exit 1 }; Write-P 54 'Preparing USB...' ''; $dp=""select disk $DiskNumber`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp.txt"" | Out-Null; Write-P 56 'Writing...' 'Do not remove USB!'; Start-Sleep 2; Write-ISOToUSB $isoPath ""\\.\PhysicalDrive$DiskNumber"" | Out-Null; Write-P 97 'Finishing...' ''; $dp2=""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp2.txt"" | Out-Null; Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue; Write-P 100 'SUCCESS!' 'Safe to remove USB.' } catch { Write-P -1 $_.Exception.Message; exit 1 }" & vbCrLf: GetPowerShellCode = code: End Function
-Sub CheckProgress(): Dim progressFile, ts, line, parts, pct, status, detail: On Error Resume Next: progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt": If fso.FileExists(progressFile) Then Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close: parts = Split(line, "|"): pct = CInt(parts(0)): status = "": detail = "": If UBound(parts) >= 1 Then status = parts(1): If UBound(parts) >= 2 Then detail = parts(2): If pct = -1 Then window.clearInterval progressTimer: ShowError status, detail ElseIf pct = 100 Then window.clearInterval progressTimer: UpdateProgress 100, status, detail: window.setTimeout GetRef("GoToStepFive"), 1500 Else UpdateProgress pct, status, detail: On Error Goto 0: End Sub
+Sub CheckProgress()
+    Dim progressFile, ts, line, parts, pct, status, detail
+    On Error Resume Next
+    progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
+    If fso.FileExists(progressFile) Then
+        Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close
+        parts = Split(line, "|"): pct = CInt(parts(0))
+        status = "": detail = ""
+        If UBound(parts) >= 1 Then status = parts(1)
+        If UBound(parts) >= 2 Then detail = parts(2)
+        If pct = -1 Then
+            window.clearInterval progressTimer: ShowError status, detail
+        ElseIf pct = 100 Then
+            window.clearInterval progressTimer: UpdateProgress 100, status, detail: window.setTimeout GetRef("GoToStepFive"), 1500
+        Else
+            UpdateProgress pct, status, detail
+        End If
+    End If
+    On Error Goto 0
+End Sub
 Sub GoToStepFive(): ShowStep 5: End Sub
 Sub UpdateProgress(pct, status, detail): document.getElementById("progressBar").style.width = pct & "%": document.getElementById("progressPercent").innerText = pct & "%": document.getElementById("progressStatus").innerText = status: If Len(detail) > 0 Then document.getElementById("progressDetail").innerText = detail: End Sub
 Sub ShowError(msg, detail): document.getElementById("progressContainer").innerHTML = "<table width=""100%"" cellpadding=""10"" bgcolor=""#FFF0F0"" style=""border:2px solid #CC0000;""><tr><td align=""center""><font size=""4"" color=""#CC0000""><b>Error</b></font><br><br>" & msg & "</td></tr></table>": currentStep = 1: UpdateButtons: document.getElementById("btnBack").disabled = False: document.getElementById("btnBack").value = "Try Again": End Sub

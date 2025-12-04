@@ -76,13 +76,27 @@ Sub UpdateStepIndicator(): document.getElementById("stepIndicator").innerText = 
 Sub UpdateButtons()
     On Error Resume Next
     document.getElementById("btnBack").disabled = (currentStep = 1 Or currentStep = 4 Or currentStep = 5)
-    If currentStep = 3 Then document.getElementById("btnNext").value = "Create USB" ElseIf currentStep = 5 Then document.getElementById("btnNext").value = "Close" Else document.getElementById("btnNext").value = "Next >"
+    Select Case currentStep
+        Case 3: document.getElementById("btnNext").value = "Create USB"
+        Case 5: document.getElementById("btnNext").value = "Close"
+        Case Else: document.getElementById("btnNext").value = "Next >"
+    End Select
     document.getElementById("btnNext").disabled = (currentStep = 2 And selectedDriveNumber < 0) Or currentStep = 4
     On Error Goto 0
 End Sub
 
-Sub GoBack(): If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1): End Sub
-Sub GoNext(): If currentStep = 1 Then ShowStep 2 ElseIf currentStep = 2 And selectedDriveNumber >= 0 Then ShowStep 3 ElseIf currentStep = 3 Then ShowStep 4: CreateUSB ElseIf currentStep = 5 Then window.close: End Sub
+Sub GoBack()
+    If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1)
+End Sub
+
+Sub GoNext()
+    Select Case currentStep
+        Case 1: ShowStep 2
+        Case 2: If selectedDriveNumber >= 0 Then ShowStep 3
+        Case 3: ShowStep 4: CreateUSB
+        Case 5: window.close
+    End Select
+End Sub
 
 Sub CreateUSB()
     Dim tempDir, psFile, progressFile, psCode, ts
@@ -113,10 +127,20 @@ Sub CheckProgress()
     On Error Resume Next
     progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
     If fso.FileExists(progressFile) Then
-        Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close: parts = Split(line, "|"): pct = CInt(parts(0))
-        status = "": detail = "": If UBound(parts) >= 1 Then status = parts(1): If UBound(parts) >= 2 Then detail = parts(2)
-        If pct = -1 Then window.clearInterval progressTimer: ShowError status, detail ElseIf pct = 100 Then window.clearInterval progressTimer: UpdateProgress 100, status, detail: window.setTimeout GetRef("GoToStepFive"), 1500 Else UpdateProgress pct, status, detail
-    End If: On Error Goto 0
+        Set ts = fso.OpenTextFile(progressFile, 1): line = ts.ReadLine(): ts.Close
+        parts = Split(line, "|"): pct = CInt(parts(0))
+        status = "": detail = ""
+        If UBound(parts) >= 1 Then status = parts(1)
+        If UBound(parts) >= 2 Then detail = parts(2)
+        If pct = -1 Then
+            window.clearInterval progressTimer: ShowError status, detail
+        ElseIf pct = 100 Then
+            window.clearInterval progressTimer: UpdateProgress 100, status, detail: window.setTimeout GetRef("GoToStepFive"), 1500
+        Else
+            UpdateProgress pct, status, detail
+        End If
+    End If
+    On Error Goto 0
 End Sub
 
 Sub GoToStepFive(): ShowStep 5: End Sub
