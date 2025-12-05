@@ -1,8 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Aegis OS - XFCE Panel Configuration
-  Windows 10-inspired taskbar layout
-  Version: 1.0.0
+  Windows 10-inspired taskbar layout with translucent effect
+  Version: 1.1.0
+  
+  Translucent Taskbar Configuration:
+    - background-style: 1 (solid color with transparency)
+    - background-rgba alpha: 0.85 (85% opacity)
+    
+  Compositor Integration Notes:
+    - Requires a compositor for transparency effects (xfwm4 compositor or picom/compton)
+    - Enable compositor: Settings > Window Manager Tweaks > Compositor
+    - For best results, ensure "Enable display compositing" is checked
+    - If using picom: Add "backend = glx" to picom.conf for better performance
+    - Fallback: If no compositor, panel will appear solid (no transparency)
 -->
 <channel name="xfce4-panel" version="1.0">
   <!-- Global Panel Settings -->
@@ -25,13 +36,15 @@
     <property name="length" type="uint" value="100"/>
     <property name="length-adjust" type="bool" value="true"/>
     
-    <!-- Appearance -->
-    <property name="background-style" type="uint" value="0"/>
+    <!-- Appearance - Translucent Taskbar -->
+    <!-- background-style: 0=None, 1=Solid color, 2=Image -->
+    <property name="background-style" type="uint" value="1"/>
+    <!-- RGBA: Dark gray with 85% opacity for modern translucent effect -->
     <property name="background-rgba" type="array">
-      <value type="double" value="0.2"/>
-      <value type="double" value="0.2"/>
-      <value type="double" value="0.2"/>
-      <value type="double" value="0.95"/>
+      <value type="double" value="0.15"/>
+      <value type="double" value="0.15"/>
+      <value type="double" value="0.15"/>
+      <value type="double" value="0.85"/>
     </property>
     <property name="enter-opacity" type="uint" value="100"/>
     <property name="leave-opacity" type="uint" value="100"/>
