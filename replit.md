@@ -122,6 +122,63 @@ The server provides a REST API for Aegis OS installations to check for updates. 
 - License key stored in `/etc/aegis/license.json`
 - Current version from `/etc/aegis/version`
 
+### Windows 10-Inspired Desktop (December 2025)
+
+Aegis OS provides a familiar Windows 10 aesthetic for easy transition from Windows:
+
+**GTK Themes (build-system/overlays/common/usr/share/themes/):**
+- `Aegis-Win10/` - Light theme with Windows 10 colors (#0078D7 accent)
+- `Aegis-Win10-Dark/` - Dark mode variant (#1F1F1F background)
+
+**Desktop Configuration:**
+- XFCE panel at bottom (Windows-style taskbar)
+- Whisker Menu as Start menu replacement
+- Aero Snap window snapping (Win+arrows)
+- Icons on right side (Windows default)
+- Alt+Tab with previews
+
+**Aegis Theme Manager** (`/usr/local/bin/aegis-theme-manager`):
+- Light/Dark mode toggle
+- 9 accent color presets + custom color picker
+- Layout presets: Windows 10, Windows 11, macOS-like, Classic
+- Live theme application
+
+### Wine/Proton Optimization (December 2025)
+
+Windows application compatibility targeting 90%+ effectiveness:
+
+**Configuration Files (build-system/overlays/gamer/etc/aegis/):**
+- `wine-optimization.conf` - DXVK, VKD3D, fsync/esync, shader cache settings
+- `proton-config.json` - GE-Proton versions, per-game profiles, DLSS/FSR settings
+
+**Aegis Wine Optimizer** (`/usr/local/bin/aegis-wine-optimizer`):
+- Auto-detect Wine/Proton versions
+- Create optimized prefixes (gaming, productivity, development)
+- Install dependencies via winetricks (vcrun, dotnet, dxvk)
+- Performance benchmarking
+- CLI and GUI modes
+
+**Environment Variables** (`/etc/profile.d/aegis-wine-env.sh`):
+- WINE_LARGE_ADDRESS_AWARE, STAGING_SHARED_MEMORY
+- DXVK/VKD3D shader cache paths
+- Tier-specific variable sets
+
+### Cross-Platform Installers (December 2025)
+
+**Windows HTA Installers** (build-system/editions/):
+- Enhanced system compatibility checks (RAM, disk, .NET, PowerShell)
+- Windows 10 Fluent UI styling (#0078D7 accent)
+- VM detection and warnings
+- Download retry with speed/ETA display
+- Error handling with troubleshooting tips
+
+**Linux USB Creator** (build-system/installers/aegis-usb-creator.sh):
+- Cross-distro support (Ubuntu, Debian, Fedora, Arch, openSUSE)
+- TUI interface via dialog/whiptail with text fallback
+- Edition selection with feature display
+- SHA256 verification
+- Safety confirmations
+
 ### Aegis Exclusive Tools
 
 Each OS edition includes 25+ custom Python-based utilities located in `/usr/local/bin/`. All tools support GUI (tkinter) and CLI modes, tier-based feature gating, and logging.
