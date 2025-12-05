@@ -1,278 +1,68 @@
 # Aegis OS Build System
 
 ## Overview
-
-Aegis OS is a conceptual Linux distribution build system designed to demonstrate a tiered software licensing model. It provides multiple OS editions (Freemium, Basic, Gamer, AI Developer, Server, Workplace) with varying feature sets. The project includes an automated build system for creating bootable ISOs using Buildroot and a Flask-based promotional website to market these editions. Its ambition is to simulate a commercial Linux distribution based on Linux Lite, offering a comprehensive ecosystem of custom tools and a structured payment/licensing system.
+Aegis OS is a conceptual Linux distribution build system demonstrating a tiered software licensing model. It offers multiple OS editions (Freemium, Basic, Gamer, AI Developer, Server, Workplace) with varying features, targeting a commercial Linux distribution based on Linux Lite. The project includes an automated build system for creating bootable ISOs using Buildroot and a Flask-based promotional website for marketing these editions. Its ambition is to create a comprehensive ecosystem with custom tools and a structured payment/licensing system.
 
 ## User Preferences
-
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
 ### Build System
-
-The build system leverages Buildroot for creating customized Linux distributions. Python scripts orchestrate a multi-stage pipeline: source code obfuscation, Buildroot compilation, filesystem image creation, and ISO packaging. Key scripts include `build-aegis.py` (main launcher), `build-replit.py` (Replit orchestrator), `obfuscate.py` (code protection), and `deploy.py` (deployment pipeline). It supports seven distinct OS editions, each with specific kernel modules and filesystem overlays.
+Leverages Buildroot and Python scripts for a multi-stage pipeline: source obfuscation, Buildroot compilation, filesystem image creation, and ISO packaging. It supports seven OS editions with specific kernel modules and filesystem overlays.
 
 ### Promotional Website
-
-The marketing website is built with Flask, featuring a Windows 10-inspired static HTML frontend with inline CSS. It incorporates robust security measures including rate limiting, security headers, JWT authentication, CSRF protection, and audit logging. The site manages six distinct OS editions with features and pricing defined in `TIER_FEATURES.json`. RESTful APIs are provided for license management, system monitoring, analytics, and user authentication. Legal compliance is ensured through scripts that apply disclaimers and manage public-facing content.
+A Flask-based marketing website with a Windows 10-inspired static HTML frontend. Features robust security (rate limiting, JWT, CSRF, audit logging), manages six OS editions with features and pricing from `TIER_FEATURES.json`, and provides RESTful APIs for license management, monitoring, analytics, and user authentication.
 
 ### Installer System
-
-The project includes cross-platform GUI installers: Windows HTA (HTML Application) installers and macOS/Linux shell scripts with TUI. These installers handle ISO downloads, SHA256 verification, USB drive detection, and progress display. They support both Freemium and licensed editions, with distinct UI themes and functionality.
+Cross-platform GUI installers include Windows HTA (HTML Application) and macOS/Linux shell scripts with TUI. They handle ISO downloads, SHA256 verification, USB detection, and support Freemium and licensed editions with distinct UIs. Licensed installers utilize RSA-2048 asymmetric cryptography for license signature verification.
 
 ### Payment & License System
+Manages user accounts, generates license keys (e.g., `PREFIX-XXXX-XXXX-XXXX`), and processes payments via Stripe. It tracks users, licenses, Stripe events, and email logs, sending confirmation emails with license keys via SendGrid. An admin panel supports "free period" mode for promotions, bypassing license validation.
 
-A robust payment and license system is integrated, managing user accounts, license key generation (e.g., `PREFIX-XXXX-XXXX-XXXX` format with checksums), and Stripe-based payment processing. Database models track users, licenses, Stripe events, and email logs. Confirmation emails with license keys are sent via SendGrid.
+### Auto-Update System
+Provides a REST API for Aegis OS installations to check for and download updates, supporting both Freemium and paid editions. Updates are RSA-signed for verification and offer edition-specific channels (Stable, Priority, Beta, LTS).
 
-### RSA License Signing System (December 2025)
+### Desktop Environment
+Offers a Windows 10-inspired desktop experience with XFCE, custom GTK themes (Light/Dark), and a configurable Aegis Theme Manager. Includes features like Aero Snap, a translucent taskbar, and Windows-compatible keyboard shortcuts.
 
-The licensed installer uses RSA-2048 asymmetric cryptography to prevent license forgery:
-
-**Security Model:**
-- **Private Key**: Stored as `LICENSE_SIGNING_PRIVATE_KEY` secret (PEM format)
-- **Public Key**: Embedded in HTA installer as base64-encoded XML (PowerShell 5 compatible)
-- **Signatures**: RSA-SHA256 for each license entry and cache integrity
-- **Hash Function**: Two-part hash combining h=((h*31)+c)&0x7FFFFFFF and r=((r^c)*17)&0xFFFF
-
-**PowerShell 5 Compatibility (Critical):**
-- Uses XML format `<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>`
-- This format works with `FromXmlString()` in PowerShell 5 (standard on Windows 10/11)
-- Previous DER format (`ImportSubjectPublicKeyInfo`) required PowerShell 7+ which most users don't have
-- **Important:** Modulus bytes must have a leading 0x00 if high bit is set (otherwise .NET treats it as negative)
-
-**Fail-Closed Design:**
-- Server returns HTTP 503 if private key not configured (no unsigned installers generated)
-- HTA rejects validation if public key is placeholder (no bypass for unsigned builds)
-- All validation functions default to False and require valid RSA signatures
-
-**Operational Procedures:**
-1. Generate RSA-2048 key pair (private key in PEM format)
-2. Set `LICENSE_SIGNING_PRIVATE_KEY` secret with private key contents
-3. Server automatically derives public key and embeds in installers (XML format)
-4. HTA uses PowerShell .NET crypto (RSACryptoServiceProvider.FromXmlString) for offline RSA verification
-
-**Key Rotation:**
-1. Generate new RSA-2048 key pair
-2. Update `LICENSE_SIGNING_PRIVATE_KEY` secret
-3. All new installer downloads will contain new public key
-4. Existing installers continue working until user re-downloads
-
-**RSA Verification Method (Critical):**
-- Python signs with: `cryptography` library, PKCS1v15 padding, SHA256
-- PowerShell verifies with: `RSA.Create().VerifyData()`, explicit UTF-8 encoding, PKCS1 padding, HashAlgorithmName.SHA256
-- This ensures byte-level compatibility between Python signing and .NET verification
-
-### Free Period & No-License Installers (December 2025)
-
-**Free Period Mode:**
-The admin panel can enable "free mode" where all editions are available without license validation. This bypasses the license system temporarily for promotions or while license issues are being fixed.
-
-- **Admin Endpoints:**
-  - `GET /api/admin/free-period` - View free period status
-  - `POST /api/admin/free-period` - Enable/configure free period
-  - `DELETE /api/admin/free-period` - Disable free period
-
-- **Public Endpoints (during free period):**
-  - `GET /api/free/editions` - List available free editions
-  - `GET /api/free/download/{edition}` - Download edition HTA (rate limited)
-
-**Rate Limiting (Anti-Bot):**
-- 5 downloads per IP per hour
-- 10 downloads per IP per day
-- HTTP 429 returned when limit exceeded
-
-**Edition-Specific HTAs (No License Validation):**
-Located in `build-system/editions/`:
-- `aegis-installer-basic.hta` - Basic edition
-- `aegis-installer-workplace.hta` - Workplace edition
-- `aegis-installer-gamer.hta` - Gamer edition
-- `aegis-installer-aidev.hta` - AI Developer edition
-- `aegis-installer-gamer-ai.hta` - Gamer+AI edition
-- `aegis-installer-server.hta` - Server edition (admin-only)
-
-These HTAs are pre-configured for their specific edition and skip the license validation step entirely.
-
-### Auto-Update System (December 2025)
-
-The server provides a REST API for Aegis OS installations to check for updates. Works with both Freemium (no license) and paid editions (with license key).
-
-**API Endpoints:**
-
-1. **GET/POST /api/v1/updates/check** - Check for available updates
-   - Query params: `license_key`, `current_version`, `hardware_id`, `edition`
-   - Returns: `update_available`, `latest_version`, `changelog`, `download_url`, `features`
-   - Response is RSA-signed for verification
-
-2. **GET /api/v1/updates/changelog** - Get full version changelog
-
-3. **GET /api/v1/updates/download-info** - Get ISO download URLs and checksums
-   - Query params: `license_key` (optional)
-   - Returns mirror URLs, SHA256 checksum, installer type
-
-**Edition-Specific Features:**
-- Freemium: Stable channel, manual updates only
-- Basic/Workplace: Priority updates, auto-update enabled
-- Gamer/AI Developer/Gamer+AI: Beta channel access, early access features
-- Server: LTS channel, priority patches
-
-**Client Integration:**
-- `aegis-update-manager` tool reads server URL from `/etc/aegis/update-config.json`
-- License key stored in `/etc/aegis/license.json`
-- Current version from `/etc/aegis/version`
-
-### Windows 10-Inspired Desktop (December 2025)
-
-Aegis OS provides a familiar Windows 10 aesthetic for easy transition from Windows:
-
-**GTK Themes (build-system/overlays/common/usr/share/themes/):**
-- `Aegis-Win10/` - Light theme with Windows 10 colors (#0078D7 accent)
-- `Aegis-Win10-Dark/` - Dark mode variant (#1F1F1F background)
-
-**Desktop Configuration:**
-- XFCE panel at bottom (Windows-style taskbar)
-- Whisker Menu as Start menu replacement
-- Aero Snap window snapping (Win+arrows)
-- Icons on right side (Windows default)
-- Alt+Tab with previews
-
-**Aegis Theme Manager** (`/usr/local/bin/aegis-theme-manager`):
-- Light/Dark mode toggle
-- 9 accent color presets + custom color picker
-- Layout presets: Windows 10, Windows 11, macOS-like, Classic
-- Live theme application
-
-### Wine/Proton Optimization (December 2025)
-
-Windows application compatibility targeting 90%+ effectiveness:
-
-**Configuration Files (build-system/overlays/gamer/etc/aegis/):**
-- `wine-optimization.conf` - DXVK, VKD3D, fsync/esync, shader cache settings
-- `proton-config.json` - GE-Proton versions, per-game profiles, DLSS/FSR settings
-
-**Aegis Wine Optimizer** (`/usr/local/bin/aegis-wine-optimizer`):
-- Auto-detect Wine/Proton versions
-- Create optimized prefixes (gaming, productivity, development)
-- Install dependencies via winetricks (vcrun, dotnet, dxvk)
-- Performance benchmarking
-- CLI and GUI modes
-
-**Environment Variables** (`/etc/profile.d/aegis-wine-env.sh`):
-- WINE_LARGE_ADDRESS_AWARE, STAGING_SHARED_MEMORY
-- DXVK/VKD3D shader cache paths
-- Tier-specific variable sets
-
-### Cross-Platform Installers (December 2025)
-
-**Windows HTA Installers** (build-system/editions/):
-- Enhanced system compatibility checks (RAM, disk, .NET, PowerShell)
-- Windows 10 Fluent UI styling (#0078D7 accent)
-- VM detection and warnings
-- Download retry with speed/ETA display
-- Error handling with troubleshooting tips
-
-**Linux USB Creator** (build-system/installers/aegis-usb-creator.sh):
-- Cross-distro support (Ubuntu, Debian, Fedora, Arch, openSUSE)
-- TUI interface via dialog/whiptail with text fallback
-- Edition selection with feature display
-- SHA256 verification
-- Safety confirmations
+### Wine/Proton Optimization
+Aims for high Windows application compatibility through pre-configured Wine/Proton settings (`wine-optimization.conf`, `proton-config.json`) and an `Aegis Wine Optimizer` tool for managing optimized prefixes and dependencies.
 
 ### Aegis Exclusive Tools
-
-Each OS edition includes 25+ custom Python-based utilities located in `/usr/local/bin/`. All tools support GUI (tkinter) and CLI modes, tier-based feature gating, and logging.
-
-**Key Tools:**
-
-1. **aegis-wallpaper-engine v3.1** - AI-powered animated wallpaper system
-   - MPV-based rendering (no Chrome dependency)
-   - AI preference learning (time-based, category-based suggestions)
-   - Weekly update checks from Aegis servers
-   - Video: MP4, AVI, MKV, WebM, MOV, HEVC, VP9, AV1
-   - Image: JPG, PNG, GIF, WebP, TIFF, SVG, HEIC
-   - Audio control, gaming mode auto-pause
-
-2. **aegis-stream v1.0** - Local game/desktop streaming
-   - Host mode: Screen capture, hardware encoding (NVENC/VAAPI/AMF)
-   - Client mode: Low-latency playback, input forwarding
-   - Quality presets: Ultra (4K60) to Potato (480p30)
-   - PIN-based pairing, auto-discovery on LAN
-   - Freemium: 720p30 max, no audio, watermark
-
-3. **aegis-security-daemon** - Background security service
-   - File integrity monitoring with hash verification
-   - Suspicious process detection
-   - Auth rate limiting
-   - Privilege separation
-   - Secure IPC via Unix sockets
-
-4. **aegis-sandbox-policy** - Application sandboxing
-   - AppArmor/Firejail profile management
-   - Filesystem/network access control
-   - Per-tool security policies
+Over 25 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter) and CLI modes, with tier-based feature gating and logging. Key tools include:
+*   **aegis-wallpaper-engine**: AI-powered animated wallpaper system.
+*   **aegis-stream**: Local game/desktop streaming solution.
+*   **aegis-security-daemon**: Background security service for integrity monitoring and threat detection.
+*   **aegis-sandbox-policy**: Application sandboxing via AppArmor/Firejail.
+*   **Freemium Lite Tools**: The Freemium edition includes toggleable, limited versions of all premium features for previewing.
 
 ### AI Security Tiering System
-
-All editions include AI-powered security with progressive capabilities:
-- **Freemium**: Basic heuristics, signature-based scanning
-- **Basic**: + Real-time file monitoring, process scanning
-- **Gamer/Workplace**: + Behavioral AI analysis, anomaly detection
-- **AI Developer**: + ML-powered threat intelligence, model-based detection
-- **Server**: Full XDR (Extended Detection & Response), eBPF monitoring, zero-trust enforcement, SIEM integration
-
-Configuration files: `tier-security.json` per edition, `aegis_ai_security.py` module with edition-specific `TIER_LIMIT` values.
-
-### Freemium Lite Tools
-
-Freemium edition includes toggleable lite versions of premium features:
-- **aegis-gaming-optimizer-lite**: Basic game detection, simple performance mode (no overclocking)
-- **aegis-ai-toolkit-lite**: Read-only model browser, basic inference (no training, no downloads)
-- **aegis-workplace-lite**: Meeting launcher, view-only remote desktop, expense tracker (10 entries max)
-- **aegis-wallpaper-engine-lite**: Static wallpapers only
-- **aegis-stream-lite**: 720p30 max, watermark, no audio
-- **aegis-security-center-lite**: Basic firewall + AI heuristics (no ClamAV/realtime)
-- **aegis-backup-lite**: Manual local backup only (no scheduling, no cloud)
-
-**Tier Limitations (Freemium vs Full):**
-- security-center: Basic firewall + AI heuristics vs full ClamAV/UFW + behavioral AI
-- backup-pro: Manual only, 5GB max vs scheduled, unlimited
-- gaming-optimizer: Basic mode vs custom profiles/overclocking
-- desktop-effects: Basic transparency vs blur/animations
-- app-store: 5 installs/month vs unlimited
-
-### Admin Panel
-
-A comprehensive admin panel provides API endpoints for managing the system, including analytics (sales, edition breakdown, trends), user management (listing, details, updates), system health monitoring (database, disk, memory), bulk operations (license creation, email sending), and reporting (monthly sales, data export).
+All editions include AI-powered security with progressive capabilities, from basic heuristics in Freemium to full XDR and ML-powered threat intelligence in Server and AI Developer editions, configured via `tier-security.json` and `aegis_ai_security.py`.
 
 ## External Dependencies
 
 ### Build System Dependencies
-
 *   **Buildroot**: Embedded Linux build system.
 *   **Linux Build Tools**: GCC, Make, debootstrap, mksquashfs, xorriso, isolinux, squashfs-tools.
-*   **Python 3**: For build orchestration scripts.
+*   **Python 3**: For build orchestration.
 
 ### Web Server Dependencies
-
 *   **Flask**: Python web framework.
-*   **PyJWT**: For JSON Web Token handling.
-*   **Python Standard Libraries**: `hashlib`, `hmac`, `secrets` for security features.
-*   **JSON**: For configuration and API responses.
-*   **SendGrid**: For transactional email (requires API key).
-*   **Stripe**: For payment processing.
+*   **PyJWT**: JSON Web Token handling.
+*   **SendGrid**: Transactional email service.
+*   **Stripe**: Payment processing.
 
 ### Aegis Tools Dependencies
-
-*   **Python 3**: Core for all tools.
-*   **tkinter**: For GUI components of Aegis tools.
-*   **MPV**: Primary renderer for `aegis-wallpaper-engine` and `aegis-stream`.
-*   **FFmpeg**: Video processing, encoding, format conversion.
-*   **ClamAV, UFW**: For `aegis-security-center`.
-*   **rsync**: For `aegis-backup-pro`.
-*   **Steam, Lutris, Heroic**: Integrations for `aegis-game-library`.
-*   **KDE Connect, Barrier/Synergy**: Integrations for device linking.
-*   **GameMode**: Integration for `aegis-gaming-optimizer`.
-*   **NVIDIA drivers**: For `aegis-nvidia-info` and hardware encoding.
-*   **AppArmor/Firejail**: For `aegis-sandbox-policy`.
-*   **PipeWire/PulseAudio**: For audio capture in `aegis-stream`.
+*   **Python 3**
+*   **tkinter**: GUI components.
+*   **MPV**: Renderer for wallpaper engine and streaming.
+*   **FFmpeg**: Video processing.
+*   **ClamAV, UFW**: For security tools.
+*   **rsync**: For backup.
+*   **Steam, Lutris, Heroic**: Game library integrations.
+*   **KDE Connect, Barrier/Synergy**: Device linking integrations.
+*   **GameMode**: Gaming optimization.
+*   **NVIDIA drivers**: Hardware encoding.
+*   **AppArmor/Firejail**: Sandboxing.
+*   **PipeWire/PulseAudio**: Audio capture.
