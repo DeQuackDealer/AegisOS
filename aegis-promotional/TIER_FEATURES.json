@@ -36,17 +36,22 @@
         "description": "Optional lite versions of premium features - enable during install",
         "gaming_lite": {
           "name": "Gaming Optimizer Lite",
-          "description": "Basic gaming performance tools",
+          "description": "Basic gaming performance tools inspired by Bazzite",
           "features": [
             "Auto-detect running games",
             "Simple performance mode (kill background apps)",
-            "Basic FPS monitoring",
-            "Game Library Lite - View installed games"
+            "Basic FPS monitoring via MangoHud Lite",
+            "Game Library Lite - View installed Steam/Lutris games",
+            "Basic Proton compatibility (stable channel only)",
+            "Static wallpaper support"
           ],
           "limitations": [
             "No overclocking",
             "No custom profiles",
-            "No advanced tweaks"
+            "No advanced tweaks",
+            "No animated wallpapers",
+            "No multi-output audio",
+            "No external game media support"
           ]
         },
         "ai_toolkit_lite": {
@@ -162,7 +167,7 @@
     "icon": "🔒",
     "color": "#6366f1",
     "features": {
-      "core": ["Linux 6.6.7", "XFCE 4.18", "Wine 8.21", "Proton", "Aegis DeskLink Pro - Control unlimited computers"],
+      "core": ["Linux 6.6.7", "XFCE 4.18", "Wine 9.0", "Proton 9.0+", "Aegis DeskLink Pro - Control unlimited computers", "Aegis Wallpaper Engine Basic - Static wallpapers with 30-sec video limit"],
       "desklink": {
         "name": "Aegis DeskLink Pro",
         "description": "Advanced mouse/keyboard sharing across unlimited computers",
@@ -185,7 +190,9 @@
         "apps": [
           "Aegis Welcome Center Pro - Interactive onboarding with tutorials",
           "Aegis App Store - Full curated marketplace with 10,000+ apps",
-          "Aegis Theme Manager - 50+ premium themes, custom icon packs, wallpaper engine",
+          "Aegis Theme Manager - 50+ premium themes, custom icon packs, static wallpaper engine",
+          "Aegis Game Launcher Lite - Basic Steam/Lutris integration (no external media)",
+          "Aegis Audio Mixer - Basic per-app volume control (single output)",
           "Aegis Security Center - All-in-one security dashboard (antivirus, firewall, VPN)",
           "Aegis Sync - Cloud sync for settings, themes, and app preferences",
           "Aegis File Manager Pro - Dual-pane with cloud integration, tabs, previews",
@@ -555,32 +562,123 @@
       },
       "aegis_exclusive_apps": {
         "name": "Aegis Built-in Apps (Gamer Edition)",
-        "description": "Gaming-optimized Aegis application suite",
+        "description": "Gaming-optimized Aegis application suite inspired by Bazzite, SteamOS, Pop!_OS",
         "apps": [
           "All Basic tier Aegis apps",
-          "Aegis Game Library - Unified launcher for Steam, Epic, GOG, Lutris",
-          "Aegis Game Recorder - Low-overhead game recording with replay buffer",
-          "Aegis Overlay - In-game FPS counter, GPU/CPU temps, frame timing",
-          "Aegis Stream Deck - Virtual stream deck with OBS integration",
-          "Aegis Chat - Discord-integrated chat overlay",
-          "Aegis Voice - Low-latency voice chat with noise cancellation",
-          "Aegis Clip Manager - Auto-save highlights, quick share to YouTube/Twitch",
+          "Aegis Game Launcher - Nintendo Switch-style game launcher with SD card/USB support (play games from removable media like cartridges)",
+          "Aegis Wallpaper Engine v3.1 - Animated video wallpapers with MPV rendering, AI suggestions, gaming mode auto-pause",
+          "Aegis Audio Router - Multi-output audio (game to headphones, Discord to speakers), PipeWire low-latency",
+          "Aegis Stream v1.0 - Local game streaming (host/client), NVENC/VAAPI/AMF encoding, Steam Link alternative",
+          "Aegis Game Library - Unified launcher for Steam, Epic, GOG, Lutris with metadata sync",
+          "Aegis Game Recorder - Low-overhead game recording with replay buffer and instant replay",
+          "Aegis Overlay - In-game FPS counter, GPU/CPU temps, frame timing via MangoHud",
+          "Aegis Stream Deck - Virtual stream deck with OBS/Twitch/YouTube integration",
+          "Aegis Chat - Discord-integrated chat overlay with game-aware DND",
+          "Aegis Voice - Low-latency voice chat with AI noise cancellation",
+          "Aegis Clip Manager - Auto-save highlights, quick share to YouTube/Twitch with thumbnails",
           "Aegis Capture Studio - Advanced game recording with effects, transitions, and multi-track editing"
+        ]
+      },
+      "aegis_game_launcher": {
+        "name": "Aegis Game Launcher (Nintendo-Style)",
+        "description": "Revolutionary game launcher that treats USB drives and SD cards like game cartridges",
+        "features": [
+          "Launch games directly from SD cards and USB drives - no installation required",
+          "Auto-detect and mount game media at /run/aegis/external-games",
+          "aegis-game.json manifest support for portable game configs",
+          "Steam, Lutris, Wine/Proton, RetroArch integration",
+          "Game save cloud sync and local backup",
+          "Cover art, playtime tracking, last played stats",
+          "Quick-launch favorites bar with one-click access",
+          "MangoHud performance overlay toggle",
+          "GameMode automatic optimization on launch",
+          "Supports exFAT, NTFS, ext4 formatted drives"
+        ]
+      },
+      "aegis_wallpaper_engine": {
+        "name": "Aegis Wallpaper Engine v3.1",
+        "description": "Animated wallpaper system with AI learning - MPV-based, not Chrome",
+        "features": [
+          "Video wallpapers: MP4, AVI, MKV, WebM, MOV, HEVC, VP9, AV1",
+          "Image formats: JPG, PNG, GIF, WebP, SVG, HEIC",
+          "MPV-based rendering for low resource usage",
+          "AI preference learning (suggests wallpapers by time/mood)",
+          "Gaming mode auto-pause when fullscreen games detected",
+          "Multi-monitor support with per-display wallpapers",
+          "Playlist/rotation mode with intervals",
+          "Steam Workshop wallpaper import",
+          "Weekly update checks for new content",
+          "Custom categories: Anime, Nature, Gaming, Abstract, Space"
+        ]
+      },
+      "aegis_audio_router": {
+        "name": "Aegis Audio Router",
+        "description": "Per-app audio output routing - different apps to different speakers",
+        "features": [
+          "Route Discord to speakers while game audio goes to headphones",
+          "Create virtual audio sinks for streaming",
+          "PipeWire/WirePlumber integration with PulseAudio fallback",
+          "Low-latency mode for gaming (~1.3ms at 48kHz)",
+          "Quick presets: Gaming, Streaming, Music Production, Voice Chat",
+          "Per-application volume and output control",
+          "USB and Bluetooth audio hotplug support",
+          "Real-time audio visualization",
+          "Stream audio separation (game/voice/music to OBS)"
+        ]
+      },
+      "aegis_stream": {
+        "name": "Aegis Stream v1.0",
+        "description": "Local game/desktop streaming - Steam Link/Moonlight alternative",
+        "features": [
+          "Host mode: Share your desktop/games to other devices on LAN",
+          "Client mode: Play games from another Aegis PC",
+          "Hardware encoding: NVENC, VAAPI, AMF support",
+          "Quality presets: Ultra (4K60) to Potato (480p30)",
+          "PIN-based pairing for security",
+          "Auto-discovery on local network",
+          "Low-latency playback with input forwarding",
+          "Works with Steam, Lutris, native games"
         ]
       },
       "system_utilities": {
         "name": "Aegis System Utilities (Gamer Edition)",
-        "description": "Gaming-optimized system management",
+        "description": "Gaming-optimized system management inspired by Bazzite, SteamOS, Pop!_OS",
         "tools": [
           "All Basic tier system utilities",
-          "Aegis Gaming Mode - One-click performance optimization",
-          "Aegis GPU Manager - Overclock, undervolt, fan curves, RGB control",
-          "Aegis Latency Optimizer - Input lag reduction, polling rate tweaks",
-          "Aegis RAM Cleaner - Free up RAM before gaming sessions",
-          "Aegis Storage Optimizer - SSD optimization for game load times",
-          "Aegis Network Optimizer - Gaming traffic prioritization, ping optimizer",
+          "Aegis Gamer Performance - Complete performance control with Proton/Wine management",
+          "Aegis Gaming Mode - One-click performance optimization with custom presets (Balanced, Performance, Esports, Stream Mode)",
+          "Aegis GPU Manager - Overclock, undervolt, fan curves (NVIDIA/AMD), power profiles",
+          "Aegis Latency Optimizer - Input lag reduction, raw input, compositor disable",
+          "Aegis RAM Cleaner - Free up RAM before gaming sessions with ZRAM tuning",
+          "Aegis Storage Optimizer - SSD optimization with TRIM and game load time improvements",
+          "Aegis Network Optimizer - BBR congestion control, TCP tuning, gaming traffic prioritization",
           "Aegis Game Booster AI - AI-powered game optimization with auto-settings detection",
-          "Aegis RGB Sync Hub - Unified RGB control for all peripherals (Razer, Corsair, Logitech, ASUS)"
+          "Aegis RGB Sync Hub - Unified RGB control for all peripherals (Razer, Corsair, Logitech, ASUS)",
+          "Aegis ProtonUp Manager - Install and manage GE-Proton versions for maximum compatibility"
+        ]
+      },
+      "aegis_gamer_performance": {
+        "name": "Aegis Gamer Performance Service",
+        "description": "Complete system tuning for maximum gaming performance",
+        "features": [
+          "Proton/Wine version management (ProtonUp-Qt style)",
+          "GameMode integration with custom presets",
+          "GPU tuning: Power profiles (Turbo, Performance, Balanced, Power Save)",
+          "NVIDIA: nvidia-smi control, fan curves, power limits",
+          "AMD: AMDGPU tuning, undervolting, memory clocks",
+          "CPU governor control (performance, schedutil)",
+          "FSR (FidelityFX Super Resolution) global enable",
+          "VRR (G-Sync/FreeSync) toggle",
+          "Frame limit settings via MangoHud",
+          "Memory optimization (drop caches, ZRAM)",
+          "Network BBR congestion control for low ping"
+        ],
+        "presets": [
+          "Balanced - Good battery life with solid performance",
+          "Performance - Full power, maximum FPS",
+          "Battery Saver - Optimized for laptops",
+          "Stream Mode - Stable FPS for streaming/recording",
+          "Esports - Minimum latency, maximum frames"
         ]
       },
       "aegis_mobile_link": {
