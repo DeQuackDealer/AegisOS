@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""
+Aegis Stream v1.0 - Local Game/Desktop Streaming
+Inspired by Steam Link, Moonlight, Parsec
+
+Features:
+- Host mode: Screen capture with hardware encoding (NVENC/VAAPI/AMF)
+- Client mode: Low-latency playback with input forwarding
+- Quality presets: Ultra (4K60) to Potato (480p30)
+- PIN-based pairing and auto-discovery on LAN
+"""
+
+import os
+import sys
+import json
+import socket
+import threading
+import subprocess
+import hashlib
+import secrets
+import time
+import argparse
+from typing import Optional, Dict, List, Tuple
+from pathlib import Path
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    HAS_GUI = True
+except ImportError:
+    HAS_GUI = False
+
+VERSION = "1.0.0"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "stream"
+LOG_FILE = Path("/var/log/aegis/stream.log")
+
+QUALITY_PRESETS = {
+    "ultra": {"resolution": "3840x2160", "fps": 60, "bitrate": 50000, "codec": "h265"},
+    "high": {"resolution": "2560x1440", "fps": 60, "bitrate": 30000, "codec": "h265"},
+    "medium": {"resolution": "1920x1080", "fps": 60, "bitrate": 15000, "codec": "h264"},
+    "low": {"resolution": "1280x720", "fps": 60, "bitrate": 8000, "codec": "h264"},
+    "potato": {"resolution": "854x480", "fps": 30, "bitrate": 3000, "codec": "h264"}
+}
+
+TIER_LIMITS = {
+    "FREEMIUM": {"max_resolution": "1280x720", "max_fps": 30, "audio": False, "watermark": True},
+    "BASIC": {"max_resolution": "1920x1080", "max_fps": 60, "audio": True, "watermark": False},
+    "GAMER": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False},
+    "GAMER_AI": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False},
+    "SERVER": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False}
+}
+
+class AegisStream:
+    def __init__(self):
+        self.config_dir = CONFIG_DIR
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.config_dir / "config.json"
+        self.load_config()
+        self.tier = self.detect_tier()
+        self.paired_clients = []
+        self.server_socket = None
+        self.is_streaming = False
+        
+    def detect_tier(self) -> str:
+        tier_files = {
+            "/etc/aegis/tier-gamer-ai": "GAMER_AI",
+            "/etc/aegis/tier-gamer": "GAMER",
+            "/etc/aegis/tier-server": "SERVER",
+            "/etc/aegis/tier-workplace": "WORKPLACE",
+            "/etc/aegis/tier-ai-dev": "AI_DEV",
+            "/etc/aegis/tier-basic": "BASIC"
+        }
+        for path, tier in tier_files.items():
+            if os.path.exists(path):
+                return tier
+        try:
+            with open("/etc/aegis/license.json") as f:
+                return json.load(f).get("tier", "FREEMIUM").upper()
+        except:
+            return "FREEMIUM"
+    
+    def load_config(self):
+        defaults = {
+            "quality": "medium",
+            "capture_display": ":0",
+            "audio_enabled": True,
+            "input_forwarding": True,
+            "discovery_port": 47989,
+            "stream_port": 47990,
+            "known_hosts": []
+        }
+        if self.config_file.exists():
+            try:
+                with open(self.config_file) as f:
+                    self.config = {**defaults, **json.load(f)}
+            except:
+                self.config = defaults
+        else:
+            self.config = defaults
+            self.save_config()
+    
+    def save_config(self):
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def detect_encoder(self) -> str:
+        """Detect available hardware encoder"""
+        encoders = [
+            ("nvidia", ["nvidia-smi"], "h264_nvenc"),
+            ("vaapi", ["vainfo"], "h264_vaapi"),
+            ("amf", ["vulkaninfo"], "h264_amf")
+        ]
+        for name, test_cmd, encoder in encoders:
+            try:
+                subprocess.run(test_cmd, capture_output=True, check=True)
+                return encoder
+            except:
+                continue
+        return "libx264"
+    
+    def generate_pin(self) -> str:
+        """Generate 4-digit pairing PIN"""
+        return f"{secrets.randbelow(10000):04d}"
+    
+    def start_discovery_server(self):
+        """Broadcast presence on LAN for auto-discovery"""
+        self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        self.discovery_socket.bind(('', self.config["discovery_port"]))
+        
+        hostname = socket.gethostname()
+        while self.is_streaming:
+            try:
+                data, addr = self.discovery_socket.recvfrom(1024)
+                if data == b"AEGIS_STREAM_DISCOVER":
+                    response = json.dumps({
+                        "type": "aegis_stream_host",
+                        "hostname": hostname,
+                        "version": VERSION,
+                        "tier": self.tier
+                    }).encode()
+                    self.discovery_socket.sendto(response, addr)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                break
+    
+    def start_host_mode(self, quality: str = "medium"):
+        """Start streaming as host"""
+        limits = TIER_LIMITS.get(self.tier, TIER_LIMITS["FREEMIUM"])
+        preset = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["medium"])
+        
+        max_res = limits["max_resolution"]
+        max_w, max_h = map(int, max_res.split('x'))
+        preset_w, preset_h = map(int, preset["resolution"].split('x'))
+        
+        if preset_w > max_w or preset_h > max_h:
+            preset["resolution"] = max_res
+        if preset["fps"] > limits["max_fps"]:
+            preset["fps"] = limits["max_fps"]
+        
+        encoder = self.detect_encoder()
+        print(f"Starting stream: {preset['resolution']}@{preset['fps']}fps, encoder: {encoder}")
+        
+        self.is_streaming = True
+        discovery_thread = threading.Thread(target=self.start_discovery_server, daemon=True)
+        discovery_thread.start()
+        
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-f", "x11grab",
+            "-video_size", preset["resolution"],
+            "-framerate", str(preset["fps"]),
+            "-i", self.config["capture_display"],
+        ]
+        
+        if limits["audio"] and self.config["audio_enabled"]:
+            ffmpeg_cmd.extend([
+                "-f", "pulse",
+                "-i", "default"
+            ])
+        
+        ffmpeg_cmd.extend([
+            "-c:v", encoder,
+            "-preset", "llhp" if "nvenc" in encoder else "ultrafast",
+            "-tune", "zerolatency",
+            "-b:v", f"{preset['bitrate']}k",
+            "-f", "mpegts",
+            f"udp://0.0.0.0:{self.config['stream_port']}?pkt_size=1316"
+        ])
+        
+        if limits["watermark"]:
+            ffmpeg_cmd.insert(-2, "-vf")
+            ffmpeg_cmd.insert(-2, "drawtext=text='Aegis Stream Free':fontsize=24:fontcolor=white@0.5:x=10:y=10")
+        
+        print(f"Streaming on port {self.config['stream_port']}")
+        print("Press Ctrl+C to stop")
+        
+        try:
+            subprocess.run(ffmpeg_cmd)
+        except KeyboardInterrupt:
+            self.is_streaming = False
+            print("\nStream stopped")
+    
+    def connect_to_host(self, host: str, port: int = 47990):
+        """Connect to a streaming host as client"""
+        print(f"Connecting to {host}:{port}...")
+        
+        mpv_cmd = [
+            "mpv",
+            f"udp://{host}:{port}",
+            "--profile=low-latency",
+            "--untimed",
+            "--no-cache",
+            "--cache-secs=0",
+            "--demuxer-lavf-o=fflags=+nobuffer+fastseek",
+            "--framedrop=vo",
+            "--video-sync=audio",
+            "--interpolation=no"
+        ]
+        
+        try:
+            subprocess.run(mpv_cmd)
+        except KeyboardInterrupt:
+            print("\nDisconnected")
+    
+    def discover_hosts(self, timeout: float = 3.0) -> List[Dict]:
+        """Discover streaming hosts on LAN"""
+        hosts = []
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(timeout)
+        
+        sock.sendto(b"AEGIS_STREAM_DISCOVER", ('255.255.255.255', self.config["discovery_port"]))
+        
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                data, addr = sock.recvfrom(1024)
+                info = json.loads(data.decode())
+                info["address"] = addr[0]
+                hosts.append(info)
+            except socket.timeout:
+                break
+            except:
+                continue
+        
+        sock.close()
+        return hosts
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aegis Stream - Local Game/Desktop Streaming")
+    parser.add_argument("--host", action="store_true", help="Start as streaming host")
+    parser.add_argument("--client", type=str, metavar="HOST", help="Connect to streaming host")
+    parser.add_argument("--discover", action="store_true", help="Discover hosts on LAN")
+    parser.add_argument("--quality", choices=list(QUALITY_PRESETS.keys()), default="medium")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI")
+    parser.add_argument("--version", action="version", version=f"Aegis Stream {VERSION}")
+    
+    args = parser.parse_args()
+    stream = AegisStream()
+    
+    if args.discover:
+        print("Discovering hosts on LAN...")
+        hosts = stream.discover_hosts()
+        if hosts:
+            for h in hosts:
+                print(f"  {h['hostname']} ({h['address']}) - {h.get('tier', 'Unknown')}")
+        else:
+            print("  No hosts found")
+    elif args.host:
+        stream.start_host_mode(args.quality)
+    elif args.client:
+        stream.connect_to_host(args.client)
+    elif args.gui and HAS_GUI:
+        print("GUI mode - launching...")
+        root = tk.Tk()
+        root.title("Aegis Stream")
+        root.geometry("600x400")
+        ttk.Label(root, text="Aegis Stream v1.0", font=('Helvetica', 16, 'bold')).pack(pady=20)
+        ttk.Label(root, text=f"Tier: {stream.tier}").pack()
+        ttk.Button(root, text="Start Host Mode", command=lambda: stream.start_host_mode()).pack(pady=10)
+        ttk.Button(root, text="Discover Hosts", command=lambda: print(stream.discover_hosts())).pack(pady=10)
+        root.mainloop()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

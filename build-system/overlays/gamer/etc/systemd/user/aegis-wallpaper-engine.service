@@ -1,0 +1,21 @@
+[Unit]
+Description=Aegis Wallpaper Engine v3.1 - Animated Desktop Wallpapers
+Documentation=https://aegis-os.com/docs/wallpaper-engine
+After=graphical-session.target
+Wants=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-wallpaper-engine --daemon
+ExecStop=/usr/local/bin/aegis-wallpaper-engine --stop
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+StandardOutput=append:/var/log/aegis/wallpaper-engine.log
+StandardError=append:/var/log/aegis/wallpaper-engine.log
+
+[Install]
+WantedBy=graphical-session.target

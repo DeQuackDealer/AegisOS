@@ -1,0 +1,33 @@
+[Unit]
+Description=Aegis OS Gamer Performance - Gaming performance optimization service
+Documentation=https://aegis-os.com/docs/gamer-performance
+After=multi-user.target graphical.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-gamer-performance --apply-saved
+ExecReload=/usr/local/bin/aegis-gamer-performance --apply-saved
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-gamer-performance
+
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=false
+NoNewPrivileges=false
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/root"
+
+[Install]
+WantedBy=multi-user.target graphical.target

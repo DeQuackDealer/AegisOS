@@ -1,0 +1,1979 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Game Launcher - Comprehensive Gaming Platform
+A SteamOS/Bazzite-inspired game launcher for external media and integrated gaming platforms
+
+Features:
+- SD card and USB drive game support (Nintendo cartridge-style)
+- Auto-detect and mount removable media
+- Steam, Lutris, Wine/Proton, RetroArch integration
+- Game save sync to cloud or local backup
+- Performance overlay (MangoHud) and GameMode integration
+- Low-latency input handling
+- Cover art, playtime, favorites tracking
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import time
+import re
+import shutil
+import signal
+import hashlib
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    from tkinter.scrolledtext import ScrolledText
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+try:
+    from PIL import Image, ImageTk
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+
+class LicenseTier(Enum):
+    FREEMIUM = 1
+    BASIC = 2
+    GAMER = 3
+    GAMER_AI = 4
+    SERVER = 5
+
+
+class GameRunner(Enum):
+    NATIVE = "native"
+    WINE = "wine"
+    PROTON = "proton"
+    RETROARCH = "retroarch"
+    STEAM = "steam"
+    LUTRIS = "lutris"
+
+
+@dataclass
+class GameManifest:
+    """External game manifest structure (aegis-game.json)"""
+    name: str
+    executable: str
+    icon: str = ""
+    runner: str = "native"
+    proton_version: str = ""
+    save_path: str = "./saves"
+    launch_options: str = ""
+    description: str = ""
+    version: str = "1.0"
+    developer: str = ""
+    genre: str = ""
+    min_ram_mb: int = 0
+    min_disk_mb: int = 0
+
+
+@dataclass
+class Game:
+    """Game data structure"""
+    id: str
+    name: str
+    platform: str
+    executable: str = ""
+    install_path: str = ""
+    icon_path: str = ""
+    runner: str = "native"
+    proton_version: str = ""
+    save_path: str = ""
+    launch_options: str = ""
+    launch_command: str = ""
+    added_date: str = ""
+    last_played: str = ""
+    play_count: int = 0
+    total_playtime: int = 0
+    favorite: bool = False
+    hidden: bool = False
+    is_external: bool = False
+    external_device: str = ""
+    description: str = ""
+    developer: str = ""
+    genre: str = ""
+
+
+class AegisGameLauncher:
+    """Main game launcher class"""
+    
+    VERSION = "1.5.0"
+    APP_NAME = "Aegis Game Launcher"
+    
+    FULL_FEATURE_TIERS = [LicenseTier.GAMER, LicenseTier.GAMER_AI, LicenseTier.SERVER]
+    
+    EXTERNAL_MOUNT_BASE = Path("/run/aegis/external-games")
+    UDEV_RULES_PATH = Path("/etc/udev/rules.d/99-aegis-game-media.rules")
+    
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = self.VERSION
+        
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/games")
+        self.log_dir = Path("/var/log/aegis")
+        self.cache_dir = Path.home() / ".cache" / "aegis-games"
+        self.backup_dir = Path("/var/lib/aegis/backup/game-saves")
+        
+        self.config_file = self.config_dir / "game-launcher.json"
+        self.library_file = self.data_dir / "library.json"
+        self.playtime_file = self.data_dir / "playtime.json"
+        self.favorites_file = self.data_dir / "favorites.json"
+        self.saves_index_file = self.data_dir / "saves-index.json"
+        self.license_file = self.config_dir / "license.json"
+        
+        self.home_dir = Path.home()
+        self.games: Dict[str, Game] = {}
+        self.favorites: List[str] = []
+        self.external_devices: Dict[str, dict] = {}
+        self.running_games: Dict[str, dict] = {}
+        
+        self.gamemode_available = False
+        self.mangohud_available = False
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.device_monitor_thread = None
+        self.monitoring = False
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.check_system_capabilities()
+        self.load_license_tier()
+        self.load_config()
+        self.load_library()
+        self.load_favorites()
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        dirs = [
+            self.config_dir, self.data_dir, self.log_dir, 
+            self.cache_dir, self.backup_dir, self.EXTERNAL_MOUNT_BASE
+        ]
+        for directory in dirs:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "game-launcher.log"
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(log_file),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except PermissionError:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+        self.logger = logging.getLogger("AegisGameLauncher")
+        self.logger.info(f"Starting {self.APP_NAME} v{self.VERSION}")
+    
+    def check_system_capabilities(self):
+        """Check for available gaming tools"""
+        self.gamemode_available = shutil.which("gamemoded") is not None or \
+                                  shutil.which("gamemode") is not None
+        self.mangohud_available = shutil.which("mangohud") is not None
+        
+        self.logger.info(f"GameMode available: {self.gamemode_available}")
+        self.logger.info(f"MangoHud available: {self.mangohud_available}")
+    
+    def load_license_tier(self):
+        """Load and determine license tier"""
+        try:
+            if self.license_file.exists():
+                with open(self.license_file, 'r') as f:
+                    license_data = json.load(f)
+                
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'gamer': LicenseTier.GAMER,
+                    'gamer-ai': LicenseTier.GAMER_AI,
+                    'gamer_ai': LicenseTier.GAMER_AI,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                marker_files = [
+                    ("/etc/aegis-gamer-marker", LicenseTier.GAMER),
+                    ("/etc/aegis-gamer-ai-marker", LicenseTier.GAMER_AI),
+                    ("/etc/aegis-server-marker", LicenseTier.SERVER),
+                    ("/etc/aegis-basic-marker", LicenseTier.BASIC),
+                    ("/etc/aegis-freemium-marker", LicenseTier.FREEMIUM),
+                ]
+                for marker, tier in marker_files:
+                    if Path(marker).exists():
+                        self.license_tier = tier
+                        break
+                        
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+            self.license_tier = LicenseTier.FREEMIUM
+        
+        self.logger.info(f"License tier: {self.license_tier.name}")
+    
+    def is_full_version(self) -> bool:
+        """Check if running full version with all features"""
+        return self.license_tier in self.FULL_FEATURE_TIERS
+    
+    def load_config(self):
+        """Load launcher configuration"""
+        default_config = {
+            "auto_scan_on_start": True,
+            "auto_mount_external": True,
+            "monitor_external_devices": True,
+            "gamemode_enabled": True,
+            "mangohud_enabled": False,
+            "mangohud_config": "fps,frametime,cpu_temp,gpu_temp",
+            "low_latency_mode": True,
+            "steam_paths": [
+                str(self.home_dir / ".steam/steam"),
+                str(self.home_dir / ".local/share/Steam")
+            ],
+            "lutris_path": str(self.home_dir / ".config/lutris"),
+            "heroic_path": str(self.home_dir / ".config/heroic"),
+            "retroarch_path": str(self.home_dir / ".config/retroarch"),
+            "wine_prefix": str(self.home_dir / ".wine"),
+            "proton_path": str(self.home_dir / ".steam/steam/compatibilitytools.d"),
+            "native_paths": [
+                "/usr/share/applications",
+                str(self.home_dir / ".local/share/applications")
+            ],
+            "external_device_types": ["usb", "sdcard", "nvme_external"],
+            "save_backup_enabled": True,
+            "save_backup_interval": 3600,
+            "save_sync_cloud": False,
+            "cloud_sync_path": "",
+            "sort_by": "name",
+            "view_mode": "grid",
+            "show_hidden_games": False,
+            "last_scan": None,
+            "ui_theme": "dark"
+        }
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    self.config = {**default_config, **json.load(f)}
+            else:
+                self.config = default_config
+                self.save_config()
+        except (json.JSONDecodeError, Exception) as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def save_config(self):
+        """Save configuration"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save config - permission denied")
+    
+    def load_library(self):
+        """Load game library"""
+        try:
+            if self.library_file.exists():
+                with open(self.library_file, 'r') as f:
+                    data = json.load(f)
+                    for game_id, game_data in data.get('games', {}).items():
+                        self.games[game_id] = Game(**game_data)
+        except Exception as e:
+            self.logger.error(f"Error loading library: {e}")
+    
+    def save_library(self):
+        """Save game library"""
+        try:
+            data = {
+                'version': self.VERSION,
+                'last_updated': datetime.now().isoformat(),
+                'games': {gid: asdict(g) for gid, g in self.games.items()}
+            }
+            with open(self.library_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save library - permission denied")
+    
+    def load_favorites(self):
+        """Load favorites list"""
+        try:
+            if self.favorites_file.exists():
+                with open(self.favorites_file, 'r') as f:
+                    self.favorites = json.load(f)
+        except Exception as e:
+            self.logger.error(f"Error loading favorites: {e}")
+            self.favorites = []
+    
+    def save_favorites(self):
+        """Save favorites list"""
+        try:
+            with open(self.favorites_file, 'w') as f:
+                json.dump(self.favorites, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save favorites - permission denied")
+    
+    def detect_external_devices(self) -> List[dict]:
+        """Detect connected SD cards and USB drives"""
+        devices = []
+        
+        try:
+            result = subprocess.run(
+                ['lsblk', '-J', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,LABEL,HOTPLUG,TRAN,RM'],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                for device in data.get('blockdevices', []):
+                    if device.get('rm') == '1' or device.get('hotplug') == '1':
+                        tran = device.get('tran', '')
+                        if tran in ['usb', 'mmc', 'nvme'] or device.get('rm') == '1':
+                            device_info = {
+                                'name': device.get('name'),
+                                'size': device.get('size'),
+                                'type': 'sdcard' if tran == 'mmc' else ('usb' if tran == 'usb' else 'external'),
+                                'label': device.get('label', ''),
+                                'mountpoint': device.get('mountpoint'),
+                                'transport': tran
+                            }
+                            devices.append(device_info)
+                            
+                            for child in device.get('children', []):
+                                if child.get('type') == 'part':
+                                    part_info = {
+                                        'name': child.get('name'),
+                                        'size': child.get('size'),
+                                        'type': device_info['type'],
+                                        'label': child.get('label', device.get('label', '')),
+                                        'mountpoint': child.get('mountpoint'),
+                                        'transport': tran,
+                                        'parent': device.get('name')
+                                    }
+                                    devices.append(part_info)
+                                    
+        except Exception as e:
+            self.logger.error(f"Error detecting external devices: {e}")
+        
+        return devices
+    
+    def mount_external_device(self, device_name: str, label: str = "") -> Optional[Path]:
+        """Mount an external device for game access"""
+        if not self.is_full_version():
+            self.logger.warning("External media mounting requires Gamer edition or higher")
+            return None
+        
+        mount_name = label if label else device_name
+        mount_name = re.sub(r'[^a-zA-Z0-9_-]', '_', mount_name)
+        mount_point = self.EXTERNAL_MOUNT_BASE / mount_name
+        
+        try:
+            mount_point.mkdir(parents=True, exist_ok=True)
+            
+            result = subprocess.run(
+                ['mount', f'/dev/{device_name}', str(mount_point)],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Mounted {device_name} at {mount_point}")
+                self.external_devices[device_name] = {
+                    'mount_point': str(mount_point),
+                    'label': label,
+                    'mounted_at': datetime.now().isoformat()
+                }
+                return mount_point
+            else:
+                result = subprocess.run(
+                    ['udisksctl', 'mount', '-b', f'/dev/{device_name}'],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode == 0:
+                    mount_line = result.stdout.strip()
+                    if 'at' in mount_line:
+                        actual_mount = mount_line.split('at')[-1].strip().rstrip('.')
+                        self.logger.info(f"Mounted {device_name} at {actual_mount}")
+                        self.external_devices[device_name] = {
+                            'mount_point': actual_mount,
+                            'label': label,
+                            'mounted_at': datetime.now().isoformat()
+                        }
+                        return Path(actual_mount)
+                        
+        except Exception as e:
+            self.logger.error(f"Error mounting {device_name}: {e}")
+        
+        return None
+    
+    def unmount_external_device(self, device_name: str) -> bool:
+        """Unmount an external device"""
+        try:
+            if device_name in self.external_devices:
+                mount_point = self.external_devices[device_name]['mount_point']
+                
+                result = subprocess.run(
+                    ['umount', mount_point],
+                    capture_output=True, text=True, timeout=30
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info(f"Unmounted {device_name}")
+                    del self.external_devices[device_name]
+                    return True
+                else:
+                    result = subprocess.run(
+                        ['udisksctl', 'unmount', '-b', f'/dev/{device_name}'],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if result.returncode == 0:
+                        del self.external_devices[device_name]
+                        return True
+                        
+        except Exception as e:
+            self.logger.error(f"Error unmounting {device_name}: {e}")
+        
+        return False
+    
+    def scan_external_games(self, mount_point: Path) -> List[Game]:
+        """Scan an external device for games with aegis-game.json manifests"""
+        games = []
+        
+        if not self.is_full_version():
+            self.logger.warning("External game scanning requires Gamer edition or higher")
+            return games
+        
+        try:
+            manifest_files = list(mount_point.rglob("aegis-game.json"))
+            
+            for manifest_path in manifest_files:
+                try:
+                    with open(manifest_path, 'r') as f:
+                        manifest_data = json.load(f)
+                    
+                    game_dir = manifest_path.parent
+                    game_id = f"external_{hashlib.md5(str(manifest_path).encode()).hexdigest()[:12]}"
+                    
+                    runner = manifest_data.get('runner', 'native').lower()
+                    executable = manifest_data.get('executable', '')
+                    exe_path = game_dir / executable if executable else ""
+                    
+                    icon_path = ""
+                    if manifest_data.get('icon'):
+                        icon_candidate = game_dir / manifest_data['icon']
+                        if icon_candidate.exists():
+                            icon_path = str(icon_candidate)
+                    
+                    game = Game(
+                        id=game_id,
+                        name=manifest_data.get('name', game_dir.name),
+                        platform=f"external_{runner}",
+                        executable=str(exe_path) if exe_path else "",
+                        install_path=str(game_dir),
+                        icon_path=icon_path,
+                        runner=runner,
+                        proton_version=manifest_data.get('proton_version', ''),
+                        save_path=str(game_dir / manifest_data.get('save_path', 'saves')),
+                        launch_options=manifest_data.get('launch_options', ''),
+                        added_date=datetime.now().isoformat(),
+                        is_external=True,
+                        external_device=str(mount_point),
+                        description=manifest_data.get('description', ''),
+                        developer=manifest_data.get('developer', ''),
+                        genre=manifest_data.get('genre', '')
+                    )
+                    
+                    games.append(game)
+                    self.logger.info(f"Found external game: {game.name} ({runner})")
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error parsing manifest {manifest_path}: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error scanning external games: {e}")
+        
+        return games
+    
+    def scan_steam_games(self) -> List[Game]:
+        """Scan for Steam games"""
+        games = []
+        
+        for steam_path in self.config.get("steam_paths", []):
+            steamapps_path = Path(steam_path) / "steamapps"
+            
+            if not steamapps_path.exists():
+                continue
+            
+            try:
+                for acf_file in steamapps_path.glob("appmanifest_*.acf"):
+                    try:
+                        game_data = self._parse_acf_file(acf_file)
+                        if game_data:
+                            game_id = f"steam_{game_data['appid']}"
+                            install_dir = steamapps_path / "common" / game_data.get("installdir", "")
+                            
+                            game = Game(
+                                id=game_id,
+                                name=game_data.get("name", "Unknown Game"),
+                                platform="steam",
+                                executable="",
+                                install_path=str(install_dir),
+                                runner="steam",
+                                launch_command=f"steam://rungameid/{game_data['appid']}",
+                                added_date=datetime.now().isoformat()
+                            )
+                            games.append(game)
+                            
+                    except Exception as e:
+                        self.logger.warning(f"Error parsing {acf_file}: {e}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error scanning Steam path {steam_path}: {e}")
+        
+        return games
+    
+    def _parse_acf_file(self, filepath: Path) -> Optional[Dict]:
+        """Parse Steam ACF manifest file"""
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            data = {}
+            key_pattern = re.compile(r'"(\w+)"\s+"([^"]*)"')
+            
+            for match in key_pattern.finditer(content):
+                key, value = match.groups()
+                data[key.lower()] = value
+            
+            if 'appid' not in data:
+                return None
+            
+            return {
+                "appid": data.get("appid"),
+                "name": data.get("name", "Unknown"),
+                "installdir": data.get("installdir", "")
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing ACF file {filepath}: {e}")
+            return None
+    
+    def scan_lutris_games(self) -> List[Game]:
+        """Scan for Lutris games"""
+        games = []
+        lutris_games_path = Path(self.config.get("lutris_path", "")) / "games"
+        
+        if not lutris_games_path.exists():
+            return games
+        
+        try:
+            for yml_file in lutris_games_path.glob("*.yml"):
+                try:
+                    import yaml
+                    with open(yml_file, 'r') as f:
+                        game_data = yaml.safe_load(f)
+                    
+                    if not game_data:
+                        continue
+                    
+                    game_slug = yml_file.stem
+                    game_id = f"lutris_{game_slug}"
+                    
+                    game = Game(
+                        id=game_id,
+                        name=game_data.get("name", game_slug),
+                        platform="lutris",
+                        runner=game_data.get("runner", "wine"),
+                        launch_command=f"lutris:rungame/{game_slug}",
+                        added_date=datetime.now().isoformat()
+                    )
+                    games.append(game)
+                    
+                except ImportError:
+                    self.logger.warning("PyYAML not available for Lutris scanning")
+                    break
+                except Exception as e:
+                    self.logger.warning(f"Error parsing Lutris game {yml_file}: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error scanning Lutris games: {e}")
+        
+        return games
+    
+    def scan_native_games(self) -> List[Game]:
+        """Scan for native Linux games from .desktop files"""
+        games = []
+        
+        for apps_path in self.config.get("native_paths", []):
+            apps_dir = Path(apps_path)
+            
+            if not apps_dir.exists():
+                continue
+            
+            try:
+                for desktop_file in apps_dir.glob("*.desktop"):
+                    try:
+                        game_data = self._parse_desktop_file(desktop_file)
+                        
+                        if not game_data:
+                            continue
+                        
+                        categories = game_data.get("categories", "").lower()
+                        if "game" not in categories:
+                            continue
+                        
+                        game_id = f"native_{desktop_file.stem}"
+                        
+                        game = Game(
+                            id=game_id,
+                            name=game_data.get("name", desktop_file.stem),
+                            platform="native",
+                            executable=game_data.get("exec", ""),
+                            icon_path=game_data.get("icon", ""),
+                            runner="native",
+                            launch_command=game_data.get("exec", ""),
+                            added_date=datetime.now().isoformat(),
+                            hidden=game_data.get("hidden", False)
+                        )
+                        games.append(game)
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Error parsing {desktop_file}: {e}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error scanning native games in {apps_path}: {e}")
+        
+        return games
+    
+    def _parse_desktop_file(self, filepath: Path) -> Optional[Dict]:
+        """Parse a .desktop file"""
+        try:
+            data = {}
+            current_section = None
+            
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    line = line.strip()
+                    
+                    if line.startswith('['):
+                        current_section = line[1:-1]
+                        continue
+                    
+                    if current_section != "Desktop Entry":
+                        continue
+                    
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        data[key.lower()] = value
+            
+            return {
+                "name": data.get("name", ""),
+                "exec": data.get("exec", ""),
+                "icon": data.get("icon", ""),
+                "categories": data.get("categories", ""),
+                "hidden": data.get("nodisplay", "false").lower() == "true"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing desktop file {filepath}: {e}")
+            return None
+    
+    def scan_all_games(self, callback=None) -> Dict[str, int]:
+        """Scan all game sources"""
+        self.logger.info("Starting full game library scan...")
+        
+        results = {
+            "steam": 0,
+            "lutris": 0,
+            "native": 0,
+            "external": 0,
+            "total": 0,
+            "errors": []
+        }
+        
+        if callback:
+            callback("Scanning Steam games...")
+        try:
+            steam_games = self.scan_steam_games()
+            for game in steam_games:
+                self._add_or_update_game(game)
+            results["steam"] = len(steam_games)
+        except Exception as e:
+            results["errors"].append(f"Steam: {e}")
+        
+        if callback:
+            callback("Scanning Lutris games...")
+        try:
+            lutris_games = self.scan_lutris_games()
+            for game in lutris_games:
+                self._add_or_update_game(game)
+            results["lutris"] = len(lutris_games)
+        except Exception as e:
+            results["errors"].append(f"Lutris: {e}")
+        
+        if callback:
+            callback("Scanning native games...")
+        try:
+            native_games = self.scan_native_games()
+            for game in native_games:
+                self._add_or_update_game(game)
+            results["native"] = len(native_games)
+        except Exception as e:
+            results["errors"].append(f"Native: {e}")
+        
+        if self.is_full_version():
+            if callback:
+                callback("Scanning external devices...")
+            try:
+                devices = self.detect_external_devices()
+                for device in devices:
+                    if device.get('mountpoint'):
+                        ext_games = self.scan_external_games(Path(device['mountpoint']))
+                        for game in ext_games:
+                            self._add_or_update_game(game)
+                        results["external"] += len(ext_games)
+            except Exception as e:
+                results["errors"].append(f"External: {e}")
+        
+        results["total"] = sum([results["steam"], results["lutris"], 
+                               results["native"], results["external"]])
+        
+        self.config["last_scan"] = datetime.now().isoformat()
+        self.save_config()
+        self.save_library()
+        
+        if callback:
+            callback(f"Scan complete! Found {results['total']} games")
+        
+        self.logger.info(f"Scan complete: {results}")
+        return results
+    
+    def _add_or_update_game(self, game: Game):
+        """Add or update a game in the library"""
+        existing = self.games.get(game.id)
+        if existing:
+            game.added_date = existing.added_date
+            game.last_played = existing.last_played
+            game.play_count = existing.play_count
+            game.total_playtime = existing.total_playtime
+            game.favorite = existing.favorite
+        self.games[game.id] = game
+    
+    def get_games(self, search: str = None, platform: str = None,
+                  favorites_only: bool = False, external_only: bool = False) -> List[Game]:
+        """Get games with optional filtering"""
+        games = list(self.games.values())
+        
+        if not self.config.get("show_hidden_games", False):
+            games = [g for g in games if not g.hidden]
+        
+        if search:
+            search_lower = search.lower()
+            games = [g for g in games if search_lower in g.name.lower()]
+        
+        if platform and platform != "all":
+            games = [g for g in games if g.platform == platform]
+        
+        if favorites_only:
+            games = [g for g in games if g.id in self.favorites]
+        
+        if external_only:
+            games = [g for g in games if g.is_external]
+        
+        sort_key = self.config.get("sort_by", "name")
+        if sort_key == "name":
+            games.sort(key=lambda x: x.name.lower())
+        elif sort_key == "last_played":
+            games.sort(key=lambda x: x.last_played or "", reverse=True)
+        elif sort_key == "play_count":
+            games.sort(key=lambda x: x.play_count, reverse=True)
+        elif sort_key == "playtime":
+            games.sort(key=lambda x: x.total_playtime, reverse=True)
+        
+        return games
+    
+    def get_favorites(self) -> List[Game]:
+        """Get favorite games"""
+        return [self.games[gid] for gid in self.favorites if gid in self.games]
+    
+    def toggle_favorite(self, game_id: str) -> bool:
+        """Toggle game favorite status"""
+        if game_id in self.favorites:
+            self.favorites.remove(game_id)
+            if game_id in self.games:
+                self.games[game_id].favorite = False
+            result = False
+        else:
+            self.favorites.append(game_id)
+            if game_id in self.games:
+                self.games[game_id].favorite = True
+            result = True
+        
+        self.save_favorites()
+        self.save_library()
+        return result
+    
+    def build_launch_command(self, game: Game) -> List[str]:
+        """Build the full launch command with performance tools"""
+        cmd = []
+        
+        if self.config.get("gamemode_enabled") and self.gamemode_available:
+            cmd.append("gamemoderun")
+        
+        if self.config.get("mangohud_enabled") and self.mangohud_available:
+            cmd.append("mangohud")
+        
+        runner = game.runner.lower()
+        
+        if runner == "steam":
+            return ["xdg-open", game.launch_command]
+        
+        elif runner == "lutris":
+            return ["xdg-open", game.launch_command]
+        
+        elif runner == "wine":
+            wine_cmd = ["wine"]
+            if game.launch_options:
+                wine_cmd.extend(game.launch_options.split())
+            wine_cmd.append(game.executable)
+            return cmd + wine_cmd
+        
+        elif runner == "proton":
+            proton_path = self._find_proton(game.proton_version)
+            if proton_path:
+                env_vars = {
+                    'STEAM_COMPAT_DATA_PATH': str(Path(game.install_path) / 'pfx'),
+                    'STEAM_COMPAT_CLIENT_INSTALL_PATH': str(Path.home() / '.steam/steam')
+                }
+                proton_cmd = [str(proton_path / 'proton'), 'run', game.executable]
+                if game.launch_options:
+                    proton_cmd.extend(game.launch_options.split())
+                return cmd + proton_cmd
+            else:
+                return cmd + ["wine", game.executable]
+        
+        elif runner == "retroarch":
+            retroarch_cmd = ["retroarch"]
+            if game.launch_options:
+                retroarch_cmd.extend(game.launch_options.split())
+            if game.executable:
+                retroarch_cmd.append(game.executable)
+            return cmd + retroarch_cmd
+        
+        elif runner == "native":
+            if game.executable:
+                native_cmd = [game.executable]
+                if game.launch_options:
+                    native_cmd.extend(game.launch_options.split())
+                return cmd + native_cmd
+            elif game.launch_command:
+                return game.launch_command.split()
+        
+        return []
+    
+    def _find_proton(self, version: str = "") -> Optional[Path]:
+        """Find Proton installation"""
+        proton_base = Path(self.config.get("proton_path", ""))
+        
+        if version and (proton_base / version).exists():
+            return proton_base / version
+        
+        if proton_base.exists():
+            proton_dirs = sorted(proton_base.glob("GE-Proton*"), reverse=True)
+            if proton_dirs:
+                return proton_dirs[0]
+            
+            proton_dirs = sorted(proton_base.glob("Proton*"), reverse=True)
+            if proton_dirs:
+                return proton_dirs[0]
+        
+        return None
+    
+    def launch_game(self, game_id: str, callback=None) -> Dict:
+        """Launch a game"""
+        game = self.games.get(game_id)
+        if not game:
+            return {"success": False, "error": f"Game '{game_id}' not found"}
+        
+        if game.is_external and not self.is_full_version():
+            return {
+                "success": False, 
+                "error": "External game launching requires Gamer edition or higher",
+                "upgrade_required": True
+            }
+        
+        result = {
+            "success": False,
+            "game_id": game_id,
+            "game_name": game.name,
+            "platform": game.platform,
+            "start_time": datetime.now().isoformat(),
+            "error": None
+        }
+        
+        self.logger.info(f"Launching game: {game.name} ({game.platform})")
+        if callback:
+            callback(f"Launching {game.name}...")
+        
+        try:
+            launch_cmd = self.build_launch_command(game)
+            
+            if not launch_cmd:
+                result["error"] = "Could not build launch command"
+                return result
+            
+            self.logger.info(f"Launch command: {' '.join(launch_cmd)}")
+            
+            env = os.environ.copy()
+            
+            if self.config.get("low_latency_mode"):
+                env['__GL_SYNC_TO_VBLANK'] = '0'
+                env['vblank_mode'] = '0'
+                env['__GL_THREADED_OPTIMIZATIONS'] = '1'
+            
+            if self.config.get("mangohud_enabled") and self.mangohud_available:
+                env['MANGOHUD'] = '1'
+                env['MANGOHUD_CONFIG'] = self.config.get("mangohud_config", "")
+            
+            if game.runner == "wine" or game.runner == "proton":
+                env['WINEESYNC'] = '1'
+                env['WINEFSYNC'] = '1'
+                env['PROTON_ENABLE_NVAPI'] = '1'
+            
+            start_time = time.time()
+            
+            process = subprocess.Popen(
+                launch_cmd,
+                env=env,
+                cwd=game.install_path if game.install_path and Path(game.install_path).exists() else None,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            
+            self.running_games[game_id] = {
+                'process': process,
+                'start_time': start_time,
+                'game': game
+            }
+            
+            game.play_count += 1
+            game.last_played = datetime.now().isoformat()
+            self.save_library()
+            
+            if self.config.get("save_backup_enabled") and self.is_full_version():
+                threading.Thread(target=self._monitor_game_session, args=(game_id,), daemon=True).start()
+            
+            result["success"] = True
+            result["pid"] = process.pid
+            
+        except Exception as e:
+            result["error"] = str(e)
+            self.logger.error(f"Error launching {game.name}: {e}")
+        
+        return result
+    
+    def _monitor_game_session(self, game_id: str):
+        """Monitor a running game and handle save backup"""
+        if game_id not in self.running_games:
+            return
+        
+        session = self.running_games[game_id]
+        process = session['process']
+        game = session['game']
+        
+        while process.poll() is None:
+            time.sleep(5)
+        
+        end_time = time.time()
+        playtime = int(end_time - session['start_time'])
+        
+        game.total_playtime += playtime
+        self.save_library()
+        
+        if game.save_path and Path(game.save_path).exists():
+            self.backup_game_saves(game_id)
+        
+        del self.running_games[game_id]
+        self.logger.info(f"Game session ended: {game.name} (played {playtime}s)")
+    
+    def backup_game_saves(self, game_id: str) -> bool:
+        """Backup game saves"""
+        if not self.is_full_version():
+            self.logger.warning("Save backup requires Gamer edition or higher")
+            return False
+        
+        game = self.games.get(game_id)
+        if not game or not game.save_path:
+            return False
+        
+        save_path = Path(game.save_path)
+        if not save_path.exists():
+            return False
+        
+        try:
+            backup_name = f"{game_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            backup_path = self.backup_dir / backup_name
+            
+            shutil.copytree(save_path, backup_path)
+            
+            self.logger.info(f"Backed up saves for {game.name} to {backup_path}")
+            
+            if self.config.get("save_sync_cloud") and self.config.get("cloud_sync_path"):
+                cloud_path = Path(self.config["cloud_sync_path"]) / backup_name
+                shutil.copytree(save_path, cloud_path)
+                self.logger.info(f"Synced saves to cloud: {cloud_path}")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error backing up saves: {e}")
+            return False
+    
+    def restore_game_saves(self, game_id: str, backup_name: str = None) -> bool:
+        """Restore game saves from backup"""
+        if not self.is_full_version():
+            self.logger.warning("Save restore requires Gamer edition or higher")
+            return False
+        
+        game = self.games.get(game_id)
+        if not game or not game.save_path:
+            return False
+        
+        try:
+            backups = sorted(self.backup_dir.glob(f"{game_id}_*"), reverse=True)
+            
+            if not backups:
+                return False
+            
+            if backup_name:
+                backup_path = self.backup_dir / backup_name
+                if not backup_path.exists():
+                    return False
+            else:
+                backup_path = backups[0]
+            
+            save_path = Path(game.save_path)
+            if save_path.exists():
+                shutil.rmtree(save_path)
+            
+            shutil.copytree(backup_path, save_path)
+            self.logger.info(f"Restored saves for {game.name} from {backup_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error restoring saves: {e}")
+            return False
+    
+    def toggle_mangohud(self) -> bool:
+        """Toggle MangoHud overlay"""
+        if not self.mangohud_available:
+            return False
+        
+        self.config["mangohud_enabled"] = not self.config.get("mangohud_enabled", False)
+        self.save_config()
+        return self.config["mangohud_enabled"]
+    
+    def toggle_gamemode(self) -> bool:
+        """Toggle GameMode"""
+        if not self.gamemode_available:
+            return False
+        
+        self.config["gamemode_enabled"] = not self.config.get("gamemode_enabled", False)
+        self.save_config()
+        return self.config["gamemode_enabled"]
+    
+    def start_device_monitoring(self):
+        """Start monitoring for external device changes"""
+        if self.monitoring:
+            return
+        
+        self.monitoring = True
+        self.device_monitor_thread = threading.Thread(target=self._device_monitor_loop, daemon=True)
+        self.device_monitor_thread.start()
+    
+    def stop_device_monitoring(self):
+        """Stop device monitoring"""
+        self.monitoring = False
+    
+    def _device_monitor_loop(self):
+        """Monitor loop for external devices"""
+        known_devices = set()
+        
+        while self.monitoring:
+            try:
+                current_devices = set()
+                for device in self.detect_external_devices():
+                    device_key = device.get('name', '')
+                    current_devices.add(device_key)
+                    
+                    if device_key not in known_devices:
+                        self.logger.info(f"New external device detected: {device_key}")
+                        if self.config.get("auto_mount_external"):
+                            mount_point = device.get('mountpoint')
+                            if mount_point:
+                                games = self.scan_external_games(Path(mount_point))
+                                for game in games:
+                                    self._add_or_update_game(game)
+                                if games:
+                                    self.save_library()
+                
+                removed = known_devices - current_devices
+                for device_key in removed:
+                    self.logger.info(f"External device removed: {device_key}")
+                    games_to_remove = [gid for gid, g in self.games.items() 
+                                       if g.is_external and device_key in g.external_device]
+                    for gid in games_to_remove:
+                        del self.games[gid]
+                    if games_to_remove:
+                        self.save_library()
+                
+                known_devices = current_devices
+                
+            except Exception as e:
+                self.logger.error(f"Device monitoring error: {e}")
+            
+            time.sleep(2)
+    
+    def format_playtime(self, seconds: int) -> str:
+        """Format playtime in human-readable format"""
+        if seconds < 60:
+            return f"{seconds}s"
+        elif seconds < 3600:
+            return f"{seconds // 60}m"
+        else:
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            return f"{hours}h {minutes}m"
+    
+    def get_stats(self) -> Dict:
+        """Get launcher statistics"""
+        total_games = len(self.games)
+        total_playtime = sum(g.total_playtime for g in self.games.values())
+        favorites_count = len(self.favorites)
+        external_count = len([g for g in self.games.values() if g.is_external])
+        
+        platform_counts = {}
+        for game in self.games.values():
+            platform_counts[game.platform] = platform_counts.get(game.platform, 0) + 1
+        
+        most_played = sorted(self.games.values(), key=lambda x: x.total_playtime, reverse=True)[:5]
+        recently_played = sorted(
+            [g for g in self.games.values() if g.last_played],
+            key=lambda x: x.last_played,
+            reverse=True
+        )[:5]
+        
+        return {
+            "total_games": total_games,
+            "total_playtime": total_playtime,
+            "total_playtime_formatted": self.format_playtime(total_playtime),
+            "favorites_count": favorites_count,
+            "external_games": external_count,
+            "platform_counts": platform_counts,
+            "most_played": [{"name": g.name, "playtime": self.format_playtime(g.total_playtime)} 
+                           for g in most_played],
+            "recently_played": [{"name": g.name, "last_played": g.last_played} 
+                               for g in recently_played],
+            "gamemode_available": self.gamemode_available,
+            "gamemode_enabled": self.config.get("gamemode_enabled", False),
+            "mangohud_available": self.mangohud_available,
+            "mangohud_enabled": self.config.get("mangohud_enabled", False),
+            "license_tier": self.license_tier.name
+        }
+
+
+class AegisGameLauncherGUI:
+    """GUI interface for the game launcher"""
+    
+    def __init__(self, launcher: AegisGameLauncher):
+        self.launcher = launcher
+        self.root = None
+        self.game_frames = {}
+        self.selected_game = None
+        
+    def run(self):
+        """Run the GUI"""
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available")
+            return
+        
+        self.root = tk.Tk()
+        self.root.title(f"{self.launcher.APP_NAME} v{self.launcher.VERSION}")
+        self.root.geometry("1200x800")
+        self.root.minsize(800, 600)
+        
+        self._setup_styles()
+        self._create_widgets()
+        self._bind_events()
+        
+        if self.launcher.config.get("auto_scan_on_start"):
+            self.root.after(100, self._initial_scan)
+        
+        if self.launcher.config.get("monitor_external_devices") and self.launcher.is_full_version():
+            self.launcher.start_device_monitoring()
+        
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        """Setup ttk styles"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        bg_color = '#1a1a2e'
+        fg_color = '#eee'
+        accent_color = '#e94560'
+        secondary_color = '#16213e'
+        
+        style.configure('TFrame', background=bg_color)
+        style.configure('TLabel', background=bg_color, foreground=fg_color)
+        style.configure('TButton', background=secondary_color, foreground=fg_color)
+        style.configure('Header.TLabel', font=('Helvetica', 16, 'bold'))
+        style.configure('Title.TLabel', font=('Helvetica', 12, 'bold'))
+        style.configure('Game.TFrame', background=secondary_color)
+        style.configure('Favorite.TButton', background=accent_color)
+        
+        self.root.configure(bg=bg_color)
+        self.bg_color = bg_color
+        self.fg_color = fg_color
+        self.accent_color = accent_color
+        self.secondary_color = secondary_color
+    
+    def _create_widgets(self):
+        """Create GUI widgets"""
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        title_label = ttk.Label(
+            header_frame, 
+            text=f"🎮 {self.launcher.APP_NAME}",
+            style='Header.TLabel'
+        )
+        title_label.pack(side=tk.LEFT)
+        
+        tier_text = f"[{self.launcher.license_tier.name}]"
+        if not self.launcher.is_full_version():
+            tier_text += " - Upgrade for full features"
+        tier_label = ttk.Label(header_frame, text=tier_text)
+        tier_label.pack(side=tk.LEFT, padx=20)
+        
+        controls_frame = ttk.Frame(header_frame)
+        controls_frame.pack(side=tk.RIGHT)
+        
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(controls_frame, textvariable=self.search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        search_entry.insert(0, "Search games...")
+        search_entry.bind('<FocusIn>', lambda e: e.widget.delete(0, tk.END) if e.widget.get() == "Search games..." else None)
+        self.search_var.trace('w', lambda *args: self._filter_games())
+        
+        scan_btn = ttk.Button(controls_frame, text="🔄 Scan", command=self._scan_games)
+        scan_btn.pack(side=tk.LEFT, padx=2)
+        
+        if self.launcher.mangohud_available:
+            self.mangohud_var = tk.BooleanVar(value=self.launcher.config.get("mangohud_enabled", False))
+            mangohud_btn = ttk.Checkbutton(
+                controls_frame, text="📊 MangoHud", 
+                variable=self.mangohud_var,
+                command=self._toggle_mangohud
+            )
+            mangohud_btn.pack(side=tk.LEFT, padx=5)
+        
+        if self.launcher.gamemode_available:
+            self.gamemode_var = tk.BooleanVar(value=self.launcher.config.get("gamemode_enabled", False))
+            gamemode_btn = ttk.Checkbutton(
+                controls_frame, text="⚡ GameMode",
+                variable=self.gamemode_var,
+                command=self._toggle_gamemode
+            )
+            gamemode_btn.pack(side=tk.LEFT, padx=5)
+        
+        content_frame = ttk.Frame(main_frame)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        sidebar_frame = ttk.Frame(content_frame, width=200)
+        sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        sidebar_frame.pack_propagate(False)
+        
+        ttk.Label(sidebar_frame, text="⭐ Quick Launch", style='Title.TLabel').pack(pady=5)
+        
+        self.favorites_frame = ttk.Frame(sidebar_frame)
+        self.favorites_frame.pack(fill=tk.BOTH, expand=True)
+        
+        filters_label = ttk.Label(sidebar_frame, text="Filters", style='Title.TLabel')
+        filters_label.pack(pady=(20, 5))
+        
+        self.platform_var = tk.StringVar(value="all")
+        platforms = [("All Games", "all"), ("Steam", "steam"), ("Lutris", "lutris"), 
+                    ("Native", "native"), ("External", "external")]
+        for text, value in platforms:
+            rb = ttk.Radiobutton(
+                sidebar_frame, text=text, value=value,
+                variable=self.platform_var, command=self._filter_games
+            )
+            rb.pack(anchor=tk.W, padx=10)
+        
+        self.favorites_only_var = tk.BooleanVar()
+        fav_check = ttk.Checkbutton(
+            sidebar_frame, text="⭐ Favorites Only",
+            variable=self.favorites_only_var, command=self._filter_games
+        )
+        fav_check.pack(anchor=tk.W, padx=10, pady=10)
+        
+        games_frame = ttk.Frame(content_frame)
+        games_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.games_canvas = tk.Canvas(games_frame, bg=self.bg_color, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(games_frame, orient=tk.VERTICAL, command=self.games_canvas.yview)
+        
+        self.games_container = ttk.Frame(self.games_canvas)
+        self.games_canvas.create_window((0, 0), window=self.games_container, anchor=tk.NW)
+        
+        self.games_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.games_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.games_container.bind('<Configure>', 
+            lambda e: self.games_canvas.configure(scrollregion=self.games_canvas.bbox("all")))
+        
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(status_frame, textvariable=self.status_var)
+        status_label.pack(side=tk.LEFT)
+        
+        stats = self.launcher.get_stats()
+        stats_text = f"Games: {stats['total_games']} | Playtime: {stats['total_playtime_formatted']}"
+        stats_label = ttk.Label(status_frame, text=stats_text)
+        stats_label.pack(side=tk.RIGHT)
+    
+    def _bind_events(self):
+        """Bind keyboard and mouse events"""
+        self.root.bind('<Control-q>', lambda e: self.root.quit())
+        self.root.bind('<Control-r>', lambda e: self._scan_games())
+        self.root.bind('<Control-f>', lambda e: self.search_var.set(''))
+        
+        self.games_canvas.bind('<MouseWheel>', 
+            lambda e: self.games_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        self.games_canvas.bind('<Button-4>', 
+            lambda e: self.games_canvas.yview_scroll(-1, "units"))
+        self.games_canvas.bind('<Button-5>', 
+            lambda e: self.games_canvas.yview_scroll(1, "units"))
+    
+    def _initial_scan(self):
+        """Perform initial scan on startup"""
+        self._scan_games()
+    
+    def _scan_games(self):
+        """Scan for games"""
+        self.status_var.set("Scanning for games...")
+        self.root.update()
+        
+        def scan_callback(msg):
+            self.status_var.set(msg)
+            self.root.update()
+        
+        threading.Thread(target=lambda: self._do_scan(scan_callback), daemon=True).start()
+    
+    def _do_scan(self, callback):
+        """Perform scan in background thread"""
+        results = self.launcher.scan_all_games(callback)
+        self.root.after(0, self._refresh_game_list)
+        self.root.after(0, self._update_favorites_bar)
+        self.root.after(0, lambda: self.status_var.set(
+            f"Found {results['total']} games (Steam: {results['steam']}, "
+            f"Lutris: {results['lutris']}, Native: {results['native']}, "
+            f"External: {results['external']})"
+        ))
+    
+    def _refresh_game_list(self):
+        """Refresh the game list display"""
+        for widget in self.games_container.winfo_children():
+            widget.destroy()
+        self.game_frames.clear()
+        
+        games = self.launcher.get_games(
+            search=self.search_var.get() if self.search_var.get() != "Search games..." else None,
+            platform=self.platform_var.get() if self.platform_var.get() != "all" else None,
+            favorites_only=self.favorites_only_var.get(),
+            external_only=self.platform_var.get() == "external"
+        )
+        
+        row = 0
+        col = 0
+        max_cols = 4
+        
+        for game in games:
+            frame = self._create_game_card(game, row, col)
+            self.game_frames[game.id] = frame
+            
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        
+        if not games:
+            no_games_label = ttk.Label(
+                self.games_container,
+                text="No games found. Click 'Scan' to search for games.",
+                style='Title.TLabel'
+            )
+            no_games_label.grid(row=0, column=0, pady=50)
+    
+    def _create_game_card(self, game: Game, row: int, col: int) -> ttk.Frame:
+        """Create a game card widget"""
+        frame = tk.Frame(
+            self.games_container,
+            bg=self.secondary_color,
+            padx=10, pady=10
+        )
+        frame.grid(row=row, column=col, padx=5, pady=5, sticky='nsew')
+        
+        icon_label = tk.Label(frame, text="🎮", font=('Helvetica', 32), 
+                             bg=self.secondary_color, fg=self.fg_color)
+        icon_label.pack()
+        
+        name_label = tk.Label(
+            frame, text=game.name[:20] + ('...' if len(game.name) > 20 else ''),
+            font=('Helvetica', 10, 'bold'),
+            bg=self.secondary_color, fg=self.fg_color,
+            wraplength=150
+        )
+        name_label.pack(pady=5)
+        
+        platform_icons = {
+            'steam': '🎮', 'lutris': '🍷', 'native': '🐧',
+            'external_wine': '💾', 'external_proton': '💾',
+            'external_native': '💾', 'external_retroarch': '🕹️'
+        }
+        platform_icon = platform_icons.get(game.platform, '🎮')
+        
+        info_text = f"{platform_icon} {game.platform}"
+        if game.total_playtime > 0:
+            info_text += f" | {self.launcher.format_playtime(game.total_playtime)}"
+        
+        info_label = tk.Label(
+            frame, text=info_text,
+            font=('Helvetica', 8),
+            bg=self.secondary_color, fg='#aaa'
+        )
+        info_label.pack()
+        
+        buttons_frame = tk.Frame(frame, bg=self.secondary_color)
+        buttons_frame.pack(pady=5)
+        
+        play_btn = tk.Button(
+            buttons_frame, text="▶ Play",
+            bg=self.accent_color, fg='white',
+            command=lambda g=game: self._launch_game(g)
+        )
+        play_btn.pack(side=tk.LEFT, padx=2)
+        
+        fav_text = "★" if game.id in self.launcher.favorites else "☆"
+        fav_btn = tk.Button(
+            buttons_frame, text=fav_text,
+            bg=self.secondary_color, fg='gold',
+            command=lambda g=game: self._toggle_favorite(g)
+        )
+        fav_btn.pack(side=tk.LEFT, padx=2)
+        
+        frame.bind('<Double-Button-1>', lambda e, g=game: self._launch_game(g))
+        
+        return frame
+    
+    def _update_favorites_bar(self):
+        """Update the favorites quick launch bar"""
+        for widget in self.favorites_frame.winfo_children():
+            widget.destroy()
+        
+        favorites = self.launcher.get_favorites()[:10]
+        
+        if not favorites:
+            ttk.Label(self.favorites_frame, text="No favorites yet").pack(pady=5)
+            return
+        
+        for game in favorites:
+            btn = tk.Button(
+                self.favorites_frame,
+                text=f"▶ {game.name[:15]}...",
+                bg=self.secondary_color, fg=self.fg_color,
+                anchor='w',
+                command=lambda g=game: self._launch_game(g)
+            )
+            btn.pack(fill=tk.X, pady=2)
+    
+    def _filter_games(self, *args):
+        """Filter games based on current criteria"""
+        self._refresh_game_list()
+    
+    def _launch_game(self, game: Game):
+        """Launch a game"""
+        self.status_var.set(f"Launching {game.name}...")
+        self.root.update()
+        
+        result = self.launcher.launch_game(game.id)
+        
+        if result["success"]:
+            self.status_var.set(f"Launched {game.name}")
+        else:
+            self.status_var.set(f"Failed: {result.get('error', 'Unknown error')}")
+            if result.get("upgrade_required"):
+                messagebox.showinfo(
+                    "Upgrade Required",
+                    "External game launching requires Aegis OS Gamer edition or higher.\n\n"
+                    "Visit https://aegis-os.com to upgrade."
+                )
+    
+    def _toggle_favorite(self, game: Game):
+        """Toggle game favorite status"""
+        self.launcher.toggle_favorite(game.id)
+        self._refresh_game_list()
+        self._update_favorites_bar()
+    
+    def _toggle_mangohud(self):
+        """Toggle MangoHud"""
+        self.launcher.toggle_mangohud()
+        status = "enabled" if self.launcher.config.get("mangohud_enabled") else "disabled"
+        self.status_var.set(f"MangoHud {status}")
+    
+    def _toggle_gamemode(self):
+        """Toggle GameMode"""
+        self.launcher.toggle_gamemode()
+        status = "enabled" if self.launcher.config.get("gamemode_enabled") else "disabled"
+        self.status_var.set(f"GameMode {status}")
+
+
+class AegisGameLauncherCLI:
+    """CLI interface for the game launcher"""
+    
+    def __init__(self, launcher: AegisGameLauncher):
+        self.launcher = launcher
+    
+    def run(self, args):
+        """Run CLI commands"""
+        parser = argparse.ArgumentParser(
+            description=f"{self.launcher.APP_NAME} v{self.launcher.VERSION}",
+            formatter_class=argparse.RawDescriptionHelpFormatter
+        )
+        
+        subparsers = parser.add_subparsers(dest='command', help='Commands')
+        
+        subparsers.add_parser('list', help='List all games')
+        
+        scan_parser = subparsers.add_parser('scan', help='Scan for games')
+        
+        launch_parser = subparsers.add_parser('launch', help='Launch a game')
+        launch_parser.add_argument('game_id', help='Game ID or name')
+        
+        subparsers.add_parser('favorites', help='Show favorite games')
+        
+        fav_parser = subparsers.add_parser('favorite', help='Toggle favorite')
+        fav_parser.add_argument('game_id', help='Game ID')
+        
+        subparsers.add_parser('stats', help='Show statistics')
+        
+        subparsers.add_parser('devices', help='List external devices')
+        
+        mount_parser = subparsers.add_parser('mount', help='Mount external device')
+        mount_parser.add_argument('device', help='Device name (e.g., sdb1)')
+        
+        unmount_parser = subparsers.add_parser('unmount', help='Unmount external device')
+        unmount_parser.add_argument('device', help='Device name')
+        
+        backup_parser = subparsers.add_parser('backup', help='Backup game saves')
+        backup_parser.add_argument('game_id', help='Game ID')
+        
+        restore_parser = subparsers.add_parser('restore', help='Restore game saves')
+        restore_parser.add_argument('game_id', help='Game ID')
+        restore_parser.add_argument('--backup', help='Specific backup name')
+        
+        subparsers.add_parser('mangohud', help='Toggle MangoHud overlay')
+        subparsers.add_parser('gamemode', help='Toggle GameMode')
+        
+        subparsers.add_parser('gui', help='Launch GUI mode')
+        
+        subparsers.add_parser('status', help='Show launcher status')
+        
+        parsed_args = parser.parse_args(args)
+        
+        if not parsed_args.command:
+            parser.print_help()
+            return
+        
+        if parsed_args.command == 'list':
+            self._list_games()
+        elif parsed_args.command == 'scan':
+            self._scan_games()
+        elif parsed_args.command == 'launch':
+            self._launch_game(parsed_args.game_id)
+        elif parsed_args.command == 'favorites':
+            self._show_favorites()
+        elif parsed_args.command == 'favorite':
+            self._toggle_favorite(parsed_args.game_id)
+        elif parsed_args.command == 'stats':
+            self._show_stats()
+        elif parsed_args.command == 'devices':
+            self._list_devices()
+        elif parsed_args.command == 'mount':
+            self._mount_device(parsed_args.device)
+        elif parsed_args.command == 'unmount':
+            self._unmount_device(parsed_args.device)
+        elif parsed_args.command == 'backup':
+            self._backup_saves(parsed_args.game_id)
+        elif parsed_args.command == 'restore':
+            self._restore_saves(parsed_args.game_id, parsed_args.backup)
+        elif parsed_args.command == 'mangohud':
+            self._toggle_mangohud()
+        elif parsed_args.command == 'gamemode':
+            self._toggle_gamemode()
+        elif parsed_args.command == 'gui':
+            self._launch_gui()
+        elif parsed_args.command == 'status':
+            self._show_status()
+    
+    def _print_header(self, text: str):
+        """Print a header"""
+        print(f"\n{'='*60}")
+        print(f"🎮 {text}")
+        print(f"{'='*60}")
+    
+    def _print_tier_warning(self):
+        """Print tier limitation warning if applicable"""
+        if not self.launcher.is_full_version():
+            print(f"\n⚠️  Running {self.launcher.license_tier.name} Edition")
+            print("   Some features require Gamer edition or higher")
+            print("   Upgrade at: https://aegis-os.com")
+    
+    def _list_games(self):
+        """List all games"""
+        self._print_header("Game Library")
+        
+        games = self.launcher.get_games()
+        
+        if not games:
+            print("\nNo games found. Run 'scan' to search for games.")
+            return
+        
+        platform_groups = {}
+        for game in games:
+            platform = game.platform
+            if platform not in platform_groups:
+                platform_groups[platform] = []
+            platform_groups[platform].append(game)
+        
+        for platform, platform_games in platform_groups.items():
+            icon = {'steam': '🎮', 'lutris': '🍷', 'native': '🐧'}.get(platform, '💾')
+            print(f"\n{icon} {platform.upper()} ({len(platform_games)} games)")
+            print("-" * 40)
+            
+            for game in platform_games[:20]:
+                fav = "⭐" if game.id in self.launcher.favorites else "  "
+                playtime = self.launcher.format_playtime(game.total_playtime) if game.total_playtime else "-"
+                print(f"  {fav} {game.name[:30]:<30} [{playtime:>8}]")
+            
+            if len(platform_games) > 20:
+                print(f"  ... and {len(platform_games) - 20} more")
+        
+        print(f"\nTotal: {len(games)} games")
+    
+    def _scan_games(self):
+        """Scan for games"""
+        self._print_header("Scanning for Games")
+        
+        def callback(msg):
+            print(f"  {msg}")
+        
+        results = self.launcher.scan_all_games(callback)
+        
+        print(f"\n✅ Scan Complete!")
+        print(f"   Steam:    {results['steam']}")
+        print(f"   Lutris:   {results['lutris']}")
+        print(f"   Native:   {results['native']}")
+        print(f"   External: {results['external']}")
+        print(f"   Total:    {results['total']}")
+        
+        if results['errors']:
+            print(f"\n⚠️  Errors:")
+            for error in results['errors']:
+                print(f"   - {error}")
+    
+    def _launch_game(self, game_id: str):
+        """Launch a game"""
+        games = self.launcher.get_games()
+        game = None
+        for g in games:
+            if g.id == game_id or game_id.lower() in g.name.lower():
+                game = g
+                break
+        
+        if not game:
+            print(f"❌ Game not found: {game_id}")
+            return
+        
+        print(f"\n🚀 Launching: {game.name}")
+        print(f"   Platform: {game.platform}")
+        print(f"   Runner: {game.runner}")
+        
+        if self.launcher.config.get("gamemode_enabled") and self.launcher.gamemode_available:
+            print(f"   ⚡ GameMode: Enabled")
+        if self.launcher.config.get("mangohud_enabled") and self.launcher.mangohud_available:
+            print(f"   📊 MangoHud: Enabled")
+        
+        result = self.launcher.launch_game(game.id)
+        
+        if result["success"]:
+            print(f"\n✅ Game launched successfully (PID: {result.get('pid', 'N/A')})")
+        else:
+            print(f"\n❌ Failed to launch: {result.get('error', 'Unknown error')}")
+            if result.get("upgrade_required"):
+                self._print_tier_warning()
+    
+    def _show_favorites(self):
+        """Show favorite games"""
+        self._print_header("Favorite Games")
+        
+        favorites = self.launcher.get_favorites()
+        
+        if not favorites:
+            print("\nNo favorites yet. Use 'favorite <game_id>' to add games.")
+            return
+        
+        for i, game in enumerate(favorites, 1):
+            playtime = self.launcher.format_playtime(game.total_playtime)
+            print(f"  {i}. ⭐ {game.name} [{game.platform}] - {playtime}")
+    
+    def _toggle_favorite(self, game_id: str):
+        """Toggle favorite status"""
+        if game_id in self.launcher.games:
+            is_fav = self.launcher.toggle_favorite(game_id)
+            status = "added to" if is_fav else "removed from"
+            print(f"✅ Game {status} favorites")
+        else:
+            print(f"❌ Game not found: {game_id}")
+    
+    def _show_stats(self):
+        """Show statistics"""
+        self._print_header("Statistics")
+        
+        stats = self.launcher.get_stats()
+        
+        print(f"\n📊 Overview")
+        print(f"   Total Games:    {stats['total_games']}")
+        print(f"   Total Playtime: {stats['total_playtime_formatted']}")
+        print(f"   Favorites:      {stats['favorites_count']}")
+        print(f"   External Games: {stats['external_games']}")
+        
+        print(f"\n📁 By Platform")
+        for platform, count in stats['platform_counts'].items():
+            print(f"   {platform}: {count}")
+        
+        if stats['most_played']:
+            print(f"\n🏆 Most Played")
+            for game in stats['most_played']:
+                print(f"   - {game['name']}: {game['playtime']}")
+        
+        if stats['recently_played']:
+            print(f"\n🕐 Recently Played")
+            for game in stats['recently_played']:
+                print(f"   - {game['name']}")
+        
+        print(f"\n⚙️  Performance Tools")
+        print(f"   GameMode: {'✅ Available' if stats['gamemode_available'] else '❌ Not Available'}")
+        print(f"             {'(Enabled)' if stats['gamemode_enabled'] else '(Disabled)'}")
+        print(f"   MangoHud: {'✅ Available' if stats['mangohud_available'] else '❌ Not Available'}")
+        print(f"             {'(Enabled)' if stats['mangohud_enabled'] else '(Disabled)'}")
+        
+        print(f"\n📜 License: {stats['license_tier']}")
+    
+    def _list_devices(self):
+        """List external devices"""
+        self._print_header("External Devices")
+        
+        devices = self.launcher.detect_external_devices()
+        
+        if not devices:
+            print("\nNo external devices detected.")
+            return
+        
+        print(f"\n{'Device':<10} {'Size':<10} {'Type':<10} {'Label':<20} {'Mount Point'}")
+        print("-" * 70)
+        
+        for device in devices:
+            name = device.get('name', '')
+            size = device.get('size', '')
+            dtype = device.get('type', '')
+            label = device.get('label', '')[:20]
+            mount = device.get('mountpoint', 'Not mounted')
+            print(f"{name:<10} {size:<10} {dtype:<10} {label:<20} {mount}")
+        
+        self._print_tier_warning()
+    
+    def _mount_device(self, device: str):
+        """Mount an external device"""
+        if not self.launcher.is_full_version():
+            print("❌ External device mounting requires Gamer edition or higher")
+            self._print_tier_warning()
+            return
+        
+        print(f"\n📀 Mounting device: {device}")
+        mount_point = self.launcher.mount_external_device(device)
+        
+        if mount_point:
+            print(f"✅ Mounted at: {mount_point}")
+            print("   Scanning for games...")
+            games = self.launcher.scan_external_games(mount_point)
+            print(f"   Found {len(games)} games")
+        else:
+            print("❌ Failed to mount device")
+    
+    def _unmount_device(self, device: str):
+        """Unmount an external device"""
+        print(f"\n📀 Unmounting device: {device}")
+        
+        if self.launcher.unmount_external_device(device):
+            print("✅ Device unmounted successfully")
+        else:
+            print("❌ Failed to unmount device")
+    
+    def _backup_saves(self, game_id: str):
+        """Backup game saves"""
+        if not self.launcher.is_full_version():
+            print("❌ Save backup requires Gamer edition or higher")
+            self._print_tier_warning()
+            return
+        
+        print(f"\n💾 Backing up saves for: {game_id}")
+        
+        if self.launcher.backup_game_saves(game_id):
+            print("✅ Saves backed up successfully")
+        else:
+            print("❌ Failed to backup saves")
+    
+    def _restore_saves(self, game_id: str, backup_name: str = None):
+        """Restore game saves"""
+        if not self.launcher.is_full_version():
+            print("❌ Save restore requires Gamer edition or higher")
+            self._print_tier_warning()
+            return
+        
+        print(f"\n💾 Restoring saves for: {game_id}")
+        
+        if self.launcher.restore_game_saves(game_id, backup_name):
+            print("✅ Saves restored successfully")
+        else:
+            print("❌ Failed to restore saves")
+    
+    def _toggle_mangohud(self):
+        """Toggle MangoHud"""
+        if not self.launcher.mangohud_available:
+            print("❌ MangoHud is not installed")
+            return
+        
+        enabled = self.launcher.toggle_mangohud()
+        status = "enabled" if enabled else "disabled"
+        print(f"✅ MangoHud {status}")
+    
+    def _toggle_gamemode(self):
+        """Toggle GameMode"""
+        if not self.launcher.gamemode_available:
+            print("❌ GameMode is not installed")
+            return
+        
+        enabled = self.launcher.toggle_gamemode()
+        status = "enabled" if enabled else "disabled"
+        print(f"✅ GameMode {status}")
+    
+    def _launch_gui(self):
+        """Launch GUI mode"""
+        if not TKINTER_AVAILABLE:
+            print("❌ GUI mode requires tkinter")
+            print("   Install with: sudo apt install python3-tk")
+            return
+        
+        print("🖥️  Launching GUI mode...")
+        gui = AegisGameLauncherGUI(self.launcher)
+        gui.run()
+    
+    def _show_status(self):
+        """Show launcher status"""
+        self._print_header(f"{self.launcher.APP_NAME} Status")
+        
+        print(f"\n📋 Version: {self.launcher.VERSION}")
+        print(f"📜 License: {self.launcher.license_tier.name}")
+        print(f"🎮 Full Features: {'Yes' if self.launcher.is_full_version() else 'No'}")
+        
+        stats = self.launcher.get_stats()
+        print(f"\n📊 Library: {stats['total_games']} games")
+        print(f"⏱️  Playtime: {stats['total_playtime_formatted']}")
+        
+        print(f"\n⚡ GameMode: {'Available' if self.launcher.gamemode_available else 'Not Found'}")
+        print(f"📊 MangoHud: {'Available' if self.launcher.mangohud_available else 'Not Found'}")
+        
+        devices = self.launcher.detect_external_devices()
+        mounted = len([d for d in devices if d.get('mountpoint')])
+        print(f"\n💾 External Devices: {len(devices)} detected, {mounted} mounted")
+        
+        print(f"\n📁 Paths:")
+        print(f"   Config: {self.launcher.config_file}")
+        print(f"   Library: {self.launcher.library_file}")
+        print(f"   Logs: {self.launcher.log_dir / 'game-launcher.log'}")
+        print(f"   Backups: {self.launcher.backup_dir}")
+
+
+def main():
+    """Main entry point"""
+    if len(sys.argv) > 1 and sys.argv[1] == '--gui':
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available")
+            print("Install with: sudo apt install python3-tk")
+            sys.exit(1)
+        
+        launcher = AegisGameLauncher(headless=False)
+        gui = AegisGameLauncherGUI(launcher)
+        gui.run()
+    
+    elif len(sys.argv) == 1 and TKINTER_AVAILABLE:
+        launcher = AegisGameLauncher(headless=False)
+        gui = AegisGameLauncherGUI(launcher)
+        gui.run()
+    
+    else:
+        launcher = AegisGameLauncher(headless=True)
+        cli = AegisGameLauncherCLI(launcher)
+        cli.run(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nExiting...")
+        sys.exit(0)
+    except Exception as e:
+        logging.error(f"Fatal error: {e}")
+        sys.exit(1)
