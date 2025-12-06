@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -27,6 +27,9 @@ class User(db.Model):
     stripe_customer_id = db.Column(db.String(255))
     
     licenses = db.relationship('License', backref='user', lazy='dynamic')
+    
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -63,6 +66,9 @@ class License(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     activated_at = db.Column(db.DateTime)
     expires_at = db.Column(db.DateTime)
+    
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
     
     def to_dict(self):
         return {
@@ -104,6 +110,9 @@ class EmailLog(db.Model):
     sent_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     error_message = db.Column(db.Text)
+    
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
 
 class AdminRole:
@@ -160,6 +169,9 @@ class AdminUser(db.Model):
     created_by = db.Column(db.String(50))
     last_login = db.Column(db.DateTime)
     
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+    
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
     
@@ -208,6 +220,9 @@ class Giveaway(db.Model):
     
     entries = db.relationship('GiveawayEntry', backref='giveaway', lazy='dynamic', cascade='all, delete-orphan')
     
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -240,6 +255,9 @@ class GiveawayEntry(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     notified_at = db.Column(db.DateTime)
     
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -270,6 +288,9 @@ class FreePeriodRedemption(db.Model):
     __table_args__ = (
         db.UniqueConstraint('ip_address', 'period_id', name='uix_ip_period'),
     )
+    
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
     
     def to_dict(self):
         return {

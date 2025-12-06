@@ -15,6 +15,7 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from cryptography.hazmat.backends import default_backend
 
 app = Flask(__name__)
@@ -2504,6 +2505,8 @@ def get_public_key_for_hta():
         return None
 
     public_key = private_key.public_key()
+    if not isinstance(public_key, RSAPublicKey):
+        return None
     public_numbers = public_key.public_numbers()
 
     # Convert modulus (n) and exponent (e) to bytes
@@ -2532,6 +2535,8 @@ def sign_license_rsa(message):
     """
     private_key = get_rsa_private_key()
     if private_key is None:
+        return None
+    if not isinstance(private_key, RSAPrivateKey):
         return None
 
     signature = private_key.sign(
@@ -4643,12 +4648,16 @@ def send_purchase_email(to_email, license_key, edition, amount, license_type):
         response = sg.send(message)
 
         with app.app_context():
+            msg_id = None
+            headers = getattr(response, 'headers', None)
+            if headers is not None:
+                msg_id = dict(headers).get('X-Message-Id') if headers else None
             email_log = EmailLog(
                 email_to=to_email,
                 email_type='purchase_confirmation',
                 subject=f"Your Aegis OS {edition_name} License - Thank You!",
                 status='sent' if response.status_code in [200, 202] else 'failed',
-                sendgrid_message_id=response.headers.get('X-Message-Id'),
+                sendgrid_message_id=msg_id,
                 sent_at=datetime.utcnow()
             )
             db.session.add(email_log)
