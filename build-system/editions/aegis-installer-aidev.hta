@@ -1,754 +1,241 @@
 <html>
 <head>
-<title>Aegis OS Media Creation Tool - AI Developer Edition</title>
-<HTA:APPLICATION ID="AegisAIDevInstaller" APPLICATIONNAME="Aegis OS AI Developer Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="4.0" SCROLL="auto"/>
+<title>Aegis OS ISO Downloader - AI Developer Edition</title>
+<HTA:APPLICATION ID="AegisAIDevDownloader" APPLICATIONNAME="Aegis OS AI Developer Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="5.0" SCROLL="no"/>
 <style>
 body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font-size:13px; background:#F3F3F3; color:#1A1A1A; }
-.header { background:linear-gradient(135deg,#FF6600 0%,#CC5200 100%); color:white; padding:16px 20px; }
-.header h1 { margin:0; font-size:18px; font-weight:600; }
-.header .edition { font-size:12px; opacity:0.9; margin-top:2px; }
-.step-bar { background:#E6E6E6; padding:8px 20px; border-bottom:1px solid #CCCCCC; font-size:12px; color:#666666; }
-.content { padding:20px; min-height:280px; }
+.header { background:linear-gradient(135deg,#FF6600 0%,#CC5200 100%); color:white; padding:20px; }
+.header h1 { margin:0; font-size:20px; font-weight:600; }
+.header .edition { font-size:12px; opacity:0.9; margin-top:4px; }
+.content { padding:20px; }
 .footer { background:#E6E6E6; padding:12px 20px; border-top:1px solid #CCCCCC; text-align:right; }
-.btn { padding:8px 16px; margin-left:8px; border:1px solid #CCCCCC; background:white; font-size:13px; font-family:inherit; cursor:pointer; border-radius:2px; min-width:80px; }
+.btn { padding:10px 20px; margin-left:8px; border:1px solid #CCCCCC; background:white; font-size:13px; font-family:inherit; cursor:pointer; border-radius:3px; min-width:100px; }
 .btn:hover { background:#F0F0F0; border-color:#999999; }
 .btn:disabled { background:#F5F5F5; color:#999999; cursor:not-allowed; }
 .btn-primary { background:#FF6600; color:white; border-color:#FF6600; font-weight:600; }
 .btn-primary:hover { background:#CC5200; border-color:#CC5200; }
 .btn-primary:disabled { background:#FFB380; border-color:#FFB380; }
-.section { background:white; border:1px solid #E0E0E0; border-radius:2px; margin-bottom:16px; }
-.section-header { background:#F8F8F8; padding:10px 14px; border-bottom:1px solid #E0E0E0; font-weight:600; font-size:12px; color:#333333; }
-.section-body { padding:14px; }
-.req-table { width:100%; border-collapse:collapse; font-size:12px; }
-.req-table td { padding:8px 10px; border-bottom:1px solid #F0F0F0; }
-.req-table tr:last-child td { border-bottom:none; }
-.req-label { color:#666666; width:140px; }
-.req-value { font-weight:600; }
-.status-pass { color:#107C10; }
-.status-warn { color:#FFB900; }
-.status-fail { color:#E81123; }
-.status-icon { margin-right:6px; }
-.alert { padding:12px 14px; border-radius:2px; margin-bottom:12px; font-size:12px; }
-.alert-info { background:#E5F1FB; border:1px solid #0078D7; color:#004578; }
-.alert-warn { background:#FFF4CE; border:1px solid #FFB900; color:#6B5300; }
-.alert-error { background:#FDE7E9; border:1px solid #E81123; color:#A80000; }
-.alert-success { background:#DFF6DD; border:1px solid #107C10; color:#094509; }
-.drive-table { width:100%; border-collapse:collapse; }
-.drive-table th { background:#F8F8F8; padding:10px; text-align:left; font-weight:600; font-size:12px; border-bottom:1px solid #E0E0E0; }
-.drive-table td { padding:10px; border-bottom:1px solid #F0F0F0; cursor:pointer; }
-.drive-table tr:hover td { background:#F5F5F5; }
-.drive-table tr.selected td { background:#FFE4D4; }
-.progress-container { background:white; border:1px solid #E0E0E0; border-radius:2px; padding:30px; text-align:center; }
-.progress-pct { font-size:42px; font-weight:300; color:#FF6600; margin-bottom:16px; }
-.progress-bar-bg { background:#E0E0E0; height:6px; border-radius:3px; overflow:hidden; margin-bottom:16px; }
-.progress-bar { height:100%; background:linear-gradient(90deg,#FF6600,#FF9933); transition:width 0.3s ease; position:relative; }
-.progress-bar::after { content:''; position:absolute; top:0; left:0; right:0; bottom:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent); animation:shimmer 2s infinite; }
-@keyframes shimmer { 0%{transform:translateX(-100%);} 100%{transform:translateX(100%);} }
+.section { background:white; border:1px solid #E0E0E0; border-radius:4px; margin-bottom:16px; padding:16px; }
+.section-title { font-weight:600; font-size:14px; margin-bottom:10px; color:#FF6600; }
+.progress-container { text-align:center; padding:20px; }
+.progress-pct { font-size:48px; font-weight:300; color:#FF6600; margin-bottom:10px; }
+.progress-bar-bg { background:#E0E0E0; height:8px; border-radius:4px; overflow:hidden; margin-bottom:12px; }
+.progress-bar { height:100%; background:#FF6600; transition:width 0.3s ease; }
 .progress-status { font-size:14px; color:#333333; margin-bottom:4px; }
 .progress-detail { font-size:12px; color:#666666; }
-.progress-speed { font-size:11px; color:#999999; margin-top:8px; }
-.features-list { list-style:none; padding:0; margin:0; }
-.features-list li { padding:6px 0; padding-left:24px; position:relative; }
-.features-list li::before { content:'\2713'; position:absolute; left:0; color:#107C10; font-weight:bold; }
-.radio-group { margin:8px 0; }
-.radio-group label { margin-right:20px; cursor:pointer; }
-.success-box { text-align:center; padding:30px; }
-.success-icon { font-size:48px; color:#107C10; margin-bottom:12px; }
-.success-title { font-size:20px; font-weight:600; color:#107C10; margin-bottom:8px; }
-.next-steps { text-align:left; }
-.next-steps ol { margin:12px 0; padding-left:24px; }
-.next-steps li { padding:6px 0; }
-.boot-keys { background:#F8F8F8; padding:10px; border-radius:2px; margin-top:10px; font-size:11px; color:#666666; }
+.success-box { text-align:center; padding:20px; }
+.success-icon { font-size:48px; color:#FF6600; margin-bottom:10px; }
+.success-title { font-size:18px; font-weight:600; color:#FF6600; margin-bottom:8px; }
+.info-box { background:#FFF0E8; border:1px solid #FF6600; border-radius:4px; padding:14px; margin:12px 0; }
+.warning-box { background:#FFF8E1; border:1px solid #FFA000; border-radius:4px; padding:14px; margin:12px 0; }
+.steps-list { margin:10px 0; padding-left:20px; }
+.steps-list li { padding:6px 0; }
+.checksum { font-family:Consolas,monospace; font-size:11px; background:#F5F5F5; padding:8px; border-radius:3px; word-break:break-all; margin-top:8px; }
+.link { color:#0066CC; cursor:pointer; text-decoration:underline; }
 </style>
 <script language="VBScript">
-Option Explicit
-Dim selectedDrive, selectedDriveNumber, drives(), driveCount, progressTimer, shell, fso, wmi
-Dim smoothProgress, partitionStyle, currentStep, sysChecksPassed, logFile, downloadStartTime, lastBytes
-Dim drv, mem, os
-Const EDITION = "aidev"
-Const EDITION_NAME = "AI Developer"
-Const ACCENT_COLOR = "#FF6600"
-Const SELECTION_COLOR = "#FFE4D4"
-
-Function IsAdmin()
-    On Error Resume Next
-    IsAdmin = (CreateObject("WScript.Shell").Run("net session", 0, True) = 0)
-    On Error Goto 0
-End Function
-
-Sub RestartAsAdmin()
-    Dim shellApp, htaPath
-    Set shellApp = CreateObject("Shell.Application")
-    htaPath = document.location.pathname
-    If Left(htaPath, 1) = "/" Then htaPath = Mid(htaPath, 2)
-    htaPath = Replace(htaPath, "%20", " ")
-    shellApp.ShellExecute "mshta.exe", Chr(34) & htaPath & Chr(34), "", "runas", 1
-    window.close
-End Sub
+Dim shell, fso, progressTimer, downloadFolder, currentStep
 
 Sub Window_OnLoad()
-    If Not IsAdmin() Then
-        If MsgBox("This tool requires Administrator privileges to create bootable USB drives." & vbCrLf & vbCrLf & "Restart with elevated permissions?", vbYesNo + vbQuestion, "Administrator Required") = vbYes Then
-            RestartAsAdmin
-            Exit Sub
-        Else
-            document.getElementById("adminNotice").style.display = ""
-        End If
-    End If
-    window.resizeTo 780, 620
+    window.resizeTo 600, 520
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
-    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    smoothProgress = 0
-    partitionStyle = "GPT"
+    downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
     currentStep = 1
-    sysChecksPassed = True
-    logFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_installer.log"
-    WriteLog "Aegis OS " & EDITION_NAME & " Installer started"
-    RunSystemChecks
-    UpdateStepIndicator
-    UpdateButtons
-End Sub
-
-Sub WriteLog(msg)
-    Dim ts
-    On Error Resume Next
-    Set ts = fso.OpenTextFile(logFile, 8, True)
-    ts.WriteLine Now() & " - " & msg
-    ts.Close
-    On Error Goto 0
-End Sub
-
-Sub RunSystemChecks()
-    Dim html, ramGB, freeSpaceGB, osVer, osCaption, psMajor, psMinor, netVer, vmType, isVM
-    Dim checkCount, passCount, warnCount, failCount
-    On Error Resume Next
-    
-    checkCount = 0: passCount = 0: warnCount = 0: failCount = 0
-    html = ""
-    
-    ramGB = 0
-    For Each mem In wmi.ExecQuery("SELECT TotalPhysicalMemory FROM Win32_ComputerSystem")
-        ramGB = Round(mem.TotalPhysicalMemory / 1073741824, 1)
-    Next
-    checkCount = checkCount + 1
-    If ramGB >= 4 Then
-        html = html & "<tr><td class='req-label'>RAM</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>" & ramGB & " GB</td></tr>"
-        passCount = passCount + 1
-    ElseIf ramGB >= 2 Then
-        html = html & "<tr><td class='req-label'>RAM</td><td class='req-value'><span class='status-icon status-warn'>&#9888;</span>" & ramGB & " GB (4GB+ recommended)</td></tr>"
-        warnCount = warnCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>RAM</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>" & ramGB & " GB (minimum 2GB required)</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    freeSpaceGB = 0
-    Set drv = fso.GetDrive(fso.GetDriveName(shell.ExpandEnvironmentStrings("%TEMP%")))
-    If Not drv Is Nothing Then freeSpaceGB = Round(drv.FreeSpace / 1073741824, 1)
-    checkCount = checkCount + 1
-    If freeSpaceGB >= 4 Then
-        html = html & "<tr><td class='req-label'>Free Disk Space</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>" & freeSpaceGB & " GB</td></tr>"
-        passCount = passCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>Free Disk Space</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>" & freeSpaceGB & " GB (4GB+ required)</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    osCaption = ""
-    osVer = ""
-    For Each os In wmi.ExecQuery("SELECT Caption, Version FROM Win32_OperatingSystem")
-        osCaption = os.Caption
-        osVer = os.Version
-    Next
-    checkCount = checkCount + 1
-    Dim verParts, majorVer
-    verParts = Split(osVer, ".")
-    If UBound(verParts) >= 0 Then majorVer = CInt(verParts(0)) Else majorVer = 0
-    If majorVer >= 10 Then
-        html = html & "<tr><td class='req-label'>Windows Version</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>" & osCaption & "</td></tr>"
-        passCount = passCount + 1
-    ElseIf majorVer >= 6 Then
-        html = html & "<tr><td class='req-label'>Windows Version</td><td class='req-value'><span class='status-icon status-warn'>&#9888;</span>" & osCaption & " (Windows 10+ recommended)</td></tr>"
-        warnCount = warnCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>Windows Version</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>" & osCaption & " (Windows 7 SP1+ required)</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    psMajor = 0: psMinor = 0
-    Dim psKey
-    psKey = "HKLM\SOFTWARE\Microsoft\PowerShell\3\PowerShellEngine\PowerShellVersion"
-    On Error Resume Next
-    Dim psVer
-    psVer = shell.RegRead(psKey)
-    If Err.Number = 0 Then
-        Dim psParts
-        psParts = Split(psVer, ".")
-        If UBound(psParts) >= 0 Then psMajor = CInt(psParts(0))
-        If UBound(psParts) >= 1 Then psMinor = CInt(psParts(1))
-    End If
-    On Error Goto 0
-    checkCount = checkCount + 1
-    If psMajor >= 5 And psMinor >= 1 Then
-        html = html & "<tr><td class='req-label'>PowerShell</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>Version " & psMajor & "." & psMinor & "</td></tr>"
-        passCount = passCount + 1
-    ElseIf psMajor >= 5 Then
-        html = html & "<tr><td class='req-label'>PowerShell</td><td class='req-value'><span class='status-icon status-warn'>&#9888;</span>Version " & psMajor & "." & psMinor & " (5.1+ recommended)</td></tr>"
-        warnCount = warnCount + 1
-    ElseIf psMajor >= 3 Then
-        html = html & "<tr><td class='req-label'>PowerShell</td><td class='req-value'><span class='status-icon status-warn'>&#9888;</span>Version " & psMajor & "." & psMinor & " (5.0+ required for best results)</td></tr>"
-        warnCount = warnCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>PowerShell</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>Version " & psMajor & "." & psMinor & " (5.0+ required)</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    netVer = ""
-    Dim netKey
-    netKey = "HKLM\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\Release"
-    On Error Resume Next
-    Dim netRelease
-    netRelease = shell.RegRead(netKey)
-    If Err.Number = 0 Then
-        If netRelease >= 528040 Then
-            netVer = "4.8+"
-        ElseIf netRelease >= 461808 Then
-            netVer = "4.7.2"
-        ElseIf netRelease >= 460798 Then
-            netVer = "4.7"
-        ElseIf netRelease >= 394802 Then
-            netVer = "4.6.2"
-        ElseIf netRelease >= 393295 Then
-            netVer = "4.6"
-        ElseIf netRelease >= 379893 Then
-            netVer = "4.5.2"
-        ElseIf netRelease >= 378675 Then
-            netVer = "4.5.1"
-        ElseIf netRelease >= 378389 Then
-            netVer = "4.5"
-        Else
-            netVer = "4.0"
-        End If
-    Else
-        netVer = "< 4.5"
-    End If
-    On Error Goto 0
-    checkCount = checkCount + 1
-    If InStr(netVer, "4.5") > 0 Or InStr(netVer, "4.6") > 0 Or InStr(netVer, "4.7") > 0 Or InStr(netVer, "4.8") > 0 Then
-        html = html & "<tr><td class='req-label'>.NET Framework</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>" & netVer & "</td></tr>"
-        passCount = passCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>.NET Framework</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>" & netVer & " (4.5+ required)</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    isVM = False
-    vmType = ""
-    Dim csProduct
-    For Each csProduct In wmi.ExecQuery("SELECT * FROM Win32_ComputerSystemProduct")
-        Dim vendor
-        vendor = LCase(csProduct.Vendor & " " & csProduct.Name)
-        If InStr(vendor, "vmware") > 0 Then
-            isVM = True: vmType = "VMware"
-        ElseIf InStr(vendor, "virtualbox") > 0 Or InStr(vendor, "vbox") > 0 Then
-            isVM = True: vmType = "VirtualBox"
-        ElseIf InStr(vendor, "microsoft") > 0 And InStr(vendor, "virtual") > 0 Then
-            isVM = True: vmType = "Hyper-V"
-        ElseIf InStr(vendor, "qemu") > 0 Then
-            isVM = True: vmType = "QEMU"
-        ElseIf InStr(vendor, "xen") > 0 Then
-            isVM = True: vmType = "Xen"
-        End If
-    Next
-    checkCount = checkCount + 1
-    If isVM Then
-        html = html & "<tr><td class='req-label'>Environment</td><td class='req-value'><span class='status-icon status-warn'>&#9888;</span>Virtual Machine (" & vmType & ") - Performance may vary</td></tr>"
-        warnCount = warnCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>Environment</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>Physical Machine</td></tr>"
-        passCount = passCount + 1
-    End If
-    
-    Dim hasInternet
-    hasInternet = CheckInternetConnection()
-    checkCount = checkCount + 1
-    If hasInternet Then
-        html = html & "<tr><td class='req-label'>Internet Connection</td><td class='req-value'><span class='status-icon status-pass'>&#10004;</span>Connected</td></tr>"
-        passCount = passCount + 1
-    Else
-        html = html & "<tr><td class='req-label'>Internet Connection</td><td class='req-value'><span class='status-icon status-fail'>&#10008;</span>No connection detected</td></tr>"
-        failCount = failCount + 1
-        sysChecksPassed = False
-    End If
-    
-    document.getElementById("sysReqContent").innerHTML = html
-    
-    Dim summaryText
-    summaryText = passCount & " passed"
-    If warnCount > 0 Then summaryText = summaryText & ", " & warnCount & " warnings"
-    If failCount > 0 Then summaryText = summaryText & ", " & failCount & " failed"
-    document.getElementById("checkSummary").innerHTML = summaryText
-    
-    If failCount > 0 Then
-        document.getElementById("checkSummary").className = "status-fail"
-    ElseIf warnCount > 0 Then
-        document.getElementById("checkSummary").className = "status-warn"
-    Else
-        document.getElementById("checkSummary").className = "status-pass"
-    End If
-    
-    WriteLog "System checks: " & passCount & " passed, " & warnCount & " warnings, " & failCount & " failed"
-    On Error Goto 0
-End Sub
-
-Function CheckInternetConnection()
-    On Error Resume Next
-    Dim http
-    Set http = CreateObject("MSXML2.XMLHTTP.6.0")
-    http.Open "HEAD", "https://www.google.com", False
-    http.setRequestHeader "User-Agent", "AegisOS/4.0"
-    http.Send
-    If Err.Number = 0 And http.Status = 200 Then
-        CheckInternetConnection = True
-    Else
-        CheckInternetConnection = False
-    End If
-    On Error Goto 0
-End Function
-
-Sub RefreshDrives()
-    Dim diskDrives, disk, html, sizeGB, modelName
-    On Error Resume Next
-    If wmi Is Nothing Then Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    Set diskDrives = wmi.ExecQuery("SELECT * FROM Win32_DiskDrive WHERE MediaType LIKE '%Removable%' OR InterfaceType='USB'")
-    ReDim drives(0)
-    driveCount = 0
-    html = ""
-    For Each disk In diskDrives
-        If disk.Size > 0 And InStr(LCase(disk.PNPDeviceID), "virtual") = 0 Then
-            sizeGB = FormatNumber(disk.Size / 1073741824, 1)
-            modelName = disk.Model
-            If IsNull(modelName) Or modelName = "" Then modelName = "USB Drive"
-            ReDim Preserve drives(driveCount)
-            drives(driveCount) = disk.Index
-            html = html & "<tr id='drive" & driveCount & "' onclick='SelectDrive(" & driveCount & ")'>"
-            html = html & "<td><strong>" & modelName & "</strong></td>"
-            html = html & "<td style='text-align:center;'>" & sizeGB & " GB</td>"
-            html = html & "<td style='text-align:center;'>Disk " & disk.Index & "</td></tr>"
-            driveCount = driveCount + 1
-        End If
-    Next
-    On Error Goto 0
-    If driveCount = 0 Then
-        html = "<tr><td colspan='3' style='text-align:center;padding:30px;color:#666666;'>No USB drives detected. Insert a USB drive and click Refresh.</td></tr>"
-    End If
-    document.getElementById("driveList").innerHTML = html
-    selectedDrive = ""
-    selectedDriveNumber = -1
-    UpdateButtons
-End Sub
-
-Sub SelectDrive(index)
-    Dim i, row
-    On Error Resume Next
-    For i = 0 To driveCount - 1
-        Set row = document.getElementById("drive" & i)
-        If Not row Is Nothing Then row.className = ""
-    Next
-    Set row = document.getElementById("drive" & index)
-    If Not row Is Nothing Then
-        row.className = "selected"
-        selectedDriveNumber = drives(index)
-        selectedDrive = row.cells(0).innerText
-    End If
-    UpdateButtons
-    On Error Goto 0
-End Sub
-
-Sub SetPartitionStyle(style)
-    partitionStyle = style
+    ShowStep 1
 End Sub
 
 Sub ShowStep(stepNum)
-    Dim i
-    On Error Resume Next
-    For i = 1 To 5
-        document.getElementById("step" & i).style.display = "none"
-    Next
+    document.getElementById("step1").style.display = "none"
+    document.getElementById("step2").style.display = "none"
+    document.getElementById("step3").style.display = "none"
     document.getElementById("step" & stepNum).style.display = ""
     currentStep = stepNum
-    If stepNum = 2 Then RefreshDrives
-    If stepNum = 3 Then
-        document.getElementById("confirmDrive").innerText = selectedDrive
-        document.getElementById("confirmPartStyle").innerText = partitionStyle
+End Sub
+
+Sub BrowseFolder()
+    Dim folderPath
+    Set objShell = CreateObject("Shell.Application")
+    Set objFolder = objShell.BrowseForFolder(0, "Select download location:", 0, downloadFolder)
+    If Not objFolder Is Nothing Then
+        downloadFolder = objFolder.Self.Path
+        document.getElementById("folderPath").innerText = downloadFolder
     End If
-    If stepNum = 4 Then
-        document.getElementById("progressBar").style.width = "0%"
-        document.getElementById("progressPercent").innerText = "0%"
-        document.getElementById("progressStatus").innerText = "Initializing..."
-        document.getElementById("progressDetail").innerText = ""
-        document.getElementById("progressSpeed").innerText = ""
-        smoothProgress = 0
-    End If
-    UpdateStepIndicator
-    UpdateButtons
-    On Error Goto 0
 End Sub
 
-Sub UpdateStepIndicator()
-    Dim stepNames
-    stepNames = Array("Welcome", "Select USB Drive", "Confirm", "Creating Media", "Complete")
-    document.getElementById("stepIndicator").innerText = "Step " & currentStep & " of 5: " & stepNames(currentStep - 1)
-End Sub
-
-Sub UpdateButtons()
-    On Error Resume Next
-    document.getElementById("btnBack").disabled = (currentStep = 1 Or currentStep = 4 Or currentStep = 5)
-    Select Case currentStep
-        Case 1
-            If sysChecksPassed Then
-                document.getElementById("btnNext").value = "Next"
-                document.getElementById("btnNext").disabled = False
-            Else
-                document.getElementById("btnNext").value = "Requirements Not Met"
-                document.getElementById("btnNext").disabled = True
-            End If
-        Case 2
-            document.getElementById("btnNext").value = "Next"
-            document.getElementById("btnNext").disabled = (selectedDriveNumber < 0)
-        Case 3
-            document.getElementById("btnNext").value = "Create USB"
-        Case 4
-            document.getElementById("btnNext").value = "Please Wait..."
-            document.getElementById("btnNext").disabled = True
-        Case 5
-            document.getElementById("btnNext").value = "Close"
-            document.getElementById("btnNext").disabled = False
-    End Select
-    On Error Goto 0
-End Sub
-
-Sub GoBack()
-    If currentStep > 1 And currentStep < 4 Then ShowStep(currentStep - 1)
-End Sub
-
-Sub GoNext()
-    Select Case currentStep
-        Case 1
-            If sysChecksPassed Then ShowStep 2
-        Case 2
-            If selectedDriveNumber >= 0 Then ShowStep 3
-        Case 3
-            ShowStep 4
-            CreateUSB
-        Case 5
-            window.close
-    End Select
-End Sub
-
-Sub RetryDownload()
-    ShowStep 4
-    CreateUSB
-End Sub
-
-Sub CreateUSB()
+Sub StartDownload()
     Dim tempDir, psFile, progressFile, psCode, ts
     tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
-    psFile = tempDir & "\aegis_creator.ps1"
+    psFile = tempDir & "\aegis_download.ps1"
     progressFile = tempDir & "\aegis_progress.txt"
     If fso.FileExists(progressFile) Then fso.DeleteFile progressFile
-    psCode = GetPowerShellCode()
+    psCode = GetDownloadScript()
     Set ts = fso.CreateTextFile(psFile, True)
     ts.Write psCode
     ts.Close
-    WriteLog "Starting USB creation process for Disk " & selectedDriveNumber
-    downloadStartTime = Now()
-    lastBytes = 0
+    ShowStep 2
     progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
-    shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DiskNumber " & selectedDriveNumber & " -PartitionStyle """ & partitionStyle & """ -ProgressFile """ & progressFile & """", 0, False
+    shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DownloadFolder """ & downloadFolder & """ -ProgressFile """ & progressFile & """", 0, False
 End Sub
 
-Function GetPowerShellCode()
+Function GetDownloadScript()
     Dim code
-    code = "param([int]$DiskNumber, [string]$PartitionStyle, [string]$ProgressFile)" & vbCrLf
+    code = "param([string]$DownloadFolder, [string]$ProgressFile)" & vbCrLf
     code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
-    code = code & "$logFile = ""$env:TEMP\aegis_creator.log""" & vbCrLf
-    code = code & "function Write-Log { param([string]$Msg); Add-Content $logFile ""$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - $Msg"" }" & vbCrLf
-    code = code & "function Write-P { param([int]$P, [string]$S, [string]$D='', [string]$Spd=''); ""$P|$S|$D|$Spd"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
-    code = code & "function Write-ISOToUSB { param([string]$IsoPath, [string]$UsbPath); $bs=4MB; $is=[IO.File]::OpenRead($IsoPath); $tb=$is.Length; $us=New-Object IO.FileStream($UsbPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None,$bs); $bf=New-Object byte[] $bs; $bw=0; $lu=Get-Date; $st=Get-Date; while(($br=$is.Read($bf,0,$bf.Length)) -gt 0){$us.Write($bf,0,$br);$us.Flush();$bw+=$br;$now=Get-Date;if(($now-$lu).TotalSeconds -ge 0.5){$p=[int](($bw/$tb)*100);$el=($now-$st).TotalSeconds;if($el -gt 0){$spd=$bw/$el/1MB;$rem=($tb-$bw)/($bw/$el);$eta=[TimeSpan]::FromSeconds($rem).ToString('mm\:ss')};Write-P (56+[int]($p*0.40)) ""Writing to USB: $p%"" ""$eta remaining"" ""$([math]::Round($spd,1)) MB/s"";$lu=$now}};$is.Close();$us.Close();return $true }" & vbCrLf
+    code = code & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
     code = code & "try {" & vbCrLf
-    code = code & "Write-Log 'Starting Aegis OS " & EDITION_NAME & " USB creation'" & vbCrLf
-    code = code & "Write-P 0 'Initializing...' 'Aegis OS " & EDITION_NAME & "'" & vbCrLf
-    code = code & "$disk = Get-Disk -Number $DiskNumber" & vbCrLf
-    code = code & "if ($disk.IsSystem -or $disk.IsBoot) { Write-P -1 'ERROR: Cannot use system drive' 'Selected drive is required for Windows'; Write-Log 'Error: System drive selected'; exit 1 }" & vbCrLf
-    code = code & "Write-Log ""USB drive validated: $($disk.FriendlyName)""" & vbCrLf
-    code = code & "Write-P 3 'USB drive validated' $disk.FriendlyName" & vbCrLf
-    code = code & "$tempDir = ""$env:TEMP\AegisOS""; New-Item -ItemType Directory -Path $tempDir -Force | Out-Null; $isoPath = ""$tempDir\base.iso""" & vbCrLf
+    code = code & "Write-P 0 'Initializing download...' 'Aegis OS AI Developer Edition'" & vbCrLf
+    code = code & "$isoPath = Join-Path $DownloadFolder 'AegisOS-AIDev.iso'" & vbCrLf
     code = code & "$mirrors = @('https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso','https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso')" & vbCrLf
     code = code & "$expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'" & vbCrLf
-    code = code & "Write-P 4 'Checking internet connection...' ''" & vbCrLf
-    code = code & "try { $null = Invoke-WebRequest -Uri 'https://www.google.com' -Method Head -TimeoutSec 10 -UseBasicParsing } catch { Write-P -1 'ERROR: No internet connection' 'Please check your network and try again'; Write-Log 'Error: Internet check failed'; exit 1 }" & vbCrLf
-    code = code & "Write-P 5 'Starting download...' 'Aegis OS " & EDITION_NAME & " (~2.9 GB)'" & vbCrLf
+    code = code & "Write-P 2 'Connecting to server...' ''" & vbCrLf
     code = code & "$dlSuccess = $false" & vbCrLf
     code = code & "foreach ($url in $mirrors) {" & vbCrLf
     code = code & "  try {" & vbCrLf
-    code = code & "    Write-Log ""Trying mirror: $url""" & vbCrLf
-    code = code & "    $web = [Net.HttpWebRequest]::Create($url); $web.UserAgent = 'AegisOS/4.0'; $web.Timeout = 30000; $resp = $web.GetResponse(); $total = $resp.ContentLength; $rs = $resp.GetResponseStream(); $fs = [IO.File]::Create($isoPath); $buf = New-Object byte[] 8MB; $dl = 0; $st = Get-Date; $lt = $st" & vbCrLf
+    code = code & "    $web = [Net.HttpWebRequest]::Create($url); $web.UserAgent = 'AegisOS/5.0'; $web.Timeout = 30000; $resp = $web.GetResponse(); $total = $resp.ContentLength; $rs = $resp.GetResponseStream(); $fs = [IO.File]::Create($isoPath); $buf = New-Object byte[] 8MB; $dl = 0; $st = Get-Date; $lt = $st" & vbCrLf
     code = code & "    while (($br = $rs.Read($buf, 0, $buf.Length)) -gt 0) {" & vbCrLf
     code = code & "      $fs.Write($buf, 0, $br); $dl += $br; $now = Get-Date" & vbCrLf
     code = code & "      if (($now - $lt).TotalSeconds -ge 0.5) {" & vbCrLf
     code = code & "        $p = [int](($dl / $total) * 100); $el = ($now - $st).TotalSeconds" & vbCrLf
-    code = code & "        if ($el -gt 0) { $spd = $dl / $el / 1MB; $rem = ($total - $dl) / ($dl / $el); $eta = [TimeSpan]::FromSeconds([Math]::Max(0,$rem)).ToString('mm\:ss') }" & vbCrLf
-    code = code & "        Write-P (8 + [int]($p * 0.40)) ""Downloading: $p%"" ""$eta remaining"" ""$([math]::Round($spd,1)) MB/s""; $lt = $now" & vbCrLf
+    code = code & "        if ($el -gt 0) { $spd = $dl / $el / 1MB; $rem = ($total - $dl) / ($dl / $el); $eta = [TimeSpan]::FromSeconds([Math]::Max(0,$rem)).ToString('mm\\:ss') }" & vbCrLf
+    code = code & "        Write-P ([int]($p * 0.90)) ""Downloading: $p%"" ""$([math]::Round($spd,1)) MB/s - $eta remaining""; $lt = $now" & vbCrLf
     code = code & "      }" & vbCrLf
     code = code & "    }" & vbCrLf
-    code = code & "    $fs.Close(); $rs.Close(); $dlSuccess = $true; Write-Log 'Download completed successfully'; break" & vbCrLf
-    code = code & "  } catch { Write-Log ""Mirror failed: $($_.Exception.Message)""; continue }" & vbCrLf
+    code = code & "    $fs.Close(); $rs.Close(); $dlSuccess = $true; break" & vbCrLf
+    code = code & "  } catch { continue }" & vbCrLf
     code = code & "}" & vbCrLf
-    code = code & "if (-not $dlSuccess -or -not (Test-Path $isoPath)) { Write-P -1 'ERROR: Download failed' 'All mirrors unavailable. Check your internet connection and try again.'; Write-Log 'Error: All mirrors failed'; exit 1 }" & vbCrLf
-    code = code & "Write-P 50 'Verifying integrity...' 'SHA256 checksum'" & vbCrLf
+    code = code & "if (-not $dlSuccess) { Write-P -1 'ERROR: Download failed' 'Could not connect to download servers'; exit 1 }" & vbCrLf
+    code = code & "Write-P 92 'Verifying checksum...' 'This may take a moment'" & vbCrLf
     code = code & "$hash = (Get-FileHash $isoPath -Algorithm SHA256).Hash" & vbCrLf
-    code = code & "if ($hash -ne $expectedHash) { Write-P -1 'ERROR: Checksum verification failed' 'Downloaded file is corrupted. Please try again.'; Write-Log ""Error: Checksum mismatch. Expected $expectedHash, got $hash""; exit 1 }" & vbCrLf
-    code = code & "Write-Log 'Checksum verified successfully'" & vbCrLf
-    code = code & "Write-P 52 'Checksum verified' 'SHA256: OK'" & vbCrLf
-    code = code & "Write-P 54 'Preparing USB drive...' 'Cleaning disk'" & vbCrLf
-    code = code & "$dp = ""select disk $DiskNumber`nclean`noffline disk`nexit""; $dp | Out-File ""$tempDir\dp.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp.txt"" | Out-Null" & vbCrLf
-    code = code & "Write-Log 'USB drive prepared'" & vbCrLf
-    code = code & "Write-P 56 'Writing image to USB...' 'Do not remove the USB drive!'" & vbCrLf
-    code = code & "Start-Sleep 2" & vbCrLf
-    code = code & "Write-ISOToUSB $isoPath ""\\.\PhysicalDrive$DiskNumber"" | Out-Null" & vbCrLf
-    code = code & "Write-Log 'Image written successfully'" & vbCrLf
-    code = code & "Write-P 97 'Finalizing...' 'Bringing drive online'" & vbCrLf
-    code = code & "$dp2 = ""select disk $DiskNumber`nonline disk`nexit""; $dp2 | Out-File ""$tempDir\dp2.txt"" -Encoding ASCII; diskpart /s ""$tempDir\dp2.txt"" | Out-Null" & vbCrLf
-    code = code & "Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue" & vbCrLf
-    code = code & "Write-Log 'USB creation completed successfully'" & vbCrLf
-    code = code & "Write-P 100 'SUCCESS' 'Aegis OS " & EDITION_NAME & " USB is ready!'" & vbCrLf
-    code = code & "} catch { Write-P -1 ""ERROR: $($_.Exception.Message)"" 'See log file for details'; Write-Log ""Fatal error: $($_.Exception.Message)""; exit 1 }" & vbCrLf
-    GetPowerShellCode = code
+    code = code & "if ($hash -ne $expectedHash) { Write-P -1 'ERROR: Checksum failed' 'File may be corrupted'; exit 1 }" & vbCrLf
+    code = code & "Write-P 100 'SUCCESS' ""$isoPath|$hash""" & vbCrLf
+    code = code & "} catch { Write-P -1 ""ERROR: $($_.Exception.Message)"" 'Download failed'; exit 1 }" & vbCrLf
+    GetDownloadScript = code
 End Function
 
 Sub CheckProgress()
-    Dim progressFile, ts, line, parts, pct, status, detail, speed
-    On Error Resume Next
+    Dim progressFile, ts, line, parts, pct, status, detail
     progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
+    On Error Resume Next
     If fso.FileExists(progressFile) Then
         Set ts = fso.OpenTextFile(progressFile, 1)
         line = ts.ReadLine()
         ts.Close
         parts = Split(line, "|")
         pct = CInt(parts(0))
-        status = ""
+        status = parts(1)
         detail = ""
-        speed = ""
-        If UBound(parts) >= 1 Then status = parts(1)
         If UBound(parts) >= 2 Then detail = parts(2)
-        If UBound(parts) >= 3 Then speed = parts(3)
         If pct = -1 Then
             window.clearInterval progressTimer
-            WriteLog "Error: " & status & " - " & detail
-            ShowError status, detail
+            document.getElementById("progressStatus").innerText = status
+            document.getElementById("progressDetail").innerText = detail
+            document.getElementById("progressPct").innerText = "!"
+            document.getElementById("progressBar").style.width = "100%"
+            document.getElementById("progressBar").style.background = "#E53935"
         ElseIf pct = 100 Then
             window.clearInterval progressTimer
-            WriteLog "Process completed successfully"
-            UpdateProgress 100, status, detail, ""
-            window.setTimeout GetRef("GoToStepFive"), 1500
+            Dim successParts
+            successParts = Split(detail, "|")
+            document.getElementById("isoPath").innerText = successParts(0)
+            document.getElementById("isoHash").innerText = successParts(1)
+            ShowStep 3
         Else
-            UpdateProgress pct, status, detail, speed
+            document.getElementById("progressPct").innerText = pct & "%"
+            document.getElementById("progressBar").style.width = pct & "%"
+            document.getElementById("progressStatus").innerText = status
+            document.getElementById("progressDetail").innerText = detail
         End If
     End If
     On Error Goto 0
 End Sub
 
-Sub GoToStepFive()
-    ShowStep 5
+Sub OpenFolder()
+    shell.Run "explorer.exe """ & downloadFolder & """"
 End Sub
 
-Sub UpdateProgress(pct, status, detail, speed)
-    document.getElementById("progressBar").style.width = pct & "%"
-    document.getElementById("progressPercent").innerText = pct & "%"
-    document.getElementById("progressStatus").innerText = status
-    If Len(detail) > 0 Then
-        document.getElementById("progressDetail").innerText = detail
-    End If
-    If Len(speed) > 0 Then
-        document.getElementById("progressSpeed").innerText = speed
-    End If
+Sub OpenEtcher()
+    shell.Run "https://etcher.balena.io/"
 End Sub
 
-Sub ShowError(msg, detail)
-    Dim html
-    html = "<div class='alert alert-error'>"
-    html = html & "<strong>" & msg & "</strong><br>"
-    html = html & detail & "</div>"
-    html = html & "<div style='text-align:center;margin-top:20px;'>"
-    html = html & "<button class='btn btn-primary' onclick='RetryDownload()'>Retry</button> "
-    html = html & "<button class='btn' onclick='ShowStep(1)'>Start Over</button>"
-    html = html & "</div>"
-    html = html & "<div class='alert alert-info' style='margin-top:16px;'>"
-    html = html & "<strong>Troubleshooting:</strong><br>"
-    html = html & "&#8226; Check your internet connection<br>"
-    html = html & "&#8226; Ensure the USB drive is properly connected<br>"
-    html = html & "&#8226; Try a different USB port<br>"
-    html = html & "&#8226; Log file: " & logFile
-    html = html & "</div>"
-    document.getElementById("progressContainer").innerHTML = html
-    currentStep = 4
-    UpdateButtons
-    document.getElementById("btnBack").disabled = False
-End Sub
-
-Sub OpenLogFile()
-    shell.Run "notepad.exe """ & logFile & """"
+Sub CloseApp()
+    window.close
 End Sub
 </script>
 </head>
 <body>
 <div class="header">
-    <h1>Aegis OS Media Creation Tool</h1>
-    <div class="edition">AI Developer Edition - Machine Learning Development Environment</div>
-</div>
-<div class="step-bar">
-    <span id="stepIndicator">Step 1 of 5: Welcome</span>
+    <h1>Aegis OS ISO Downloader</h1>
+    <div class="edition">AI Developer Edition - Complete ML Toolkit</div>
 </div>
 <div class="content">
     <div id="step1">
-        <div id="adminNotice" class="alert alert-warn" style="display:none;">
-            <strong>Limited Functionality:</strong> Running without Administrator privileges. Some features may not work correctly.
-        </div>
-        
         <div class="section">
-            <div class="section-header">Welcome to Aegis OS AI Developer Edition</div>
-            <div class="section-body">
-                <p style="margin:0 0 12px 0;">Create a bootable USB drive with Aegis OS optimized for AI/ML development:</p>
-                <ul class="features-list">
-                    <li>AI Toolkit - Complete development environment</li>
-                    <li>GPU Compute Manager - NVIDIA/AMD optimization</li>
-                    <li>ML Frameworks - TensorFlow, PyTorch pre-installed</li>
-                    <li>Code Studio - Integrated development environment</li>
-                    <li>Jupyter Lab - Interactive notebooks</li>
-                    <li>CUDA Support - GPU-accelerated computing</li>
-                </ul>
-            </div>
+            <div class="section-title">Welcome</div>
+            <p>This tool will download the Aegis OS AI Developer Edition ISO file to your computer.</p>
+            <p>After downloading, you'll use <strong>Balena Etcher</strong> (free software) to create a bootable USB drive.</p>
         </div>
-        
         <div class="section">
-            <div class="section-header">System Requirements Check <span id="checkSummary" style="float:right;font-weight:normal;"></span></div>
-            <div class="section-body">
-                <table class="req-table">
-                    <tbody id="sysReqContent">
-                        <tr><td colspan="2" style="text-align:center;padding:20px;color:#666666;">Checking system requirements...</td></tr>
-                    </tbody>
-                </table>
-            </div>
+            <div class="section-title">Download Location</div>
+            <p>The ISO will be saved to:</p>
+            <p><strong id="folderPath">C:\Users\...\Downloads</strong></p>
+            <button class="btn" onclick="BrowseFolder()">Change Folder</button>
+        </div>
+        <div class="info-box">
+            <strong>What you'll need:</strong>
+            <ul class="steps-list">
+                <li>About 3 GB of free disk space</li>
+                <li>A stable internet connection</li>
+                <li>A USB drive (8 GB or larger) for installation</li>
+            </ul>
         </div>
     </div>
-    
     <div id="step2" style="display:none;">
         <div class="section">
-            <div class="section-header">Select USB Drive</div>
-            <div class="section-body">
-                <p style="margin:0 0 12px 0;color:#666666;">Select the USB drive to use. All data will be permanently erased.</p>
-                <table class="drive-table">
-                    <thead>
-                        <tr><th>Drive</th><th style="width:80px;text-align:center;">Size</th><th style="width:80px;text-align:center;">Disk #</th></tr>
-                    </thead>
-                    <tbody id="driveList">
-                        <tr><td colspan="3" style="text-align:center;padding:30px;color:#666666;">Click Refresh to detect USB drives</td></tr>
-                    </tbody>
-                </table>
-                <div style="margin-top:12px;">
-                    <button class="btn" onclick="RefreshDrives()">Refresh</button>
-                </div>
+            <div class="progress-container">
+                <div class="progress-pct" id="progressPct">0%</div>
+                <div class="progress-bar-bg"><div class="progress-bar" id="progressBar" style="width:0%;"></div></div>
+                <div class="progress-status" id="progressStatus">Starting download...</div>
+                <div class="progress-detail" id="progressDetail"></div>
             </div>
         </div>
-        
-        <div class="section">
-            <div class="section-header">Partition Style</div>
-            <div class="section-body">
-                <div class="radio-group">
-                    <label><input type="radio" name="ps" checked onclick="SetPartitionStyle('GPT')"> GPT (recommended for UEFI systems)</label>
-                    <label><input type="radio" name="ps" onclick="SetPartitionStyle('MBR')"> MBR (for legacy BIOS)</label>
-                </div>
-            </div>
-        </div>
-        
-        <div class="alert alert-error">
-            <strong>Warning:</strong> All data on the selected USB drive will be permanently erased. Make sure you have backed up any important files.
+        <div class="warning-box">
+            <strong>Please wait</strong> - Do not close this window while downloading.
         </div>
     </div>
-    
     <div id="step3" style="display:none;">
         <div class="section">
-            <div class="section-header">Confirm Settings</div>
-            <div class="section-body">
-                <table class="req-table">
-                    <tr><td class="req-label">Edition</td><td class="req-value">Aegis OS AI Developer</td></tr>
-                    <tr><td class="req-label">USB Drive</td><td class="req-value"><span id="confirmDrive">-</span></td></tr>
-                    <tr><td class="req-label">Partition Style</td><td class="req-value"><span id="confirmPartStyle">GPT</span></td></tr>
-                    <tr><td class="req-label">Download Size</td><td class="req-value">~2.9 GB</td></tr>
-                    <tr><td class="req-label">Estimated Time</td><td class="req-value">10-30 minutes (depending on internet speed)</td></tr>
-                </table>
+            <div class="success-box">
+                <div class="success-icon">&#10004;</div>
+                <div class="success-title">Download Complete!</div>
+                <p>Your ISO file is ready.</p>
             </div>
         </div>
-        
-        <div class="alert alert-info">
-            <strong>Ready to create!</strong> Click "Create USB" to begin. The process will download the OS image and write it to your USB drive.
+        <div class="section">
+            <div class="section-title">ISO File Location</div>
+            <p id="isoPath" style="font-family:Consolas;font-size:12px;"></p>
+            <button class="btn" onclick="OpenFolder()">Open Folder</button>
         </div>
-    </div>
-    
-    <div id="step4" style="display:none;">
-        <div id="progressContainer" class="progress-container">
-            <div class="progress-pct"><span id="progressPercent">0%</span></div>
-            <div class="progress-bar-bg"><div id="progressBar" class="progress-bar" style="width:0%;"></div></div>
-            <div class="progress-status"><span id="progressStatus">Initializing...</span></div>
-            <div class="progress-detail"><span id="progressDetail"></span></div>
-            <div class="progress-speed"><span id="progressSpeed"></span></div>
+        <div class="section">
+            <div class="section-title">SHA256 Checksum (for verification)</div>
+            <div class="checksum" id="isoHash"></div>
         </div>
-        
-        <div class="alert alert-warn" style="margin-top:16px;">
-            <strong>Do not remove the USB drive!</strong> Removing the drive during this process will corrupt it and may require reformatting.
-        </div>
-    </div>
-    
-    <div id="step5" style="display:none;">
-        <div class="success-box">
-            <div class="success-icon">&#10004;</div>
-            <div class="success-title">USB Drive Ready!</div>
-            <p style="color:#666666;margin:0;">Aegis OS AI Developer Edition has been successfully written to your USB drive.</p>
-        </div>
-        
-        <div class="section" style="margin-top:16px;">
-            <div class="section-header">What's Next?</div>
-            <div class="section-body next-steps">
-                <ol>
-                    <li><strong>Safely remove the USB drive</strong> from this computer</li>
-                    <li><strong>Insert the USB drive</strong> into the target PC</li>
-                    <li><strong>Boot from USB</strong> by pressing the boot menu key during startup</li>
-                    <li><strong>Follow the on-screen installer</strong> to complete installation</li>
-                </ol>
-                <div class="boot-keys">
-                    <strong>Common Boot Menu Keys:</strong><br>
-                    Dell: F12 | HP: F9 or Esc | Lenovo: F12 | ASUS: F8 or Esc | Acer: F12<br>
-                    MSI: F11 | Gigabyte: F12 | ASRock: F11 | Intel NUC: F10
-                </div>
-            </div>
-        </div>
-        
-        <div class="alert alert-success">
-            <strong>Tip:</strong> If your PC doesn't boot from USB, you may need to disable Secure Boot or enable Legacy/CSM mode in BIOS settings.
+        <div class="info-box">
+            <div class="section-title">Next Steps - Create Bootable USB</div>
+            <ol class="steps-list">
+                <li>Download and install <span class="link" onclick="OpenEtcher()">Balena Etcher</span> (free)</li>
+                <li>Insert your USB drive (8 GB or larger)</li>
+                <li>Open Balena Etcher and click "Flash from file"</li>
+                <li>Select the downloaded ISO file</li>
+                <li>Select your USB drive and click "Flash!"</li>
+                <li>Once complete, restart your computer and boot from USB</li>
+            </ol>
         </div>
     </div>
 </div>
 <div class="footer">
-    <button class="btn" id="btnBack" onclick="GoBack()" disabled>&lt; Back</button>
-    <button class="btn btn-primary" id="btnNext" onclick="GoNext()">Next</button>
-    <button class="btn" onclick="window.close()" style="margin-left:20px;">Cancel</button>
+    <button class="btn" onclick="CloseApp()" id="btnCancel">Cancel</button>
+    <button class="btn btn-primary" onclick="StartDownload()" id="btnDownload">Download ISO</button>
 </div>
 </body>
 </html>
