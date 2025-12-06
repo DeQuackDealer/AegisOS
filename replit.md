@@ -66,3 +66,65 @@ All editions include AI-powered security with progressive capabilities, from bas
 *   **NVIDIA drivers**: Hardware encoding.
 *   **AppArmor/Firejail**: Sandboxing.
 *   **PipeWire/PulseAudio**: Audio capture.
+
+### Legal Compliance (December 2025)
+
+**Public Legal Pages** (aegis-promotional/html/):
+- `terms.html` - Terms of Service with 14-day refund policy, AS-IS warranty, independence statement
+- `privacy.html` - Privacy Policy with GDPR compliance, data handling, third-party disclosures
+- `attributions.html` - Open Source Attributions (GPL, LGPL, MIT, BSD for all bundled tools)
+
+**Key Legal Protections:**
+- Clear independence statement (not affiliated with Microsoft, Linux Lite, etc.)
+- Proper upstream project attribution (Wine, Proton, DXVK, etc.)
+- Payment/refund terms aligned with Stripe requirements
+- No trademark infringement risks
+
+### Aegis Neural Upscaler (ANU) System (December 2025)
+
+Custom AI upscaling technology for gaming editions:
+
+**aegis-upscaler** (`/usr/local/bin/aegis-upscaler`):
+- GTK3 GUI with real-time preview and CLI mode
+- Multiple backends: Bilinear, FSR 1.0/2.0/3.0, Real-ESRGAN, ANU Neural
+- Quality presets: Ultra Quality, Quality, Balanced, Performance, Ultra Performance
+- Per-game profiles saved in ~/.config/aegis/upscaler/
+- Tier-gated: Gamer gets FSR, Gamer+AI unlocks neural network upscaling
+
+**aegis-game-launcher** (`/usr/local/bin/aegis-game-launcher`):
+- Unified launcher for Steam, Lutris, Heroic, GOG
+- Pre-launch upscaler injection via Gamescope
+- Post-game performance reports (FPS stats)
+- Library view with cover art, categories, favorites
+
+### Enhanced Edition Features (December 2025)
+
+**Basic Edition** - Now includes:
+- aegis_security_suite (ClamAV, UFW, Fail2ban, encrypted folders)
+- aegis_backup_suite (scheduled backups, 10GB cloud, restore points)
+- aegis_media_suite (VLC, Handbrake, screen recorder, podcast manager)
+- aegis_customization (100+ themes, 50+ icon packs, widgets)
+- aegis_productivity (clipboard manager, window tiling, quick launcher)
+- aegis_internet (Firefox ESR, email client, VPN client)
+
+**Workplace Edition** - Enterprise tools:
+- aegis_enterprise_suite (M365/Google Workspace, SSO, AD/LDAP)
+- aegis_collaboration (screen sharing, video conferencing, team chat)
+- aegis_document_management (PDF editing, OCR, cloud sync)
+- aegis_productivity_tools (time tracking, project management, CRM)
+- aegis_it_management (remote desktop, network monitoring, asset tracking)
+
+**AI Developer Edition** - Complete AI/ML toolkit:
+- aegis_ml_studio (Jupyter Lab, VS Code with AI extensions, PyCharm)
+- aegis_model_hub (Hugging Face cache, model downloads, quantization)
+- aegis_inference_engine (llama.cpp, ONNX, TensorRT, vLLM)
+- aegis_gpu_tools (CUDA 12.4, ROCm 6.0, multi-GPU management)
+- aegis_data_science (Pandas, NumPy, scikit-learn, MLflow)
+- aegis_llm_tools (LangChain, vector databases, RAG templates)
+
+**Gamer+AI Edition** - Ultimate hybrid experience:
+- aegis_ai_gaming (AI companion, real-time translation, auto-highlights)
+- aegis_neural_upscaling (ANU upscaler, DLSS 3.5, FSR 3.0, XeSS)
+- aegis_ai_streaming (AI overlays, sentiment analysis, auto-clips)
+- aegis_game_modding (AI texture upscaling, mod manager, Steam Workshop)
+- aegis_performance_ai (ML performance prediction, smart VRAM management)
