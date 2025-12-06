@@ -2879,6 +2879,17 @@ def page_privacy():
         logger.error(f"Error serving privacy.html: {e}")
         return jsonify({'error': 'Page not found'}), 404
 
+@app.route('/attributions')
+def page_attributions():
+    """Serve Open Source Attributions page"""
+    try:
+        filepath = os.path.join(BASE_DIR, 'html', 'attributions.html')
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        logger.error(f"Error serving attributions.html: {e}")
+        return jsonify({'error': 'Page not found'}), 404
+
 @app.route('/disclaimer')
 def page_disclaimer():
     """Serve Legal Disclaimer page"""

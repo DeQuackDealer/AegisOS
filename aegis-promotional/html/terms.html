@@ -4,27 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Terms of Service - Aegis OS</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
+            --bg-dark: #0a0d12;
+            --bg-card: #12171f;
+            --bg-card-hover: #171d27;
+            --bg-hover: #1e2533;
             --primary: #6366f1;
+            --primary-light: #818cf8;
             --secondary: #8b5cf6;
-            --text-dark: #1f2937;
-            --text-muted: #6b7280;
-            --bg-light: #ffffff;
-            --bg-gray: #f9fafb;
-            --border: #e5e7eb;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #3b82f6;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+            --border-light: #334155;
         }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-gray);
-            color: var(--text-dark);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
             line-height: 1.8;
+            min-height: 100vh;
         }
         .navbar {
-            background: var(--bg-light);
+            background: var(--bg-card);
             padding: 1rem 2rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-bottom: 1px solid var(--border);
             position: sticky;
             top: 0;
             z-index: 100;
@@ -38,17 +50,24 @@
         }
         .logo {
             font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--primary);
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
         .nav-links a {
-            color: var(--text-dark);
+            color: var(--text-secondary);
             text-decoration: none;
             margin-left: 2rem;
             font-weight: 500;
+            transition: color 0.2s ease;
         }
-        .nav-links a:hover { color: var(--primary); }
+        .nav-links a:hover { color: var(--primary-light); }
         .container {
             max-width: 900px;
             margin: 0 auto;
@@ -56,7 +75,10 @@
         }
         h1 {
             font-size: 2.5rem;
-            color: var(--primary);
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             margin-bottom: 0.5rem;
         }
         .last-updated {
@@ -65,46 +87,90 @@
             font-size: 0.9rem;
         }
         h2 {
-            font-size: 1.5rem;
-            color: var(--text-dark);
-            margin: 2rem 0 1rem;
-            padding-top: 1rem;
+            font-size: 1.4rem;
+            color: var(--text-primary);
+            margin: 2.5rem 0 1rem;
+            padding-top: 1.5rem;
             border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
-        h2:first-of-type { border-top: none; }
+        h2:first-of-type { border-top: none; padding-top: 0; }
+        h2 .icon { font-size: 1.2rem; }
         p, ul, ol {
             margin-bottom: 1rem;
-            color: var(--text-dark);
+            color: var(--text-secondary);
         }
-        ul, ol {
-            padding-left: 2rem;
-        }
+        ul, ol { padding-left: 2rem; }
         li { margin-bottom: 0.5rem; }
+        strong { color: var(--text-primary); }
+        a { color: var(--primary-light); }
+        a:hover { color: var(--primary); }
         .highlight-box {
-            background: #fef3c7;
-            border: 2px solid #fbbf24;
-            border-radius: 10px;
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--warning);
+            border-radius: 12px;
             padding: 1.5rem;
             margin: 2rem 0;
         }
         .highlight-box h3 {
-            color: #d97706;
+            color: var(--warning);
             margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
+        .highlight-box p { color: var(--text-secondary); margin-bottom: 0; }
         .warning-box {
-            background: #fee2e2;
-            border: 2px solid #ef4444;
-            border-radius: 10px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 12px;
             padding: 1.5rem;
             margin: 2rem 0;
         }
         .warning-box h3 {
-            color: #dc2626;
+            color: var(--error);
             margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
+        .warning-box p { color: var(--text-secondary); margin-bottom: 0; }
+        .info-box {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid var(--primary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+        }
+        .info-box h3 {
+            color: var(--primary-light);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .info-box p { color: var(--text-secondary); margin-bottom: 0; }
+        .success-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--success);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+        }
+        .success-box h3 {
+            color: var(--success);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .success-box p { color: var(--text-secondary); margin-bottom: 0; }
         .footer {
-            background: var(--text-dark);
-            color: #f3f4f6;
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            color: var(--text-secondary);
             padding: 3rem 2rem;
             margin-top: 4rem;
         }
@@ -117,11 +183,16 @@
             margin: 1.5rem 0;
         }
         .footer-links a {
-            color: #60a5fa;
+            color: var(--primary-light);
             text-decoration: none;
             margin: 0 1rem;
         }
-        .footer-links a:hover { text-decoration: underline; }
+        .footer-links a:hover { color: var(--primary); }
+        .footer-note {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+        }
     </style>
 </head>
 <body>
@@ -130,142 +201,154 @@
             <a href="/" class="logo">🛡️ Aegis OS</a>
             <div class="nav-links">
                 <a href="/">Home</a>
-                <a href="/#tiers">Pricing</a>
+                <a href="/pricing">Pricing</a>
                 <a href="/privacy">Privacy</a>
-                <a href="mailto:riley.liang@hotmail.com">Contact</a>
+                <a href="/attributions">Attributions</a>
             </div>
         </div>
     </nav>
 
     <div class="container">
         <h1>Terms of Service</h1>
-        <p class="last-updated">Last Updated: November 25, 2025</p>
+        <p class="last-updated">Last Updated: December 6, 2025</p>
 
         <div class="warning-box">
-            <h3>ℹ️ COMMERCIAL TERMS</h3>
-            <p><strong>COMMERCIAL SOFTWARE - SOLD AS-IS.</strong> Aegis OS is sold as-is without implied warranties. Liability limited to purchase price. Based on Linux Lite 7.2 (GPL). By using this software or purchasing any edition, you acknowledge and accept all terms below.</p>
+            <h3>⚠️ Important Notice</h3>
+            <p><strong>Aegis OS is an independent project.</strong> We are not affiliated with, endorsed by, or sponsored by Microsoft Corporation, Linux Lite, Canonical, or any other company or open-source project. All trademarks belong to their respective owners.</p>
         </div>
 
-        <h2>1. Acceptance of Terms</h2>
+        <h2><span class="icon">📜</span> 1. Acceptance of Terms</h2>
         <p>By accessing this website, downloading, installing, or using Aegis OS software ("the Software"), you agree to be bound by these Terms of Service. If you do not agree to these terms, do not use the Software or this website.</p>
 
-        <h2>2. Commercial Product Terms</h2>
-        <p>Aegis OS is a <strong>commercial Linux distribution</strong>. Please note:</p>
+        <h2><span class="icon">📋</span> 2. License Grant</h2>
+        <p>Subject to your compliance with these Terms, we grant you a limited, personal, non-exclusive, non-transferable license to:</p>
         <ul>
-            <li>Features and specifications may be updated in future releases</li>
-            <li>The Software is licensed for commercial and personal use</li>
-            <li>Software updates are provided periodically to improve functionality</li>
-            <li>The Software is based on Linux Lite 7.2 and contains open-source components under GPL</li>
-            <li>Product roadmap and future features are at our discretion</li>
+            <li>Download and install the Software on devices you own or control</li>
+            <li>Use the Software for personal, non-commercial purposes (Freemium/Basic editions)</li>
+            <li>Use the Software for commercial purposes (paid commercial editions only)</li>
+        </ul>
+        <p><strong>This license is:</strong></p>
+        <ul>
+            <li><strong>Personal:</strong> Licensed to you as an individual, not to organizations unless specifically purchased as a site license</li>
+            <li><strong>Non-Transferable:</strong> You may not sell, transfer, assign, or sublicense your license to any third party</li>
+            <li><strong>Revocable:</strong> We reserve the right to revoke licenses for violations of these Terms</li>
         </ul>
 
-        <h2>3. No Warranty Disclaimer</h2>
-        <div class="highlight-box">
-            <h3>NO WARRANTY EXPRESSED OR IMPLIED</h3>
-            <p>THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS, COPYRIGHT HOLDERS, OR AEGIS OS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.</p>
-        </div>
-
-        <h2>4. Performance Claims Disclaimer</h2>
-        <p>All performance claims, benchmarks, compatibility statements, and technical specifications presented on this website or in promotional materials are:</p>
+        <h2><span class="icon">🚫</span> 3. Prohibited Uses</h2>
+        <p>You may NOT:</p>
         <ul>
-            <li><strong>Estimates only</strong> and may vary significantly based on hardware configuration</li>
-            <li>Based on internal testing which may not reflect real-world conditions</li>
-            <li>Subject to change without notice</li>
-            <li>Not guaranteed to be accurate, complete, or current</li>
-            <li>Dependent on factors outside our control including hardware, drivers, and third-party software</li>
+            <li>Redistribute, resell, or sublicense the Software or any license keys</li>
+            <li>Reverse engineer, decompile, or attempt to extract source code (except where permitted by open-source components)</li>
+            <li>Remove or alter any proprietary notices, labels, or marks</li>
+            <li>Use the Software for any illegal purpose or in violation of any laws</li>
+            <li>Circumvent or attempt to circumvent license validation systems</li>
+            <li>Share license keys publicly or with unauthorized users</li>
+            <li>Use the Software to develop competing products</li>
+            <li>Misrepresent the Software as your own creation</li>
         </ul>
-        <p><strong>Performance claims are estimates and may vary.</strong> Your actual experience may differ substantially from what is advertised.</p>
 
-        <h2>5. Support Options</h2>
-        <div class="highlight-box">
-            <h3>ℹ️ SUPPORT AVAILABILITY</h3>
-            <p>Aegis OS offers tiered support options. Community forums are available for all users. Priority support packages are available for purchase separately. Enterprise customers may negotiate custom support agreements. Support options and availability are subject to our current offerings.</p>
+        <h2><span class="icon">💳</span> 4. Payment Terms and Refund Policy</h2>
+        <div class="success-box">
+            <h3>✅ 14-Day Money-Back Guarantee</h3>
+            <p>We offer a 14-day refund policy for all paid editions. If you are not satisfied with your purchase for any reason, you may request a full refund within 14 days of purchase. No questions asked.</p>
         </div>
-
-        <h2>6. Pricing and Payments</h2>
-        <p>Regarding our pricing structure:</p>
+        <p><strong>Payment Processing:</strong></p>
+        <ul>
+            <li>All payments are securely processed through <strong>Stripe</strong></li>
+            <li>We do not store your credit card information on our servers</li>
+            <li>Prices are displayed in USD and may be subject to currency conversion fees</li>
+            <li>Prices may change at any time; existing licenses are not affected</li>
+        </ul>
+        <p><strong>Refund Process:</strong></p>
+        <ul>
+            <li>To request a refund, email <a href="mailto:riley.liang@hotmail.com">riley.liang@hotmail.com</a> with your order details</li>
+            <li>Refunds are processed within 5-10 business days</li>
+            <li>Upon refund, your license will be deactivated</li>
+            <li>Refund requests after 14 days will be evaluated on a case-by-case basis</li>
+        </ul>
+        <p><strong>Pricing:</strong></p>
         <ul>
             <li><strong>Freemium Edition:</strong> FREE - No payment required</li>
-            <li><strong>Basic Edition:</strong> $69 lifetime license OR $11/year annual subscription</li>
-            <li><strong>Gamer Edition:</strong> $89 lifetime license OR $13/year annual subscription</li>
-            <li><strong>AI Developer Edition:</strong> $109 lifetime license OR $16/year annual subscription</li>
-            <li><strong>Gamer + AI Edition:</strong> $149 lifetime license OR $20/year annual subscription</li>
-            <li><strong>Workplace Edition:</strong> $79/year per user (annual subscription only)</li>
-            <li><strong>Enterprise Server:</strong> Custom pricing - Contact for quote</li>
+            <li><strong>Basic Edition:</strong> $69 lifetime OR $10/year</li>
+            <li><strong>Workplace Edition:</strong> $49 lifetime OR $8/year</li>
+            <li><strong>Gamer Edition:</strong> $89 lifetime OR $13/year</li>
+            <li><strong>AI Developer Edition:</strong> $109 lifetime OR $15/year</li>
+            <li><strong>Gamer + AI Edition:</strong> $149 lifetime OR $20/year</li>
+            <li><strong>Server Edition:</strong> Contact for enterprise pricing</li>
         </ul>
-        <p>All prices are in USD. Prices may change without notice. "Lifetime" licenses are valid for the lifetime of the product line, not the lifetime of the purchaser.</p>
+        <p>"Lifetime" licenses are valid for the lifetime of the Aegis OS product line, not the lifetime of the purchaser.</p>
 
-        <h2>7. Refund Policy</h2>
-        <p><strong>30-Day Money Back Guarantee:</strong> We offer a 30-day refund policy for all paid editions. If you are not satisfied with your purchase, you may request a full refund within 30 days of purchase. Refund requests after 30 days will not be honored. To request a refund, contact: <a href="mailto:riley.liang@hotmail.com">riley.liang@hotmail.com</a></p>
-
-        <h2>8. Limitation of Liability</h2>
-        <p><strong>USE AT YOUR OWN RISK.</strong> In no event shall Aegis OS, its developers, distributors, or affiliates be liable for:</p>
-        <ul>
-            <li>Any direct, indirect, incidental, special, consequential, or punitive damages</li>
-            <li>Loss of data, profits, revenue, or business opportunities</li>
-            <li>System failures, crashes, or hardware damage</li>
-            <li>Security breaches or data loss</li>
-            <li>Any damages arising from the use or inability to use the Software</li>
-        </ul>
-        <p>Your use of the Software is at your sole risk. You assume full responsibility for any consequences of using the Software.</p>
-
-        <h2>9. Third-Party Software and Services</h2>
-        <p>Aegis OS may include or reference third-party software, services, or content. We are not responsible for any third-party software, and their inclusion does not imply endorsement. Third-party software is subject to its own licensing terms.</p>
-
-        <h2>10. Intellectual Property and Trademarks</h2>
-        <p><strong>All trademarks are the property of their respective owners.</strong> Aegis OS is not affiliated with, endorsed by, or sponsored by:</p>
-        <ul>
-            <li>Microsoft Corporation, Windows, or any Microsoft products</li>
-            <li>Apple Inc. or any Apple products</li>
-            <li>Valve Corporation, Steam, or SteamOS</li>
-            <li>NVIDIA Corporation</li>
-            <li>Advanced Micro Devices (AMD)</li>
-            <li>Intel Corporation</li>
-            <li>The Linux Foundation or any specific Linux distribution</li>
-            <li>Any other company, trademark, or brand mentioned on this website</li>
-        </ul>
-        <p>All product names, logos, and brands mentioned are property of their respective owners. Use of these names, logos, and brands does not imply endorsement or affiliation.</p>
-
-        <h2>11. Information Accuracy</h2>
+        <h2><span class="icon">⚠️</span> 5. Disclaimer of Warranties</h2>
         <div class="highlight-box">
-            <h3>⚠️ DISCLAIMER ON ACCURACY</h3>
-            <p><strong>Anything represented on this website may not be true.</strong> While we strive for accuracy, we make no guarantees regarding the accuracy, completeness, or reliability of any information presented. Information is provided "as-is" and may contain errors, omissions, or outdated content.</p>
+            <h3>⚠️ AS-IS Software</h3>
+            <p>THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. WE DO NOT GUARANTEE COMPATIBILITY WITH YOUR SPECIFIC HARDWARE CONFIGURATION, THIRD-PARTY SOFTWARE, OR PERIPHERALS.</p>
         </div>
+        <p>We specifically disclaim:</p>
+        <ul>
+            <li><strong>No Compatibility Guarantee:</strong> We cannot guarantee the Software will work on all hardware configurations</li>
+            <li><strong>No Performance Guarantee:</strong> Performance may vary based on your system specifications</li>
+            <li><strong>No Fitness for Purpose:</strong> We make no warranty the Software is suitable for any particular purpose</li>
+            <li><strong>No Merchantability:</strong> We disclaim all implied warranties of merchantability</li>
+            <li><strong>No Error-Free Operation:</strong> The Software may contain bugs or errors</li>
+        </ul>
 
-        <h2>12. Modifications to Terms</h2>
-        <p>We reserve the right to modify these Terms of Service at any time without prior notice. Your continued use of the Software or website after any changes constitutes acceptance of the new terms.</p>
+        <h2><span class="icon">⚖️</span> 6. Limitation of Liability</h2>
+        <p><strong>TO THE MAXIMUM EXTENT PERMITTED BY LAW:</strong></p>
+        <ul>
+            <li>Our total liability shall not exceed the amount you paid for the Software</li>
+            <li>We are not liable for any indirect, incidental, special, consequential, or punitive damages</li>
+            <li>We are not liable for loss of data, profits, revenue, or business opportunities</li>
+            <li>We are not liable for system failures, crashes, or hardware damage</li>
+            <li>We are not liable for third-party software issues or conflicts</li>
+        </ul>
+        <p>You use the Software at your own risk and assume full responsibility for any consequences.</p>
 
-        <h2>13. Governing Law</h2>
-        <p>These terms shall be governed by and construed in accordance with applicable laws. Any disputes shall be resolved through binding arbitration.</p>
+        <h2><span class="icon">🔚</span> 7. Termination</h2>
+        <p>We may terminate or suspend your license immediately, without prior notice, if:</p>
+        <ul>
+            <li>You violate any provision of these Terms</li>
+            <li>You engage in fraudulent activity or abuse our refund policy</li>
+            <li>You share, redistribute, or sell license keys</li>
+            <li>You attempt to circumvent license validation</li>
+        </ul>
+        <p>Upon termination:</p>
+        <ul>
+            <li>Your license to use the Software is immediately revoked</li>
+            <li>You must destroy all copies of the Software in your possession</li>
+            <li>No refund will be provided for terminations due to Terms violations</li>
+        </ul>
 
-        <h2>14. Contact Information</h2>
-        <p>For questions about these Terms of Service, contact:</p>
+        <h2><span class="icon">🌍</span> 8. Governing Law</h2>
+        <p>These Terms shall be governed by and construed in accordance with the laws of your jurisdiction of residence, without regard to its conflict of law provisions. Any disputes arising from these Terms or your use of the Software shall be resolved through binding arbitration in your jurisdiction, unless prohibited by local law.</p>
+
+        <h2><span class="icon">🔗</span> 9. Third-Party Software</h2>
+        <p>Aegis OS includes open-source components governed by their respective licenses (GPL, LGPL, MIT, BSD, etc.). See our <a href="/attributions">Attributions page</a> for full details. Third-party components are provided "as is" under their original licenses.</p>
+
+        <h2><span class="icon">✏️</span> 10. Modifications to Terms</h2>
+        <p>We reserve the right to modify these Terms at any time. Changes will be posted on this page with an updated revision date. Your continued use of the Software after changes constitutes acceptance of the new Terms.</p>
+
+        <h2><span class="icon">📧</span> 11. Contact Information</h2>
+        <p>For questions about these Terms of Service:</p>
         <p>Email: <a href="mailto:riley.liang@hotmail.com">riley.liang@hotmail.com</a></p>
-        <p><strong>Note:</strong> This contact is for general inquiries. For technical support, please see our support options.</p>
 
-        <h2>15. Severability</h2>
-        <p>If any provision of these Terms is found to be unenforceable, the remaining provisions shall continue in full force and effect.</p>
-
-        <div class="highlight-box">
-            <h3>ℹ️ ACKNOWLEDGMENT</h3>
-            <p>BY USING AEGIS OS OR THIS WEBSITE, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE BOUND BY THESE TERMS OF SERVICE. You understand that this is commercial software sold as-is without implied warranties, with liability limited to purchase price. Support is available separately.</p>
+        <div class="info-box">
+            <h3>ℹ️ Acknowledgment</h3>
+            <p>By using Aegis OS, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service. You understand this is commercial software provided as-is without implied warranties, and that Aegis OS is an independent project not affiliated with any other company or project.</p>
         </div>
     </div>
 
     <footer class="footer">
         <div class="footer-content">
-            <p>&copy; 2024 Aegis OS. All rights reserved.</p>
+            <p>&copy; 2025 Aegis OS. All rights reserved.</p>
             <div class="footer-links">
                 <a href="/">Home</a>
                 <a href="/terms">Terms of Service</a>
                 <a href="/privacy">Privacy Policy</a>
-                <a href="mailto:riley.liang@hotmail.com">Contact</a>
+                <a href="/attributions">Attributions</a>
             </div>
-            <p style="margin-top: 1rem; font-size: 0.85rem; opacity: 0.8;">
-                All trademarks are property of their respective owners. Aegis OS is not affiliated with Microsoft, Apple, Steam, NVIDIA, AMD, Intel, or any other company mentioned.
-            </p>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem; opacity: 0.7;">
-                Commercial software sold as-is. Liability limited to purchase price. Based on Linux Lite 7.2 (GPL). Support available separately.
+            <p class="footer-note">
+                Aegis OS is an independent project. All trademarks are property of their respective owners.<br>
+                Not affiliated with Microsoft, Linux Lite, Canonical, Valve, NVIDIA, AMD, or Intel.
             </p>
         </div>
     </footer>

@@ -6,11 +6,15 @@ A SteamOS/Bazzite-inspired game launcher for external media and integrated gamin
 Features:
 - SD card and USB drive game support (Nintendo cartridge-style)
 - Auto-detect and mount removable media
-- Steam, Lutris, Wine/Proton, RetroArch integration
+- Steam, Lutris, Heroic, Wine/Proton, RetroArch integration
 - Game save sync to cloud or local backup
 - Performance overlay (MangoHud) and GameMode integration
 - Low-latency input handling
 - Cover art, playtime, favorites tracking
+- Pre-launch Aegis Neural Upscaler (ANU) injection
+- Post-game performance reports with stats
+- Game categories and organization
+- Recently played section
 """
 
 import os
@@ -90,6 +94,7 @@ class Game:
     executable: str = ""
     install_path: str = ""
     icon_path: str = ""
+    cover_art: str = ""
     runner: str = "native"
     proton_version: str = ""
     save_path: str = ""
@@ -106,6 +111,33 @@ class Game:
     description: str = ""
     developer: str = ""
     genre: str = ""
+    category: str = ""
+    upscaler_enabled: bool = False
+    upscaler_profile: str = ""
+    last_session_fps_avg: float = 0.0
+    last_session_fps_min: float = 0.0
+    last_session_fps_max: float = 0.0
+
+
+@dataclass
+class PerformanceReport:
+    """Post-game performance report"""
+    game_id: str
+    game_name: str
+    session_start: str
+    session_end: str
+    duration_seconds: int
+    avg_fps: float = 0.0
+    min_fps: float = 0.0
+    max_fps: float = 0.0
+    avg_frametime: float = 0.0
+    cpu_avg: float = 0.0
+    gpu_avg: float = 0.0
+    ram_max_mb: int = 0
+    vram_max_mb: int = 0
+    upscaler_used: str = ""
+    upscaler_quality: str = ""
+    resolution: str = ""
 
 
 class AegisGameLauncher:
@@ -144,10 +176,14 @@ class AegisGameLauncher:
         
         self.gamemode_available = False
         self.mangohud_available = False
+        self.upscaler_available = False
         self.license_tier = LicenseTier.FREEMIUM
         
         self.device_monitor_thread = None
         self.monitoring = False
+        
+        self.categories: List[str] = ["Action", "RPG", "Strategy", "Simulation", "Sports", "Indie", "Multiplayer"]
+        self.performance_reports: List[PerformanceReport] = []
         
         self.ensure_directories()
         self.setup_logging()
@@ -195,9 +231,14 @@ class AegisGameLauncher:
         self.gamemode_available = shutil.which("gamemoded") is not None or \
                                   shutil.which("gamemode") is not None
         self.mangohud_available = shutil.which("mangohud") is not None
+        self.upscaler_available = Path("/usr/local/bin/aegis-upscaler").exists() or \
+                                  shutil.which("aegis-upscaler") is not None
+        self.gamescope_available = shutil.which("gamescope") is not None
         
         self.logger.info(f"GameMode available: {self.gamemode_available}")
         self.logger.info(f"MangoHud available: {self.mangohud_available}")
+        self.logger.info(f"ANU Upscaler available: {self.upscaler_available}")
+        self.logger.info(f"GameScope available: {self.gamescope_available}")
     
     def load_license_tier(self):
         """Load and determine license tier"""
@@ -579,6 +620,68 @@ class AegisGameLauncher:
             self.logger.error(f"Error parsing ACF file {filepath}: {e}")
             return None
     
+    def scan_heroic_games(self) -> List[Game]:
+        """Scan for Heroic Games Launcher games (Epic, GOG, Amazon)"""
+        games = []
+        heroic_path = Path(self.config.get("heroic_path", str(self.home_dir / ".config/heroic")))
+        
+        if not heroic_path.exists():
+            return games
+        
+        try:
+            gog_installed = heroic_path / "gog_store" / "installed.json"
+            if gog_installed.exists():
+                with open(gog_installed, 'r') as f:
+                    data = json.load(f)
+                    for app_name, game_info in data.get("installed", {}).items():
+                        game_id = f"heroic_gog_{app_name}"
+                        game = Game(
+                            id=game_id,
+                            name=game_info.get("title", app_name),
+                            platform="heroic_gog",
+                            install_path=game_info.get("install_path", ""),
+                            runner="wine",
+                            added_date=datetime.now().isoformat()
+                        )
+                        games.append(game)
+            
+            legendary_installed = heroic_path / "legendaryConfig" / "legendary" / "installed.json"
+            if legendary_installed.exists():
+                with open(legendary_installed, 'r') as f:
+                    data = json.load(f)
+                    for app_name, game_info in data.items():
+                        game_id = f"heroic_epic_{app_name}"
+                        game = Game(
+                            id=game_id,
+                            name=game_info.get("title", app_name),
+                            platform="heroic_epic",
+                            install_path=game_info.get("install_path", ""),
+                            runner="wine",
+                            added_date=datetime.now().isoformat()
+                        )
+                        games.append(game)
+            
+            nile_installed = heroic_path / "nile_store" / "installed.json"
+            if nile_installed.exists():
+                with open(nile_installed, 'r') as f:
+                    data = json.load(f)
+                    for app_name, game_info in data.get("installed", {}).items():
+                        game_id = f"heroic_amazon_{app_name}"
+                        game = Game(
+                            id=game_id,
+                            name=game_info.get("title", app_name),
+                            platform="heroic_amazon",
+                            install_path=game_info.get("install_path", ""),
+                            runner="wine",
+                            added_date=datetime.now().isoformat()
+                        )
+                        games.append(game)
+                        
+        except Exception as e:
+            self.logger.error(f"Error scanning Heroic games: {e}")
+        
+        return games
+    
     def scan_lutris_games(self) -> List[Game]:
         """Scan for Lutris games"""
         games = []
@@ -706,6 +809,7 @@ class AegisGameLauncher:
         results = {
             "steam": 0,
             "lutris": 0,
+            "heroic": 0,
             "native": 0,
             "external": 0,
             "total": 0,
@@ -733,6 +837,16 @@ class AegisGameLauncher:
             results["errors"].append(f"Lutris: {e}")
         
         if callback:
+            callback("Scanning Heroic games (Epic/GOG/Amazon)...")
+        try:
+            heroic_games = self.scan_heroic_games()
+            for game in heroic_games:
+                self._add_or_update_game(game)
+            results["heroic"] = len(heroic_games)
+        except Exception as e:
+            results["errors"].append(f"Heroic: {e}")
+        
+        if callback:
             callback("Scanning native games...")
         try:
             native_games = self.scan_native_games()
@@ -756,7 +870,7 @@ class AegisGameLauncher:
             except Exception as e:
                 results["errors"].append(f"External: {e}")
         
-        results["total"] = sum([results["steam"], results["lutris"], 
+        results["total"] = sum([results["steam"], results["lutris"], results["heroic"],
                                results["native"], results["external"]])
         
         self.config["last_scan"] = datetime.now().isoformat()
@@ -961,6 +1075,24 @@ class AegisGameLauncher:
                 env['WINEFSYNC'] = '1'
                 env['PROTON_ENABLE_NVAPI'] = '1'
             
+            upscaler_env = self.get_upscaler_env_vars(game)
+            if upscaler_env:
+                env.update(upscaler_env)
+                self.logger.info(f"Upscaler enabled: {upscaler_env.get('AEGIS_UPSCALER_BACKEND', 'unknown')}")
+                if callback:
+                    callback(f"ANU Upscaler: {upscaler_env.get('AEGIS_UPSCALER_QUALITY', 'balanced')}")
+            
+            if game.upscaler_enabled and self.gamescope_available:
+                gamescope_args = self.get_gamescope_args(game)
+                if gamescope_args:
+                    launch_cmd = gamescope_args + launch_cmd
+                    self.logger.info(f"Using gamescope for upscaling")
+            
+            if self.config.get("mangohud_enabled") and self.mangohud_available:
+                log_path = self.cache_dir / f"mangohud_{game_id}.log"
+                env['MANGOHUD_LOG'] = str(log_path)
+            
+            session_start = datetime.now().isoformat()
             start_time = time.time()
             
             process = subprocess.Popen(
@@ -974,7 +1106,9 @@ class AegisGameLauncher:
             self.running_games[game_id] = {
                 'process': process,
                 'start_time': start_time,
-                'game': game
+                'session_start': session_start,
+                'game': game,
+                'upscaler_enabled': game.upscaler_enabled
             }
             
             game.play_count += 1
@@ -1001,15 +1135,22 @@ class AegisGameLauncher:
         session = self.running_games[game_id]
         process = session['process']
         game = session['game']
+        session_start = session.get('session_start', datetime.now().isoformat())
         
         while process.poll() is None:
             time.sleep(5)
         
         end_time = time.time()
+        session_end = datetime.now().isoformat()
         playtime = int(end_time - session['start_time'])
         
         game.total_playtime += playtime
         self.save_library()
+        
+        report = self.generate_performance_report(game_id, session_start, session_end, playtime)
+        if report:
+            self.logger.info(f"Performance report: Avg FPS: {report.avg_fps:.1f}, "
+                           f"Min: {report.min_fps:.1f}, Max: {report.max_fps:.1f}")
         
         if game.save_path and Path(game.save_path).exists():
             self.backup_game_saves(game_id)
@@ -1166,6 +1307,202 @@ class AegisGameLauncher:
             minutes = (seconds % 3600) // 60
             return f"{hours}h {minutes}m"
     
+    def get_upscaler_env_vars(self, game: Game) -> Dict[str, str]:
+        """Get environment variables for upscaler integration"""
+        env_vars = {}
+        
+        if not self.upscaler_available or not self.is_full_version():
+            return env_vars
+        
+        if not game.upscaler_enabled:
+            return env_vars
+        
+        upscaler_config_path = Path("/etc/aegis/upscaler-config.json")
+        if upscaler_config_path.exists():
+            try:
+                with open(upscaler_config_path, 'r') as f:
+                    upscaler_config = json.load(f)
+                
+                game_override_key = f"steam_{game.id.split('_')[-1]}" if game.platform == "steam" else game.id
+                game_settings = upscaler_config.get("per_game_overrides", {}).get(game_override_key, {})
+                
+                backend = game_settings.get("backend", upscaler_config.get("defaults", {}).get("backend", "fsr2"))
+                quality = game_settings.get("quality_preset", upscaler_config.get("defaults", {}).get("quality_preset", "balanced"))
+                
+                if backend in ["fsr1", "fsr2", "fsr3"]:
+                    env_vars["WINE_FULLSCREEN_FSR"] = "1"
+                    
+                    quality_map = {
+                        "ultra_quality": "0",
+                        "quality": "1",
+                        "balanced": "2",
+                        "performance": "3",
+                        "ultra_performance": "4"
+                    }
+                    env_vars["WINE_FULLSCREEN_FSR_STRENGTH"] = quality_map.get(quality, "2")
+                    env_vars["WINE_FULLSCREEN_FSR_MODE"] = quality
+                
+                env_vars["AEGIS_UPSCALER_BACKEND"] = backend
+                env_vars["AEGIS_UPSCALER_QUALITY"] = quality
+                env_vars["AEGIS_UPSCALER_ENABLED"] = "1"
+                
+            except Exception as e:
+                self.logger.warning(f"Error loading upscaler config: {e}")
+        
+        return env_vars
+    
+    def get_gamescope_args(self, game: Game) -> List[str]:
+        """Get gamescope arguments for upscaling a game"""
+        if not self.gamescope_available or not game.upscaler_enabled:
+            return []
+        
+        upscaler_config_path = Path("/etc/aegis/upscaler-config.json")
+        target_width, target_height = 1920, 1080
+        quality = "balanced"
+        
+        if upscaler_config_path.exists():
+            try:
+                with open(upscaler_config_path, 'r') as f:
+                    config = json.load(f)
+                
+                game_key = f"steam_{game.id.split('_')[-1]}" if game.platform == "steam" else game.id
+                game_settings = config.get("per_game_overrides", {}).get(game_key, {})
+                quality = game_settings.get("quality_preset", config.get("defaults", {}).get("quality_preset", "balanced"))
+                
+            except Exception:
+                pass
+        
+        scale_factors = {
+            "ultra_quality": 0.77,
+            "quality": 0.67,
+            "balanced": 0.58,
+            "performance": 0.50,
+            "ultra_performance": 0.33
+        }
+        
+        scale = scale_factors.get(quality, 0.58)
+        render_width = int(target_width * scale)
+        render_height = int(target_height * scale)
+        
+        render_width = (render_width + 7) & ~7
+        render_height = (render_height + 7) & ~7
+        
+        args = [
+            "gamescope",
+            "-W", str(target_width),
+            "-H", str(target_height),
+            "-w", str(render_width),
+            "-h", str(render_height),
+            "-f",
+            "-e",
+            "-F", "fsr",
+            "--fsr-sharpness", "5",
+            "--"
+        ]
+        
+        return args
+    
+    def generate_performance_report(self, game_id: str, session_start: str, 
+                                    session_end: str, playtime: int) -> Optional[PerformanceReport]:
+        """Generate post-game performance report"""
+        game = self.games.get(game_id)
+        if not game:
+            return None
+        
+        report = PerformanceReport(
+            game_id=game_id,
+            game_name=game.name,
+            session_start=session_start,
+            session_end=session_end,
+            duration_seconds=playtime
+        )
+        
+        mangohud_log = self.cache_dir / f"mangohud_{game_id}.log"
+        if mangohud_log.exists():
+            try:
+                fps_values = []
+                with open(mangohud_log, 'r') as f:
+                    for line in f:
+                        if line.strip() and not line.startswith('#'):
+                            parts = line.split(',')
+                            if len(parts) > 1:
+                                try:
+                                    fps = float(parts[1])
+                                    fps_values.append(fps)
+                                except ValueError:
+                                    pass
+                
+                if fps_values:
+                    report.avg_fps = sum(fps_values) / len(fps_values)
+                    report.min_fps = min(fps_values)
+                    report.max_fps = max(fps_values)
+                    report.avg_frametime = 1000 / report.avg_fps if report.avg_fps > 0 else 0
+                    
+                    game.last_session_fps_avg = report.avg_fps
+                    game.last_session_fps_min = report.min_fps
+                    game.last_session_fps_max = report.max_fps
+                    self.save_library()
+                    
+            except Exception as e:
+                self.logger.warning(f"Error parsing MangoHud log: {e}")
+        
+        if game.upscaler_enabled:
+            report.upscaler_used = "ANU FSR"
+            report.upscaler_quality = game.upscaler_profile or "balanced"
+        
+        self.performance_reports.append(report)
+        self._save_performance_reports()
+        
+        return report
+    
+    def _save_performance_reports(self):
+        """Save performance reports"""
+        try:
+            reports_file = self.data_dir / "performance_reports.json"
+            data = [asdict(r) for r in self.performance_reports[-100:]]
+            with open(reports_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            self.logger.warning(f"Error saving performance reports: {e}")
+    
+    def get_recently_played(self, limit: int = 10) -> List[Game]:
+        """Get recently played games"""
+        played_games = [g for g in self.games.values() if g.last_played]
+        return sorted(played_games, key=lambda x: x.last_played, reverse=True)[:limit]
+    
+    def get_games_by_category(self, category: str) -> List[Game]:
+        """Get games in a specific category"""
+        return [g for g in self.games.values() if g.category == category]
+    
+    def set_game_category(self, game_id: str, category: str) -> bool:
+        """Set category for a game"""
+        if game_id in self.games:
+            self.games[game_id].category = category
+            self.save_library()
+            return True
+        return False
+    
+    def toggle_game_upscaler(self, game_id: str) -> bool:
+        """Toggle upscaler for a game"""
+        if not self.is_full_version():
+            self.logger.warning("Upscaler requires Gamer edition or higher")
+            return False
+        
+        if game_id in self.games:
+            self.games[game_id].upscaler_enabled = not self.games[game_id].upscaler_enabled
+            self.save_library()
+            return self.games[game_id].upscaler_enabled
+        return False
+    
+    def set_game_upscaler_profile(self, game_id: str, profile: str) -> bool:
+        """Set upscaler profile for a game"""
+        if game_id in self.games:
+            self.games[game_id].upscaler_profile = profile
+            self.games[game_id].upscaler_enabled = True
+            self.save_library()
+            return True
+        return False
+    
     def get_stats(self) -> Dict:
         """Get launcher statistics"""
         total_games = len(self.games)
@@ -1199,6 +1536,11 @@ class AegisGameLauncher:
             "gamemode_enabled": self.config.get("gamemode_enabled", False),
             "mangohud_available": self.mangohud_available,
             "mangohud_enabled": self.config.get("mangohud_enabled", False),
+            "upscaler_available": self.upscaler_available,
+            "gamescope_available": self.gamescope_available,
+            "games_with_upscaler": len([g for g in self.games.values() if g.upscaler_enabled]),
+            "categories_used": list(set(g.category for g in self.games.values() if g.category)),
+            "heroic_games": len([g for g in self.games.values() if g.platform.startswith("heroic")]),
             "license_tier": self.license_tier.name
         }
 

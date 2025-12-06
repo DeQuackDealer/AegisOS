@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Source Attributions - Aegis OS</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-dark: #0a0d12;
+            --bg-card: #12171f;
+            --bg-card-hover: #171d27;
+            --bg-hover: #1e2533;
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #ec4899;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #3b82f6;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+            --border-light: #334155;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.8;
+            min-height: 100vh;
+        }
+        .navbar {
+            background: var(--bg-card);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            margin-left: 2rem;
+            font-weight: 500;
+            transition: color 0.2s ease;
+        }
+        .nav-links a:hover { color: var(--primary-light); }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+        }
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-size: 1rem;
+        }
+        h2 {
+            font-size: 1.4rem;
+            color: var(--text-primary);
+            margin: 2.5rem 0 1rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        h2:first-of-type { border-top: none; padding-top: 0; }
+        h2 .icon { font-size: 1.2rem; }
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+        strong { color: var(--text-primary); }
+        a { color: var(--primary-light); }
+        a:hover { color: var(--primary); }
+        .success-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--success);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+        }
+        .success-box h3 {
+            color: var(--success);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .success-box p { color: var(--text-secondary); margin-bottom: 0; }
+        .attribution-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+        }
+        .attribution-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+        .attribution-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+        .attribution-card h3 {
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .attribution-card .license-badge {
+            display: inline-block;
+            background: var(--bg-hover);
+            color: var(--primary-light);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+        .attribution-card p {
+            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
+        }
+        .attribution-card .link {
+            font-size: 0.85rem;
+        }
+        .license-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin: 1.5rem 0;
+            overflow: hidden;
+        }
+        .license-header {
+            background: var(--bg-hover);
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .license-header h3 {
+            color: var(--text-primary);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .license-header .badge {
+            background: var(--primary);
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .license-content {
+            padding: 1.5rem;
+        }
+        .license-content ul {
+            list-style: none;
+            padding: 0;
+        }
+        .license-content li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .license-content li:last-child {
+            border-bottom: none;
+        }
+        .license-content .project-name {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .footer {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 3rem 2rem;
+            margin-top: 4rem;
+        }
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        .footer-links {
+            margin: 1.5rem 0;
+        }
+        .footer-links a {
+            color: var(--primary-light);
+            text-decoration: none;
+            margin: 0 1rem;
+        }
+        .footer-links a:hover { color: var(--primary); }
+        .footer-note {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="/" class="logo">🛡️ Aegis OS</a>
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/pricing">Pricing</a>
+                <a href="/terms">Terms</a>
+                <a href="/privacy">Privacy</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>Open Source Attributions</h1>
+        <p class="subtitle">Aegis OS is built on the shoulders of giants. We gratefully acknowledge the open-source projects that make this possible.</p>
+
+        <div class="success-box">
+            <h3>✅ Our Commitment to Open Source</h3>
+            <p>We deeply respect and honor all upstream open-source licenses. Aegis OS complies with all license requirements, and we are committed to giving back to the open-source community that makes our work possible. Source code for GPL components is available upon request.</p>
+        </div>
+
+        <h2><span class="icon">🐧</span> Core System Components</h2>
+        <div class="attribution-grid">
+            <div class="attribution-card">
+                <h3>🔷 Linux Kernel</h3>
+                <span class="license-badge">GPL-2.0</span>
+                <p>The heart of Aegis OS. The Linux kernel provides the core operating system functionality, hardware drivers, and system interfaces.</p>
+                <p class="link"><a href="https://kernel.org" target="_blank">kernel.org</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>🖥️ XFCE Desktop</h3>
+                <span class="license-badge">GPL-2.0 / LGPL-2.1</span>
+                <p>A lightweight, modular desktop environment. XFCE provides our Windows-like desktop experience with customizable panels and themes.</p>
+                <p class="link"><a href="https://xfce.org" target="_blank">xfce.org</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>📦 Debian/Ubuntu Base</h3>
+                <span class="license-badge">Various</span>
+                <p>System packages and package management infrastructure from the Debian and Ubuntu projects.</p>
+                <p class="link"><a href="https://debian.org" target="_blank">debian.org</a></p>
+            </div>
+        </div>
+
+        <h2><span class="icon">🎮</span> Gaming and Compatibility Layer</h2>
+        <div class="attribution-grid">
+            <div class="attribution-card">
+                <h3>🍷 Wine Project</h3>
+                <span class="license-badge">LGPL-2.1</span>
+                <p>Windows compatibility layer that enables running Windows applications on Linux. The foundation of our Windows software compatibility.</p>
+                <p class="link"><a href="https://winehq.org" target="_blank">winehq.org</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>🎮 Proton</h3>
+                <span class="license-badge">BSD-3-Clause</span>
+                <p>Valve's compatibility tool for Steam Play, based on Wine. Enables playing Windows games on Linux with excellent performance.</p>
+                <p class="link"><a href="https://github.com/ValveSoftware/Proton" target="_blank">GitHub</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>⚡ GE-Proton</h3>
+                <span class="license-badge">BSD-3-Clause</span>
+                <p>Community-maintained Proton fork by GloriousEggroll with additional patches and game fixes not yet upstream.</p>
+                <p class="link"><a href="https://github.com/GloriousEggroll/proton-ge-custom" target="_blank">GitHub</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>🔺 DXVK</h3>
+                <span class="license-badge">zlib License</span>
+                <p>Vulkan-based translation layer for Direct3D 9/10/11. Provides significant performance improvements for DirectX games.</p>
+                <p class="link"><a href="https://github.com/doitsujin/dxvk" target="_blank">GitHub</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>🔷 VKD3D-Proton</h3>
+                <span class="license-badge">zlib License</span>
+                <p>Vulkan-based translation layer for Direct3D 12. Enables running DirectX 12 games with ray tracing support.</p>
+                <p class="link"><a href="https://github.com/HansKristian-Work/vkd3d-proton" target="_blank">GitHub</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>📊 MangoHud</h3>
+                <span class="license-badge">MIT License</span>
+                <p>Vulkan and OpenGL overlay for monitoring FPS, temperatures, CPU/GPU load, and more during gaming sessions.</p>
+                <p class="link"><a href="https://github.com/flightlessmango/MangoHud" target="_blank">GitHub</a></p>
+            </div>
+        </div>
+
+        <h2><span class="icon">🛠️</span> System Utilities and Tools</h2>
+        
+        <div class="license-section">
+            <div class="license-header">
+                <h3>GPL-2.0 Licensed <span class="badge">Copyleft</span></h3>
+            </div>
+            <div class="license-content">
+                <ul>
+                    <li><span class="project-name">GNU Coreutils</span> <span>System utilities</span></li>
+                    <li><span class="project-name">GNU Bash</span> <span>Shell</span></li>
+                    <li><span class="project-name">systemd</span> <span>Init system</span></li>
+                    <li><span class="project-name">GRUB</span> <span>Bootloader</span></li>
+                    <li><span class="project-name">GParted</span> <span>Partition editor</span></li>
+                    <li><span class="project-name">htop</span> <span>Process viewer</span></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="license-section">
+            <div class="license-header">
+                <h3>LGPL Licensed <span class="badge">Lesser Copyleft</span></h3>
+            </div>
+            <div class="license-content">
+                <ul>
+                    <li><span class="project-name">glibc</span> <span>C library</span></li>
+                    <li><span class="project-name">GTK</span> <span>GUI toolkit</span></li>
+                    <li><span class="project-name">PulseAudio/PipeWire</span> <span>Audio system</span></li>
+                    <li><span class="project-name">Mesa</span> <span>Graphics drivers</span></li>
+                    <li><span class="project-name">SDL2</span> <span>Game library</span></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="license-section">
+            <div class="license-header">
+                <h3>MIT / BSD Licensed <span class="badge">Permissive</span></h3>
+            </div>
+            <div class="license-content">
+                <ul>
+                    <li><span class="project-name">X.Org / Xwayland</span> <span>Display server</span></li>
+                    <li><span class="project-name">curl</span> <span>Data transfer</span></li>
+                    <li><span class="project-name">OpenSSL</span> <span>Cryptography</span></li>
+                    <li><span class="project-name">SQLite</span> <span>Database</span></li>
+                    <li><span class="project-name">zlib</span> <span>Compression</span></li>
+                    <li><span class="project-name">libpng</span> <span>Image format</span></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="license-section">
+            <div class="license-header">
+                <h3>Apache 2.0 Licensed <span class="badge">Permissive</span></h3>
+            </div>
+            <div class="license-content">
+                <ul>
+                    <li><span class="project-name">Vulkan Loader</span> <span>Graphics API</span></li>
+                    <li><span class="project-name">FreeType</span> <span>Font rendering</span></li>
+                </ul>
+            </div>
+        </div>
+
+        <h2><span class="icon">🤖</span> AI Development Tools (AI-Dev Edition)</h2>
+        <div class="attribution-grid">
+            <div class="attribution-card">
+                <h3>🐍 Python</h3>
+                <span class="license-badge">PSF License</span>
+                <p>Programming language and runtime for AI/ML development. Bundled with scientific computing libraries.</p>
+                <p class="link"><a href="https://python.org" target="_blank">python.org</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>🔥 PyTorch</h3>
+                <span class="license-badge">BSD-3-Clause</span>
+                <p>Open source machine learning framework. Powers many of our AI development tools.</p>
+                <p class="link"><a href="https://pytorch.org" target="_blank">pytorch.org</a></p>
+            </div>
+            <div class="attribution-card">
+                <h3>📊 NumPy / SciPy</h3>
+                <span class="license-badge">BSD-3-Clause</span>
+                <p>Fundamental packages for scientific computing with Python.</p>
+                <p class="link"><a href="https://numpy.org" target="_blank">numpy.org</a></p>
+            </div>
+        </div>
+
+        <h2><span class="icon">📄</span> Full License Texts</h2>
+        <p>Complete license texts for all included software can be found:</p>
+        <ul style="color: var(--text-secondary); padding-left: 2rem;">
+            <li>In the installed system at <code>/usr/share/doc/*/copyright</code></li>
+            <li>In the source packages available from our repository</li>
+            <li>Upon request by emailing <a href="mailto:riley.liang@hotmail.com">riley.liang@hotmail.com</a></li>
+        </ul>
+        
+        <p style="margin-top: 2rem;">For GPL-licensed source code, we will provide a complete machine-readable copy upon written request within three years of your receipt of the binary. Please include $10 to cover media and shipping costs.</p>
+
+        <h2><span class="icon">📧</span> Contact</h2>
+        <p>For questions about open-source compliance, licensing, or to request source code:</p>
+        <p>Email: <a href="mailto:riley.liang@hotmail.com">riley.liang@hotmail.com</a></p>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-content">
+            <p>&copy; 2025 Aegis OS. All rights reserved.</p>
+            <div class="footer-links">
+                <a href="/">Home</a>
+                <a href="/terms">Terms of Service</a>
+                <a href="/privacy">Privacy Policy</a>
+                <a href="/attributions">Attributions</a>
+            </div>
+            <p class="footer-note">
+                Aegis OS is an independent project. All trademarks are property of their respective owners.<br>
+                Not affiliated with Microsoft, Linux Lite, Canonical, Valve, NVIDIA, AMD, or Intel.
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
