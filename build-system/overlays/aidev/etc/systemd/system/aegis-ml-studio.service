@@ -1,0 +1,26 @@
+[Unit]
+Description=Aegis ML Studio - Jupyter Lab server for AI development
+Documentation=https://aegis-os.com/docs/ml-studio
+After=multi-user.target network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+ExecStart=/usr/local/bin/aegis-ml-studio --server
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-ml-studio
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=%h"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""
+Aegis Data Science - Data science environment setup and management
+Features: Environment setup, package management, dataset management
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from typing import Dict, List, Any
+
+TIER_LIMIT = "aidev"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Data Science"
+
+CONFIG_FILE = "/etc/aegis/aidev-config.json"
+LOG_FILE = "/var/log/aegis/data-science.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    AIDEV = 4
+
+
+DS_PACKAGES = {
+    "core": ["numpy", "pandas", "scipy", "matplotlib", "seaborn", "jupyter"],
+    "ml": ["scikit-learn", "xgboost", "lightgbm", "catboost"],
+    "deep_learning": ["torch", "tensorflow", "keras"],
+    "nlp": ["transformers", "spacy", "nltk", "gensim"],
+    "vision": ["opencv-python", "pillow", "albumentations"],
+    "data": ["sqlalchemy", "pyarrow", "dask", "polars"]
+}
+
+
+class AegisDataScience:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler() if not self.headless else logging.NullHandler()])
+        except Exception:
+            logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("AegisDataScience")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-aidev-marker").exists():
+            self.license_tier = LicenseTier.AIDEV
+    
+    def check_pip(self) -> bool:
+        return shutil.which("pip") is not None or shutil.which("pip3") is not None
+    
+    def check_conda(self) -> bool:
+        return shutil.which("conda") is not None
+    
+    def install_packages(self, packages: List[str], use_conda: bool = False) -> Dict[str, Any]:
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        try:
+            if use_conda and self.check_conda():
+                cmd = ["conda", "install", "-y"] + packages
+            elif self.check_pip():
+                pip_cmd = shutil.which("pip3") or shutil.which("pip")
+                cmd = [pip_cmd, "install"] + packages
+            else:
+                return {"success": False, "error": "No package manager available"}
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            return {"success": result.returncode == 0, "output": result.stdout}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def get_installed_packages(self) -> List[str]:
+        try:
+            pip_cmd = shutil.which("pip3") or shutil.which("pip")
+            if pip_cmd:
+                result = subprocess.run([pip_cmd, "list", "--format=freeze"], capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    return [line.split("==")[0] for line in result.stdout.strip().split('\n') if line]
+        except Exception:
+            pass
+        return []
+    
+    def get_status(self) -> Dict[str, Any]:
+        installed = self.get_installed_packages()
+        return {
+            "pip_available": self.check_pip(),
+            "conda_available": self.check_conda(),
+            "installed_count": len(installed),
+            "package_groups": list(DS_PACKAGES.keys())
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        status = self.get_status()
+        print(f"Pip: {'✓' if status['pip_available'] else '✗'}")
+        print(f"Conda: {'✓' if status['conda_available'] else '✗'}")
+        print(f"Installed Packages: {status['installed_count']}")
+        
+        print("\nPackage Groups:")
+        for group, packages in DS_PACKAGES.items():
+            print(f"  {group}: {', '.join(packages[:3])}...")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        vbox.set_margin_top(20)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 10)
+        
+        for group, packages in DS_PACKAGES.items():
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            label = Gtk.Label(label=f"{group}: {', '.join(packages[:3])}...")
+            label.set_xalign(0)
+            hbox.pack_start(label, True, True, 10)
+            
+            btn = Gtk.Button(label="Install")
+            btn.set_sensitive(self.license_tier >= LicenseTier.AIDEV)
+            hbox.pack_end(btn, False, False, 10)
+            
+            vbox.pack_start(hbox, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--install", metavar="GROUP", help="Install package group")
+    parser.add_argument("--status", action="store_true", help="Show status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.install:
+        app = AegisDataScience(headless=True)
+        if args.install in DS_PACKAGES:
+            result = app.install_packages(DS_PACKAGES[args.install])
+            print(json.dumps(result, indent=2))
+    elif args.status:
+        app = AegisDataScience(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisDataScience(headless=False)
+        app.run_cli()
+    else:
+        app = AegisDataScience(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

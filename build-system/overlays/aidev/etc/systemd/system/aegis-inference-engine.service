@@ -1,0 +1,26 @@
+[Unit]
+Description=Aegis Inference Engine - Local LLM inference server
+Documentation=https://aegis-os.com/docs/inference-engine
+After=multi-user.target network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-inference-engine --server
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-inference-engine
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="CUDA_VISIBLE_DEVICES=0"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""
+Aegis Enterprise Suite - M365 and Google Workspace integration for Workplace edition
+Features: Microsoft 365 integration, Google Workspace, SSO, AD/LDAP support
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import webbrowser
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "workplace"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Enterprise Suite"
+
+CONFIG_FILE = "/etc/aegis/workplace-config.json"
+LOG_FILE = "/var/log/aegis/enterprise-suite.log"
+DATA_DIR = "/var/lib/aegis/enterprise"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    BASIC = 2
+    WORKPLACE = 3
+    GAMER = 4
+    GAMER_AI = 5
+    SERVER = 6
+
+
+M365_APPS = {
+    "outlook": {"name": "Microsoft Outlook", "web_url": "https://outlook.office365.com", "icon": "mail-client"},
+    "word": {"name": "Microsoft Word", "web_url": "https://www.office.com/launch/word", "icon": "x-office-document"},
+    "excel": {"name": "Microsoft Excel", "web_url": "https://www.office.com/launch/excel", "icon": "x-office-spreadsheet"},
+    "powerpoint": {"name": "Microsoft PowerPoint", "web_url": "https://www.office.com/launch/powerpoint", "icon": "x-office-presentation"},
+    "teams": {"name": "Microsoft Teams", "web_url": "https://teams.microsoft.com", "icon": "user-available"},
+    "onedrive": {"name": "Microsoft OneDrive", "web_url": "https://onedrive.live.com", "icon": "folder-cloud"},
+    "sharepoint": {"name": "Microsoft SharePoint", "web_url": "https://www.office.com/launch/sharepoint", "icon": "network-server"}
+}
+
+GOOGLE_APPS = {
+    "gmail": {"name": "Gmail", "web_url": "https://mail.google.com", "icon": "mail-client"},
+    "drive": {"name": "Google Drive", "web_url": "https://drive.google.com", "icon": "folder-cloud"},
+    "docs": {"name": "Google Docs", "web_url": "https://docs.google.com", "icon": "x-office-document"},
+    "sheets": {"name": "Google Sheets", "web_url": "https://sheets.google.com", "icon": "x-office-spreadsheet"},
+    "slides": {"name": "Google Slides", "web_url": "https://slides.google.com", "icon": "x-office-presentation"},
+    "meet": {"name": "Google Meet", "web_url": "https://meet.google.com", "icon": "camera-video"},
+    "calendar": {"name": "Google Calendar", "web_url": "https://calendar.google.com", "icon": "x-office-calendar"}
+}
+
+
+class AegisEnterpriseSuite:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.daemon_mode = False
+        self.running = True
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
+        
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
+        
+        self.logger = logging.getLogger("AegisEnterpriseSuite")
+        self.logger.info(f"Starting {APP_NAME} v{VERSION}")
+    
+    def load_license_tier(self):
+        license_file = Path("/etc/aegis/license.json")
+        try:
+            if license_file.exists():
+                with open(license_file, 'r') as f:
+                    license_data = json.load(f)
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'workplace': LicenseTier.WORKPLACE,
+                    'gamer': LicenseTier.GAMER,
+                    'gamer-ai': LicenseTier.GAMER_AI,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                if Path("/etc/aegis-workplace-marker").exists():
+                    self.license_tier = LicenseTier.WORKPLACE
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+    
+    def is_feature_available(self, feature: str) -> bool:
+        workplace_features = ["m365", "google_workspace", "sso", "ad_ldap"]
+        if feature in workplace_features:
+            return self.license_tier >= LicenseTier.WORKPLACE
+        return False
+    
+    def load_config(self):
+        default_config = {
+            "m365_integration": True,
+            "google_workspace": True,
+            "sso_enabled": True,
+            "default_browser": "firefox"
+        }
+        
+        try:
+            if Path(CONFIG_FILE).exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    file_config = json.load(f)
+                    if "features" in file_config and "enterprise_suite" in file_config["features"]:
+                        self.config = {**default_config, **file_config["features"]["enterprise_suite"]}
+                    else:
+                        self.config = default_config
+            else:
+                self.config = default_config
+        except Exception as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def launch_m365_app(self, app_id: str) -> bool:
+        if not self.is_feature_available("m365"):
+            return False
+        
+        if app_id not in M365_APPS:
+            return False
+        
+        app = M365_APPS[app_id]
+        try:
+            webbrowser.open(app["web_url"])
+            self.logger.info(f"Launched M365 app: {app['name']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to launch M365 app: {e}")
+            return False
+    
+    def launch_google_app(self, app_id: str) -> bool:
+        if not self.is_feature_available("google_workspace"):
+            return False
+        
+        if app_id not in GOOGLE_APPS:
+            return False
+        
+        app = GOOGLE_APPS[app_id]
+        try:
+            webbrowser.open(app["web_url"])
+            self.logger.info(f"Launched Google app: {app['name']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to launch Google app: {e}")
+            return False
+    
+    def get_integration_status(self) -> Dict[str, Any]:
+        return {
+            "m365": {
+                "enabled": self.config.get("m365_integration", False),
+                "available": self.is_feature_available("m365"),
+                "apps": list(M365_APPS.keys())
+            },
+            "google_workspace": {
+                "enabled": self.config.get("google_workspace", False),
+                "available": self.is_feature_available("google_workspace"),
+                "apps": list(GOOGLE_APPS.keys())
+            },
+            "sso": {
+                "enabled": self.config.get("sso_enabled", False),
+                "available": self.is_feature_available("sso")
+            }
+        }
+    
+    def run_daemon(self):
+        self.daemon_mode = True
+        self.logger.info("Starting enterprise suite daemon")
+        while self.running:
+            threading.Event().wait(60)
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            print("GTK not available. Use --cli mode.")
+            return self.run_cli()
+        
+        win = EnterpriseSuiteWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"  License Tier: {'WORKPLACE+' if self.license_tier >= LicenseTier.WORKPLACE else 'LIMITED'}")
+        print(f"{'='*60}\n")
+        
+        status = self.get_integration_status()
+        print("Microsoft 365 Integration:")
+        print(f"  Status: {'Enabled' if status['m365']['available'] else 'Requires Workplace edition'}")
+        print(f"  Apps: {', '.join(M365_APPS.keys())}")
+        
+        print("\nGoogle Workspace Integration:")
+        print(f"  Status: {'Enabled' if status['google_workspace']['available'] else 'Requires Workplace edition'}")
+        print(f"  Apps: {', '.join(GOOGLE_APPS.keys())}")
+        
+        if self.license_tier < LicenseTier.WORKPLACE:
+            print("\n⚠ Upgrade to Workplace edition for enterprise features")
+
+
+if GTK_AVAILABLE:
+    class EnterpriseSuiteWindow(Gtk.Window):
+        def __init__(self, app: AegisEnterpriseSuite):
+            super().__init__(title=f"{APP_NAME} v{VERSION}")
+            self.app = app
+            self.set_default_size(900, 700)
+            self.set_border_width(10)
+            self.setup_ui()
+        
+        def setup_ui(self):
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            self.add(vbox)
+            
+            header = Gtk.Label()
+            header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+            vbox.pack_start(header, False, False, 10)
+            
+            if self.app.license_tier < LicenseTier.WORKPLACE:
+                warning = Gtk.Label()
+                warning.set_markup("<span foreground='orange'>⚠ Upgrade to Workplace edition for full access</span>")
+                vbox.pack_start(warning, False, False, 5)
+            
+            notebook = Gtk.Notebook()
+            vbox.pack_start(notebook, True, True, 0)
+            
+            notebook.append_page(self.create_m365_tab(), Gtk.Label(label="Microsoft 365"))
+            notebook.append_page(self.create_google_tab(), Gtk.Label(label="Google Workspace"))
+        
+        def create_m365_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            for app_id, app_info in M365_APPS.items():
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                label = Gtk.Label(label=app_info["name"])
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                btn = Gtk.Button(label="Open")
+                btn.connect("clicked", self.on_launch_m365, app_id)
+                btn.set_sensitive(self.app.license_tier >= LicenseTier.WORKPLACE)
+                hbox.pack_end(btn, False, False, 10)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def create_google_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            for app_id, app_info in GOOGLE_APPS.items():
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                label = Gtk.Label(label=app_info["name"])
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                btn = Gtk.Button(label="Open")
+                btn.connect("clicked", self.on_launch_google, app_id)
+                btn.set_sensitive(self.app.license_tier >= LicenseTier.WORKPLACE)
+                hbox.pack_end(btn, False, False, 10)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def on_launch_m365(self, button, app_id):
+            self.app.launch_m365_app(app_id)
+        
+        def on_launch_google(self, button, app_id):
+            self.app.launch_google_app(app_id)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--daemon", action="store_true", help="Run as daemon")
+    parser.add_argument("--launch-m365", metavar="APP", help="Launch M365 app")
+    parser.add_argument("--launch-google", metavar="APP", help="Launch Google app")
+    parser.add_argument("--status", action="store_true", help="Show integration status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.daemon:
+        app = AegisEnterpriseSuite(headless=True)
+        app.run_daemon()
+    elif args.launch_m365:
+        app = AegisEnterpriseSuite(headless=True)
+        app.launch_m365_app(args.launch_m365)
+    elif args.launch_google:
+        app = AegisEnterpriseSuite(headless=True)
+        app.launch_google_app(args.launch_google)
+    elif args.status:
+        app = AegisEnterpriseSuite(headless=True)
+        print(json.dumps(app.get_integration_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisEnterpriseSuite(headless=False)
+        app.run_cli()
+    else:
+        app = AegisEnterpriseSuite(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

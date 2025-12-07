@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""
+Aegis LLM Tools - LangChain templates and vector database configuration
+Features: LangChain templates, vector DB config, embeddings management
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from typing import Dict, List, Any
+
+TIER_LIMIT = "aidev"
+VERSION = "1.5.0"
+APP_NAME = "Aegis LLM Tools"
+
+CONFIG_FILE = "/etc/aegis/aidev-config.json"
+LOG_FILE = "/var/log/aegis/llm-tools.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    AIDEV = 4
+
+
+VECTOR_DATABASES = {
+    "chromadb": {"name": "ChromaDB", "pip_package": "chromadb", "description": "Lightweight embedding DB"},
+    "qdrant": {"name": "Qdrant", "pip_package": "qdrant-client", "description": "Vector similarity search"},
+    "weaviate": {"name": "Weaviate", "pip_package": "weaviate-client", "description": "ML-first vector DB"},
+    "milvus": {"name": "Milvus", "pip_package": "pymilvus", "description": "Scalable vector DB"},
+    "pinecone": {"name": "Pinecone", "pip_package": "pinecone-client", "description": "Cloud vector DB"}
+}
+
+LANGCHAIN_TEMPLATES = {
+    "rag_basic": {
+        "name": "Basic RAG",
+        "description": "Simple retrieval-augmented generation",
+        "packages": ["langchain", "chromadb", "sentence-transformers"]
+    },
+    "chat_memory": {
+        "name": "Chat with Memory",
+        "description": "Conversational chain with history",
+        "packages": ["langchain", "langchain-community"]
+    },
+    "agent_tools": {
+        "name": "Agent with Tools",
+        "description": "AI agent with external tool access",
+        "packages": ["langchain", "langchain-experimental"]
+    },
+    "document_qa": {
+        "name": "Document Q&A",
+        "description": "Question answering over documents",
+        "packages": ["langchain", "unstructured", "pypdf"]
+    }
+}
+
+
+class AegisLLMTools:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisLLMTools")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-aidev-marker").exists():
+            self.license_tier = LicenseTier.AIDEV
+    
+    def install_template(self, template_id: str) -> Dict[str, Any]:
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        if template_id not in LANGCHAIN_TEMPLATES:
+            return {"success": False, "error": "Unknown template"}
+        
+        template = LANGCHAIN_TEMPLATES[template_id]
+        pip_cmd = shutil.which("pip3") or shutil.which("pip")
+        
+        if not pip_cmd:
+            return {"success": False, "error": "pip not available"}
+        
+        try:
+            result = subprocess.run(
+                [pip_cmd, "install"] + template["packages"],
+                capture_output=True, text=True, timeout=300
+            )
+            return {"success": result.returncode == 0, "template": template_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def install_vector_db(self, db_id: str) -> Dict[str, Any]:
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        if db_id not in VECTOR_DATABASES:
+            return {"success": False, "error": "Unknown database"}
+        
+        db = VECTOR_DATABASES[db_id]
+        pip_cmd = shutil.which("pip3") or shutil.which("pip")
+        
+        try:
+            result = subprocess.run(
+                [pip_cmd, "install", db["pip_package"]],
+                capture_output=True, text=True, timeout=300
+            )
+            return {"success": result.returncode == 0, "database": db_id}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "templates": list(LANGCHAIN_TEMPLATES.keys()),
+            "vector_dbs": list(VECTOR_DATABASES.keys()),
+            "tier": self.license_tier
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        print("LangChain Templates:")
+        for tid, template in LANGCHAIN_TEMPLATES.items():
+            print(f"  {tid}: {template['name']} - {template['description']}")
+        
+        print("\nVector Databases:")
+        for dbid, db in VECTOR_DATABASES.items():
+            print(f"  {dbid}: {db['name']} - {db['description']}")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        vbox.set_margin_top(20)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 10)
+        
+        notebook = Gtk.Notebook()
+        vbox.pack_start(notebook, True, True, 0)
+        
+        templates_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        for tid, template in LANGCHAIN_TEMPLATES.items():
+            label = Gtk.Label(label=f"{template['name']}: {template['description']}")
+            label.set_xalign(0)
+            templates_box.pack_start(label, False, False, 5)
+        notebook.append_page(templates_box, Gtk.Label(label="Templates"))
+        
+        db_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        for dbid, db in VECTOR_DATABASES.items():
+            label = Gtk.Label(label=f"{db['name']}: {db['description']}")
+            label.set_xalign(0)
+            db_box.pack_start(label, False, False, 5)
+        notebook.append_page(db_box, Gtk.Label(label="Vector DBs"))
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--install-template", metavar="ID", help="Install template")
+    parser.add_argument("--install-db", metavar="ID", help="Install vector DB")
+    parser.add_argument("--status", action="store_true", help="Show status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.install_template:
+        app = AegisLLMTools(headless=True)
+        result = app.install_template(args.install_template)
+        print(json.dumps(result, indent=2))
+    elif args.install_db:
+        app = AegisLLMTools(headless=True)
+        result = app.install_vector_db(args.install_db)
+        print(json.dumps(result, indent=2))
+    elif args.status:
+        app = AegisLLMTools(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisLLMTools(headless=False)
+        app.run_cli()
+    else:
+        app = AegisLLMTools(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

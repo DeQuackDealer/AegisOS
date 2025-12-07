@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""
+Aegis Load Balancer - nginx/haproxy configuration templates for Server edition
+Features: Load balancer config, SSL automation, health checks
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any
+
+TIER_LIMIT = "server"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Load Balancer"
+
+CONFIG_FILE = "/etc/aegis/server-config.json"
+LOG_FILE = "/var/log/aegis/load-balancer.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    SERVER = 5
+
+
+NGINX_TEMPLATES = {
+    "reverse_proxy": {
+        "name": "Reverse Proxy",
+        "description": "Basic reverse proxy configuration",
+        "template": """
+upstream backend {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name example.com;
+    
+    location / {
+        proxy_pass http://backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+"""
+    },
+    "load_balanced": {
+        "name": "Load Balanced",
+        "description": "Round-robin load balancing",
+        "template": """
+upstream backend {
+    least_conn;
+    server backend1:8080 weight=3;
+    server backend2:8080 weight=2;
+    server backend3:8080 weight=1;
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://backend;
+    }
+}
+"""
+    }
+}
+
+HAPROXY_TEMPLATES = {
+    "http_lb": {
+        "name": "HTTP Load Balancer",
+        "description": "HTTP load balancing with health checks",
+        "template": """
+frontend http_front
+    bind *:80
+    default_backend http_back
+
+backend http_back
+    balance roundrobin
+    option httpchk GET /health
+    server server1 192.168.1.10:8080 check
+    server server2 192.168.1.11:8080 check
+"""
+    }
+}
+
+
+class AegisLoadBalancer:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisLoadBalancer")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-server-marker").exists():
+            self.license_tier = LicenseTier.SERVER
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.SERVER
+    
+    def check_nginx_installed(self) -> bool:
+        return shutil.which("nginx") is not None
+    
+    def check_haproxy_installed(self) -> bool:
+        return shutil.which("haproxy") is not None
+    
+    def get_template(self, lb_type: str, template_id: str) -> str:
+        if lb_type == "nginx" and template_id in NGINX_TEMPLATES:
+            return NGINX_TEMPLATES[template_id]["template"]
+        elif lb_type == "haproxy" and template_id in HAPROXY_TEMPLATES:
+            return HAPROXY_TEMPLATES[template_id]["template"]
+        return ""
+    
+    def test_nginx_config(self) -> bool:
+        try:
+            result = subprocess.run(["nginx", "-t"], capture_output=True, timeout=10)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def reload_nginx(self) -> bool:
+        try:
+            result = subprocess.run(["systemctl", "reload", "nginx"], capture_output=True, timeout=30)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "nginx_installed": self.check_nginx_installed(),
+            "haproxy_installed": self.check_haproxy_installed(),
+            "nginx_templates": list(NGINX_TEMPLATES.keys()),
+            "haproxy_templates": list(HAPROXY_TEMPLATES.keys()),
+            "tier": self.license_tier
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        print(f"Nginx: {'✓ Installed' if self.check_nginx_installed() else '✗ Not installed'}")
+        print(f"HAProxy: {'✓ Installed' if self.check_haproxy_installed() else '✗ Not installed'}")
+        
+        print("\nNginx Templates:")
+        for tid, template in NGINX_TEMPLATES.items():
+            print(f"  {tid}: {template['name']} - {template['description']}")
+        
+        print("\nHAProxy Templates:")
+        for tid, template in HAPROXY_TEMPLATES.items():
+            print(f"  {tid}: {template['name']} - {template['description']}")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        status = self.get_status()
+        nginx_label = Gtk.Label(label=f"Nginx: {'✓' if status['nginx_installed'] else '✗'}")
+        haproxy_label = Gtk.Label(label=f"HAProxy: {'✓' if status['haproxy_installed'] else '✗'}")
+        vbox.pack_start(nginx_label, False, False, 5)
+        vbox.pack_start(haproxy_label, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--get-template", nargs=2, metavar=("TYPE", "ID"))
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.get_template:
+        app = AegisLoadBalancer(headless=True)
+        print(app.get_template(args.get_template[0], args.get_template[1]))
+    elif args.status:
+        app = AegisLoadBalancer(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisLoadBalancer(headless=False)
+        app.run_cli()
+    else:
+        app = AegisLoadBalancer(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

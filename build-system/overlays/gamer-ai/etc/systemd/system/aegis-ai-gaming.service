@@ -1,0 +1,22 @@
+[Unit]
+Description=Aegis AI Gaming - AI companion and real-time translation service
+Documentation=https://aegis-os.com/docs/ai-gaming
+After=multi-user.target graphical.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+ExecStart=/usr/local/bin/aegis-ai-gaming --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-ai-gaming
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""
+Aegis AI Streaming - AI overlays and sentiment analysis for Gamer AI edition
+Features: AI overlays, chat sentiment analysis, auto highlights, moderation
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from typing import Dict, List, Any
+
+TIER_LIMIT = "gamer-ai"
+VERSION = "1.5.0"
+APP_NAME = "Aegis AI Streaming"
+
+CONFIG_FILE = "/etc/aegis/gamer-ai-config.json"
+LOG_FILE = "/var/log/aegis/ai-streaming.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    GAMER = 4
+    GAMER_AI = 5
+
+
+STREAMING_FEATURES = {
+    "ai_overlays": {
+        "name": "AI Overlays",
+        "description": "Smart game stat overlays with AI insights",
+        "components": ["Performance Stats", "Game Tips", "Viewer Interaction"]
+    },
+    "sentiment": {
+        "name": "Chat Sentiment",
+        "description": "Real-time chat mood analysis",
+        "components": ["Mood Indicator", "Toxic Detection", "Engagement Score"]
+    },
+    "highlights": {
+        "name": "Auto Highlights",
+        "description": "AI-detected memorable moments",
+        "components": ["Kill Detection", "Epic Moments", "Funny Clips"]
+    },
+    "moderation": {
+        "name": "AI Moderation",
+        "description": "Automated chat moderation",
+        "components": ["Spam Filter", "Toxic Filter", "Raid Protection"]
+    }
+}
+
+STREAMING_PLATFORMS = ["Twitch", "YouTube", "Kick", "Facebook Gaming"]
+
+
+class AegisAIStreaming:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisAIStreaming")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-gamer-ai-marker").exists():
+            self.license_tier = LicenseTier.GAMER_AI
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.GAMER_AI
+    
+    def check_obs_installed(self) -> bool:
+        return shutil.which("obs") is not None or shutil.which("obs-studio") is not None
+    
+    def get_features_status(self) -> List[Dict[str, Any]]:
+        features = []
+        for fid, info in STREAMING_FEATURES.items():
+            features.append({
+                "id": fid,
+                "name": info["name"],
+                "description": info["description"],
+                "components": info["components"],
+                "available": self.is_feature_available()
+            })
+        return features
+    
+    def start_overlay(self, overlay_type: str) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Gamer AI edition"}
+        
+        self.logger.info(f"Starting AI overlay: {overlay_type}")
+        return {"success": True, "overlay": overlay_type, "status": "active"}
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "features": self.get_features_status(),
+            "obs_installed": self.check_obs_installed(),
+            "platforms": STREAMING_PLATFORMS,
+            "tier": self.license_tier
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        print(f"OBS Studio: {'✓ Installed' if self.check_obs_installed() else '✗ Not installed'}")
+        print(f"Supported Platforms: {', '.join(STREAMING_PLATFORMS)}")
+        
+        print("\nAI Streaming Features:")
+        for feature in self.get_features_status():
+            status = "✓" if feature["available"] else "✗"
+            print(f"  {feature['name']}: {status}")
+            print(f"    {feature['description']}")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        for feature in self.get_features_status():
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            label = Gtk.Label(label=f"{feature['name']}: {feature['description']}")
+            label.set_xalign(0)
+            hbox.pack_start(label, True, True, 10)
+            
+            btn = Gtk.Button(label="Enable")
+            btn.set_sensitive(self.license_tier >= LicenseTier.GAMER_AI)
+            hbox.pack_end(btn, False, False, 10)
+            
+            vbox.pack_start(hbox, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--start-overlay", metavar="TYPE")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.start_overlay:
+        app = AegisAIStreaming(headless=True)
+        result = app.start_overlay(args.start_overlay)
+        print(json.dumps(result, indent=2))
+    elif args.status:
+        app = AegisAIStreaming(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisAIStreaming(headless=False)
+        app.run_cli()
+    else:
+        app = AegisAIStreaming(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

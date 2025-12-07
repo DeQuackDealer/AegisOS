@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+"""
+Aegis ML Studio - Jupyter Lab and VS Code AI extensions configuration
+Features: Jupyter Lab server, VS Code extensions, conda environments
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import webbrowser
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "aidev"
+VERSION = "1.5.0"
+APP_NAME = "Aegis ML Studio"
+
+CONFIG_FILE = "/etc/aegis/aidev-config.json"
+LOG_FILE = "/var/log/aegis/ml-studio.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    BASIC = 2
+    AIDEV = 4
+    SERVER = 5
+
+
+VSCODE_EXTENSIONS = [
+    {"id": "ms-python.python", "name": "Python", "description": "Python language support"},
+    {"id": "ms-toolsai.jupyter", "name": "Jupyter", "description": "Jupyter notebook support"},
+    {"id": "GitHub.copilot", "name": "GitHub Copilot", "description": "AI pair programmer"},
+    {"id": "ms-python.vscode-pylance", "name": "Pylance", "description": "Python language server"},
+    {"id": "ms-toolsai.vscode-jupyter-slideshow", "name": "Jupyter Slideshow", "description": "Slideshow mode"},
+    {"id": "TabNine.tabnine-vscode", "name": "Tabnine", "description": "AI autocomplete"},
+    {"id": "Continue.continue", "name": "Continue", "description": "Open-source AI assistant"}
+]
+
+CONDA_ENVIRONMENTS = {
+    "ml": {
+        "packages": ["numpy", "pandas", "scikit-learn", "matplotlib", "seaborn", "jupyter"],
+        "description": "Machine Learning basics"
+    },
+    "nlp": {
+        "packages": ["transformers", "datasets", "tokenizers", "sentencepiece", "spacy"],
+        "description": "Natural Language Processing"
+    },
+    "vision": {
+        "packages": ["opencv-python", "pillow", "torchvision", "albumentations"],
+        "description": "Computer Vision"
+    },
+    "deep": {
+        "packages": ["torch", "tensorflow", "keras", "lightning"],
+        "description": "Deep Learning frameworks"
+    }
+}
+
+
+class AegisMLStudio:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.jupyter_process = None
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
+        
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
+        
+        self.logger = logging.getLogger("AegisMLStudio")
+        self.logger.info(f"Starting {APP_NAME} v{VERSION}")
+    
+    def load_license_tier(self):
+        license_file = Path("/etc/aegis/license.json")
+        try:
+            if license_file.exists():
+                with open(license_file, 'r') as f:
+                    license_data = json.load(f)
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'aidev': LicenseTier.AIDEV,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                if Path("/etc/aegis-aidev-marker").exists():
+                    self.license_tier = LicenseTier.AIDEV
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+    
+    def is_feature_available(self, feature: str) -> bool:
+        aidev_features = ["jupyter_lab", "vscode_extensions", "conda_envs", "notebooks"]
+        if feature in aidev_features:
+            return self.license_tier >= LicenseTier.AIDEV
+        return False
+    
+    def load_config(self):
+        default_config = {
+            "jupyter_port": 8888,
+            "jupyter_token": "",
+            "default_environment": "base",
+            "notebooks_dir": str(Path.home() / "Notebooks")
+        }
+        
+        try:
+            if Path(CONFIG_FILE).exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    file_config = json.load(f)
+                    if "features" in file_config and "ml_studio" in file_config["features"]:
+                        self.config = {**default_config, **file_config["features"]["ml_studio"]}
+                    else:
+                        self.config = default_config
+            else:
+                self.config = default_config
+        except Exception as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def check_jupyter_installed(self) -> bool:
+        return shutil.which("jupyter") is not None or shutil.which("jupyter-lab") is not None
+    
+    def check_conda_installed(self) -> bool:
+        return shutil.which("conda") is not None or shutil.which("mamba") is not None
+    
+    def start_jupyter_lab(self, port: int = 8888, notebook_dir: Optional[str] = None) -> Dict[str, Any]:
+        if not self.is_feature_available("jupyter_lab"):
+            return {"success": False, "error": "Jupyter Lab requires AI Developer edition"}
+        
+        if not self.check_jupyter_installed():
+            return {"success": False, "error": "Jupyter Lab not installed"}
+        
+        notebook_dir = notebook_dir or self.config.get("notebooks_dir", str(Path.home() / "Notebooks"))
+        Path(notebook_dir).mkdir(parents=True, exist_ok=True)
+        
+        try:
+            cmd = [
+                "jupyter-lab",
+                f"--port={port}",
+                f"--notebook-dir={notebook_dir}",
+                "--no-browser",
+                "--ip=0.0.0.0"
+            ]
+            
+            self.jupyter_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
+            
+            self.logger.info(f"Jupyter Lab started on port {port}")
+            return {"success": True, "port": port, "url": f"http://localhost:{port}"}
+            
+        except Exception as e:
+            self.logger.error(f"Failed to start Jupyter Lab: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def stop_jupyter_lab(self) -> bool:
+        if self.jupyter_process:
+            self.jupyter_process.terminate()
+            self.jupyter_process = None
+            return True
+        return False
+    
+    def install_vscode_extension(self, extension_id: str) -> bool:
+        if not self.is_feature_available("vscode_extensions"):
+            return False
+        
+        code_cmd = shutil.which("code") or shutil.which("codium")
+        if not code_cmd:
+            return False
+        
+        try:
+            result = subprocess.run(
+                [code_cmd, "--install-extension", extension_id],
+                capture_output=True, text=True, timeout=120
+            )
+            return result.returncode == 0
+        except Exception as e:
+            self.logger.error(f"Failed to install extension: {e}")
+            return False
+    
+    def list_installed_extensions(self) -> List[str]:
+        code_cmd = shutil.which("code") or shutil.which("codium")
+        if not code_cmd:
+            return []
+        
+        try:
+            result = subprocess.run(
+                [code_cmd, "--list-extensions"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return result.stdout.strip().split('\n')
+        except Exception:
+            pass
+        return []
+    
+    def create_conda_environment(self, name: str, packages: List[str]) -> Dict[str, Any]:
+        if not self.is_feature_available("conda_envs"):
+            return {"success": False, "error": "Conda environments require AI Developer edition"}
+        
+        conda_cmd = shutil.which("mamba") or shutil.which("conda")
+        if not conda_cmd:
+            return {"success": False, "error": "Conda not installed"}
+        
+        try:
+            cmd = [conda_cmd, "create", "-n", name, "-y"] + packages
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            
+            if result.returncode == 0:
+                return {"success": True, "environment": name}
+            else:
+                return {"success": False, "error": result.stderr}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def list_conda_environments(self) -> List[str]:
+        conda_cmd = shutil.which("conda")
+        if not conda_cmd:
+            return []
+        
+        try:
+            result = subprocess.run(
+                [conda_cmd, "env", "list", "--json"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return [Path(e).name for e in data.get("envs", [])]
+        except Exception:
+            pass
+        return []
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "jupyter_installed": self.check_jupyter_installed(),
+            "conda_installed": self.check_conda_installed(),
+            "vscode_installed": shutil.which("code") is not None or shutil.which("codium") is not None,
+            "conda_environments": self.list_conda_environments(),
+            "installed_extensions": self.list_installed_extensions()[:5],
+            "tier": self.license_tier
+        }
+    
+    def run_server(self):
+        result = self.start_jupyter_lab()
+        if result["success"]:
+            print(f"Jupyter Lab running at {result['url']}")
+            try:
+                while True:
+                    import time
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                self.stop_jupyter_lab()
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            print("GTK not available. Use --cli mode.")
+            return self.run_cli()
+        
+        win = MLStudioWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"  License Tier: {'AIDEV+' if self.license_tier >= LicenseTier.AIDEV else 'LIMITED'}")
+        print(f"{'='*60}\n")
+        
+        status = self.get_status()
+        print("Environment Status:")
+        print(f"  Jupyter Lab: {'✓' if status['jupyter_installed'] else '✗'}")
+        print(f"  Conda/Mamba: {'✓' if status['conda_installed'] else '✗'}")
+        print(f"  VS Code: {'✓' if status['vscode_installed'] else '✗'}")
+        
+        if status['conda_environments']:
+            print(f"\nConda Environments: {', '.join(status['conda_environments'][:5])}")
+        
+        print("\nRecommended VS Code Extensions:")
+        for ext in VSCODE_EXTENSIONS[:5]:
+            print(f"  - {ext['name']}: {ext['description']}")
+
+
+if GTK_AVAILABLE:
+    class MLStudioWindow(Gtk.Window):
+        def __init__(self, app: AegisMLStudio):
+            super().__init__(title=f"{APP_NAME} v{VERSION}")
+            self.app = app
+            self.set_default_size(900, 700)
+            self.set_border_width(10)
+            self.setup_ui()
+        
+        def setup_ui(self):
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            self.add(vbox)
+            
+            header = Gtk.Label()
+            header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+            vbox.pack_start(header, False, False, 10)
+            
+            notebook = Gtk.Notebook()
+            vbox.pack_start(notebook, True, True, 0)
+            
+            notebook.append_page(self.create_jupyter_tab(), Gtk.Label(label="Jupyter Lab"))
+            notebook.append_page(self.create_extensions_tab(), Gtk.Label(label="VS Code Extensions"))
+            notebook.append_page(self.create_conda_tab(), Gtk.Label(label="Conda Environments"))
+        
+        def create_jupyter_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            start_btn = Gtk.Button(label="Start Jupyter Lab")
+            start_btn.connect("clicked", self.on_start_jupyter)
+            start_btn.set_sensitive(self.app.license_tier >= LicenseTier.AIDEV)
+            box.pack_start(start_btn, False, False, 10)
+            
+            self.jupyter_status = Gtk.Label(label="Jupyter Lab not running")
+            box.pack_start(self.jupyter_status, False, False, 10)
+            
+            return box
+        
+        def create_extensions_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            for ext in VSCODE_EXTENSIONS:
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                label = Gtk.Label(label=f"{ext['name']}: {ext['description']}")
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                btn = Gtk.Button(label="Install")
+                btn.connect("clicked", self.on_install_extension, ext['id'])
+                btn.set_sensitive(self.app.license_tier >= LicenseTier.AIDEV)
+                hbox.pack_end(btn, False, False, 10)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def create_conda_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            for env_name, env_info in CONDA_ENVIRONMENTS.items():
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                label = Gtk.Label(label=f"{env_name}: {env_info['description']}")
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                btn = Gtk.Button(label="Create")
+                btn.connect("clicked", self.on_create_env, env_name, env_info['packages'])
+                btn.set_sensitive(self.app.license_tier >= LicenseTier.AIDEV)
+                hbox.pack_end(btn, False, False, 10)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def on_start_jupyter(self, button):
+            result = self.app.start_jupyter_lab()
+            if result["success"]:
+                self.jupyter_status.set_text(f"Running at {result['url']}")
+                webbrowser.open(result['url'])
+            else:
+                self.jupyter_status.set_text(f"Error: {result.get('error')}")
+        
+        def on_install_extension(self, button, ext_id):
+            self.app.install_vscode_extension(ext_id)
+        
+        def on_create_env(self, button, name, packages):
+            self.app.create_conda_environment(name, packages)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--server", action="store_true", help="Run Jupyter Lab server")
+    parser.add_argument("--start-jupyter", action="store_true", help="Start Jupyter Lab")
+    parser.add_argument("--install-extension", metavar="ID", help="Install VS Code extension")
+    parser.add_argument("--create-env", metavar="NAME", help="Create conda environment")
+    parser.add_argument("--status", action="store_true", help="Show status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.server:
+        app = AegisMLStudio(headless=True)
+        app.run_server()
+    elif args.start_jupyter:
+        app = AegisMLStudio(headless=True)
+        result = app.start_jupyter_lab()
+        print(json.dumps(result, indent=2))
+    elif args.install_extension:
+        app = AegisMLStudio(headless=True)
+        result = app.install_vscode_extension(args.install_extension)
+        print("Installed" if result else "Failed")
+    elif args.create_env:
+        app = AegisMLStudio(headless=True)
+        result = app.create_conda_environment(args.create_env, ["numpy", "pandas"])
+        print(json.dumps(result, indent=2))
+    elif args.status:
+        app = AegisMLStudio(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisMLStudio(headless=False)
+        app.run_cli()
+    else:
+        app = AegisMLStudio(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""
+Aegis IT Management - Remote desktop and network monitoring for Workplace edition
+Features: Remote desktop config, network monitoring, asset tracking, helpdesk
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import socket
+import threading
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "workplace"
+VERSION = "1.5.0"
+APP_NAME = "Aegis IT Management"
+
+CONFIG_FILE = "/etc/aegis/workplace-config.json"
+LOG_FILE = "/var/log/aegis/it-management.log"
+DATA_DIR = "/var/lib/aegis/it-management"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    BASIC = 2
+    WORKPLACE = 3
+    SERVER = 5
+
+
+REMOTE_DESKTOP_TOOLS = {
+    "remmina": {"name": "Remmina", "command": "remmina", "protocols": ["rdp", "vnc", "ssh"]},
+    "rustdesk": {"name": "RustDesk", "command": "rustdesk", "protocols": ["rustdesk"]},
+    "anydesk": {"name": "AnyDesk", "command": "anydesk", "protocols": ["anydesk"]},
+    "vinagre": {"name": "Vinagre", "command": "vinagre", "protocols": ["vnc", "rdp"]},
+    "krdc": {"name": "KRDC", "command": "krdc", "protocols": ["rdp", "vnc"]}
+}
+
+NETWORK_TOOLS = {
+    "nmap": {"name": "Nmap", "command": "nmap", "description": "Network scanner"},
+    "wireshark": {"name": "Wireshark", "command": "wireshark", "description": "Packet analyzer"},
+    "iftop": {"name": "iftop", "command": "iftop", "description": "Bandwidth monitor"},
+    "nethogs": {"name": "Nethogs", "command": "nethogs", "description": "Per-process bandwidth"},
+    "tcpdump": {"name": "tcpdump", "command": "tcpdump", "description": "Packet capture"}
+}
+
+
+class AegisITManagement:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.daemon_mode = False
+        self.running = True
+        self.monitored_hosts: List[Dict[str, Any]] = []
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        self.load_hosts()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
+        
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
+        
+        self.logger = logging.getLogger("AegisITManagement")
+        self.logger.info(f"Starting {APP_NAME} v{VERSION}")
+    
+    def load_license_tier(self):
+        license_file = Path("/etc/aegis/license.json")
+        try:
+            if license_file.exists():
+                with open(license_file, 'r') as f:
+                    license_data = json.load(f)
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'workplace': LicenseTier.WORKPLACE,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                if Path("/etc/aegis-workplace-marker").exists():
+                    self.license_tier = LicenseTier.WORKPLACE
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+    
+    def is_feature_available(self, feature: str) -> bool:
+        workplace_features = ["remote_desktop", "network_monitoring", "asset_tracking"]
+        if feature in workplace_features:
+            return self.license_tier >= LicenseTier.WORKPLACE
+        return False
+    
+    def load_config(self):
+        default_config = {
+            "remote_desktop": True,
+            "network_monitoring": True,
+            "default_rdp_tool": "remmina",
+            "ping_interval": 60
+        }
+        
+        try:
+            if Path(CONFIG_FILE).exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    file_config = json.load(f)
+                    if "features" in file_config and "it_management" in file_config["features"]:
+                        self.config = {**default_config, **file_config["features"]["it_management"]}
+                    else:
+                        self.config = default_config
+            else:
+                self.config = default_config
+        except Exception as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def load_hosts(self):
+        hosts_file = Path(DATA_DIR) / "hosts.json"
+        try:
+            if hosts_file.exists():
+                with open(hosts_file, 'r') as f:
+                    self.monitored_hosts = json.load(f).get("hosts", [])
+        except Exception as e:
+            self.logger.error(f"Error loading hosts: {e}")
+    
+    def save_hosts(self):
+        try:
+            Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+            hosts_file = Path(DATA_DIR) / "hosts.json"
+            with open(hosts_file, 'w') as f:
+                json.dump({"hosts": self.monitored_hosts}, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Error saving hosts: {e}")
+    
+    def check_tool_installed(self, command: str) -> bool:
+        try:
+            result = subprocess.run(["which", command], capture_output=True)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def launch_remote_desktop(self, tool_id: str, host: Optional[str] = None, protocol: str = "rdp") -> bool:
+        if not self.is_feature_available("remote_desktop"):
+            return False
+        
+        if tool_id not in REMOTE_DESKTOP_TOOLS:
+            return False
+        
+        tool = REMOTE_DESKTOP_TOOLS[tool_id]
+        if not self.check_tool_installed(tool["command"]):
+            self.logger.error(f"{tool['name']} not installed")
+            return False
+        
+        try:
+            cmd = [tool["command"]]
+            if host and tool_id == "remmina":
+                cmd.extend(["-c", f"{protocol}://{host}"])
+            subprocess.Popen(cmd, start_new_session=True)
+            self.logger.info(f"Launched {tool['name']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to launch {tool['name']}: {e}")
+            return False
+    
+    def ping_host(self, host: str, timeout: int = 2) -> Dict[str, Any]:
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", str(timeout), host],
+                capture_output=True, text=True, timeout=timeout + 1
+            )
+            
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if "time=" in line:
+                        time_ms = float(line.split("time=")[1].split()[0])
+                        return {"host": host, "status": "up", "latency_ms": time_ms}
+                return {"host": host, "status": "up", "latency_ms": None}
+            else:
+                return {"host": host, "status": "down", "latency_ms": None}
+        except Exception as e:
+            return {"host": host, "status": "error", "error": str(e)}
+    
+    def check_port(self, host: str, port: int, timeout: int = 2) -> bool:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
+    
+    def scan_host(self, host: str) -> Dict[str, Any]:
+        if not self.is_feature_available("network_monitoring"):
+            return {"error": "Network monitoring requires Workplace edition"}
+        
+        common_ports = {
+            22: "SSH",
+            80: "HTTP",
+            443: "HTTPS",
+            3389: "RDP",
+            5900: "VNC",
+            5985: "WinRM"
+        }
+        
+        result = {
+            "host": host,
+            "ping": self.ping_host(host),
+            "open_ports": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        for port, service in common_ports.items():
+            if self.check_port(host, port):
+                result["open_ports"].append({"port": port, "service": service})
+        
+        return result
+    
+    def add_monitored_host(self, host: str, name: str = "") -> bool:
+        if not self.is_feature_available("network_monitoring"):
+            return False
+        
+        for h in self.monitored_hosts:
+            if h["host"] == host:
+                return False
+        
+        self.monitored_hosts.append({
+            "host": host,
+            "name": name or host,
+            "added": datetime.now().isoformat(),
+            "last_status": None
+        })
+        self.save_hosts()
+        return True
+    
+    def get_network_status(self) -> List[Dict[str, Any]]:
+        results = []
+        for host_info in self.monitored_hosts:
+            ping_result = self.ping_host(host_info["host"])
+            results.append({
+                "name": host_info["name"],
+                "host": host_info["host"],
+                "status": ping_result["status"],
+                "latency_ms": ping_result.get("latency_ms")
+            })
+        return results
+    
+    def get_local_network_info(self) -> Dict[str, Any]:
+        info = {
+            "hostname": socket.gethostname(),
+            "interfaces": []
+        }
+        
+        try:
+            result = subprocess.run(["ip", "-j", "addr"], capture_output=True, text=True)
+            if result.returncode == 0:
+                interfaces = json.loads(result.stdout)
+                for iface in interfaces:
+                    if iface.get("addr_info"):
+                        for addr in iface["addr_info"]:
+                            if addr.get("family") == "inet":
+                                info["interfaces"].append({
+                                    "name": iface["ifname"],
+                                    "ip": addr["local"],
+                                    "prefix": addr.get("prefixlen")
+                                })
+        except Exception:
+            pass
+        
+        return info
+    
+    def run_daemon(self):
+        self.daemon_mode = True
+        self.logger.info("Starting IT management daemon")
+        
+        while self.running:
+            for host_info in self.monitored_hosts:
+                status = self.ping_host(host_info["host"])
+                host_info["last_status"] = status["status"]
+            
+            self.save_hosts()
+            time.sleep(self.config.get("ping_interval", 60))
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            print("GTK not available. Use --cli mode.")
+            return self.run_cli()
+        
+        win = ITManagementWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"  License Tier: {'WORKPLACE+' if self.license_tier >= LicenseTier.WORKPLACE else 'LIMITED'}")
+        print(f"{'='*60}\n")
+        
+        network_info = self.get_local_network_info()
+        print(f"Hostname: {network_info['hostname']}")
+        print("Network Interfaces:")
+        for iface in network_info["interfaces"]:
+            print(f"  {iface['name']}: {iface['ip']}/{iface['prefix']}")
+        
+        print("\nRemote Desktop Tools:")
+        for tool_id, tool_info in REMOTE_DESKTOP_TOOLS.items():
+            installed = "✓" if self.check_tool_installed(tool_info["command"]) else "✗"
+            print(f"  {tool_info['name']}: {installed}")
+        
+        if self.monitored_hosts:
+            print(f"\nMonitored Hosts: {len(self.monitored_hosts)}")
+            status = self.get_network_status()
+            for host in status:
+                print(f"  {host['name']}: {host['status']}")
+
+
+if GTK_AVAILABLE:
+    class ITManagementWindow(Gtk.Window):
+        def __init__(self, app: AegisITManagement):
+            super().__init__(title=f"{APP_NAME} v{VERSION}")
+            self.app = app
+            self.set_default_size(900, 700)
+            self.set_border_width(10)
+            self.setup_ui()
+        
+        def setup_ui(self):
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            self.add(vbox)
+            
+            header = Gtk.Label()
+            header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+            vbox.pack_start(header, False, False, 10)
+            
+            notebook = Gtk.Notebook()
+            vbox.pack_start(notebook, True, True, 0)
+            
+            notebook.append_page(self.create_remote_tab(), Gtk.Label(label="Remote Desktop"))
+            notebook.append_page(self.create_network_tab(), Gtk.Label(label="Network Monitor"))
+        
+        def create_remote_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            for tool_id, tool_info in REMOTE_DESKTOP_TOOLS.items():
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                
+                label = Gtk.Label(label=f"{tool_info['name']} ({', '.join(tool_info['protocols'])})")
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                btn = Gtk.Button(label="Launch")
+                btn.connect("clicked", self.on_launch_remote, tool_id)
+                btn.set_sensitive(self.app.license_tier >= LicenseTier.WORKPLACE and 
+                                 self.app.check_tool_installed(tool_info["command"]))
+                hbox.pack_end(btn, False, False, 10)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def create_network_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            network_info = self.app.get_local_network_info()
+            info_label = Gtk.Label(label=f"Hostname: {network_info['hostname']}")
+            box.pack_start(info_label, False, False, 5)
+            
+            for iface in network_info["interfaces"]:
+                iface_label = Gtk.Label(label=f"  {iface['name']}: {iface['ip']}")
+                box.pack_start(iface_label, False, False, 2)
+            
+            refresh_btn = Gtk.Button(label="Refresh Status")
+            refresh_btn.set_sensitive(self.app.license_tier >= LicenseTier.WORKPLACE)
+            box.pack_start(refresh_btn, False, False, 20)
+            
+            return box
+        
+        def on_launch_remote(self, button, tool_id):
+            self.app.launch_remote_desktop(tool_id)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--daemon", action="store_true", help="Run as daemon")
+    parser.add_argument("--launch-rdp", metavar="TOOL", help="Launch remote desktop tool")
+    parser.add_argument("--ping", metavar="HOST", help="Ping host")
+    parser.add_argument("--scan", metavar="HOST", help="Scan host")
+    parser.add_argument("--network-status", action="store_true", help="Show network status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.daemon:
+        app = AegisITManagement(headless=True)
+        app.run_daemon()
+    elif args.launch_rdp:
+        app = AegisITManagement(headless=True)
+        app.launch_remote_desktop(args.launch_rdp)
+    elif args.ping:
+        app = AegisITManagement(headless=True)
+        result = app.ping_host(args.ping)
+        print(json.dumps(result, indent=2))
+    elif args.scan:
+        app = AegisITManagement(headless=True)
+        result = app.scan_host(args.scan)
+        print(json.dumps(result, indent=2))
+    elif args.network_status:
+        app = AegisITManagement(headless=True)
+        print(json.dumps(app.get_network_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisITManagement(headless=False)
+        app.run_cli()
+    else:
+        app = AegisITManagement(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""
+Aegis Inference Engine - Local LLM inference with llama.cpp and ONNX
+Features: llama.cpp wrapper, ONNX runtime, multi-model support
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "aidev"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Inference Engine"
+
+CONFIG_FILE = "/etc/aegis/aidev-config.json"
+LOG_FILE = "/var/log/aegis/inference-engine.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    AIDEV = 4
+
+
+INFERENCE_BACKENDS = {
+    "llama.cpp": {"command": "llama-cli", "description": "CPU/GPU inference for GGUF models"},
+    "ollama": {"command": "ollama", "description": "Easy model management and inference"},
+    "onnxruntime": {"command": "python", "description": "ONNX model inference"},
+    "vllm": {"command": "vllm", "description": "High-throughput inference server"}
+}
+
+
+class AegisInferenceEngine:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.server_process = None
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
+        
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
+        
+        self.logger = logging.getLogger("AegisInferenceEngine")
+    
+    def load_license_tier(self):
+        license_file = Path("/etc/aegis/license.json")
+        try:
+            if license_file.exists():
+                with open(license_file, 'r') as f:
+                    license_data = json.load(f)
+                edition = license_data.get('edition', 'freemium').lower()
+                if edition == 'aidev':
+                    self.license_tier = LicenseTier.AIDEV
+            elif Path("/etc/aegis-aidev-marker").exists():
+                self.license_tier = LicenseTier.AIDEV
+        except Exception:
+            pass
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.AIDEV
+    
+    def load_config(self):
+        default_config = {
+            "default_threads": 8,
+            "gpu_layers": 35,
+            "context_size": 4096,
+            "default_backend": "ollama"
+        }
+        
+        try:
+            if Path(CONFIG_FILE).exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    file_config = json.load(f)
+                    if "features" in file_config and "inference_engine" in file_config["features"]:
+                        self.config = {**default_config, **file_config["features"]["inference_engine"]}
+                    else:
+                        self.config = default_config
+            else:
+                self.config = default_config
+        except Exception:
+            self.config = default_config
+    
+    def check_backend_available(self, backend: str) -> bool:
+        if backend not in INFERENCE_BACKENDS:
+            return False
+        return shutil.which(INFERENCE_BACKENDS[backend]["command"]) is not None
+    
+    def get_available_backends(self) -> List[Dict[str, Any]]:
+        backends = []
+        for name, info in INFERENCE_BACKENDS.items():
+            backends.append({
+                "name": name,
+                "description": info["description"],
+                "available": self.check_backend_available(name)
+            })
+        return backends
+    
+    def run_inference(self, model: str, prompt: str, backend: str = "ollama") -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Inference requires AI Developer edition"}
+        
+        if not self.check_backend_available(backend):
+            return {"success": False, "error": f"Backend {backend} not available"}
+        
+        try:
+            if backend == "ollama":
+                result = subprocess.run(
+                    ["ollama", "run", model, prompt],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    return {"success": True, "response": result.stdout.strip(), "model": model}
+                else:
+                    return {"success": False, "error": result.stderr}
+            
+            elif backend == "llama.cpp":
+                result = subprocess.run(
+                    ["llama-cli", "-m", model, "-p", prompt, "-n", "256"],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    return {"success": True, "response": result.stdout.strip(), "model": model}
+                else:
+                    return {"success": False, "error": result.stderr}
+            
+            return {"success": False, "error": "Unsupported backend"}
+            
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Inference timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def start_server(self, model: str = "llama3.2", port: int = 11434) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Server requires AI Developer edition"}
+        
+        if self.check_backend_available("ollama"):
+            try:
+                self.server_process = subprocess.Popen(
+                    ["ollama", "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                return {"success": True, "port": port, "backend": "ollama"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No inference backend available"}
+    
+    def stop_server(self) -> bool:
+        if self.server_process:
+            self.server_process.terminate()
+            self.server_process = None
+            return True
+        return False
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "backends": self.get_available_backends(),
+            "config": self.config,
+            "tier": self.license_tier
+        }
+    
+    def run_server_mode(self):
+        result = self.start_server()
+        if result["success"]:
+            print(f"Inference server running on port {result['port']}")
+            try:
+                import time
+                while True:
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                self.stop_server()
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = InferenceWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        status = self.get_status()
+        
+        print("Inference Backends:")
+        for backend in status["backends"]:
+            available = "✓" if backend["available"] else "✗"
+            print(f"  {backend['name']}: {available} - {backend['description']}")
+        
+        print(f"\nConfiguration:")
+        print(f"  Threads: {self.config.get('default_threads')}")
+        print(f"  GPU Layers: {self.config.get('gpu_layers')}")
+        print(f"  Context Size: {self.config.get('context_size')}")
+
+
+if GTK_AVAILABLE:
+    class InferenceWindow(Gtk.Window):
+        def __init__(self, app: AegisInferenceEngine):
+            super().__init__(title=f"{APP_NAME} v{VERSION}")
+            self.app = app
+            self.set_default_size(800, 600)
+            self.set_border_width(10)
+            self.setup_ui()
+        
+        def setup_ui(self):
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            self.add(vbox)
+            
+            header = Gtk.Label()
+            header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+            vbox.pack_start(header, False, False, 10)
+            
+            backends = self.app.get_available_backends()
+            for backend in backends:
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                status = "✓" if backend["available"] else "✗"
+                label = Gtk.Label(label=f"{status} {backend['name']}: {backend['description']}")
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                vbox.pack_start(hbox, False, False, 5)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--server", action="store_true", help="Run inference server")
+    parser.add_argument("--run", nargs=2, metavar=("MODEL", "PROMPT"), help="Run inference")
+    parser.add_argument("--status", action="store_true", help="Show status")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.server:
+        app = AegisInferenceEngine(headless=True)
+        app.run_server_mode()
+    elif args.run:
+        app = AegisInferenceEngine(headless=True)
+        result = app.run_inference(args.run[0], args.run[1])
+        print(json.dumps(result, indent=2))
+    elif args.status:
+        app = AegisInferenceEngine(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisInferenceEngine(headless=False)
+        app.run_cli()
+    else:
+        app = AegisInferenceEngine(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,30 @@
+[Unit]
+Description=Aegis IT Management - Network monitoring and remote management service
+Documentation=https://aegis-os.com/docs/it-management
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-it-management --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-it-management
+
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aegis /var/log/aegis
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target

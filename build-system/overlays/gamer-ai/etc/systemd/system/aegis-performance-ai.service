@@ -1,0 +1,22 @@
+[Unit]
+Description=Aegis Performance AI - ML-based performance optimization
+Documentation=https://aegis-os.com/docs/performance-ai
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-performance-ai --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-performance-ai
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target

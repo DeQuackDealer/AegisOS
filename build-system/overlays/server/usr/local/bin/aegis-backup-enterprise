@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""
+Aegis Backup Enterprise - Disaster recovery and automated backup for Server edition
+Features: Disaster recovery, automated backups, cross-site replication
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any
+
+TIER_LIMIT = "server"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Backup Enterprise"
+
+CONFIG_FILE = "/etc/aegis/server-config.json"
+LOG_FILE = "/var/log/aegis/backup-enterprise.log"
+BACKUP_DIR = "/var/backups/aegis"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    SERVER = 5
+
+
+BACKUP_TOOLS = {
+    "restic": {"name": "Restic", "command": "restic", "description": "Fast, secure backup"},
+    "borgbackup": {"name": "BorgBackup", "command": "borg", "description": "Deduplicating backup"},
+    "rsync": {"name": "Rsync", "command": "rsync", "description": "File synchronization"},
+    "rclone": {"name": "Rclone", "command": "rclone", "description": "Cloud sync tool"}
+}
+
+
+class AegisBackupEnterprise:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisBackupEnterprise")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-server-marker").exists():
+            self.license_tier = LicenseTier.SERVER
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.SERVER
+    
+    def check_tool_installed(self, command: str) -> bool:
+        return shutil.which(command) is not None
+    
+    def get_tools_status(self) -> List[Dict[str, Any]]:
+        tools = []
+        for tool_id, info in BACKUP_TOOLS.items():
+            tools.append({
+                "id": tool_id,
+                "name": info["name"],
+                "description": info["description"],
+                "installed": self.check_tool_installed(info["command"])
+            })
+        return tools
+    
+    def create_backup(self, source: str, destination: str, tool: str = "rsync") -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        if not self.check_tool_installed(BACKUP_TOOLS.get(tool, {}).get("command", "")):
+            return {"success": False, "error": f"Tool {tool} not installed"}
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest_path = Path(destination) / f"backup_{timestamp}"
+            
+            if tool == "rsync":
+                cmd = ["rsync", "-avz", "--progress", source, str(dest_path)]
+            elif tool == "restic":
+                cmd = ["restic", "-r", str(dest_path), "backup", source]
+            else:
+                return {"success": False, "error": "Unsupported tool"}
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            return {"success": result.returncode == 0, "destination": str(dest_path)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def list_backups(self) -> List[Dict[str, Any]]:
+        backups = []
+        backup_path = Path(BACKUP_DIR)
+        if backup_path.exists():
+            for item in backup_path.iterdir():
+                if item.is_dir() and item.name.startswith("backup_"):
+                    stat = item.stat()
+                    backups.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        "size_mb": round(sum(f.stat().st_size for f in item.rglob('*') if f.is_file()) / (1024*1024), 2)
+                    })
+        return sorted(backups, key=lambda x: x["created"], reverse=True)
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "tools": self.get_tools_status(),
+            "backups_count": len(self.list_backups()),
+            "tier": self.license_tier
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        tools = self.get_tools_status()
+        print("Backup Tools:")
+        for tool in tools:
+            status = "✓" if tool["installed"] else "✗"
+            print(f"  {tool['name']}: {status} - {tool['description']}")
+        
+        backups = self.list_backups()
+        print(f"\nExisting Backups: {len(backups)}")
+        for backup in backups[:5]:
+            print(f"  {backup['name']} ({backup['size_mb']} MB)")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--backup", nargs=2, metavar=("SOURCE", "DEST"))
+    parser.add_argument("--list-backups", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.backup:
+        app = AegisBackupEnterprise(headless=True)
+        result = app.create_backup(args.backup[0], args.backup[1])
+        print(json.dumps(result, indent=2))
+    elif args.list_backups:
+        app = AegisBackupEnterprise(headless=True)
+        print(json.dumps(app.list_backups(), indent=2))
+    elif args.status:
+        app = AegisBackupEnterprise(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisBackupEnterprise(headless=False)
+        app.run_cli()
+    else:
+        app = AegisBackupEnterprise(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

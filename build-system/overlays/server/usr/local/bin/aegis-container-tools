@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""
+Aegis Container Tools - Kubernetes and Docker Swarm management for Server edition
+Features: K8s config, Docker Swarm, Podman support, registry management
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from typing import Dict, List, Any
+
+TIER_LIMIT = "server"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Container Tools"
+
+CONFIG_FILE = "/etc/aegis/server-config.json"
+LOG_FILE = "/var/log/aegis/container-tools.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    SERVER = 5
+
+
+CONTAINER_TOOLS = {
+    "docker": {"name": "Docker", "command": "docker", "description": "Container runtime"},
+    "podman": {"name": "Podman", "command": "podman", "description": "Daemonless containers"},
+    "kubectl": {"name": "Kubectl", "command": "kubectl", "description": "Kubernetes CLI"},
+    "k3s": {"name": "K3s", "command": "k3s", "description": "Lightweight Kubernetes"},
+    "helm": {"name": "Helm", "command": "helm", "description": "Kubernetes package manager"},
+    "docker-compose": {"name": "Docker Compose", "command": "docker-compose", "description": "Multi-container apps"}
+}
+
+
+class AegisContainerTools:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisContainerTools")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-server-marker").exists():
+            self.license_tier = LicenseTier.SERVER
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.SERVER
+    
+    def check_tool_installed(self, command: str) -> bool:
+        return shutil.which(command) is not None
+    
+    def get_tools_status(self) -> List[Dict[str, Any]]:
+        tools = []
+        for tool_id, info in CONTAINER_TOOLS.items():
+            tools.append({
+                "id": tool_id,
+                "name": info["name"],
+                "description": info["description"],
+                "installed": self.check_tool_installed(info["command"])
+            })
+        return tools
+    
+    def list_docker_containers(self) -> List[Dict[str, Any]]:
+        if not self.check_tool_installed("docker"):
+            return []
+        
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                containers = []
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        parts = line.split('\t')
+                        if len(parts) >= 4:
+                            containers.append({
+                                "id": parts[0],
+                                "name": parts[1],
+                                "status": parts[2],
+                                "image": parts[3]
+                            })
+                return containers
+        except Exception:
+            pass
+        return []
+    
+    def list_k8s_pods(self) -> List[Dict[str, Any]]:
+        if not self.check_tool_installed("kubectl"):
+            return []
+        
+        try:
+            result = subprocess.run(
+                ["kubectl", "get", "pods", "-o", "json"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                pods = []
+                for item in data.get("items", []):
+                    pods.append({
+                        "name": item["metadata"]["name"],
+                        "namespace": item["metadata"]["namespace"],
+                        "status": item["status"]["phase"]
+                    })
+                return pods
+        except Exception:
+            pass
+        return []
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "tools": self.get_tools_status(),
+            "docker_containers": len(self.list_docker_containers()),
+            "k8s_pods": len(self.list_k8s_pods()),
+            "tier": self.license_tier
+        }
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        tools = self.get_tools_status()
+        print("Container Tools:")
+        for tool in tools:
+            status = "✓" if tool["installed"] else "✗"
+            print(f"  {tool['name']}: {status} - {tool['description']}")
+        
+        containers = self.list_docker_containers()
+        if containers:
+            print(f"\nRunning Docker Containers: {len(containers)}")
+            for c in containers[:5]:
+                print(f"  {c['name']}: {c['status']}")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        for tool in self.get_tools_status():
+            label = Gtk.Label(label=f"{'✓' if tool['installed'] else '✗'} {tool['name']}")
+            label.set_xalign(0)
+            vbox.pack_start(label, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--list-containers", action="store_true")
+    parser.add_argument("--list-pods", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.list_containers:
+        app = AegisContainerTools(headless=True)
+        print(json.dumps(app.list_docker_containers(), indent=2))
+    elif args.list_pods:
+        app = AegisContainerTools(headless=True)
+        print(json.dumps(app.list_k8s_pods(), indent=2))
+    elif args.status:
+        app = AegisContainerTools(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisContainerTools(headless=False)
+        app.run_cli()
+    else:
+        app = AegisContainerTools(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

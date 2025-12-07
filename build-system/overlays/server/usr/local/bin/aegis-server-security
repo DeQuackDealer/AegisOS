@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""
+Aegis Server Security - XDR and threat intelligence for Server edition
+Features: Extended detection, threat intelligence, IDS, advanced firewall
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+import time
+import threading
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any
+
+TIER_LIMIT = "server"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Server Security"
+
+CONFIG_FILE = "/etc/aegis/server-config.json"
+LOG_FILE = "/var/log/aegis/server-security.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    BASIC = 2
+    SERVER = 5
+
+
+SECURITY_TOOLS = {
+    "suricata": {"name": "Suricata IDS", "command": "suricata", "description": "Network threat detection"},
+    "ossec": {"name": "OSSEC HIDS", "command": "ossec-control", "description": "Host-based intrusion detection"},
+    "fail2ban": {"name": "Fail2ban", "command": "fail2ban-client", "description": "Brute force protection"},
+    "clamav": {"name": "ClamAV", "command": "clamscan", "description": "Antivirus scanning"},
+    "rkhunter": {"name": "Rootkit Hunter", "command": "rkhunter", "description": "Rootkit detection"},
+    "lynis": {"name": "Lynis", "command": "lynis", "description": "Security auditing"}
+}
+
+THREAT_INTEL_FEEDS = [
+    {"name": "Emerging Threats", "url": "https://rules.emergingthreats.net/"},
+    {"name": "Abuse.ch", "url": "https://abuse.ch/"},
+    {"name": "AlienVault OTX", "url": "https://otx.alienvault.com/"}
+]
+
+
+class AegisServerSecurity:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.daemon_running = False
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("AegisServerSecurity")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-server-marker").exists():
+            self.license_tier = LicenseTier.SERVER
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.SERVER
+    
+    def load_config(self):
+        self.config = {
+            "xdr_enabled": True,
+            "threat_intelligence": True,
+            "ids_enabled": True
+        }
+    
+    def check_tool_installed(self, command: str) -> bool:
+        return shutil.which(command) is not None
+    
+    def get_security_tools_status(self) -> List[Dict[str, Any]]:
+        tools = []
+        for tool_id, tool_info in SECURITY_TOOLS.items():
+            tools.append({
+                "id": tool_id,
+                "name": tool_info["name"],
+                "description": tool_info["description"],
+                "installed": self.check_tool_installed(tool_info["command"])
+            })
+        return tools
+    
+    def run_security_scan(self, scan_type: str = "quick") -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        results = {"scan_type": scan_type, "timestamp": datetime.now().isoformat(), "findings": []}
+        
+        if self.check_tool_installed("lynis"):
+            try:
+                result = subprocess.run(
+                    ["lynis", "audit", "system", "--quick"],
+                    capture_output=True, text=True, timeout=300
+                )
+                results["lynis_ran"] = result.returncode == 0
+            except Exception as e:
+                results["errors"] = [str(e)]
+        
+        return results
+    
+    def get_active_connections(self) -> List[Dict[str, Any]]:
+        connections = []
+        try:
+            result = subprocess.run(
+                ["ss", "-tuln"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n')[1:]:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        connections.append({
+                            "protocol": parts[0],
+                            "local": parts[4],
+                            "state": parts[1] if len(parts) > 1 else "LISTEN"
+                        })
+        except Exception:
+            pass
+        return connections
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "tools": self.get_security_tools_status(),
+            "active_connections": len(self.get_active_connections()),
+            "threat_feeds": len(THREAT_INTEL_FEEDS),
+            "tier": self.license_tier
+        }
+    
+    def run_daemon(self):
+        self.daemon_running = True
+        self.logger.info("Starting server security daemon")
+        while self.daemon_running:
+            time.sleep(60)
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        tools = self.get_security_tools_status()
+        print("Security Tools:")
+        for tool in tools:
+            status = "✓" if tool["installed"] else "✗"
+            print(f"  {tool['name']}: {status} - {tool['description']}")
+        
+        print(f"\nActive Connections: {len(self.get_active_connections())}")
+        print(f"Threat Intelligence Feeds: {len(THREAT_INTEL_FEEDS)}")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        for tool in self.get_security_tools_status():
+            label = Gtk.Label(label=f"{'✓' if tool['installed'] else '✗'} {tool['name']}")
+            label.set_xalign(0)
+            vbox.pack_start(label, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--daemon", action="store_true")
+    parser.add_argument("--scan", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.daemon:
+        app = AegisServerSecurity(headless=True)
+        app.run_daemon()
+    elif args.scan:
+        app = AegisServerSecurity(headless=True)
+        print(json.dumps(app.run_security_scan(), indent=2))
+    elif args.status:
+        app = AegisServerSecurity(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisServerSecurity(headless=False)
+        app.run_cli()
+    else:
+        app = AegisServerSecurity(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

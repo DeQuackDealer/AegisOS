@@ -1,5 +1,5 @@
 
-Aegis OS Freemium 1.5.0
+Aegis OS Freemium 2.0.0
 =======================
 
 Basic Linux with XFCE desktop - Free edition
@@ -11,16 +11,20 @@ System Requirements:
 - Graphics: Any GPU with OpenGL 3.0 support
 
 Quick Start:
-1. Boot from this ISO
+1. Boot from this ISO (USB or DVD)
 2. Select "Start Aegis OS Freemium" from the menu
-3. Follow the on-screen installer
+3. Use the desktop or run the installer
+
+Boot Options:
+- BIOS: Select the CD/USB drive from your BIOS boot menu
+- UEFI: The ISO supports UEFI Secure Boot
 
 Documentation: https://aegis-os.io/docs
 Support: https://aegis-os.io/support
 
 Build Information:
-- Version: 1.5.0
+- Version: 2.0.0
 - Kernel: 6.8.0-45-generic
 - Base: Ubuntu 24.04 (noble)
-- Build Date: 2025-11-28T07:11:02.422021+00:00
+- Build Date: 2025-12-07T13:19:58.661186+00:00
 - Build Mode: SIMULATION

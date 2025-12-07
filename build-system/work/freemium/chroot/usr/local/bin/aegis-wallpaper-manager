@@ -1,0 +1,1080 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Wallpaper Manager v1.0.0
+Desktop wallpaper management with GUI and CLI modes
+
+Features:
+  - Browse and select wallpapers from /usr/share/backgrounds/
+  - Set wallpaper via xfconf-query
+  - Slideshow mode with timed rotation (paid tiers only)
+  - Thumbnail preview grid
+  - Categories: Nature, Abstract, Aegis Branded, Minimal
+  - Integration with aegis-theme-manager
+
+Tier Gating:
+  - Freemium: Static wallpaper only
+  - Paid tiers: Slideshow mode enabled
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import threading
+import time
+import hashlib
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    gi.require_version('GdkPixbuf', '2.0')
+    from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Wallpaper Manager"
+APP_ID = "com.aegis-os.wallpaper-manager"
+
+WALLPAPER_DIRS = [
+    Path("/usr/share/backgrounds"),
+    Path("/usr/share/backgrounds/aegis"),
+    Path("/usr/share/wallpapers"),
+    Path.home() / "Pictures" / "Wallpapers",
+    Path.home() / ".local/share/backgrounds",
+]
+
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "wallpaper-manager"
+CACHE_DIR = Path.home() / ".cache" / "aegis" / "wallpaper-thumbnails"
+TIER_FILE = Path("/etc/aegis/tier-security.json")
+FREEMIUM_MARKER = Path("/etc/aegis-freemium-marker")
+
+SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.svg'}
+
+THUMBNAIL_SIZE = 180
+
+class WallpaperCategory(Enum):
+    ALL = "All"
+    NATURE = "Nature"
+    ABSTRACT = "Abstract"
+    AEGIS = "Aegis Branded"
+    MINIMAL = "Minimal"
+    CUSTOM = "Custom"
+
+CATEGORY_KEYWORDS = {
+    WallpaperCategory.NATURE: ['nature', 'landscape', 'forest', 'mountain', 'ocean', 'beach', 
+                                'sunset', 'sunrise', 'sky', 'tree', 'flower', 'water', 'lake'],
+    WallpaperCategory.ABSTRACT: ['abstract', 'geometric', 'pattern', 'gradient', 'fractal', 
+                                  'art', 'digital', 'design', 'colorful', 'shapes'],
+    WallpaperCategory.AEGIS: ['aegis', 'aegis-os', 'branded', 'logo', 'official'],
+    WallpaperCategory.MINIMAL: ['minimal', 'minimalist', 'simple', 'clean', 'solid', 
+                                 'plain', 'flat', 'mono', 'single'],
+}
+
+@dataclass
+class WallpaperInfo:
+    """Information about a wallpaper image"""
+    path: Path
+    name: str
+    category: WallpaperCategory
+    width: int = 0
+    height: int = 0
+    size_bytes: int = 0
+    thumbnail_path: Optional[Path] = None
+    
+    def get_resolution(self) -> str:
+        if self.width and self.height:
+            return f"{self.width}x{self.height}"
+        return "Unknown"
+    
+    def get_size_human(self) -> str:
+        if self.size_bytes < 1024:
+            return f"{self.size_bytes} B"
+        elif self.size_bytes < 1024 * 1024:
+            return f"{self.size_bytes / 1024:.1f} KB"
+        else:
+            return f"{self.size_bytes / (1024 * 1024):.1f} MB"
+
+
+class TierManager:
+    """Manages tier-based feature access"""
+    
+    def __init__(self):
+        self.tier_info = self._load_tier_info()
+        
+    def _load_tier_info(self) -> Dict:
+        """Load tier information from system config"""
+        default_tier = {
+            "tier": "freemium",
+            "features": {
+                "slideshow": False,
+                "custom_wallpapers": True,
+                "categories": True
+            }
+        }
+        
+        if FREEMIUM_MARKER.exists():
+            return default_tier
+            
+        try:
+            if TIER_FILE.exists():
+                with open(TIER_FILE, 'r') as f:
+                    data = json.load(f)
+                    tier = data.get('tier', 'freemium').lower()
+                    
+                    if tier in ['basic', 'gamer', 'ai-dev', 'server', 'workplace', 'enterprise']:
+                        return {
+                            "tier": tier,
+                            "features": {
+                                "slideshow": True,
+                                "custom_wallpapers": True,
+                                "categories": True
+                            }
+                        }
+        except Exception as e:
+            print(f"Warning: Could not load tier info: {e}")
+            
+        return default_tier
+        
+    def is_freemium(self) -> bool:
+        return self.tier_info.get('tier', 'freemium') == 'freemium'
+        
+    def slideshow_enabled(self) -> bool:
+        return self.tier_info.get('features', {}).get('slideshow', False)
+        
+    def get_tier_name(self) -> str:
+        return self.tier_info.get('tier', 'freemium').title()
+
+
+class WallpaperManager:
+    """Core wallpaper management functionality"""
+    
+    def __init__(self):
+        self.config_dir = CONFIG_DIR
+        self.cache_dir = CACHE_DIR
+        self.config_file = self.config_dir / "settings.json"
+        self.config = self._load_config()
+        self.tier_manager = TierManager()
+        self.wallpapers: List[WallpaperInfo] = []
+        self.slideshow_thread: Optional[threading.Thread] = None
+        self.slideshow_running = False
+        self._ensure_dirs()
+        
+    def _ensure_dirs(self):
+        """Ensure required directories exist"""
+        for d in [self.config_dir, self.cache_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+            
+    def _load_config(self) -> Dict:
+        """Load configuration from file"""
+        default_config = {
+            "current_wallpaper": None,
+            "wallpaper_style": "zoom",  # zoom, centered, tiled, scaled, stretched
+            "slideshow_enabled": False,
+            "slideshow_interval": 300,  # seconds
+            "slideshow_random": True,
+            "slideshow_playlist": [],
+            "favorite_wallpapers": [],
+            "last_category": "All",
+            "show_hidden": False
+        }
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    loaded = json.load(f)
+                    default_config.update(loaded)
+        except Exception as e:
+            print(f"Warning: Could not load config: {e}")
+            
+        return default_config
+        
+    def save_config(self):
+        """Save current configuration"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            print(f"Error saving config: {e}")
+            
+    def scan_wallpapers(self) -> List[WallpaperInfo]:
+        """Scan all wallpaper directories for images"""
+        wallpapers = []
+        seen_paths = set()
+        
+        for wallpaper_dir in WALLPAPER_DIRS:
+            if not wallpaper_dir.exists():
+                continue
+                
+            for ext in SUPPORTED_EXTENSIONS:
+                for img_path in wallpaper_dir.rglob(f"*{ext}"):
+                    if img_path in seen_paths:
+                        continue
+                    seen_paths.add(img_path)
+                    
+                    try:
+                        category = self._categorize_wallpaper(img_path)
+                        stat = img_path.stat()
+                        
+                        info = WallpaperInfo(
+                            path=img_path,
+                            name=img_path.stem,
+                            category=category,
+                            size_bytes=stat.st_size
+                        )
+                        
+                        wallpapers.append(info)
+                    except Exception as e:
+                        print(f"Warning: Could not process {img_path}: {e}")
+                        
+        self.wallpapers = sorted(wallpapers, key=lambda w: w.name.lower())
+        return self.wallpapers
+        
+    def _categorize_wallpaper(self, path: Path) -> WallpaperCategory:
+        """Determine category based on path and filename"""
+        path_str = str(path).lower()
+        name = path.stem.lower()
+        parent = path.parent.name.lower()
+        
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword in name or keyword in parent or keyword in path_str:
+                    return category
+                    
+        if str(path).startswith(str(Path.home())):
+            return WallpaperCategory.CUSTOM
+            
+        return WallpaperCategory.ALL
+        
+    def get_wallpapers_by_category(self, category: WallpaperCategory) -> List[WallpaperInfo]:
+        """Filter wallpapers by category"""
+        if category == WallpaperCategory.ALL:
+            return self.wallpapers
+        return [w for w in self.wallpapers if w.category == category]
+        
+    def generate_thumbnail(self, wallpaper: WallpaperInfo) -> Optional[Path]:
+        """Generate and cache thumbnail for wallpaper"""
+        if wallpaper.thumbnail_path and wallpaper.thumbnail_path.exists():
+            return wallpaper.thumbnail_path
+            
+        path_hash = hashlib.md5(str(wallpaper.path).encode()).hexdigest()
+        thumb_path = self.cache_dir / f"{path_hash}.png"
+        
+        if thumb_path.exists():
+            wallpaper.thumbnail_path = thumb_path
+            return thumb_path
+            
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                str(wallpaper.path),
+                THUMBNAIL_SIZE, THUMBNAIL_SIZE,
+                True
+            )
+            pixbuf.savev(str(thumb_path), "png", [], [])
+            
+            wallpaper.thumbnail_path = thumb_path
+            wallpaper.width = pixbuf.get_width()
+            wallpaper.height = pixbuf.get_height()
+            
+            return thumb_path
+        except Exception as e:
+            print(f"Warning: Could not generate thumbnail for {wallpaper.path}: {e}")
+            return None
+            
+    def set_wallpaper(self, path: Path, style: str = None) -> bool:
+        """Set wallpaper using xfconf-query"""
+        if not path.exists():
+            print(f"Error: Wallpaper not found: {path}")
+            return False
+            
+        if style is None:
+            style = self.config.get('wallpaper_style', 'zoom')
+            
+        style_map = {
+            'zoom': 5,
+            'centered': 1,
+            'tiled': 2,
+            'scaled': 3,
+            'stretched': 4,
+            'spanning': 6
+        }
+        style_num = style_map.get(style, 5)
+        
+        try:
+            monitors = self._get_monitors()
+            
+            for monitor in monitors:
+                workspace_path = f"/backdrop/screen0/monitor{monitor}/workspace0"
+                
+                subprocess.run([
+                    'xfconf-query', '-c', 'xfce4-desktop',
+                    '-p', f'{workspace_path}/last-image',
+                    '-s', str(path)
+                ], check=True, capture_output=True)
+                
+                subprocess.run([
+                    'xfconf-query', '-c', 'xfce4-desktop',
+                    '-p', f'{workspace_path}/image-style',
+                    '-s', str(style_num)
+                ], capture_output=True)
+                
+            self.config['current_wallpaper'] = str(path)
+            self.config['wallpaper_style'] = style
+            self.save_config()
+            
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"Error setting wallpaper: {e}")
+            return False
+        except FileNotFoundError:
+            return self._set_wallpaper_fallback(path, style)
+            
+    def _set_wallpaper_fallback(self, path: Path, style: str) -> bool:
+        """Fallback wallpaper setting using gsettings or nitrogen"""
+        try:
+            subprocess.run([
+                'gsettings', 'set', 'org.gnome.desktop.background',
+                'picture-uri', f'file://{path}'
+            ], capture_output=True)
+            return True
+        except Exception:
+            pass
+            
+        try:
+            subprocess.run(['nitrogen', '--set-zoom', str(path)], capture_output=True)
+            return True
+        except Exception:
+            pass
+            
+        return False
+        
+    def _get_monitors(self) -> List[str]:
+        """Get list of connected monitors"""
+        monitors = []
+        try:
+            result = subprocess.run([
+                'xfconf-query', '-c', 'xfce4-desktop', '-l'
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if '/backdrop/screen0/monitor' in line:
+                        parts = line.split('/')
+                        for part in parts:
+                            if part.startswith('monitor'):
+                                monitor_name = part.split('/')[0]
+                                if monitor_name not in monitors:
+                                    monitors.append(monitor_name)
+        except Exception:
+            pass
+            
+        return monitors if monitors else ['monitor0']
+        
+    def get_current_wallpaper(self) -> Optional[str]:
+        """Get currently set wallpaper path"""
+        try:
+            result = subprocess.run([
+                'xfconf-query', '-c', 'xfce4-desktop',
+                '-p', '/backdrop/screen0/monitor0/workspace0/last-image'
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+            
+        return self.config.get('current_wallpaper')
+        
+    def start_slideshow(self, wallpapers: List[WallpaperInfo] = None, 
+                        interval: int = None, random_order: bool = True) -> bool:
+        """Start slideshow mode (paid tiers only)"""
+        if not self.tier_manager.slideshow_enabled():
+            print("Slideshow mode requires a paid tier.")
+            return False
+            
+        if self.slideshow_running:
+            self.stop_slideshow()
+            
+        if wallpapers is None:
+            wallpapers = self.wallpapers
+        if interval is None:
+            interval = self.config.get('slideshow_interval', 300)
+            
+        if not wallpapers:
+            print("No wallpapers available for slideshow.")
+            return False
+            
+        self.slideshow_running = True
+        self.config['slideshow_enabled'] = True
+        self.config['slideshow_interval'] = interval
+        self.config['slideshow_random'] = random_order
+        self.config['slideshow_playlist'] = [str(w.path) for w in wallpapers]
+        self.save_config()
+        
+        self.slideshow_thread = threading.Thread(
+            target=self._slideshow_loop,
+            args=(wallpapers, interval, random_order),
+            daemon=True
+        )
+        self.slideshow_thread.start()
+        
+        return True
+        
+    def _slideshow_loop(self, wallpapers: List[WallpaperInfo], 
+                        interval: int, random_order: bool):
+        """Main slideshow loop"""
+        import random as rand
+        
+        playlist = list(wallpapers)
+        index = 0
+        
+        while self.slideshow_running:
+            if random_order:
+                wallpaper = rand.choice(playlist)
+            else:
+                wallpaper = playlist[index % len(playlist)]
+                index += 1
+                
+            self.set_wallpaper(wallpaper.path)
+            
+            for _ in range(interval):
+                if not self.slideshow_running:
+                    return
+                time.sleep(1)
+                
+    def stop_slideshow(self):
+        """Stop slideshow mode"""
+        self.slideshow_running = False
+        self.config['slideshow_enabled'] = False
+        self.save_config()
+        
+        if self.slideshow_thread:
+            self.slideshow_thread = None
+            
+    def add_favorite(self, path: Path):
+        """Add wallpaper to favorites"""
+        path_str = str(path)
+        if path_str not in self.config['favorite_wallpapers']:
+            self.config['favorite_wallpapers'].append(path_str)
+            self.save_config()
+            
+    def remove_favorite(self, path: Path):
+        """Remove wallpaper from favorites"""
+        path_str = str(path)
+        if path_str in self.config['favorite_wallpapers']:
+            self.config['favorite_wallpapers'].remove(path_str)
+            self.save_config()
+            
+    def is_favorite(self, path: Path) -> bool:
+        """Check if wallpaper is in favorites"""
+        return str(path) in self.config['favorite_wallpapers']
+        
+    def notify_theme_manager(self, wallpaper_path: Path):
+        """Integration hook for aegis-theme-manager"""
+        try:
+            theme_config = Path.home() / ".config" / "aegis" / "theme-manager" / "settings.json"
+            if theme_config.exists():
+                with open(theme_config, 'r') as f:
+                    config = json.load(f)
+                config['current_wallpaper'] = str(wallpaper_path)
+                with open(theme_config, 'w') as f:
+                    json.dump(config, f, indent=2)
+        except Exception:
+            pass
+
+
+class WallpaperManagerWindow(Gtk.ApplicationWindow):
+    """Main GUI window"""
+    
+    def __init__(self, app):
+        super().__init__(application=app, title=APP_NAME)
+        self.set_default_size(900, 650)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        
+        self.manager = WallpaperManager()
+        self.current_category = WallpaperCategory.ALL
+        self.loading_thumbnails = False
+        
+        self._setup_header_bar()
+        self._setup_ui()
+        self._apply_custom_css()
+        
+        GLib.idle_add(self._load_wallpapers)
+        
+    def _setup_header_bar(self):
+        """Setup header bar with controls"""
+        header = Gtk.HeaderBar()
+        header.set_show_close_button(True)
+        header.set_title(APP_NAME)
+        header.set_subtitle(f"Tier: {self.manager.tier_manager.get_tier_name()}")
+        
+        try:
+            icon_path = Path("/usr/share/pixmaps/aegis-logo-128.png")
+            if icon_path.exists():
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(icon_path), 24, 24, True
+                )
+                icon = Gtk.Image.new_from_pixbuf(pixbuf)
+                header.pack_start(icon)
+        except Exception:
+            pass
+            
+        refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        refresh_btn.set_tooltip_text("Refresh Wallpapers")
+        refresh_btn.connect("clicked", self._on_refresh_clicked)
+        header.pack_start(refresh_btn)
+        
+        menu_btn = Gtk.MenuButton()
+        menu_btn.set_image(Gtk.Image.new_from_icon_name("open-menu-symbolic", Gtk.IconSize.BUTTON))
+        menu_btn.set_tooltip_text("Menu")
+        
+        menu = Gio.Menu()
+        menu.append("Open Custom Folder", "app.open-custom")
+        menu.append("About", "app.about")
+        menu_btn.set_menu_model(menu)
+        header.pack_end(menu_btn)
+        
+        self.set_titlebar(header)
+        
+    def _setup_ui(self):
+        """Setup main UI layout"""
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.add(main_box)
+        
+        sidebar = self._create_sidebar()
+        main_box.pack_start(sidebar, False, False, 0)
+        
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        main_box.pack_start(content_box, True, True, 0)
+        
+        toolbar = self._create_toolbar()
+        content_box.pack_start(toolbar, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        self.flowbox = Gtk.FlowBox()
+        self.flowbox.set_valign(Gtk.Align.START)
+        self.flowbox.set_max_children_per_line(10)
+        self.flowbox.set_min_children_per_line(2)
+        self.flowbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.flowbox.set_homogeneous(True)
+        self.flowbox.set_row_spacing(12)
+        self.flowbox.set_column_spacing(12)
+        self.flowbox.set_margin_start(16)
+        self.flowbox.set_margin_end(16)
+        self.flowbox.set_margin_top(16)
+        self.flowbox.set_margin_bottom(16)
+        self.flowbox.connect("child-activated", self._on_wallpaper_activated)
+        
+        scroll.add(self.flowbox)
+        content_box.pack_start(scroll, True, True, 0)
+        
+        self.statusbar = Gtk.Statusbar()
+        content_box.pack_end(self.statusbar, False, False, 0)
+        
+    def _create_sidebar(self) -> Gtk.Box:
+        """Create category sidebar"""
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        sidebar.set_size_request(200, -1)
+        sidebar.get_style_context().add_class("sidebar")
+        
+        title = Gtk.Label()
+        title.set_markup("<b>Categories</b>")
+        title.set_margin_top(16)
+        title.set_margin_bottom(8)
+        title.set_margin_start(16)
+        title.set_xalign(0)
+        sidebar.pack_start(title, False, False, 0)
+        
+        self.category_list = Gtk.ListBox()
+        self.category_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.category_list.get_style_context().add_class("navigation-sidebar")
+        
+        for category in WallpaperCategory:
+            row = Gtk.ListBoxRow()
+            row.category = category
+            
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_start(16)
+            box.set_margin_end(16)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            
+            label = Gtk.Label(label=category.value)
+            label.set_xalign(0)
+            box.pack_start(label, True, True, 0)
+            
+            row.add(box)
+            self.category_list.add(row)
+            
+        self.category_list.select_row(self.category_list.get_row_at_index(0))
+        self.category_list.connect("row-selected", self._on_category_selected)
+        sidebar.pack_start(self.category_list, False, False, 0)
+        
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        separator.set_margin_top(16)
+        separator.set_margin_bottom(16)
+        sidebar.pack_start(separator, False, False, 0)
+        
+        slideshow_frame = Gtk.Frame()
+        slideshow_frame.set_shadow_type(Gtk.ShadowType.NONE)
+        slideshow_frame.set_margin_start(8)
+        slideshow_frame.set_margin_end(8)
+        
+        slideshow_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        slideshow_box.set_margin_start(8)
+        slideshow_box.set_margin_end(8)
+        slideshow_box.set_margin_top(8)
+        slideshow_box.set_margin_bottom(8)
+        
+        slideshow_label = Gtk.Label()
+        slideshow_label.set_markup("<b>Slideshow</b>")
+        slideshow_label.set_xalign(0)
+        slideshow_box.pack_start(slideshow_label, False, False, 0)
+        
+        if self.manager.tier_manager.slideshow_enabled():
+            enable_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            enable_label = Gtk.Label(label="Enable")
+            enable_label.set_xalign(0)
+            enable_box.pack_start(enable_label, True, True, 0)
+            
+            self.slideshow_switch = Gtk.Switch()
+            self.slideshow_switch.set_active(self.manager.config.get('slideshow_enabled', False))
+            self.slideshow_switch.connect("notify::active", self._on_slideshow_toggled)
+            enable_box.pack_end(self.slideshow_switch, False, False, 0)
+            slideshow_box.pack_start(enable_box, False, False, 0)
+            
+            interval_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            interval_label = Gtk.Label(label="Interval (min)")
+            interval_label.set_xalign(0)
+            interval_box.pack_start(interval_label, True, True, 0)
+            
+            self.interval_spin = Gtk.SpinButton.new_with_range(1, 60, 1)
+            self.interval_spin.set_value(self.manager.config.get('slideshow_interval', 300) // 60)
+            interval_box.pack_end(self.interval_spin, False, False, 0)
+            slideshow_box.pack_start(interval_box, False, False, 0)
+            
+            random_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            random_label = Gtk.Label(label="Random")
+            random_label.set_xalign(0)
+            random_box.pack_start(random_label, True, True, 0)
+            
+            self.random_check = Gtk.CheckButton()
+            self.random_check.set_active(self.manager.config.get('slideshow_random', True))
+            random_box.pack_end(self.random_check, False, False, 0)
+            slideshow_box.pack_start(random_box, False, False, 0)
+        else:
+            upgrade_label = Gtk.Label()
+            upgrade_label.set_markup("<small>Upgrade to a paid tier\nto enable slideshow mode</small>")
+            upgrade_label.set_xalign(0)
+            upgrade_label.get_style_context().add_class("dim-label")
+            slideshow_box.pack_start(upgrade_label, False, False, 0)
+            
+        slideshow_frame.add(slideshow_box)
+        sidebar.pack_start(slideshow_frame, False, False, 0)
+        
+        return sidebar
+        
+    def _create_toolbar(self) -> Gtk.Box:
+        """Create view toolbar"""
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        toolbar.set_margin_start(16)
+        toolbar.set_margin_end(16)
+        toolbar.set_margin_top(8)
+        toolbar.set_margin_bottom(8)
+        
+        self.count_label = Gtk.Label(label="0 wallpapers")
+        self.count_label.set_xalign(0)
+        toolbar.pack_start(self.count_label, False, False, 0)
+        
+        toolbar.pack_start(Gtk.Box(), True, True, 0)
+        
+        style_label = Gtk.Label(label="Style:")
+        toolbar.pack_start(style_label, False, False, 0)
+        
+        self.style_combo = Gtk.ComboBoxText()
+        for style in ['Zoom', 'Centered', 'Tiled', 'Scaled', 'Stretched']:
+            self.style_combo.append_text(style)
+        current_style = self.manager.config.get('wallpaper_style', 'zoom')
+        self.style_combo.set_active(['zoom', 'centered', 'tiled', 'scaled', 'stretched'].index(current_style))
+        self.style_combo.connect("changed", self._on_style_changed)
+        toolbar.pack_start(self.style_combo, False, False, 0)
+        
+        return toolbar
+        
+    def _apply_custom_css(self):
+        """Apply custom CSS styling"""
+        css = b"""
+        .sidebar {
+            background-color: @theme_bg_color;
+            border-right: 1px solid @borders;
+        }
+        
+        .wallpaper-item {
+            background-color: @theme_base_color;
+            border-radius: 8px;
+            padding: 8px;
+            border: 2px solid transparent;
+        }
+        
+        .wallpaper-item:selected {
+            border-color: @theme_selected_bg_color;
+        }
+        
+        .wallpaper-item:hover {
+            background-color: alpha(@theme_selected_bg_color, 0.1);
+        }
+        
+        .wallpaper-name {
+            font-size: 11px;
+        }
+        
+        flowboxchild {
+            padding: 4px;
+            border-radius: 8px;
+        }
+        
+        flowboxchild:selected {
+            background-color: alpha(@theme_selected_bg_color, 0.3);
+        }
+        """
+        
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+    def _load_wallpapers(self):
+        """Load and display wallpapers"""
+        self.statusbar.push(0, "Scanning for wallpapers...")
+        
+        for child in self.flowbox.get_children():
+            self.flowbox.remove(child)
+            
+        wallpapers = self.manager.scan_wallpapers()
+        filtered = self.manager.get_wallpapers_by_category(self.current_category)
+        
+        self.count_label.set_text(f"{len(filtered)} wallpapers")
+        
+        for wallpaper in filtered:
+            item = self._create_wallpaper_item(wallpaper)
+            self.flowbox.add(item)
+            
+        self.flowbox.show_all()
+        
+        self.loading_thumbnails = True
+        threading.Thread(target=self._load_thumbnails_async, args=(filtered,), daemon=True).start()
+        
+        self.statusbar.push(0, f"Found {len(wallpapers)} wallpapers")
+        
+    def _load_thumbnails_async(self, wallpapers: List[WallpaperInfo]):
+        """Load thumbnails in background thread"""
+        for wallpaper in wallpapers:
+            if not self.loading_thumbnails:
+                break
+            self.manager.generate_thumbnail(wallpaper)
+            GLib.idle_add(self._update_thumbnail, wallpaper)
+            
+    def _update_thumbnail(self, wallpaper: WallpaperInfo):
+        """Update thumbnail in UI"""
+        for child in self.flowbox.get_children():
+            item = child.get_child()
+            if hasattr(item, 'wallpaper') and item.wallpaper.path == wallpaper.path:
+                image = item.get_children()[0]
+                if wallpaper.thumbnail_path and wallpaper.thumbnail_path.exists():
+                    try:
+                        pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                            str(wallpaper.thumbnail_path),
+                            THUMBNAIL_SIZE, THUMBNAIL_SIZE // 2 * 3,
+                            True
+                        )
+                        image.set_from_pixbuf(pixbuf)
+                    except Exception:
+                        pass
+                break
+        return False
+        
+    def _create_wallpaper_item(self, wallpaper: WallpaperInfo) -> Gtk.Box:
+        """Create wallpaper grid item"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.wallpaper = wallpaper
+        box.get_style_context().add_class("wallpaper-item")
+        
+        image = Gtk.Image.new_from_icon_name("image-x-generic", Gtk.IconSize.DIALOG)
+        image.set_size_request(THUMBNAIL_SIZE, THUMBNAIL_SIZE // 4 * 3)
+        
+        if wallpaper.thumbnail_path and wallpaper.thumbnail_path.exists():
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(wallpaper.thumbnail_path),
+                    THUMBNAIL_SIZE, THUMBNAIL_SIZE // 4 * 3,
+                    True
+                )
+                image.set_from_pixbuf(pixbuf)
+            except Exception:
+                pass
+                
+        box.pack_start(image, False, False, 0)
+        
+        name_label = Gtk.Label(label=wallpaper.name[:20])
+        name_label.set_ellipsize(3)  # PANGO_ELLIPSIZE_END
+        name_label.get_style_context().add_class("wallpaper-name")
+        box.pack_start(name_label, False, False, 0)
+        
+        is_current = str(wallpaper.path) == self.manager.get_current_wallpaper()
+        if is_current:
+            current_label = Gtk.Label()
+            current_label.set_markup("<small>✓ Current</small>")
+            current_label.get_style_context().add_class("dim-label")
+            box.pack_start(current_label, False, False, 0)
+            
+        return box
+        
+    def _on_category_selected(self, listbox, row):
+        """Handle category selection"""
+        if row is None:
+            return
+        self.current_category = row.category
+        self._load_wallpapers()
+        
+    def _on_wallpaper_activated(self, flowbox, child):
+        """Handle wallpaper selection"""
+        item = child.get_child()
+        if hasattr(item, 'wallpaper'):
+            wallpaper = item.wallpaper
+            
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.YES_NO,
+                text=f"Set '{wallpaper.name}' as wallpaper?"
+            )
+            dialog.format_secondary_text(f"Resolution: {wallpaper.get_resolution()}\nSize: {wallpaper.get_size_human()}")
+            
+            response = dialog.run()
+            dialog.destroy()
+            
+            if response == Gtk.ResponseType.YES:
+                if self.manager.set_wallpaper(wallpaper.path):
+                    self.manager.notify_theme_manager(wallpaper.path)
+                    self.statusbar.push(0, f"Wallpaper set: {wallpaper.name}")
+                    self._load_wallpapers()
+                else:
+                    self.statusbar.push(0, "Failed to set wallpaper")
+                    
+    def _on_refresh_clicked(self, button):
+        """Handle refresh button click"""
+        self._load_wallpapers()
+        
+    def _on_style_changed(self, combo):
+        """Handle wallpaper style change"""
+        styles = ['zoom', 'centered', 'tiled', 'scaled', 'stretched']
+        style = styles[combo.get_active()]
+        self.manager.config['wallpaper_style'] = style
+        self.manager.save_config()
+        
+        current = self.manager.get_current_wallpaper()
+        if current:
+            self.manager.set_wallpaper(Path(current), style)
+            
+    def _on_slideshow_toggled(self, switch, gparam):
+        """Handle slideshow toggle"""
+        if switch.get_active():
+            interval = int(self.interval_spin.get_value()) * 60
+            random_order = self.random_check.get_active()
+            
+            wallpapers = self.manager.get_wallpapers_by_category(self.current_category)
+            if self.manager.start_slideshow(wallpapers, interval, random_order):
+                self.statusbar.push(0, "Slideshow started")
+            else:
+                switch.set_active(False)
+                self.statusbar.push(0, "Failed to start slideshow")
+        else:
+            self.manager.stop_slideshow()
+            self.statusbar.push(0, "Slideshow stopped")
+
+
+class WallpaperManagerApp(Gtk.Application):
+    """GTK Application wrapper"""
+    
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.window = None
+        
+    def do_activate(self):
+        if not self.window:
+            self.window = WallpaperManagerWindow(self)
+            self._setup_actions()
+        self.window.present()
+        
+    def _setup_actions(self):
+        """Setup application actions"""
+        about_action = Gio.SimpleAction.new("about", None)
+        about_action.connect("activate", self._on_about)
+        self.add_action(about_action)
+        
+        open_custom_action = Gio.SimpleAction.new("open-custom", None)
+        open_custom_action.connect("activate", self._on_open_custom)
+        self.add_action(open_custom_action)
+        
+    def _on_about(self, action, param):
+        """Show about dialog"""
+        dialog = Gtk.AboutDialog(transient_for=self.window)
+        dialog.set_program_name(APP_NAME)
+        dialog.set_version(VERSION)
+        dialog.set_copyright("© 2024 Aegis OS Team")
+        dialog.set_comments("Desktop wallpaper management for Aegis OS")
+        dialog.set_license_type(Gtk.License.GPL_3_0)
+        dialog.set_website("https://aegis-os.com")
+        dialog.run()
+        dialog.destroy()
+        
+    def _on_open_custom(self, action, param):
+        """Open custom wallpapers folder"""
+        custom_dir = Path.home() / "Pictures" / "Wallpapers"
+        custom_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            subprocess.run(['xdg-open', str(custom_dir)], check=True)
+        except Exception:
+            pass
+
+
+def cli_main():
+    """CLI mode entry point"""
+    parser = argparse.ArgumentParser(
+        description="Aegis OS Wallpaper Manager",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-wallpaper-manager --set /path/to/wallpaper.jpg
+  aegis-wallpaper-manager --list
+  aegis-wallpaper-manager --list --category nature
+  aegis-wallpaper-manager --current
+  aegis-wallpaper-manager --slideshow --interval 5
+        """
+    )
+    
+    parser.add_argument('--version', action='version', version=f'{APP_NAME} {VERSION}')
+    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--set', metavar='PATH', help='Set wallpaper from path')
+    parser.add_argument('--style', choices=['zoom', 'centered', 'tiled', 'scaled', 'stretched'],
+                        default='zoom', help='Wallpaper style (default: zoom)')
+    parser.add_argument('--list', action='store_true', help='List available wallpapers')
+    parser.add_argument('--category', choices=['all', 'nature', 'abstract', 'aegis', 'minimal', 'custom'],
+                        default='all', help='Filter by category')
+    parser.add_argument('--current', action='store_true', help='Show current wallpaper')
+    parser.add_argument('--scan', action='store_true', help='Scan and update wallpaper cache')
+    parser.add_argument('--slideshow', action='store_true', help='Start slideshow mode')
+    parser.add_argument('--stop-slideshow', action='store_true', help='Stop slideshow mode')
+    parser.add_argument('--interval', type=int, default=5, help='Slideshow interval in minutes')
+    parser.add_argument('--random', action='store_true', help='Random slideshow order')
+    parser.add_argument('--json', action='store_true', help='Output in JSON format')
+    
+    args = parser.parse_args()
+    
+    if args.gui or len(sys.argv) == 1:
+        if not GTK_AVAILABLE:
+            print("Error: GTK3 not available. Install python3-gi and gir1.2-gtk-3.0")
+            sys.exit(1)
+        app = WallpaperManagerApp()
+        app.run([])
+        return
+        
+    manager = WallpaperManager()
+    
+    if args.current:
+        current = manager.get_current_wallpaper()
+        if args.json:
+            print(json.dumps({"current_wallpaper": current}))
+        else:
+            print(f"Current wallpaper: {current or 'None'}")
+        return
+        
+    if args.set:
+        path = Path(args.set)
+        if not path.exists():
+            print(f"Error: File not found: {path}")
+            sys.exit(1)
+        if manager.set_wallpaper(path, args.style):
+            manager.notify_theme_manager(path)
+            print(f"Wallpaper set: {path}")
+        else:
+            print("Failed to set wallpaper")
+            sys.exit(1)
+        return
+        
+    if args.list or args.scan:
+        wallpapers = manager.scan_wallpapers()
+        
+        category_map = {
+            'all': WallpaperCategory.ALL,
+            'nature': WallpaperCategory.NATURE,
+            'abstract': WallpaperCategory.ABSTRACT,
+            'aegis': WallpaperCategory.AEGIS,
+            'minimal': WallpaperCategory.MINIMAL,
+            'custom': WallpaperCategory.CUSTOM,
+        }
+        category = category_map.get(args.category, WallpaperCategory.ALL)
+        filtered = manager.get_wallpapers_by_category(category)
+        
+        if args.json:
+            output = [{
+                "path": str(w.path),
+                "name": w.name,
+                "category": w.category.value,
+                "size": w.size_bytes
+            } for w in filtered]
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"Found {len(filtered)} wallpapers in category '{args.category}':\n")
+            for w in filtered:
+                print(f"  {w.path}")
+        return
+        
+    if args.slideshow:
+        if not manager.tier_manager.slideshow_enabled():
+            print("Error: Slideshow mode requires a paid tier.")
+            sys.exit(1)
+            
+        manager.scan_wallpapers()
+        interval = args.interval * 60
+        
+        print(f"Starting slideshow with {interval // 60} minute interval...")
+        print("Press Ctrl+C to stop")
+        
+        if manager.start_slideshow(interval=interval, random_order=args.random):
+            try:
+                while manager.slideshow_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                manager.stop_slideshow()
+                print("\nSlideshow stopped")
+        return
+        
+    if args.stop_slideshow:
+        manager.stop_slideshow()
+        print("Slideshow stopped")
+        return
+        
+    parser.print_help()
+
+
+if __name__ == "__main__":
+    cli_main()

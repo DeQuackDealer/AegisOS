@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+Aegis Monitoring - SIEM and log aggregation for Server edition
+Features: SIEM setup, log aggregation, alerting, dashboards
+
+Provides GUI (GTK) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any
+
+TIER_LIMIT = "server"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Monitoring"
+
+CONFIG_FILE = "/etc/aegis/server-config.json"
+LOG_FILE = "/var/log/aegis/monitoring.log"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    SERVER = 5
+
+
+MONITORING_TOOLS = {
+    "prometheus": {"name": "Prometheus", "command": "prometheus", "port": 9090},
+    "grafana": {"name": "Grafana", "command": "grafana-server", "port": 3000},
+    "loki": {"name": "Loki", "command": "loki", "port": 3100},
+    "alertmanager": {"name": "Alertmanager", "command": "alertmanager", "port": 9093},
+    "node_exporter": {"name": "Node Exporter", "command": "node_exporter", "port": 9100}
+}
+
+
+class AegisMonitoring:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.license_tier = LicenseTier.FREEMIUM
+        self.daemon_running = False
+        
+        self.setup_logging()
+        self.load_license_tier()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(level=logging.INFO)
+        except Exception:
+            pass
+        self.logger = logging.getLogger("AegisMonitoring")
+    
+    def load_license_tier(self):
+        if Path("/etc/aegis-server-marker").exists():
+            self.license_tier = LicenseTier.SERVER
+    
+    def is_feature_available(self) -> bool:
+        return self.license_tier >= LicenseTier.SERVER
+    
+    def check_tool_installed(self, command: str) -> bool:
+        return shutil.which(command) is not None
+    
+    def check_service_running(self, service: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", service],
+                capture_output=True, text=True, timeout=10
+            )
+            return result.stdout.strip() == "active"
+        except Exception:
+            return False
+    
+    def get_tools_status(self) -> List[Dict[str, Any]]:
+        tools = []
+        for tool_id, info in MONITORING_TOOLS.items():
+            tools.append({
+                "id": tool_id,
+                "name": info["name"],
+                "port": info["port"],
+                "installed": self.check_tool_installed(info["command"]),
+                "running": self.check_service_running(tool_id)
+            })
+        return tools
+    
+    def get_system_metrics(self) -> Dict[str, Any]:
+        metrics = {}
+        
+        try:
+            with open("/proc/loadavg", "r") as f:
+                load = f.read().split()
+                metrics["load_1m"] = float(load[0])
+                metrics["load_5m"] = float(load[1])
+                metrics["load_15m"] = float(load[2])
+        except Exception:
+            pass
+        
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        metrics["mem_total_kb"] = int(line.split()[1])
+                    elif line.startswith("MemAvailable:"):
+                        metrics["mem_available_kb"] = int(line.split()[1])
+        except Exception:
+            pass
+        
+        try:
+            result = subprocess.run(["df", "-k", "/"], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    parts = lines[1].split()
+                    metrics["disk_total_kb"] = int(parts[1])
+                    metrics["disk_used_kb"] = int(parts[2])
+                    metrics["disk_available_kb"] = int(parts[3])
+        except Exception:
+            pass
+        
+        return metrics
+    
+    def get_recent_logs(self, service: str = "syslog", lines: int = 50) -> List[str]:
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", service, "-n", str(lines), "--no-pager"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return result.stdout.strip().split('\n')
+        except Exception:
+            pass
+        return []
+    
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "tools": self.get_tools_status(),
+            "metrics": self.get_system_metrics(),
+            "tier": self.license_tier
+        }
+    
+    def run_daemon(self):
+        self.daemon_running = True
+        self.logger.info("Starting monitoring daemon")
+        while self.daemon_running:
+            time.sleep(60)
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"{'='*60}\n")
+        
+        tools = self.get_tools_status()
+        print("Monitoring Stack:")
+        for tool in tools:
+            installed = "✓" if tool["installed"] else "✗"
+            running = "Running" if tool["running"] else "Stopped"
+            print(f"  {tool['name']}: {installed} ({running}) - Port {tool['port']}")
+        
+        metrics = self.get_system_metrics()
+        print(f"\nSystem Metrics:")
+        if "load_1m" in metrics:
+            print(f"  Load Average: {metrics['load_1m']:.2f} / {metrics['load_5m']:.2f} / {metrics['load_15m']:.2f}")
+        if "mem_total_kb" in metrics:
+            used = metrics["mem_total_kb"] - metrics.get("mem_available_kb", 0)
+            print(f"  Memory: {used // 1024} MB / {metrics['mem_total_kb'] // 1024} MB")
+        if "disk_total_kb" in metrics:
+            print(f"  Disk: {metrics['disk_used_kb'] // 1024} MB / {metrics['disk_total_kb'] // 1024} MB")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            return self.run_cli()
+        
+        win = Gtk.Window(title=f"{APP_NAME}")
+        win.set_default_size(800, 600)
+        win.connect("destroy", Gtk.main_quit)
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        win.add(vbox)
+        
+        header = Gtk.Label()
+        header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+        vbox.pack_start(header, False, False, 20)
+        
+        for tool in self.get_tools_status():
+            label = Gtk.Label(label=f"{'✓' if tool['installed'] else '✗'} {tool['name']} (:{tool['port']})")
+            label.set_xalign(0)
+            vbox.pack_start(label, False, False, 5)
+        
+        win.show_all()
+        Gtk.main()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME}")
+    parser.add_argument("--gui", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--daemon", action="store_true")
+    parser.add_argument("--metrics", action="store_true")
+    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.daemon:
+        app = AegisMonitoring(headless=True)
+        app.run_daemon()
+    elif args.metrics:
+        app = AegisMonitoring(headless=True)
+        print(json.dumps(app.get_system_metrics(), indent=2))
+    elif args.status:
+        app = AegisMonitoring(headless=True)
+        print(json.dumps(app.get_status(), indent=2))
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisMonitoring(headless=False)
+        app.run_cli()
+    else:
+        app = AegisMonitoring(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

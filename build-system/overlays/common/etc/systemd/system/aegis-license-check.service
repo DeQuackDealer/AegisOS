@@ -1,0 +1,17 @@
+[Unit]
+Description=Aegis OS License Validation Service
+After=network-online.target local-fs.target
+Wants=network-online.target
+Before=graphical.target multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aegis-license-manager --validate-boot
+ExecStartPost=/usr/local/bin/aegis-license-manager --apply-tier
+TimeoutStartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

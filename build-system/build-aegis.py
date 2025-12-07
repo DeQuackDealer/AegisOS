@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aegis OS Build System v1.5.0
+Aegis OS Build System v2.0.0
 Generates bootable ISO images for all Aegis OS editions
 
 Supports two modes:
@@ -23,10 +23,14 @@ import hashlib
 import argparse
 import subprocess
 import platform
+import py_compile
+import compileall
+import glob as globlib
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional, Dict, List, Tuple, Any
 
-VERSION = "1.5.0"
+VERSION = "2.0.0"
 KERNEL_VERSION = "6.8.0-45-generic"
 UBUNTU_CODENAME = "noble"
 UBUNTU_VERSION = "24.04"
@@ -38,6 +42,7 @@ LOGS_DIR = BUILD_DIR / "logs"
 WORK_DIR = BUILD_DIR / "work"
 CONFIGS_DIR = BUILD_DIR / "configs"
 MANIFEST_DIR = BUILD_DIR / "manifests"
+OVERLAYS_DIR = BUILD_DIR / "overlays"
 
 UBUNTU_MIRROR = "http://archive.ubuntu.com/ubuntu"
 
@@ -72,6 +77,21 @@ REQUIRED_TOOLS = {
         "package": "syslinux",
         "description": "Lightweight boot loader",
         "required": False
+    },
+    "grub-mkimage": {
+        "package": "grub-pc-bin",
+        "description": "GRUB bootloader tools",
+        "required": False
+    },
+    "rsync": {
+        "package": "rsync",
+        "description": "Fast file copy with permissions",
+        "required": True
+    },
+    "gpg": {
+        "package": "gnupg",
+        "description": "GPG signing tool",
+        "required": False
     }
 }
 
@@ -84,6 +104,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "freemium",
+        "tier": "free",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -115,6 +137,13 @@ EDITIONS = {
             "fonts-liberation",
             "plymouth",
             "plymouth-theme-spinner",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-security-suite.service",
         ],
         "size_mb": 1500,
         "description": "Basic Linux with XFCE desktop - Free edition"
@@ -127,6 +156,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "basic",
+        "tier": "basic",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -153,27 +184,20 @@ EDITIONS = {
             "npm",
             "docker.io",
             "docker-compose",
-            "code",
             "libreoffice",
             "gimp",
             "inkscape",
             "vlc",
             "audacity",
-            "kdenlive",
             "gparted",
             "synaptic",
             "bleachbit",
-            "virtualbox",
-            "qemu-system-x86",
-            "virt-manager",
-            "libvirt-daemon-system",
             "firewalld",
             "fail2ban",
             "clamav",
             "clamav-daemon",
             "rkhunter",
             "lynis",
-            "aide",
             "firefox",
             "chromium-browser",
             "thunderbird",
@@ -185,6 +209,14 @@ EDITIONS = {
             "fonts-ubuntu",
             "fonts-liberation",
             "fonts-noto",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-backup-suite.service",
+            "aegis-security-suite.service",
         ],
         "extra_packages": 150,
         "size_mb": 3500,
@@ -198,6 +230,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "workplace",
+        "tier": "professional",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -221,7 +255,6 @@ EDITIONS = {
             "thunderbird-gnome-support",
             "gimp",
             "gimp-data-extras",
-            "gimp-plugin-registry",
             "inkscape",
             "scribus",
             "evince",
@@ -250,7 +283,14 @@ EDITIONS = {
             "fonts-noto",
             "fonts-dejavu",
             "fonts-open-sans",
-            "ttf-mscorefonts-installer",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-enterprise-suite.service",
+            "aegis-it-management.service",
         ],
         "size_mb": 3000,
         "description": "Professional productivity workstation for office environments"
@@ -263,6 +303,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "gamer",
+        "tier": "gamer",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -307,8 +349,16 @@ EDITIONS = {
             "chromium-browser",
             "network-manager",
             "pulseaudio",
+            "pipewire",
             "pavucontrol",
             "fonts-ubuntu",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-gamer-performance.service",
         ],
         "gaming_optimized": True,
         "size_mb": 4500,
@@ -322,6 +372,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "aidev",
+        "tier": "professional",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -349,18 +401,13 @@ EDITIONS = {
             "ipython3",
             "nvidia-cuda-toolkit",
             "nvidia-cuda-dev",
-            "nvidia-cudnn",
             "nvidia-driver-550",
             "nvidia-settings",
-            "libnvinfer8",
-            "libnvinfer-dev",
-            "code",
             "spyder",
             "postgresql",
             "postgresql-client",
             "redis-server",
             "redis-tools",
-            "mongodb-org",
             "docker.io",
             "docker-compose",
             "nodejs",
@@ -370,6 +417,14 @@ EDITIONS = {
             "network-manager",
             "pulseaudio",
             "fonts-ubuntu",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-inference-engine.service",
+            "aegis-ml-studio.service",
         ],
         "ml_frameworks": ["tensorflow", "pytorch", "keras", "scikit-learn", "xgboost", "lightgbm", "huggingface-transformers"],
         "size_mb": 6000,
@@ -383,6 +438,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": "xfce4",
+        "overlay_name": "gamer-ai",
+        "tier": "ultimate",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -420,8 +477,6 @@ EDITIONS = {
             "jupyter-notebook",
             "nvidia-cuda-toolkit",
             "nvidia-cuda-dev",
-            "nvidia-cudnn",
-            "code",
             "spyder",
             "docker.io",
             "docker-compose",
@@ -429,8 +484,17 @@ EDITIONS = {
             "chromium-browser",
             "network-manager",
             "pulseaudio",
+            "pipewire",
             "pavucontrol",
             "fonts-ubuntu",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-ai-gaming.service",
+            "aegis-performance-ai.service",
         ],
         "gaming_optimized": True,
         "ml_frameworks": ["tensorflow", "pytorch", "keras", "scikit-learn"],
@@ -445,6 +509,8 @@ EDITIONS = {
         "ubuntu_base": UBUNTU_CODENAME,
         "kernel": f"linux-image-{KERNEL_VERSION}",
         "desktop": None,
+        "overlay_name": "server",
+        "tier": "enterprise",
         "packages": [
             f"linux-image-{KERNEL_VERSION}",
             "linux-headers-generic",
@@ -467,9 +533,6 @@ EDITIONS = {
             "containerd",
             "prometheus",
             "prometheus-node-exporter",
-            "grafana",
-            "nagios4",
-            "nagios-plugins",
             "logrotate",
             "rsyslog",
             "cron",
@@ -496,6 +559,14 @@ EDITIONS = {
             "unzip",
             "zip",
             "tar",
+            "casper",
+            "lupin-casper",
+            "grub-efi-amd64-signed",
+            "shim-signed",
+        ],
+        "systemd_services": [
+            "aegis-monitoring.service",
+            "aegis-server-security.service",
         ],
         "enterprise_ready": True,
         "size_mb": 3000,
@@ -504,7 +575,7 @@ EDITIONS = {
 }
 
 
-def get_file_checksum(filepath, algorithm='sha256'):
+def get_file_checksum(filepath: Path, algorithm: str = 'sha256') -> Optional[str]:
     """Calculate file checksum"""
     hash_func = hashlib.new(algorithm)
     try:
@@ -516,13 +587,13 @@ def get_file_checksum(filepath, algorithm='sha256'):
         return None
 
 
-def is_replit_environment():
+def is_replit_environment() -> bool:
     """Check if running on Replit platform"""
     return bool(os.environ.get('REPL_ID') or os.environ.get('REPLIT_DEPLOYMENT') or 
                 os.environ.get('REPL_SLUG') or os.environ.get('REPLIT'))
 
 
-def has_root_privileges():
+def has_root_privileges() -> bool:
     """Check if running with root privileges or can use sudo"""
     if os.geteuid() == 0:
         return True
@@ -537,7 +608,7 @@ def has_root_privileges():
         return False
 
 
-def check_tool_available(tool_name, tool_info):
+def check_tool_available(tool_name: str, tool_info: Dict) -> bool:
     """Check if a specific tool is available"""
     if shutil.which(tool_name):
         return True
@@ -546,7 +617,7 @@ def check_tool_available(tool_name, tool_info):
     return False
 
 
-def check_build_dependencies(verbose=False):
+def check_build_dependencies(verbose: bool = False) -> Tuple[bool, List[str], List[str], List[str]]:
     """
     Check all build dependencies and return detailed status.
     Returns: (all_required_available, missing_required, missing_optional, available)
@@ -576,7 +647,7 @@ def check_build_dependencies(verbose=False):
     return all_required_available, missing_required, missing_optional, available
 
 
-def check_build_environment(verbose=False):
+def check_build_environment(verbose: bool = False) -> Dict[str, Any]:
     """
     Comprehensive check of the build environment.
     Returns: dict with environment status
@@ -648,16 +719,9 @@ def check_build_environment(verbose=False):
     return env_status
 
 
-def should_simulate(force_simulate=False, force_real=False):
+def should_simulate(force_simulate: bool = False, force_real: bool = False) -> Tuple[bool, str]:
     """
     Determine if build should run in simulation mode.
-    
-    Args:
-        force_simulate: User explicitly requested simulation
-        force_real: User explicitly requested real build
-    
-    Returns:
-        (simulate: bool, reason: str)
     """
     if force_simulate:
         return True, "Simulation explicitly requested"
@@ -686,14 +750,51 @@ def should_simulate(force_simulate=False, force_real=False):
         return True, env['simulation_reason']
 
 
+class ProgressReporter:
+    """Progress reporting for long operations"""
+    
+    def __init__(self, total_steps: int, description: str = ""):
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.description = description
+        self.start_time = datetime.now()
+    
+    def update(self, step: int = None, message: str = ""):
+        if step is not None:
+            self.current_step = step
+        else:
+            self.current_step += 1
+        
+        percent = (self.current_step / self.total_steps) * 100
+        elapsed = (datetime.now() - self.start_time).total_seconds()
+        
+        bar_width = 40
+        filled = int(bar_width * self.current_step / self.total_steps)
+        bar = '█' * filled + '░' * (bar_width - filled)
+        
+        status = f"\r[{bar}] {percent:5.1f}% ({self.current_step}/{self.total_steps})"
+        if message:
+            status += f" - {message}"
+        
+        print(status, end='', flush=True)
+        
+        if self.current_step >= self.total_steps:
+            print()
+    
+    def finish(self):
+        self.update(self.total_steps, "Complete!")
+
+
 class AegisBuilder:
     """Main build class for Aegis OS"""
     
-    def __init__(self, edition, simulate=False, force_real=False, verbose=False):
+    def __init__(self, edition: str, simulate: bool = False, force_real: bool = False, 
+                 verbose: bool = False, gpg_key: str = None):
         self.edition = edition
         self.config = EDITIONS[edition]
         self.verbose = verbose
         self.force_real = force_real
+        self.gpg_key = gpg_key
         
         should_sim, sim_reason = should_simulate(force_simulate=simulate, force_real=force_real)
         self.simulate = should_sim
@@ -707,13 +808,14 @@ class AegisBuilder:
         self.manifest = {}
         self.build_start_time = None
         self.mounted_points = []
+        self.cleanup_handlers = []
         
         for d in [OUTPUT_DIR, LOGS_DIR, MANIFEST_DIR, self.work_dir]:
             d.mkdir(parents=True, exist_ok=True)
             
         self.log_file = LOGS_DIR / f"build-{edition}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
         
-    def log(self, message, level="INFO"):
+    def log(self, message: str, level: str = "INFO"):
         """Log message to console and file"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         prefix = ""
@@ -727,14 +829,18 @@ class AegisBuilder:
             print(f"\033[93m{log_msg}\033[0m")
         elif level == "SUCCESS":
             print(f"\033[92m{log_msg}\033[0m")
+        elif level == "PROGRESS":
+            print(f"\033[94m{log_msg}\033[0m")
         else:
             print(log_msg)
             
         with open(self.log_file, 'a') as f:
             f.write(log_msg + "\n")
     
-    def run_command(self, cmd, shell=False, check=True, capture=True, sudo=False):
-        """Execute shell command with logging"""
+    def run_command(self, cmd: str, shell: bool = False, check: bool = True, 
+                    capture: bool = True, sudo: bool = False, 
+                    timeout: int = None) -> str:
+        """Execute shell command with logging and error handling"""
         if sudo and os.geteuid() != 0:
             if isinstance(cmd, str):
                 cmd = f"sudo {cmd}"
@@ -756,7 +862,8 @@ class AegisBuilder:
                 shell=shell,
                 capture_output=capture,
                 text=True,
-                check=check
+                check=check,
+                timeout=timeout
             )
             if result.stdout and self.verbose:
                 self.log(f"Output: {result.stdout[:500]}")
@@ -764,13 +871,20 @@ class AegisBuilder:
         except subprocess.CalledProcessError as e:
             self.log(f"Command failed: {e.stderr}", "ERROR")
             raise
+        except subprocess.TimeoutExpired:
+            self.log(f"Command timed out: {cmd}", "ERROR")
+            raise
     
-    def chroot_run(self, cmd):
+    def chroot_run(self, cmd: str, timeout: int = 600) -> str:
         """Run command in chroot environment"""
         if self.simulate:
             self.log(f"[SIMULATED CHROOT] {cmd}")
             return ""
-        return self.run_command(f"chroot {self.chroot_dir} /bin/bash -c '{cmd}'", shell=True)
+        return self.run_command(
+            f"chroot {self.chroot_dir} /bin/bash -c '{cmd}'", 
+            shell=True,
+            timeout=timeout
+        )
     
     def mount_chroot_filesystems(self):
         """Mount required filesystems for chroot"""
@@ -783,6 +897,7 @@ class AegisBuilder:
             ("sys", "sys", "-t sysfs"),
             ("dev", "/dev", "--bind"),
             ("dev/pts", "/dev/pts", "--bind"),
+            ("run", "/run", "--bind"),
         ]
         
         for target, source, opts in mounts:
@@ -795,21 +910,29 @@ class AegisBuilder:
                 self.log(f"Warning: Failed to mount {target}: {e}", "WARN")
     
     def unmount_chroot_filesystems(self):
-        """Unmount chroot filesystems"""
+        """Unmount chroot filesystems safely"""
         if self.simulate:
             return
         
         for mount_point in reversed(self.mounted_points):
             try:
-                self.run_command(f"umount {mount_point}", shell=True, check=False)
+                self.run_command(f"umount -l {mount_point}", shell=True, check=False)
             except Exception:
-                try:
-                    self.run_command(f"umount -l {mount_point}", shell=True, check=False)
-                except Exception:
-                    pass
+                pass
         self.mounted_points = []
     
-    def check_dependencies(self):
+    def cleanup(self):
+        """Cleanup resources on exit"""
+        self.log("Cleaning up resources...")
+        self.unmount_chroot_filesystems()
+        
+        for handler in self.cleanup_handlers:
+            try:
+                handler()
+            except Exception as e:
+                self.log(f"Cleanup handler failed: {e}", "WARN")
+    
+    def check_dependencies(self) -> bool:
         """Verify build dependencies are installed"""
         self.log("Checking build dependencies...")
         
@@ -832,9 +955,9 @@ class AegisBuilder:
         self.log("All required dependencies satisfied", "SUCCESS")
         return True
     
-    def create_base_system(self):
+    def create_base_system(self) -> Path:
         """Create base Ubuntu system using debootstrap"""
-        self.log(f"Creating base system for {self.edition}...")
+        self.log(f"Creating base system for {self.edition}...", "PROGRESS")
         
         if self.chroot_dir.exists():
             self.log("Removing existing chroot directory...")
@@ -845,27 +968,33 @@ class AegisBuilder:
         
         if self.simulate:
             dirs = ["bin", "boot", "boot/grub", "dev", "etc", "etc/apt", 
-                   "etc/default", "etc/skel/.config", "home", "lib", "lib64", 
-                   "lib/modules", "media", "mnt", "opt", "proc", "root", "run", 
-                   "sbin", "srv", "sys", "tmp", "usr", "usr/bin", "usr/lib",
-                   "usr/share", "usr/local/bin", "var", "var/lib", "var/log",
-                   "var/lib/aegis", "var/cache/apt/archives"]
+                   "etc/default", "etc/skel/.config", "etc/aegis", "home", 
+                   "lib", "lib64", "lib/modules", "media", "mnt", "opt", 
+                   "proc", "root", "run", "sbin", "srv", "sys", "tmp", 
+                   "usr", "usr/bin", "usr/lib", "usr/share", "usr/local/bin",
+                   "usr/share/applications", "var", "var/lib", "var/log",
+                   "var/lib/aegis", "var/cache/apt/archives",
+                   "etc/systemd/system", "etc/xdg"]
             for d in dirs:
                 (self.chroot_dir / d).mkdir(parents=True, exist_ok=True)
                 
             self._create_simulated_files()
         else:
             self.log(f"Running debootstrap for {UBUNTU_CODENAME}...")
-            self.log("This may take 10-30 minutes depending on network speed...")
+            self.log("This may take 10-30 minutes depending on network speed...", "PROGRESS")
             
             self.run_command(
-                f"debootstrap --arch=amd64 --variant=minbase {UBUNTU_CODENAME} {self.chroot_dir} {UBUNTU_MIRROR}",
-                shell=True
+                f"debootstrap --arch=amd64 --variant=minbase "
+                f"--include=apt-transport-https,ca-certificates,gnupg,locales "
+                f"{UBUNTU_CODENAME} {self.chroot_dir} {UBUNTU_MIRROR}",
+                shell=True,
+                timeout=3600
             )
             
             sources_list = f"""deb {UBUNTU_MIRROR} {UBUNTU_CODENAME} main restricted universe multiverse
 deb {UBUNTU_MIRROR} {UBUNTU_CODENAME}-updates main restricted universe multiverse
 deb {UBUNTU_MIRROR} {UBUNTU_CODENAME}-security main restricted universe multiverse
+deb {UBUNTU_MIRROR} {UBUNTU_CODENAME}-backports main restricted universe multiverse
 """
             (self.chroot_dir / "etc/apt/sources.list").write_text(sources_list)
             
@@ -896,6 +1025,8 @@ VERSION_ID="{VERSION}"
 HOME_URL="https://aegis-os.io"
 SUPPORT_URL="https://aegis-os.io/support"
 BUG_REPORT_URL="https://aegis-os.io/bugs"
+AEGIS_EDITION="{self.edition}"
+AEGIS_TIER="{self.config.get('tier', 'free')}"
 """
         (self.chroot_dir / "etc/os-release").write_text(os_release)
         
@@ -937,6 +1068,8 @@ VERSION_ID="{VERSION}"
 HOME_URL="https://aegis-os.io"
 SUPPORT_URL="https://aegis-os.io/support"
 BUG_REPORT_URL="https://aegis-os.io/bugs"
+AEGIS_EDITION="{self.edition}"
+AEGIS_TIER="{self.config.get('tier', 'free')}"
 """
         (self.chroot_dir / "etc/os-release").write_text(os_release)
         
@@ -944,9 +1077,226 @@ BUG_REPORT_URL="https://aegis-os.io/bugs"
             self.config['name'].replace(" ", "-").lower() + "\n"
         )
     
-    def install_packages(self, chroot_dir):
+    def apply_overlays(self):
+        """Apply common and edition-specific overlays to chroot"""
+        self.log("Applying overlays...", "PROGRESS")
+        
+        common_overlay = OVERLAYS_DIR / "common"
+        edition_overlay = OVERLAYS_DIR / self.config.get('overlay_name', self.edition)
+        
+        overlays_applied = []
+        
+        if common_overlay.exists():
+            self.log(f"Applying common overlay from {common_overlay}")
+            self._apply_overlay(common_overlay)
+            overlays_applied.append("common")
+        else:
+            self.log(f"Warning: Common overlay not found at {common_overlay}", "WARN")
+        
+        if edition_overlay.exists():
+            self.log(f"Applying edition overlay from {edition_overlay}")
+            self._apply_overlay(edition_overlay)
+            overlays_applied.append(self.config.get('overlay_name', self.edition))
+        else:
+            self.log(f"Warning: Edition overlay not found at {edition_overlay}", "WARN")
+        
+        self._make_scripts_executable()
+        
+        self.manifest['overlays'] = {
+            'applied': overlays_applied,
+            'common_path': str(common_overlay),
+            'edition_path': str(edition_overlay),
+            'applied_at': datetime.now(timezone.utc).isoformat()
+        }
+        
+        self.log(f"Overlays applied: {', '.join(overlays_applied)}", "SUCCESS")
+    
+    def _apply_overlay(self, overlay_path: Path):
+        """Apply a single overlay directory to chroot"""
+        if self.simulate:
+            self.log(f"[SIMULATED] Would rsync {overlay_path}/ to {self.chroot_dir}/")
+            for root, dirs, files in os.walk(overlay_path):
+                for file in files:
+                    src = Path(root) / file
+                    rel_path = src.relative_to(overlay_path)
+                    dst = self.chroot_dir / rel_path
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        shutil.copy2(src, dst)
+                    except Exception as e:
+                        self.log(f"Warning: Failed to copy {src}: {e}", "WARN")
+            return
+        
+        if shutil.which('rsync'):
+            self.run_command(
+                f"rsync -avP --chmod=D755,F644 {overlay_path}/ {self.chroot_dir}/",
+                shell=True
+            )
+        else:
+            for root, dirs, files in os.walk(overlay_path):
+                for file in files:
+                    src = Path(root) / file
+                    rel_path = src.relative_to(overlay_path)
+                    dst = self.chroot_dir / rel_path
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    src_stat = src.stat()
+                    os.chmod(dst, src_stat.st_mode)
+    
+    def _make_scripts_executable(self):
+        """Make all scripts in usr/local/bin executable"""
+        bin_dir = self.chroot_dir / "usr/local/bin"
+        
+        if not bin_dir.exists():
+            return
+        
+        script_count = 0
+        for script in bin_dir.iterdir():
+            if script.is_file():
+                if self.simulate:
+                    self.log(f"[SIMULATED] chmod +x {script}")
+                else:
+                    os.chmod(script, 0o755)
+                script_count += 1
+        
+        self.log(f"Made {script_count} scripts executable in usr/local/bin")
+    
+    def run_post_build_hooks(self):
+        """Run post-build scripts and configurations"""
+        self.log("Running post-build hooks...", "PROGRESS")
+        
+        self._enable_systemd_services()
+        self._compile_python_bytecode()
+        self._generate_tier_json()
+        self._update_initramfs()
+        self._configure_display_manager()
+        
+        self.log("Post-build hooks completed", "SUCCESS")
+    
+    def _enable_systemd_services(self):
+        """Enable systemd services defined in overlays"""
+        services = self.config.get('systemd_services', [])
+        
+        if not services:
+            self.log("No systemd services to enable")
+            return
+        
+        self.log(f"Enabling {len(services)} systemd services...")
+        
+        for service in services:
+            service_path = self.chroot_dir / "etc/systemd/system" / service
+            if service_path.exists() or self.simulate:
+                if self.simulate:
+                    self.log(f"[SIMULATED] systemctl enable {service}")
+                else:
+                    try:
+                        self.mount_chroot_filesystems()
+                        self.chroot_run(f"systemctl enable {service}")
+                    except Exception as e:
+                        self.log(f"Warning: Failed to enable {service}: {e}", "WARN")
+                    finally:
+                        self.unmount_chroot_filesystems()
+            else:
+                self.log(f"Warning: Service file not found: {service}", "WARN")
+    
+    def _compile_python_bytecode(self):
+        """Compile Python tools to bytecode for faster startup"""
+        self.log("Compiling Python tools to bytecode...")
+        
+        python_dirs = [
+            self.chroot_dir / "usr/share/aegis",
+            self.chroot_dir / "usr/local/lib/python3",
+        ]
+        
+        compiled_count = 0
+        for py_dir in python_dirs:
+            if py_dir.exists():
+                if self.simulate:
+                    py_files = list(py_dir.rglob("*.py"))
+                    self.log(f"[SIMULATED] Would compile {len(py_files)} Python files in {py_dir}")
+                    compiled_count += len(py_files)
+                else:
+                    try:
+                        compileall.compile_dir(str(py_dir), quiet=1, force=True)
+                        py_files = list(py_dir.rglob("*.py"))
+                        compiled_count += len(py_files)
+                    except Exception as e:
+                        self.log(f"Warning: Failed to compile Python in {py_dir}: {e}", "WARN")
+        
+        self.log(f"Compiled {compiled_count} Python files to bytecode")
+    
+    def _generate_tier_json(self):
+        """Generate /etc/aegis/tier.json with edition info"""
+        self.log("Generating tier.json...")
+        
+        aegis_dir = self.chroot_dir / "etc/aegis"
+        aegis_dir.mkdir(parents=True, exist_ok=True)
+        
+        tier_info = {
+            "edition": self.edition,
+            "edition_name": self.config['name'],
+            "tier": self.config.get('tier', 'free'),
+            "version": VERSION,
+            "codename": self.config['codename'],
+            "kernel": KERNEL_VERSION,
+            "build_date": BUILD_TIMESTAMP,
+            "features": {
+                "desktop": self.config.get('desktop'),
+                "gaming_optimized": self.config.get('gaming_optimized', False),
+                "enterprise_ready": self.config.get('enterprise_ready', False),
+                "ml_frameworks": self.config.get('ml_frameworks', []),
+            },
+            "services": self.config.get('systemd_services', []),
+            "license_required": self.config.get('tier', 'free') != 'free',
+            "support_url": "https://aegis-os.io/support",
+            "documentation_url": "https://aegis-os.io/docs"
+        }
+        
+        tier_json_path = aegis_dir / "tier.json"
+        with open(tier_json_path, 'w') as f:
+            json.dump(tier_info, f, indent=2)
+        
+        self.log(f"Generated tier.json: {tier_json_path}")
+    
+    def _update_initramfs(self):
+        """Update initramfs after overlay application"""
+        self.log("Updating initramfs...")
+        
+        if self.simulate:
+            self.log("[SIMULATED] Would run update-initramfs -u")
+            return
+        
+        try:
+            self.mount_chroot_filesystems()
+            self.chroot_run("update-initramfs -u -k all", timeout=600)
+        except Exception as e:
+            self.log(f"Warning: Failed to update initramfs: {e}", "WARN")
+        finally:
+            self.unmount_chroot_filesystems()
+    
+    def _configure_display_manager(self):
+        """Configure display manager for desktop editions"""
+        if not self.config.get('desktop'):
+            return
+        
+        self.log("Configuring display manager...")
+        
+        lightdm_conf = """[Seat:*]
+autologin-user=aegis
+autologin-user-timeout=0
+user-session=xfce
+greeter-session=lightdm-gtk-greeter
+"""
+        
+        lightdm_dir = self.chroot_dir / "etc/lightdm/lightdm.conf.d"
+        lightdm_dir.mkdir(parents=True, exist_ok=True)
+        (lightdm_dir / "50-aegis.conf").write_text(lightdm_conf)
+        
+        self.log("Display manager configured")
+    
+    def install_packages(self, chroot_dir: Path):
         """Install edition-specific packages"""
-        self.log(f"Installing packages for {self.edition}...")
+        self.log(f"Installing packages for {self.edition}...", "PROGRESS")
         
         packages = self.config['packages']
         
@@ -974,33 +1324,40 @@ BUG_REPORT_URL="https://aegis-os.io/bugs"
             
             try:
                 self.log("Updating package lists...")
-                self.chroot_run("apt-get update")
+                self.chroot_run("apt-get update", timeout=300)
                 
                 self.log("Upgrading base system...")
-                self.chroot_run("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y")
+                self.chroot_run("DEBIAN_FRONTEND=noninteractive apt-get upgrade -y", timeout=600)
                 
                 self.log(f"Installing {len(packages)} packages...")
-                self.log("This may take 30-60 minutes depending on edition size...")
+                self.log("This may take 30-60 minutes depending on edition size...", "PROGRESS")
                 
+                progress = ProgressReporter(len(packages), "Installing packages")
                 batch_size = 20
+                
                 for i in range(0, len(packages), batch_size):
                     batch = packages[i:i+batch_size]
                     pkg_string = " ".join(batch)
-                    self.log(f"Installing batch {i//batch_size + 1}/{(len(packages) + batch_size - 1)//batch_size}...")
                     
                     try:
                         self.chroot_run(
-                            f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {pkg_string}"
+                            f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {pkg_string}",
+                            timeout=1800
                         )
+                        progress.update(min(i + batch_size, len(packages)), 
+                                       f"Batch {i//batch_size + 1} complete")
                     except Exception as e:
                         self.log(f"Warning: Some packages in batch failed: {e}", "WARN")
                         for pkg in batch:
                             try:
                                 self.chroot_run(
-                                    f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {pkg}"
+                                    f"DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {pkg}",
+                                    timeout=300
                                 )
                             except Exception:
                                 self.log(f"Warning: Failed to install {pkg}", "WARN")
+                
+                progress.finish()
                 
                 self.log("Cleaning up package cache...")
                 self.chroot_run("apt-get clean")
@@ -1011,9 +1368,9 @@ BUG_REPORT_URL="https://aegis-os.io/bugs"
         
         self.log(f"Package installation complete ({len(packages)} packages)", "SUCCESS")
     
-    def configure_system(self, chroot_dir):
+    def configure_system(self, chroot_dir: Path):
         """Apply system configurations"""
-        self.log("Configuring system...")
+        self.log("Configuring system...", "PROGRESS")
         
         hostname = self.config['name'].replace(" ", "-").lower()
         issue = f"\\n \\l\\n{self.config['name']} {VERSION}\\n"
@@ -1063,6 +1420,10 @@ vm.swappiness=10
 vm.vfs_cache_pressure=50
 net.core.netdev_max_backlog=16384
 kernel.sched_autogroup_enabled=0
+kernel.sched_min_granularity_ns=1000000
+kernel.sched_wakeup_granularity_ns=500000
+vm.dirty_ratio=10
+vm.dirty_background_ratio=5
 """
             (chroot_dir / "etc/sysctl.d/99-aegis-gaming.conf").parent.mkdir(
                 parents=True, exist_ok=True
@@ -1076,6 +1437,12 @@ net.ipv4.tcp_syncookies=1
 net.ipv4.conf.all.rp_filter=1
 net.ipv4.conf.default.rp_filter=1
 kernel.randomize_va_space=2
+net.ipv4.tcp_timestamps=0
+net.ipv4.conf.all.accept_redirects=0
+net.ipv4.conf.default.accept_redirects=0
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.conf.default.send_redirects=0
+net.ipv4.icmp_echo_ignore_broadcasts=1
 """
             (chroot_dir / "etc/sysctl.d/99-aegis-security.conf").parent.mkdir(
                 parents=True, exist_ok=True
@@ -1092,9 +1459,9 @@ UUID=SWAP       none            swap    sw              0       0
         
         self.log("System configured", "SUCCESS")
     
-    def create_squashfs(self, chroot_dir):
+    def create_squashfs(self, chroot_dir: Path) -> Path:
         """Create compressed filesystem"""
-        self.log("Creating squashfs filesystem...")
+        self.log("Creating squashfs filesystem...", "PROGRESS")
         
         self.squashfs_dir.mkdir(parents=True, exist_ok=True)
         squashfs_path = self.squashfs_dir / "filesystem.squashfs"
@@ -1128,15 +1495,17 @@ var/cache/apt/archives/*.deb
 var/lib/apt/lists/*
 boot/vmlinuz*
 boot/initrd*
+lost+found
 """)
             
-            self.log("Compressing filesystem with mksquashfs (this may take a while)...")
+            self.log("Compressing filesystem with mksquashfs (this may take a while)...", "PROGRESS")
             
             self.run_command(
                 f"mksquashfs {chroot_dir} {squashfs_path} "
                 f"-comp xz -b 1M -Xdict-size 100% "
-                f"-ef {exclude_list} -noappend",
-                shell=True
+                f"-ef {exclude_list} -noappend -progress",
+                shell=True,
+                timeout=7200
             )
             
             manifest_file = self.squashfs_dir / "filesystem.manifest"
@@ -1178,9 +1547,11 @@ boot/initrd*
         
         dirs = [
             "boot/grub",
+            "boot/grub/x86_64-efi",
             "isolinux",
             "casper",
             "EFI/boot",
+            "EFI/ubuntu",
             ".disk",
             "preseed",
             "pool/main"
@@ -1190,6 +1561,13 @@ boot/initrd*
         
         grub_cfg = f"""set default=0
 set timeout=10
+set gfxmode=auto
+set gfxpayload=keep
+insmod all_video
+insmod gfxterm
+insmod png
+
+terminal_output gfxterm
 
 menuentry "{self.config['name']}" {{
     linux /casper/vmlinuz boot=casper quiet splash ---
@@ -1201,6 +1579,11 @@ menuentry "{self.config['name']} (Safe Mode)" {{
     initrd /casper/initrd
 }}
 
+menuentry "{self.config['name']} (Recovery)" {{
+    linux /casper/vmlinuz boot=casper single ---
+    initrd /casper/initrd
+}}
+
 menuentry "Check disc for defects" {{
     linux /casper/vmlinuz boot=casper integrity-check ---
     initrd /casper/initrd
@@ -1209,8 +1592,16 @@ menuentry "Check disc for defects" {{
 menuentry "Memory test" {{
     linux16 /boot/memtest86+.bin
 }}
+
+menuentry "Boot from first hard disk" {{
+    set root=(hd0)
+    chainloader +1
+}}
 """
         (self.iso_dir / "boot/grub/grub.cfg").write_text(grub_cfg)
+        
+        grub_efi_cfg = grub_cfg
+        (self.iso_dir / "EFI/boot/grub.cfg").write_text(grub_efi_cfg)
         
         isolinux_cfg = f"""DEFAULT vesamenu.c32
 TIMEOUT 100
@@ -1223,23 +1614,35 @@ MENU COLOR title 1 #ffffffff #00000000 none
 MENU COLOR sel 7 #ffffffff #76a1d0ff all
 MENU COLOR hotsel 7 #ffffffff #76a1d0ff all
 MENU COLOR tabmsg 0 #ffffffff #00000000 none
+MENU RESOLUTION 800 600
 
 LABEL live
-  MENU LABEL Start {self.config['name']}
+  MENU LABEL ^Start {self.config['name']}
+  MENU DEFAULT
   KERNEL /casper/vmlinuz
   APPEND initrd=/casper/initrd boot=casper quiet splash ---
 
 LABEL live-safe
-  MENU LABEL Start {self.config['name']} (Safe Graphics)
+  MENU LABEL Start {self.config['name']} (^Safe Graphics)
   KERNEL /casper/vmlinuz
   APPEND initrd=/casper/initrd boot=casper nomodeset ---
 
+LABEL live-recovery
+  MENU LABEL Start {self.config['name']} (^Recovery Mode)
+  KERNEL /casper/vmlinuz
+  APPEND initrd=/casper/initrd boot=casper single ---
+
+LABEL check
+  MENU LABEL ^Check disc for defects
+  KERNEL /casper/vmlinuz
+  APPEND initrd=/casper/initrd boot=casper integrity-check ---
+
 LABEL memtest
-  MENU LABEL Memory Test
+  MENU LABEL ^Memory Test
   KERNEL /boot/memtest86+.bin
 
 LABEL hd
-  MENU LABEL Boot from first hard disk
+  MENU LABEL ^Boot from first hard disk
   LOCALBOOT 0x80
 """
         (self.iso_dir / "isolinux/isolinux.cfg").write_text(isolinux_cfg)
@@ -1248,6 +1651,7 @@ LABEL hd
         (self.iso_dir / ".disk/info").write_text(disk_info)
         (self.iso_dir / ".disk/base_installable").touch()
         (self.iso_dir / ".disk/cd_type").write_text("full_cd/single")
+        (self.iso_dir / ".disk/release_notes_url").write_text("https://aegis-os.io/release-notes\n")
         
         readme = f"""
 {self.config['name']} {VERSION}
@@ -1262,9 +1666,13 @@ System Requirements:
 - Graphics: Any GPU with OpenGL 3.0 support
 
 Quick Start:
-1. Boot from this ISO
+1. Boot from this ISO (USB or DVD)
 2. Select "Start {self.config['name']}" from the menu
-3. Follow the on-screen installer
+3. Use the desktop or run the installer
+
+Boot Options:
+- BIOS: Select the CD/USB drive from your BIOS boot menu
+- UEFI: The ISO supports UEFI Secure Boot
 
 Documentation: https://aegis-os.io/docs
 Support: https://aegis-os.io/support
@@ -1280,8 +1688,10 @@ Build Information:
         
         self.log("ISO structure created", "SUCCESS")
     
-    def copy_boot_files(self, casper_dir):
+    def copy_boot_files(self, casper_dir: Path):
         """Copy kernel and initrd to casper directory"""
+        self.log("Copying boot files...")
+        
         if self.simulate:
             (casper_dir / "vmlinuz").write_bytes(b'\x00' * 1024)
             (casper_dir / "initrd").write_bytes(b'\x00' * 2048)
@@ -1317,7 +1727,9 @@ Build Information:
             (casper_dir / "initrd").write_bytes(b'\x00' * 2048)
     
     def copy_isolinux_files(self):
-        """Copy isolinux boot files"""
+        """Copy isolinux boot files for BIOS boot"""
+        self.log("Copying ISOLINUX files for BIOS boot...")
+        
         if self.simulate:
             return
         
@@ -1332,7 +1744,10 @@ Build Information:
             "ldlinux.c32",
             "libcom32.c32",
             "libutil.c32",
-            "vesamenu.c32"
+            "vesamenu.c32",
+            "libmenu.c32",
+            "libgpl.c32",
+            "hdt.c32",
         ]
         
         for filename in required_files:
@@ -1342,15 +1757,109 @@ Build Information:
                     shutil.copy2(src, self.iso_dir / "isolinux" / filename)
                     break
     
-    def create_iso(self, squashfs_path):
-        """Generate bootable ISO"""
-        self.log("Creating ISO image...")
+    def setup_efi_boot(self):
+        """Setup EFI boot files for UEFI systems"""
+        self.log("Setting up EFI boot...")
+        
+        if self.simulate:
+            (self.iso_dir / "EFI/boot/bootx64.efi").write_bytes(b'\x00' * 1024)
+            (self.iso_dir / "EFI/boot/grubx64.efi").write_bytes(b'\x00' * 1024)
+            return
+        
+        efi_sources = [
+            ("/usr/lib/shim/shimx64.efi.signed", "EFI/boot/bootx64.efi"),
+            ("/usr/lib/shim/shimx64.efi", "EFI/boot/bootx64.efi"),
+            ("/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed", "EFI/boot/grubx64.efi"),
+            ("/usr/lib/grub/x86_64-efi/grub.efi", "EFI/boot/grubx64.efi"),
+        ]
+        
+        for src_path, dst_rel in efi_sources:
+            src = Path(src_path)
+            dst = self.iso_dir / dst_rel
+            if src.exists() and not dst.exists():
+                shutil.copy2(src, dst)
+                self.log(f"Copied EFI file: {src.name}")
+        
+        efi_grub_cfg = f"""search --set=root --file /.disk/info
+set prefix=($root)/boot/grub
+configfile $prefix/grub.cfg
+"""
+        (self.iso_dir / "EFI/boot/grub.cfg").write_text(efi_grub_cfg)
+        
+        if shutil.which('grub-mkimage'):
+            grub_modules = [
+                "part_gpt", "part_msdos", "fat", "iso9660", "ntfs",
+                "hfs", "hfsplus", "ext2", "normal", "chain", "boot",
+                "configfile", "linux", "linuxefi", "multiboot",
+                "search", "search_fs_uuid", "search_fs_file", "search_label",
+                "gfxterm", "gfxmenu", "video", "video_bochs", "video_cirrus",
+                "all_video", "png", "gzio", "gettext", "font", "echo",
+                "ls", "cat", "help", "loopback", "squash4", "test", "true"
+            ]
+            
+            try:
+                self.run_command(
+                    f"grub-mkimage -O x86_64-efi -o {self.iso_dir}/EFI/boot/grubx64.efi "
+                    f"-p /boot/grub {' '.join(grub_modules)}",
+                    shell=True
+                )
+                self.log("Generated GRUB EFI image")
+            except Exception as e:
+                self.log(f"Warning: Could not generate GRUB EFI image: {e}", "WARN")
+        
+        self.log("EFI boot setup complete")
+    
+    def create_efi_image(self) -> Optional[Path]:
+        """Create EFI boot image for xorriso"""
+        self.log("Creating EFI boot image...")
+        
+        efi_img_path = self.iso_dir / "boot/grub/efi.img"
+        
+        if self.simulate:
+            efi_img_path.write_bytes(b'\x00' * (4 * 1024 * 1024))
+            return efi_img_path
+        
+        try:
+            self.run_command(f"dd if=/dev/zero of={efi_img_path} bs=1M count=4", shell=True)
+            self.run_command(f"mkfs.vfat {efi_img_path}", shell=True)
+            
+            mount_point = self.work_dir / "efi_mount"
+            mount_point.mkdir(parents=True, exist_ok=True)
+            
+            self.run_command(f"mount -o loop {efi_img_path} {mount_point}", shell=True)
+            
+            (mount_point / "EFI/boot").mkdir(parents=True, exist_ok=True)
+            
+            for efi_file in (self.iso_dir / "EFI/boot").glob("*"):
+                if efi_file.is_file():
+                    shutil.copy2(efi_file, mount_point / "EFI/boot" / efi_file.name)
+            
+            self.run_command(f"umount {mount_point}", shell=True)
+            
+            self.log("EFI boot image created")
+            return efi_img_path
+            
+        except Exception as e:
+            self.log(f"Warning: Could not create EFI image: {e}", "WARN")
+            return None
+    
+    def create_iso(self, squashfs_path: Path) -> Path:
+        """Generate bootable hybrid ISO with BIOS and EFI support"""
+        self.log("Creating ISO image...", "PROGRESS")
         
         self.create_iso_structure()
         
         casper_dir = self.iso_dir / "casper"
         if squashfs_path.exists():
             shutil.copy2(squashfs_path, casper_dir / "filesystem.squashfs")
+        
+        manifest_src = self.squashfs_dir / "filesystem.manifest"
+        if manifest_src.exists():
+            shutil.copy2(manifest_src, casper_dir / "filesystem.manifest")
+        
+        size_src = self.squashfs_dir / "filesystem.size"
+        if size_src.exists():
+            shutil.copy2(size_src, casper_dir / "filesystem.size")
         
         self.copy_boot_files(casper_dir)
         
@@ -1361,6 +1870,9 @@ Build Information:
             self.log(f"[SIMULATED] ISO created: {self.iso_path}")
         else:
             self.copy_isolinux_files()
+            self.setup_efi_boot()
+            
+            efi_img = self.create_efi_image()
             
             isohdpfx_paths = [
                 "/usr/lib/ISOLINUX/isohdpfx.bin",
@@ -1375,28 +1887,44 @@ Build Information:
                     break
             
             if not isohdpfx:
-                self.log("Warning: isohdpfx.bin not found, ISO may not be bootable", "WARN")
+                self.log("Warning: isohdpfx.bin not found, ISO may not be bootable from USB", "WARN")
                 isohdpfx = "/usr/lib/ISOLINUX/isohdpfx.bin"
             
-            self.log("Running xorriso to create bootable ISO...")
+            self.log("Running xorriso to create hybrid bootable ISO...")
             
             xorriso_cmd = f"""xorriso -as mkisofs \
     -iso-level 3 \
     -full-iso9660-filenames \
-    -volid "AEGIS_{self.edition.upper()}" \
+    -joliet \
+    -joliet-long \
+    -rational-rock \
+    -volid "AEGIS_{self.edition.upper()[:11]}" \
+    -appid "{self.config['name']} {VERSION}" \
+    -publisher "Aegis OS Project" \
+    -preparer "Aegis Build System v{VERSION}" \
     -output "{self.iso_path}" \
     -eltorito-boot isolinux/isolinux.bin \
     -eltorito-catalog isolinux/boot.cat \
     -no-emul-boot \
     -boot-load-size 4 \
     -boot-info-table \
-    -isohybrid-mbr {isohdpfx} \
+    -isohybrid-mbr {isohdpfx}"""
+            
+            if efi_img and efi_img.exists():
+                xorriso_cmd += f""" \
+    -eltorito-alt-boot \
+    -e boot/grub/efi.img \
+    -no-emul-boot \
+    -isohybrid-gpt-basdat"""
+            
+            xorriso_cmd += f""" \
     "{self.iso_dir}" """
             
             try:
-                self.run_command(xorriso_cmd, shell=True)
-            except subprocess.CalledProcessError:
-                self.log("xorriso failed, trying genisoimage...", "WARN")
+                self.run_command(xorriso_cmd, shell=True, timeout=3600)
+            except subprocess.CalledProcessError as e:
+                self.log(f"xorriso failed: {e}", "WARN")
+                self.log("Trying genisoimage as fallback...", "WARN")
                 
                 genisoimage_cmd = f"""genisoimage \
     -o "{self.iso_path}" \
@@ -1405,10 +1933,17 @@ Build Information:
     -no-emul-boot \
     -boot-load-size 4 \
     -boot-info-table \
-    -J -R -V "AEGIS_{self.edition.upper()}" \
+    -J -R -V "AEGIS_{self.edition.upper()[:11]}" \
     "{self.iso_dir}" """
                 
-                self.run_command(genisoimage_cmd, shell=True)
+                self.run_command(genisoimage_cmd, shell=True, timeout=3600)
+                
+                if shutil.which('isohybrid') and os.path.exists(isohdpfx):
+                    try:
+                        self.run_command(f"isohybrid {self.iso_path}", shell=True)
+                        self.log("Applied hybrid MBR for USB boot")
+                    except Exception:
+                        pass
             
             if self.iso_path.exists():
                 actual_size = self.iso_path.stat().st_size
@@ -1421,8 +1956,86 @@ Build Information:
         self.log(f"ISO created: {self.iso_path}", "SUCCESS")
         return self.iso_path
     
-    def generate_manifest(self):
-        """Generate build manifest with checksums and file listings"""
+    def generate_checksums(self) -> Dict[str, str]:
+        """Generate checksums for the ISO file"""
+        self.log("Generating checksums...")
+        
+        checksums = {}
+        
+        if not self.iso_path.exists():
+            self.log("Warning: ISO file not found, skipping checksum generation", "WARN")
+            return checksums
+        
+        for algo in ['sha256', 'sha512', 'md5']:
+            checksum = get_file_checksum(self.iso_path, algo)
+            if checksum:
+                checksums[algo] = checksum
+                
+                checksum_file = OUTPUT_DIR / f"aegis-{self.edition}-{VERSION}.{algo}"
+                checksum_file.write_text(f"{checksum}  {self.iso_path.name}\n")
+                self.log(f"Generated {algo.upper()} checksum")
+        
+        all_checksums_file = OUTPUT_DIR / f"aegis-{self.edition}-{VERSION}.checksums"
+        with open(all_checksums_file, 'w') as f:
+            f.write(f"# Checksums for {self.iso_path.name}\n")
+            f.write(f"# Generated: {BUILD_TIMESTAMP}\n\n")
+            for algo, checksum in checksums.items():
+                f.write(f"{algo.upper()}: {checksum}\n")
+        
+        return checksums
+    
+    def sign_iso(self) -> Optional[Path]:
+        """Sign the ISO with GPG if key is available"""
+        self.log("Attempting to sign ISO...")
+        
+        if not self.gpg_key:
+            if shutil.which('gpg'):
+                try:
+                    result = subprocess.run(
+                        ['gpg', '--list-secret-keys'],
+                        capture_output=True,
+                        text=True
+                    )
+                    if 'sec' not in result.stdout:
+                        self.log("No GPG signing key available, skipping signing", "WARN")
+                        return None
+                except Exception:
+                    self.log("GPG not properly configured, skipping signing", "WARN")
+                    return None
+            else:
+                self.log("GPG not installed, skipping signing", "WARN")
+                return None
+        
+        if not self.iso_path.exists():
+            self.log("ISO file not found, skipping signing", "WARN")
+            return None
+        
+        sig_path = OUTPUT_DIR / f"{self.iso_path.name}.sig"
+        asc_path = OUTPUT_DIR / f"{self.iso_path.name}.asc"
+        
+        try:
+            gpg_cmd = ['gpg', '--armor', '--detach-sign', '-o', str(asc_path)]
+            if self.gpg_key:
+                gpg_cmd.extend(['--local-user', self.gpg_key])
+            gpg_cmd.append(str(self.iso_path))
+            
+            if self.simulate:
+                self.log(f"[SIMULATED] Would run: {' '.join(gpg_cmd)}")
+                return None
+            
+            subprocess.run(gpg_cmd, check=True)
+            self.log(f"ISO signed: {asc_path}", "SUCCESS")
+            return asc_path
+            
+        except subprocess.CalledProcessError as e:
+            self.log(f"Failed to sign ISO: {e}", "WARN")
+            return None
+        except Exception as e:
+            self.log(f"Signing error: {e}", "WARN")
+            return None
+    
+    def generate_manifest(self) -> Path:
+        """Generate comprehensive build manifest with all file hashes"""
         self.log("Generating build manifest...")
         
         build_duration = None
@@ -1431,14 +2044,14 @@ Build Information:
         
         iso_size_bytes = 0
         iso_size_mb = self.config.get('size_mb', 2000)
-        iso_checksum_sha256 = None
-        iso_checksum_md5 = None
+        checksums = {}
         
         if self.iso_path.exists():
             iso_size_bytes = self.iso_path.stat().st_size
             iso_size_mb = round(iso_size_bytes / (1024 * 1024), 2)
-            iso_checksum_sha256 = get_file_checksum(self.iso_path)
-            iso_checksum_md5 = get_file_checksum(self.iso_path, 'md5')
+            checksums = self.generate_checksums()
+        
+        signature_path = self.sign_iso()
         
         self.manifest.update({
             'build_info': {
@@ -1446,6 +2059,7 @@ Build Information:
                 'edition': self.edition,
                 'edition_name': self.config['name'],
                 'codename': self.config['codename'],
+                'tier': self.config.get('tier', 'free'),
                 'kernel': KERNEL_VERSION,
                 'ubuntu_base': f"{UBUNTU_VERSION} ({UBUNTU_CODENAME})",
                 'build_timestamp': BUILD_TIMESTAMP,
@@ -1454,23 +2068,27 @@ Build Information:
                 'simulation_reason': self.simulation_reason if self.simulate else None,
                 'build_system': f"Aegis Build System v{VERSION}",
                 'build_host': platform.node(),
-                'build_platform': platform.platform()
+                'build_platform': platform.platform(),
+                'python_version': platform.python_version()
             },
             'iso_info': {
                 'filename': self.iso_path.name,
                 'path': str(self.iso_path),
                 'size_bytes': iso_size_bytes,
                 'size_mb': iso_size_mb,
-                'checksum_sha256': iso_checksum_sha256,
-                'checksum_md5': iso_checksum_md5,
-                'is_bootable': not self.simulate and iso_size_bytes > 1024 * 1024
+                'checksums': checksums,
+                'signature': str(signature_path) if signature_path else None,
+                'is_bootable': not self.simulate and iso_size_bytes > 1024 * 1024,
+                'boot_modes': ['BIOS', 'UEFI'] if not self.simulate else [],
+                'is_hybrid': not self.simulate
             },
             'edition_info': {
                 'description': self.config['description'],
                 'desktop': self.config.get('desktop'),
                 'gaming_optimized': self.config.get('gaming_optimized', False),
                 'enterprise_ready': self.config.get('enterprise_ready', False),
-                'ml_frameworks': self.config.get('ml_frameworks', [])
+                'ml_frameworks': self.config.get('ml_frameworks', []),
+                'systemd_services': self.config.get('systemd_services', [])
             },
             'file_listing': []
         })
@@ -1479,24 +2097,22 @@ Build Information:
             for file in self.iso_dir.rglob('*'):
                 if file.is_file():
                     file_size = file.stat().st_size
-                    self.manifest['file_listing'].append({
+                    file_entry = {
                         'path': str(file.relative_to(self.iso_dir)),
                         'size': file_size,
-                        'checksum': get_file_checksum(file) if file_size < 10*1024*1024 else None
-                    })
+                    }
+                    if file_size < 10*1024*1024:
+                        file_entry['sha256'] = get_file_checksum(file, 'sha256')
+                    self.manifest['file_listing'].append(file_entry)
         
         manifest_path = MANIFEST_DIR / f"manifest-{self.edition}-{VERSION}.json"
         with open(manifest_path, 'w') as f:
             json.dump(self.manifest, f, indent=2)
         
-        checksum_path = OUTPUT_DIR / f"aegis-{self.edition}-{VERSION}.sha256"
-        if self.iso_path.exists() and iso_checksum_sha256:
-            checksum_path.write_text(f"{iso_checksum_sha256}  {self.iso_path.name}\n")
-        
         self.log(f"Manifest saved: {manifest_path}", "SUCCESS")
         return manifest_path
     
-    def build(self):
+    def build(self) -> bool:
         """Main build process"""
         self.build_start_time = datetime.now()
         
@@ -1504,6 +2120,7 @@ Build Information:
         self.log(f"AEGIS OS BUILD SYSTEM v{VERSION}")
         self.log("=" * 70)
         self.log(f"Edition: {self.config['name']}")
+        self.log(f"Tier: {self.config.get('tier', 'free').upper()}")
         self.log(f"Description: {self.config['description']}")
         self.log(f"Kernel: {KERNEL_VERSION}")
         self.log(f"Target Size: ~{self.config.get('size_mb', 2000)} MB")
@@ -1514,7 +2131,7 @@ Build Information:
             self.log(f"Reason: {self.simulation_reason}")
             self.log("=" * 70)
             self.log("For real build on Ubuntu 24.04:")
-            self.log("  sudo apt install debootstrap squashfs-tools xorriso isolinux syslinux")
+            self.log("  sudo apt install debootstrap squashfs-tools xorriso isolinux syslinux rsync grub-pc-bin shim-signed")
             self.log(f"  sudo python3 {__file__} --edition {self.edition} --real-build")
         else:
             self.log("=" * 70)
@@ -1532,7 +2149,9 @@ Build Information:
             
             chroot_dir = self.create_base_system()
             self.install_packages(chroot_dir)
+            self.apply_overlays()
             self.configure_system(chroot_dir)
+            self.run_post_build_hooks()
             squashfs_path = self.create_squashfs(chroot_dir)
             iso_path = self.create_iso(squashfs_path)
             manifest_path = self.generate_manifest()
@@ -1555,6 +2174,10 @@ Build Information:
             self.log(f"Log:      {self.log_file}")
             self.log(f"Duration: {build_duration:.1f} seconds")
             
+            checksums_file = OUTPUT_DIR / f"aegis-{self.edition}-{VERSION}.sha256"
+            if checksums_file.exists():
+                self.log(f"Checksum: {checksums_file}")
+            
             if self.simulate:
                 self.log("")
                 self.log("NOTE: This was a simulation. The ISO is a placeholder.", "WARN")
@@ -1563,8 +2186,11 @@ Build Information:
             else:
                 self.log("")
                 self.log("The ISO is ready for use!", "SUCCESS")
+                self.log("Boot modes: BIOS (Legacy) and UEFI")
                 self.log("You can burn it to a USB drive with:")
-                self.log(f"  sudo dd if={iso_path} of=/dev/sdX bs=4M status=progress")
+                self.log(f"  sudo dd if={iso_path} of=/dev/sdX bs=4M status=progress oflag=sync")
+                self.log("")
+                self.log("Or use a tool like balenaEtcher, Rufus, or Ventoy")
             
             return True
             
@@ -1573,175 +2199,110 @@ Build Information:
             import traceback
             self.log(traceback.format_exc(), "ERROR")
             return False
+            
         finally:
-            self.unmount_chroot_filesystems()
-
-
-def list_editions():
-    """Print available editions"""
-    print("\n" + "=" * 70)
-    print("AEGIS OS EDITIONS")
-    print("=" * 70 + "\n")
-    
-    for edition_id, config in EDITIONS.items():
-        print(f"  {edition_id:12} - {config['name']}")
-        print(f"               {config['description']}")
-        print(f"               Size: ~{config.get('size_mb', 2000)} MB")
-        if config.get('desktop'):
-            print(f"               Desktop: {config['desktop']}")
-        if config.get('gaming_optimized'):
-            print(f"               [Gaming Optimized]")
-        if config.get('enterprise_ready'):
-            print(f"               [Enterprise Ready]")
-        if config.get('ml_frameworks'):
-            print(f"               ML Frameworks: {len(config['ml_frameworks'])}")
-        print()
-
-
-def check_deps_command():
-    """Run dependency check as standalone command"""
-    print("\n" + "=" * 60)
-    print("AEGIS OS BUILD SYSTEM - DEPENDENCY CHECK")
-    print("=" * 60 + "\n")
-    
-    env = check_build_environment(verbose=True)
-    
-    print("=" * 60)
-    if env['can_real_build']:
-        print("\n✓ System is ready for REAL builds!")
-        print("  Run: sudo python3 build-aegis.py --edition <edition> --real-build")
-        return 0
-    else:
-        print(f"\n⚠ System requires simulation mode")
-        print(f"  Reason: {env['simulation_reason']}")
-        
-        if env['missing_required_deps']:
-            print("\n  To enable real builds:")
-            print(f"  sudo apt install {' '.join(env['missing_required_deps'])}")
-        
-        if not env['has_root'] and env['is_linux']:
-            print("\n  Also run with sudo for real builds:")
-            print("  sudo python3 build-aegis.py --edition <edition> --real-build")
-        
-        return 1
+            self.cleanup()
 
 
 def main():
-    """Main entry point"""
     parser = argparse.ArgumentParser(
         description=f"Aegis OS Build System v{VERSION}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  Check build dependencies:
-    python3 build-aegis.py --check-deps
-    
-  Build freemium edition (auto-detect mode):
-    python3 build-aegis.py --edition freemium
-    
-  Force simulation mode:
-    python3 build-aegis.py --edition freemium --simulate
-    
-  Force real build (requires root and dependencies):
-    sudo python3 build-aegis.py --edition freemium --real-build
-    
-  Build all editions (simulation):
-    python3 build-aegis.py --edition all --simulate
-    
-  List available editions:
-    python3 build-aegis.py --list-editions
+  python3 build-aegis.py --edition freemium --simulate
+  python3 build-aegis.py --edition gamer --real-build --verbose
+  python3 build-aegis.py --edition all --simulate
+  python3 build-aegis.py --check-deps
+  python3 build-aegis.py --list-editions
 
-For real builds on Ubuntu 24.04, first install dependencies:
-  sudo apt install debootstrap squashfs-tools xorriso isolinux syslinux genisoimage
+Editions:
+  freemium   - Basic Linux with XFCE desktop (Free)
+  basic      - Professional productivity suite
+  workplace  - Office workstation environment
+  gamer      - Gaming optimized with Steam/Lutris
+  ai         - AI/ML development platform
+  gamer-ai   - Gaming + AI development combo
+  server     - Enterprise server deployment
 """
     )
     
-    parser.add_argument(
-        "--edition",
-        choices=list(EDITIONS.keys()) + ["all"],
-        help="Edition to build (or 'all' for all editions)"
-    )
-    parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Force simulation mode (no actual system changes)"
-    )
-    parser.add_argument(
-        "--real-build", "--no-simulation",
-        dest="real_build",
-        action="store_true",
-        help="Force real build mode (requires root and dependencies)"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--list-editions",
-        action="store_true",
-        help="List all available editions"
-    )
-    parser.add_argument(
-        "--check-deps",
-        action="store_true",
-        help="Check build dependencies and system requirements"
-    )
+    parser.add_argument('--edition', '-e', 
+                       help='Edition to build (or "all")')
+    parser.add_argument('--simulate', '-s', action='store_true',
+                       help='Run in simulation mode (no root required)')
+    parser.add_argument('--real-build', '-r', action='store_true',
+                       help='Force real build mode (requires root)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                       help='Enable verbose output')
+    parser.add_argument('--check-deps', action='store_true',
+                       help='Check build dependencies and exit')
+    parser.add_argument('--list-editions', action='store_true',
+                       help='List available editions and exit')
+    parser.add_argument('--gpg-key', 
+                       help='GPG key ID for signing ISOs')
+    parser.add_argument('--version', action='version', 
+                       version=f'Aegis Build System v{VERSION}')
     
     args = parser.parse_args()
     
     if args.check_deps:
-        return check_deps_command()
+        check_build_environment(verbose=True)
+        return 0
     
     if args.list_editions:
-        list_editions()
+        print(f"\nAegis OS Build System v{VERSION}")
+        print("=" * 60)
+        print("\nAvailable Editions:\n")
+        for edition_id, config in EDITIONS.items():
+            tier = config.get('tier', 'free').upper()
+            print(f"  {edition_id:12} [{tier:12}] - {config['name']}")
+            print(f"               {config['description']}")
+            print(f"               Size: ~{config.get('size_mb', 2000)} MB")
+            if config.get('desktop'):
+                print(f"               Desktop: {config['desktop']}")
+            if config.get('gaming_optimized'):
+                print(f"               Gaming optimized: Yes")
+            if config.get('ml_frameworks'):
+                print(f"               ML Frameworks: {', '.join(config['ml_frameworks'][:3])}...")
+            print()
         return 0
     
     if not args.edition:
         parser.print_help()
         return 1
     
-    if args.simulate and args.real_build:
-        print("Error: Cannot specify both --simulate and --real-build")
-        return 1
-    
-    print()
-    print("=" * 70)
-    print(f"AEGIS OS BUILD SYSTEM v{VERSION}")
-    print("=" * 70)
-    print(f"Build Timestamp: {BUILD_TIMESTAMP}")
-    print(f"Kernel Version:  {KERNEL_VERSION}")
-    print(f"Ubuntu Base:     {UBUNTU_VERSION} ({UBUNTU_CODENAME})")
-    print()
-    
-    if args.edition == "all":
+    if args.edition.lower() == 'all':
         editions = list(EDITIONS.keys())
     else:
+        if args.edition not in EDITIONS:
+            print(f"Error: Unknown edition '{args.edition}'")
+            print(f"Available editions: {', '.join(EDITIONS.keys())}")
+            return 1
         editions = [args.edition]
     
     results = {}
     for edition in editions:
-        print(f"\n{'#' * 70}")
-        print(f"# Building: {edition}")
-        print(f"{'#' * 70}\n")
+        print(f"\n{'='*70}")
+        print(f"Building {EDITIONS[edition]['name']}...")
+        print(f"{'='*70}\n")
         
         builder = AegisBuilder(
-            edition, 
-            simulate=args.simulate, 
+            edition=edition,
+            simulate=args.simulate,
             force_real=args.real_build,
-            verbose=args.verbose
+            verbose=args.verbose,
+            gpg_key=args.gpg_key
         )
-        success = builder.build()
-        results[edition] = success
+        
+        results[edition] = builder.build()
     
-    print("\n" + "=" * 70)
+    print(f"\n{'='*70}")
     print("BUILD SUMMARY")
-    print("=" * 70)
+    print(f"{'='*70}")
     for edition, success in results.items():
-        status = "SUCCESS" if success else "FAILED"
-        color = "\033[92m" if success else "\033[91m"
-        print(f"  {edition:15} [{color}{status}\033[0m]")
-    print("=" * 70)
+        status = "✓ SUCCESS" if success else "✗ FAILED"
+        print(f"  {edition}: {status}")
     
     all_success = all(results.values())
     return 0 if all_success else 1

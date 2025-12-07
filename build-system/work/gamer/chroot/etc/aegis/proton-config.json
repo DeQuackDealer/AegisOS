@@ -1,0 +1,611 @@
+{
+  "version": "1.5.0",
+  "description": "Aegis OS Proton Configuration - Optimized for 90%+ Windows Application Effectiveness",
+  "tier": "gamer",
+  "last_updated": "2024-12-05",
+
+  "recommended_versions": {
+    "ge_proton": {
+      "latest": "GE-Proton9-20",
+      "stable": "GE-Proton9-15",
+      "legacy": "GE-Proton8-32",
+      "lts": "GE-Proton7-55"
+    },
+    "proton_experimental": {
+      "enabled": true,
+      "auto_update": true
+    },
+    "proton_stable": {
+      "version": "9.0-4",
+      "fallback": "8.0-5"
+    }
+  },
+
+  "ge_proton_versions": [
+    {
+      "name": "GE-Proton9-20",
+      "version": "9.20",
+      "release_date": "2024-11-15",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton9-20/GE-Proton9-20.tar.gz",
+      "checksum_sha256": "",
+      "description": "Latest GE-Proton with cutting-edge patches",
+      "features": ["DXVK 2.4", "VKD3D-Proton 2.12", "Wine 9.20", "FSR 3.0", "NVAPI"],
+      "recommended_for": ["new_games", "dx12", "ray_tracing"],
+      "status": "recommended"
+    },
+    {
+      "name": "GE-Proton9-15",
+      "version": "9.15",
+      "release_date": "2024-10-01",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton9-15/GE-Proton9-15.tar.gz",
+      "checksum_sha256": "",
+      "description": "Stable GE-Proton with excellent compatibility",
+      "features": ["DXVK 2.3", "VKD3D-Proton 2.11", "Wine 9.15", "FSR 2.2"],
+      "recommended_for": ["most_games", "stability"],
+      "status": "stable"
+    },
+    {
+      "name": "GE-Proton9-10",
+      "version": "9.10",
+      "release_date": "2024-08-15",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton9-10/GE-Proton9-10.tar.gz",
+      "checksum_sha256": "",
+      "description": "Previous stable release",
+      "features": ["DXVK 2.3", "VKD3D-Proton 2.10", "Wine 9.10"],
+      "recommended_for": ["compatibility_issues"],
+      "status": "previous_stable"
+    },
+    {
+      "name": "GE-Proton8-32",
+      "version": "8.32",
+      "release_date": "2024-02-20",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton8-32/GE-Proton8-32.tar.gz",
+      "checksum_sha256": "",
+      "description": "Legacy version for older games",
+      "features": ["DXVK 2.2", "VKD3D-Proton 2.8", "Wine 8.21"],
+      "recommended_for": ["older_games", "legacy_titles"],
+      "status": "legacy"
+    },
+    {
+      "name": "GE-Proton7-55",
+      "version": "7.55",
+      "release_date": "2023-08-10",
+      "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton7-55/GE-Proton7-55.tar.gz",
+      "checksum_sha256": "",
+      "description": "LTS version for maximum compatibility with legacy titles",
+      "features": ["DXVK 2.0", "VKD3D-Proton 2.6", "Wine 8.0"],
+      "recommended_for": ["very_old_games", "fallback"],
+      "status": "lts"
+    }
+  ],
+
+  "per_game_compatibility": {
+    "default": {
+      "proton_version": "auto",
+      "dxvk_enabled": true,
+      "vkd3d_enabled": true,
+      "esync": true,
+      "fsync": true,
+      "gamemode": true,
+      "mangohud": false,
+      "fsr_enabled": false,
+      "fsr_quality": "balanced"
+    },
+    "games": {
+      "cyberpunk2077": {
+        "name": "Cyberpunk 2077",
+        "steam_appid": 1091500,
+        "proton_version": "GE-Proton9-20",
+        "dxvk_enabled": false,
+        "vkd3d_enabled": true,
+        "dlss_enabled": true,
+        "ray_tracing": true,
+        "fsr_enabled": true,
+        "fsr_quality": "quality",
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_1",
+          "PROTON_ENABLE_NVAPI": "1",
+          "PROTON_HIDE_NVIDIA_GPU": "0",
+          "DXVK_ENABLE_NVAPI": "1"
+        },
+        "launch_options": "-dx12"
+      },
+      "eldenring": {
+        "name": "Elden Ring",
+        "steam_appid": 1245620,
+        "proton_version": "GE-Proton9-15",
+        "dxvk_enabled": true,
+        "esync": true,
+        "fsync": true,
+        "env_vars": {
+          "PROTON_NO_ESYNC": "0",
+          "PROTON_NO_FSYNC": "0",
+          "DXVK_ASYNC": "1"
+        }
+      },
+      "baldursgate3": {
+        "name": "Baldur's Gate 3",
+        "steam_appid": 1086940,
+        "proton_version": "GE-Proton9-20",
+        "vkd3d_enabled": true,
+        "fsr_enabled": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_0"
+        }
+      },
+      "reddead2": {
+        "name": "Red Dead Redemption 2",
+        "steam_appid": 1174180,
+        "proton_version": "GE-Proton9-15",
+        "dxvk_enabled": true,
+        "env_vars": {
+          "DXVK_ASYNC": "1",
+          "STAGING_SHARED_MEMORY": "1"
+        },
+        "notes": "Vulkan renderer recommended"
+      },
+      "gta5": {
+        "name": "Grand Theft Auto V",
+        "steam_appid": 271590,
+        "proton_version": "GE-Proton9-10",
+        "dxvk_enabled": true,
+        "env_vars": {
+          "DXVK_ASYNC": "1"
+        }
+      },
+      "witcher3": {
+        "name": "The Witcher 3",
+        "steam_appid": 292030,
+        "proton_version": "GE-Proton9-15",
+        "dxvk_enabled": true,
+        "vkd3d_enabled": true,
+        "fsr_enabled": true,
+        "ray_tracing": true
+      },
+      "hogwartslegacy": {
+        "name": "Hogwarts Legacy",
+        "steam_appid": 990080,
+        "proton_version": "GE-Proton9-20",
+        "vkd3d_enabled": true,
+        "dlss_enabled": true,
+        "fsr_enabled": true,
+        "ray_tracing": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_1",
+          "PROTON_ENABLE_NVAPI": "1"
+        }
+      },
+      "starfield": {
+        "name": "Starfield",
+        "steam_appid": 1716740,
+        "proton_version": "GE-Proton9-20",
+        "vkd3d_enabled": true,
+        "dlss_enabled": true,
+        "fsr_enabled": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_2",
+          "PROTON_ENABLE_NVAPI": "1",
+          "VKD3D_SHADER_MODEL": "6_6"
+        }
+      },
+      "forza_horizon_5": {
+        "name": "Forza Horizon 5",
+        "steam_appid": 1551360,
+        "proton_version": "GE-Proton9-15",
+        "vkd3d_enabled": true,
+        "fsr_enabled": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_1"
+        }
+      },
+      "halo_infinite": {
+        "name": "Halo Infinite",
+        "steam_appid": 1240440,
+        "proton_version": "GE-Proton9-15",
+        "vkd3d_enabled": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_0"
+        }
+      },
+      "monsterhunterworld": {
+        "name": "Monster Hunter World",
+        "steam_appid": 582010,
+        "proton_version": "GE-Proton9-10",
+        "dxvk_enabled": true,
+        "env_vars": {
+          "DXVK_ASYNC": "1"
+        }
+      },
+      "doom_eternal": {
+        "name": "Doom Eternal",
+        "steam_appid": 782330,
+        "proton_version": "GE-Proton9-15",
+        "notes": "Native Vulkan renderer, excellent performance"
+      },
+      "resident_evil_village": {
+        "name": "Resident Evil Village",
+        "steam_appid": 1196590,
+        "proton_version": "GE-Proton9-15",
+        "vkd3d_enabled": true,
+        "ray_tracing": true
+      },
+      "alan_wake_2": {
+        "name": "Alan Wake 2",
+        "steam_appid": 0,
+        "epic_appid": "AlanWake2",
+        "proton_version": "GE-Proton9-20",
+        "vkd3d_enabled": true,
+        "dlss_enabled": true,
+        "fsr_enabled": true,
+        "ray_tracing": true,
+        "env_vars": {
+          "VKD3D_FEATURE_LEVEL": "12_2",
+          "PROTON_ENABLE_NVAPI": "1"
+        }
+      }
+    }
+  },
+
+  "upscaling": {
+    "nvidia_dlss": {
+      "enabled": true,
+      "supported_versions": ["2.0", "3.0", "3.5"],
+      "default_quality": "balanced",
+      "quality_presets": {
+        "ultra_performance": {"scale": 0.33, "description": "Maximum performance, lowest quality"},
+        "performance": {"scale": 0.50, "description": "High performance, reduced quality"},
+        "balanced": {"scale": 0.58, "description": "Balanced performance and quality"},
+        "quality": {"scale": 0.67, "description": "High quality, moderate performance"},
+        "ultra_quality": {"scale": 0.77, "description": "Near-native quality"}
+      },
+      "frame_generation": {
+        "enabled": true,
+        "dlss_3_supported": true,
+        "min_gpu": "RTX 40xx"
+      },
+      "env_vars": {
+        "PROTON_ENABLE_NVAPI": "1",
+        "PROTON_HIDE_NVIDIA_GPU": "0",
+        "DXVK_ENABLE_NVAPI": "1"
+      },
+      "installation": {
+        "dll_path": "/usr/share/aegis/dlss",
+        "ngx_path": "/usr/share/aegis/nvidia-ngx",
+        "auto_update": true
+      }
+    },
+
+    "amd_fsr": {
+      "enabled": true,
+      "supported_versions": ["1.0", "2.0", "2.1", "2.2", "3.0"],
+      "default_quality": "balanced",
+      "quality_presets": {
+        "ultra_performance": {"scale": 0.33, "sharpness": 0.9},
+        "performance": {"scale": 0.50, "sharpness": 0.8},
+        "balanced": {"scale": 0.59, "sharpness": 0.7},
+        "quality": {"scale": 0.67, "sharpness": 0.6},
+        "ultra_quality": {"scale": 0.77, "sharpness": 0.5}
+      },
+      "fsr_1_sharpening": 0.8,
+      "env_vars": {
+        "WINE_FULLSCREEN_FSR": "1",
+        "WINE_FULLSCREEN_FSR_STRENGTH": "2",
+        "WINE_FULLSCREEN_FSR_MODE": "balanced"
+      },
+      "gamescope_integration": {
+        "enabled": true,
+        "command": "gamescope -F fsr"
+      }
+    },
+
+    "intel_xess": {
+      "enabled": true,
+      "default_quality": "balanced",
+      "quality_presets": {
+        "performance": {"description": "High performance mode"},
+        "balanced": {"description": "Balanced mode"},
+        "quality": {"description": "High quality mode"},
+        "ultra_quality": {"description": "Maximum quality"}
+      }
+    }
+  },
+
+  "ray_tracing": {
+    "enabled": true,
+    "vkd3d_ray_tracing": {
+      "tier": "1.1",
+      "env_vars": {
+        "VKD3D_CONFIG": "dxr11,dxr",
+        "VKD3D_FEATURE_LEVEL": "12_1"
+      }
+    },
+    "nvidia_specific": {
+      "rtx_enabled": true,
+      "env_vars": {
+        "PROTON_ENABLE_NVAPI": "1",
+        "__GL_SHADER_DISK_CACHE": "1",
+        "__GL_SHADER_DISK_CACHE_SKIP_CLEANUP": "1"
+      }
+    },
+    "amd_specific": {
+      "rdna2_ray_tracing": true,
+      "env_vars": {
+        "RADV_PERFTEST": "rt"
+      }
+    },
+    "performance_impact": {
+      "note": "Ray tracing significantly impacts performance",
+      "recommended_upscaling": "dlss_quality",
+      "fallback_upscaling": "fsr_quality"
+    }
+  },
+
+  "shader_precaching": {
+    "enabled": true,
+    "settings": {
+      "background_processing": true,
+      "max_threads": 0,
+      "priority": "low",
+      "steam_integration": true,
+      "fossilize_enabled": true
+    },
+    "cache_paths": {
+      "dxvk_state_cache": "$HOME/.cache/aegis/dxvk-state-cache",
+      "vkd3d_shader_cache": "$HOME/.cache/aegis/vkd3d-shader-cache",
+      "steam_shader_cache": "$HOME/.local/share/Steam/steamapps/shadercache",
+      "mesa_shader_cache": "$HOME/.cache/mesa_shader_cache"
+    },
+    "cache_management": {
+      "max_size_gb": 20,
+      "cleanup_interval_days": 30,
+      "compression": true,
+      "per_game_isolation": true
+    },
+    "pre_caching_service": {
+      "enabled": true,
+      "on_game_install": true,
+      "on_proton_update": true,
+      "background_download": true
+    }
+  },
+
+  "performance_presets": {
+    "quality": {
+      "name": "Quality",
+      "description": "Maximum visual quality with stable frame rates",
+      "dxvk": {
+        "async": true,
+        "frame_queue_size": 3
+      },
+      "fsr_quality": "ultra_quality",
+      "dlss_quality": "ultra_quality",
+      "vsync": true,
+      "frame_limit": 60,
+      "env_vars": {
+        "DXVK_ASYNC": "1",
+        "DXVK_FRAME_RATE": "60"
+      }
+    },
+
+    "balanced": {
+      "name": "Balanced",
+      "description": "Good balance between quality and performance",
+      "dxvk": {
+        "async": true,
+        "frame_queue_size": 2
+      },
+      "fsr_quality": "balanced",
+      "dlss_quality": "balanced",
+      "vsync": true,
+      "frame_limit": 0,
+      "env_vars": {
+        "DXVK_ASYNC": "1"
+      }
+    },
+
+    "performance": {
+      "name": "Performance",
+      "description": "Maximum frame rates with good visuals",
+      "dxvk": {
+        "async": true,
+        "frame_queue_size": 1
+      },
+      "fsr_quality": "performance",
+      "dlss_quality": "performance",
+      "vsync": false,
+      "frame_limit": 0,
+      "compositor_disabled": true,
+      "env_vars": {
+        "DXVK_ASYNC": "1",
+        "__GL_YIELD": "NOTHING",
+        "vblank_mode": "0"
+      }
+    },
+
+    "ultra": {
+      "name": "Ultra Performance",
+      "description": "Absolute maximum performance for competitive gaming",
+      "dxvk": {
+        "async": true,
+        "frame_queue_size": 0
+      },
+      "fsr_quality": "ultra_performance",
+      "dlss_quality": "ultra_performance",
+      "vsync": false,
+      "frame_limit": 0,
+      "compositor_disabled": true,
+      "low_latency_mode": true,
+      "raw_input": true,
+      "env_vars": {
+        "DXVK_ASYNC": "1",
+        "__GL_YIELD": "NOTHING",
+        "vblank_mode": "0",
+        "DXVK_HUD": "0",
+        "__GL_SYNC_TO_VBLANK": "0"
+      },
+      "kernel_tweaks": {
+        "governor": "performance",
+        "swappiness": 1
+      }
+    }
+  },
+
+  "environment_variables": {
+    "global": {
+      "PROTON_USE_WINED3D": "0",
+      "PROTON_NO_ESYNC": "0",
+      "PROTON_NO_FSYNC": "0",
+      "PROTON_FORCE_LARGE_ADDRESS_AWARE": "1",
+      "PROTON_HIDE_NVIDIA_GPU": "0",
+      "PROTON_ENABLE_NVAPI": "1",
+      "DXVK_ASYNC": "1",
+      "DXVK_STATE_CACHE": "1",
+      "DXVK_STATE_CACHE_PATH": "$HOME/.cache/aegis/dxvk-state-cache",
+      "VKD3D_SHADER_CACHE_PATH": "$HOME/.cache/aegis/vkd3d-shader-cache",
+      "WINE_LARGE_ADDRESS_AWARE": "1",
+      "STAGING_SHARED_MEMORY": "1",
+      "mesa_glthread": "true",
+      "__GL_SHADER_DISK_CACHE": "1",
+      "__GL_SHADER_DISK_CACHE_PATH": "$HOME/.cache/aegis/gl-shader-cache",
+      "__GL_SHADER_DISK_CACHE_SKIP_CLEANUP": "1"
+    },
+    "nvidia": {
+      "__GL_THREADED_OPTIMIZATION": "1",
+      "__GL_YIELD": "NOTHING",
+      "PROTON_ENABLE_NVAPI": "1",
+      "DXVK_ENABLE_NVAPI": "1"
+    },
+    "amd": {
+      "AMD_VULKAN_ICD": "RADV",
+      "RADV_PERFTEST": "gpl,rt",
+      "mesa_glthread": "true"
+    },
+    "intel": {
+      "mesa_glthread": "true"
+    }
+  },
+
+  "gamescope_integration": {
+    "enabled": true,
+    "default_options": {
+      "fullscreen": true,
+      "borderless": false,
+      "nested": false,
+      "fsr": true,
+      "fsr_sharpness": 5
+    },
+    "presets": {
+      "steam_deck_mode": {
+        "description": "SteamOS-like experience",
+        "options": "-f -e --fsr --adaptive-sync"
+      },
+      "performance": {
+        "description": "Maximum performance with FSR",
+        "options": "-f -F fsr --fsr-sharpness 8"
+      },
+      "quality": {
+        "description": "Native resolution gaming",
+        "options": "-f -e --adaptive-sync"
+      }
+    }
+  },
+
+  "mangohud_integration": {
+    "enabled": true,
+    "default_config": {
+      "fps": true,
+      "frametime": true,
+      "cpu_stats": true,
+      "gpu_stats": true,
+      "ram": true,
+      "vram": true
+    },
+    "presets": {
+      "minimal": "fps",
+      "standard": "fps,frametime,cpu_temp,gpu_temp",
+      "full": "full",
+      "benchmark": "fps,frametime,frame_count,gpu_stats,cpu_stats"
+    }
+  },
+
+  "gamemode_integration": {
+    "enabled": true,
+    "auto_activate": true,
+    "features": {
+      "cpu_governor": "performance",
+      "gpu_performance": true,
+      "io_priority": "realtime",
+      "nice_level": -10
+    }
+  },
+
+  "tier_features": {
+    "freemium": {
+      "proton_enabled": false,
+      "wine_enabled": false,
+      "message": "Wine/Proton requires BASIC edition or higher"
+    },
+    "basic": {
+      "proton_enabled": false,
+      "wine_enabled": true,
+      "wine_basic_only": true,
+      "dxvk_enabled": false,
+      "max_prefixes": 2
+    },
+    "gamer": {
+      "proton_enabled": true,
+      "wine_enabled": true,
+      "dxvk_enabled": true,
+      "vkd3d_enabled": true,
+      "dlss_enabled": true,
+      "fsr_enabled": true,
+      "ray_tracing": true,
+      "shader_precaching": true,
+      "per_game_profiles": true,
+      "gamescope": true,
+      "mangohud": true,
+      "gamemode": true,
+      "max_prefixes": "unlimited"
+    },
+    "gamer_ai": {
+      "proton_enabled": true,
+      "wine_enabled": true,
+      "dxvk_enabled": true,
+      "vkd3d_enabled": true,
+      "dlss_enabled": true,
+      "fsr_enabled": true,
+      "ray_tracing": true,
+      "shader_precaching": true,
+      "per_game_profiles": true,
+      "ai_optimization": true,
+      "auto_tuning": true,
+      "predictive_caching": true,
+      "max_prefixes": "unlimited"
+    },
+    "server": {
+      "proton_enabled": true,
+      "wine_enabled": true,
+      "dxvk_enabled": true,
+      "vkd3d_enabled": true,
+      "headless_mode": true,
+      "remote_management": true,
+      "max_prefixes": "unlimited"
+    }
+  },
+
+  "installation_paths": {
+    "proton_compat_tools": "$HOME/.local/share/Steam/compatibilitytools.d",
+    "wine_prefix_base": "$HOME/.wine",
+    "aegis_wine_prefixes": "$HOME/.local/share/aegis/wine-prefixes",
+    "shader_cache_base": "$HOME/.cache/aegis",
+    "game_saves_backup": "/var/lib/aegis/backup/game-saves"
+  },
+
+  "logging": {
+    "enabled": true,
+    "log_file": "/var/log/aegis/proton.log",
+    "level": "info",
+    "max_size_mb": 50,
+    "backup_count": 5
+  }
+}

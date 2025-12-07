@@ -1,0 +1,29 @@
+[Unit]
+Description=Aegis Server Security - XDR and threat intelligence service
+Documentation=https://aegis-os.com/docs/server-security
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-server-security --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+
+TimeoutStartSec=60
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-server-security
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aegis /var/log/aegis /etc/aegis
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"
+
+[Install]
+WantedBy=multi-user.target

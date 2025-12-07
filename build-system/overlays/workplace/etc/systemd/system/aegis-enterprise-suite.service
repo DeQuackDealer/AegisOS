@@ -1,0 +1,30 @@
+[Unit]
+Description=Aegis Enterprise Suite - M365 and Google Workspace integration service
+Documentation=https://aegis-os.com/docs/enterprise-suite
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-enterprise-suite --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10
+
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-enterprise-suite
+
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aegis /var/log/aegis /etc/aegis
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target

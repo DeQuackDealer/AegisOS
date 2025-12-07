@@ -1,0 +1,679 @@
+<html>
+<head>
+<title>Aegis OS Builder - WSL2 Build System</title>
+<HTA:APPLICATION ID="AegisBuilder" APPLICATIONNAME="Aegis OS Builder" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="yes" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="2.0" SCROLL="no"/>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 14px; background: #1a1a2e; color: #eee; }
+.header { background: linear-gradient(135deg, #0f3460, #16213e); color: white; padding: 20px; text-align: center; border-bottom: 3px solid #e94560; }
+.header h1 { margin: 0 0 5px 0; font-size: 24px; }
+.header p { margin: 0; opacity: 0.8; font-size: 13px; }
+.content { padding: 20px; height: calc(100vh - 180px); overflow-y: auto; }
+.section { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+.section h3 { margin: 0 0 12px 0; color: #e94560; font-size: 15px; border-bottom: 1px solid #0f3460; padding-bottom: 8px; }
+.footer { background: #16213e; padding: 15px 20px; text-align: right; border-top: 2px solid #0f3460; position: fixed; bottom: 0; left: 0; right: 0; }
+.btn { padding: 10px 25px; border: 1px solid #0f3460; background: #1a1a2e; color: #eee; font-size: 13px; cursor: pointer; border-radius: 4px; margin-left: 10px; transition: all 0.2s; }
+.btn:hover { background: #0f3460; border-color: #e94560; }
+.btn-primary { background: #e94560; color: white; border-color: #e94560; font-weight: bold; }
+.btn-primary:hover { background: #c73e54; }
+.btn-success { background: #28a745; color: white; border-color: #28a745; }
+.btn-success:hover { background: #218838; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+select, input[type="text"] { width: 100%; padding: 10px; border: 1px solid #0f3460; border-radius: 4px; background: #1a1a2e; color: #eee; font-size: 13px; margin-top: 5px; }
+select:focus, input:focus { outline: none; border-color: #e94560; }
+.row { display: flex; gap: 15px; margin-bottom: 10px; }
+.col { flex: 1; }
+.label { font-size: 12px; color: #aaa; margin-bottom: 5px; }
+.status-box { background: #0f0f1a; border: 1px solid #0f3460; border-radius: 4px; padding: 10px; font-family: Consolas, monospace; font-size: 11px; height: 150px; overflow-y: auto; white-space: pre-wrap; word-wrap: break-word; }
+.status-ok { color: #28a745; }
+.status-warn { color: #ffc107; }
+.status-error { color: #dc3545; }
+.status-info { color: #17a2b8; }
+.progress-container { margin: 15px 0; }
+.progress-bar-bg { background: #0f3460; height: 24px; border-radius: 12px; overflow: hidden; }
+.progress-bar { background: linear-gradient(90deg, #e94560, #0f3460); height: 100%; border-radius: 12px; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
+.progress-text { text-align: center; margin-top: 8px; color: #aaa; font-size: 12px; }
+.prereq-item { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #0f3460; }
+.prereq-item:last-child { border-bottom: none; }
+.prereq-icon { width: 24px; height: 24px; margin-right: 12px; font-size: 16px; }
+.prereq-text { flex: 1; }
+.prereq-status { font-size: 12px; padding: 3px 10px; border-radius: 12px; }
+.prereq-ok { background: #28a745; color: white; }
+.prereq-missing { background: #dc3545; color: white; }
+.prereq-checking { background: #ffc107; color: black; }
+.path-box { display: flex; gap: 10px; align-items: center; }
+.path-box input { flex: 1; }
+.hidden { display: none; }
+.toggle-container { display: flex; align-items: center; gap: 10px; }
+.toggle { position: relative; width: 50px; height: 26px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #0f3460; border-radius: 26px; transition: 0.3s; }
+.toggle-slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+.toggle input:checked + .toggle-slider { background: #e94560; }
+.toggle input:checked + .toggle-slider:before { transform: translateX(24px); }
+.toggle-label { font-size: 13px; }
+.result-box { background: #0f0f1a; border: 2px solid #28a745; border-radius: 8px; padding: 15px; margin-top: 15px; }
+.result-title { color: #28a745; font-size: 18px; margin-bottom: 10px; }
+.result-item { margin: 8px 0; }
+.result-label { color: #aaa; font-size: 12px; }
+.result-value { font-family: Consolas, monospace; font-size: 12px; background: #1a1a2e; padding: 8px; border-radius: 4px; margin-top: 4px; word-break: break-all; }
+.link { color: #e94560; cursor: pointer; text-decoration: underline; }
+.edition-desc { font-size: 11px; color: #888; margin-top: 5px; font-style: italic; }
+</style>
+<script language="VBScript">
+Option Explicit
+
+Dim oShell, oFSO, sOutputFolder, nTimer, bBuilding, sLogFile, sProgressFile
+Dim bWSLInstalled, bUbuntuInstalled, bDepsInstalled
+
+Sub Window_OnLoad()
+    window.resizeTo 700, 700
+    Set oShell = CreateObject("WScript.Shell")
+    Set oFSO = CreateObject("Scripting.FileSystemObject")
+    sOutputFolder = oShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Documents\AegisOS-Builds"
+    document.getElementById("outputPath").value = sOutputFolder
+    bBuilding = False
+    bWSLInstalled = False
+    bUbuntuInstalled = False
+    bDepsInstalled = False
+    UpdateEditionDescription
+    CheckPrerequisites
+End Sub
+
+Sub UpdateEditionDescription()
+    Dim sEdition, sDesc
+    sEdition = document.getElementById("editionSelect").value
+    Select Case sEdition
+        Case "freemium"
+            sDesc = "Basic Linux with XFCE desktop - Free edition (~1.5 GB)"
+        Case "basic"
+            sDesc = "Professional productivity suite with development tools (~3.5 GB)"
+        Case "workplace"
+            sDesc = "Professional workstation for office environments (~3 GB)"
+        Case "gamer"
+            sDesc = "Ultimate gaming with Steam, Lutris, Wine/Proton (~4.5 GB)"
+        Case "ai"
+            sDesc = "Complete AI/ML development platform with CUDA support (~6 GB)"
+        Case "gamer-ai"
+            sDesc = "Ultimate gaming and AI development combo (~7 GB)"
+        Case "server"
+            sDesc = "Enterprise-grade server with security hardening (~3 GB)"
+    End Select
+    document.getElementById("editionDesc").innerText = sDesc
+End Sub
+
+Sub CheckPrerequisites()
+    Dim sTmp, sPS, sResultFile, sCode, oFile
+    
+    AddLog "Checking prerequisites...", "info"
+    SetPrereqStatus "wsl", "checking"
+    SetPrereqStatus "ubuntu", "checking"
+    SetPrereqStatus "deps", "checking"
+    
+    sTmp = oShell.ExpandEnvironmentStrings("%TEMP%")
+    sPS = sTmp & "\aegis_prereq_" & Timer & ".ps1"
+    sResultFile = sTmp & "\aegis_prereq_result_" & Timer & ".txt"
+    
+    sCode = "$ErrorActionPreference='SilentlyContinue'" & vbCrLf
+    sCode = sCode & "$results = @{}" & vbCrLf
+    sCode = sCode & "" & vbCrLf
+    sCode = sCode & "# Check WSL" & vbCrLf
+    sCode = sCode & "$wslVer = wsl --version 2>&1" & vbCrLf
+    sCode = sCode & "if ($LASTEXITCODE -eq 0 -and $wslVer -match 'WSL') {" & vbCrLf
+    sCode = sCode & "    $results['wsl'] = 'OK'" & vbCrLf
+    sCode = sCode & "} else {" & vbCrLf
+    sCode = sCode & "    $results['wsl'] = 'MISSING'" & vbCrLf
+    sCode = sCode & "}" & vbCrLf
+    sCode = sCode & "" & vbCrLf
+    sCode = sCode & "# Check Ubuntu in WSL" & vbCrLf
+    sCode = sCode & "$distros = wsl -l -q 2>&1" & vbCrLf
+    sCode = sCode & "if ($distros -match 'Ubuntu') {" & vbCrLf
+    sCode = sCode & "    $results['ubuntu'] = 'OK'" & vbCrLf
+    sCode = sCode & "} else {" & vbCrLf
+    sCode = sCode & "    $results['ubuntu'] = 'MISSING'" & vbCrLf
+    sCode = sCode & "}" & vbCrLf
+    sCode = sCode & "" & vbCrLf
+    sCode = sCode & "# Check build dependencies in WSL" & vbCrLf
+    sCode = sCode & "if ($results['ubuntu'] -eq 'OK') {" & vbCrLf
+    sCode = sCode & "    $depCheck = wsl -d Ubuntu -- bash -c 'which debootstrap mksquashfs xorriso rsync 2>/dev/null | wc -l'" & vbCrLf
+    sCode = sCode & "    if ([int]$depCheck -ge 4) {" & vbCrLf
+    sCode = sCode & "        $results['deps'] = 'OK'" & vbCrLf
+    sCode = sCode & "    } else {" & vbCrLf
+    sCode = sCode & "        $results['deps'] = 'MISSING'" & vbCrLf
+    sCode = sCode & "    }" & vbCrLf
+    sCode = sCode & "} else {" & vbCrLf
+    sCode = sCode & "    $results['deps'] = 'SKIP'" & vbCrLf
+    sCode = sCode & "}" & vbCrLf
+    sCode = sCode & "" & vbCrLf
+    sCode = sCode & "# Output results" & vbCrLf
+    sCode = sCode & "$output = $results['wsl'] + '|' + $results['ubuntu'] + '|' + $results['deps']" & vbCrLf
+    sCode = sCode & "$output | Out-File -FilePath '" & sResultFile & "' -Encoding ASCII" & vbCrLf
+    
+    Set oFile = oFSO.CreateTextFile(sPS, True)
+    oFile.Write sCode
+    oFile.Close
+    
+    document.getElementById("prereqResult").value = sResultFile
+    oShell.Run "powershell -EP Bypass -WindowStyle Hidden -File """ & sPS & """", 0, False
+    window.setTimeout GetRef("ReadPrereqResults"), 2000
+End Sub
+
+Sub ReadPrereqResults()
+    Dim sFile, oTS, sLine, arr
+    On Error Resume Next
+    sFile = document.getElementById("prereqResult").value
+    If oFSO.FileExists(sFile) Then
+        Set oTS = oFSO.OpenTextFile(sFile, 1)
+        If Not oTS.AtEndOfStream Then sLine = Trim(oTS.ReadLine)
+        oTS.Close
+        oFSO.DeleteFile sFile
+        
+        If Len(sLine) > 0 Then
+            arr = Split(sLine, "|")
+            If UBound(arr) >= 2 Then
+                bWSLInstalled = (arr(0) = "OK")
+                bUbuntuInstalled = (arr(1) = "OK")
+                bDepsInstalled = (arr(2) = "OK")
+                
+                If bWSLInstalled Then
+                    SetPrereqStatus "wsl", "ok"
+                    AddLog "WSL2 is installed", "ok"
+                Else
+                    SetPrereqStatus "wsl", "missing"
+                    AddLog "WSL2 is NOT installed", "error"
+                End If
+                
+                If bUbuntuInstalled Then
+                    SetPrereqStatus "ubuntu", "ok"
+                    AddLog "Ubuntu distribution found in WSL", "ok"
+                Else
+                    SetPrereqStatus "ubuntu", "missing"
+                    AddLog "Ubuntu NOT found in WSL", "warn"
+                End If
+                
+                If bDepsInstalled Then
+                    SetPrereqStatus "deps", "ok"
+                    AddLog "Build dependencies installed", "ok"
+                ElseIf arr(2) = "SKIP" Then
+                    SetPrereqStatus "deps", "missing"
+                    AddLog "Dependencies check skipped (Ubuntu not available)", "warn"
+                Else
+                    SetPrereqStatus "deps", "missing"
+                    AddLog "Build dependencies need to be installed", "warn"
+                End If
+                
+                UpdateBuildButton
+                Exit Sub
+            End If
+        End If
+    End If
+    
+    window.setTimeout GetRef("ReadPrereqResults"), 1000
+    On Error Goto 0
+End Sub
+
+Sub SetPrereqStatus(sItem, sStatus)
+    Dim el, sClass, sText
+    Set el = document.getElementById("prereq_" & sItem)
+    Select Case sStatus
+        Case "ok"
+            sClass = "prereq-status prereq-ok"
+            sText = "Ready"
+        Case "missing"
+            sClass = "prereq-status prereq-missing"
+            sText = "Missing"
+        Case "checking"
+            sClass = "prereq-status prereq-checking"
+            sText = "Checking..."
+    End Select
+    el.className = sClass
+    el.innerText = sText
+End Sub
+
+Sub UpdateBuildButton()
+    Dim btn
+    Set btn = document.getElementById("btnBuild")
+    If bWSLInstalled And bUbuntuInstalled Then
+        btn.disabled = False
+        If Not bDepsInstalled Then
+            btn.innerText = "Install Deps & Build"
+        Else
+            btn.innerText = "Start Build"
+        End If
+    Else
+        btn.disabled = True
+        btn.innerText = "Prerequisites Missing"
+    End If
+End Sub
+
+Sub InstallWSL()
+    AddLog "Installing WSL2 and Ubuntu...", "info"
+    AddLog "This will open PowerShell as Administrator", "warn"
+    oShell.Run "powershell -Command ""Start-Process powershell -Verb RunAs -ArgumentList '-Command wsl --install -d Ubuntu'""", 1, False
+    AddLog "After installation completes, restart your PC and reopen this builder", "info"
+End Sub
+
+Sub AddLog(sMsg, sType)
+    Dim el, sClass
+    Set el = document.getElementById("logOutput")
+    Select Case sType
+        Case "ok": sClass = "status-ok"
+        Case "warn": sClass = "status-warn"
+        Case "error": sClass = "status-error"
+        Case Else: sClass = "status-info"
+    End Select
+    el.innerHTML = el.innerHTML & "<span class='" & sClass & "'>[" & Time & "] " & sMsg & "</span>" & vbCrLf
+    el.scrollTop = el.scrollHeight
+End Sub
+
+Sub PickOutputFolder()
+    Dim oApp, oDir
+    Set oApp = CreateObject("Shell.Application")
+    Set oDir = oApp.BrowseForFolder(0, "Choose output folder for ISO files:", 0, sOutputFolder)
+    If Not oDir Is Nothing Then
+        sOutputFolder = oDir.Self.Path
+        document.getElementById("outputPath").value = sOutputFolder
+    End If
+End Sub
+
+Sub StartBuild()
+    Dim sEdition, bRealBuild, sTmp, sPS, sCode, oFile
+    
+    If bBuilding Then Exit Sub
+    bBuilding = True
+    
+    sEdition = document.getElementById("editionSelect").value
+    bRealBuild = document.getElementById("realBuildToggle").checked
+    
+    document.getElementById("btnBuild").disabled = True
+    document.getElementById("btnBuild").innerText = "Building..."
+    document.getElementById("buildProgress").className = ""
+    document.getElementById("buildResult").className = "hidden"
+    UpdateProgress 0, "Initializing build..."
+    
+    AddLog "=== Starting Aegis OS Build ===", "info"
+    AddLog "Edition: " & sEdition, "info"
+    AddLog "Mode: " & IIf(bRealBuild, "Real Build", "Simulation"), "info"
+    AddLog "Output: " & sOutputFolder, "info"
+    
+    If Not oFSO.FolderExists(sOutputFolder) Then
+        oFSO.CreateFolder(sOutputFolder)
+        AddLog "Created output folder", "ok"
+    End If
+    
+    sTmp = oShell.ExpandEnvironmentStrings("%TEMP%")
+    sPS = sTmp & "\aegis_build_" & Timer & ".ps1"
+    sProgressFile = sTmp & "\aegis_build_progress_" & Timer & ".txt"
+    sLogFile = sTmp & "\aegis_build_log_" & Timer & ".txt"
+    
+    sCode = BuildPowerShellScript(sEdition, bRealBuild, sOutputFolder, sProgressFile, sLogFile)
+    
+    Set oFile = oFSO.CreateTextFile(sPS, True)
+    oFile.Write sCode
+    oFile.Close
+    
+    document.getElementById("progressFile").value = sProgressFile
+    document.getElementById("logFileInput").value = sLogFile
+    
+    oShell.Run "powershell -EP Bypass -WindowStyle Hidden -File """ & sPS & """", 0, False
+    nTimer = window.setInterval(GetRef("CheckBuildProgress"), 1000)
+End Sub
+
+Function BuildPowerShellScript(sEdition, bRealBuild, sOutput, sProgFile, sLogFilePS)
+    Dim s, sMode
+    If bRealBuild Then sMode = "--real-build" Else sMode = "--simulate"
+    
+    s = "$ErrorActionPreference = 'Stop'" & vbCrLf
+    s = s & "$ProgressFile = '" & sProgFile & "'" & vbCrLf
+    s = s & "$LogFile = '" & sLogFilePS & "'" & vbCrLf
+    s = s & "$Edition = '" & sEdition & "'" & vbCrLf
+    s = s & "$BuildMode = '" & sMode & "'" & vbCrLf
+    s = s & "$OutputFolder = '" & sOutput & "'" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "function Write-Progress-File($pct, $status, $detail) {" & vbCrLf
+    s = s & "    ""$pct|$status|$detail"" | Out-File $ProgressFile -Force -Encoding ASCII" & vbCrLf
+    s = s & "}" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "function Write-Log($msg) {" & vbCrLf
+    s = s & "    $timestamp = Get-Date -Format 'HH:mm:ss'" & vbCrLf
+    s = s & "    ""[$timestamp] $msg"" | Out-File $LogFile -Append -Encoding ASCII" & vbCrLf
+    s = s & "}" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "try {" & vbCrLf
+    s = s & "    Write-Progress-File 5 'Preparing' 'Setting up WSL environment...'" & vbCrLf
+    s = s & "    Write-Log 'Starting Aegis OS build process'" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Get the script directory (build-system folder)" & vbCrLf
+    s = s & "    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path" & vbCrLf
+    s = s & "    $BuildSystemDir = (Get-Item $ScriptDir).Parent.FullName" & vbCrLf
+    s = s & "    if (-not (Test-Path ""$BuildSystemDir\build-aegis.py"")) {" & vbCrLf
+    s = s & "        # Try to find build-system relative to HTA location" & vbCrLf
+    s = s & "        $htaDir = Split-Path -Parent (Get-Process -Id $PID).Path" & vbCrLf
+    s = s & "        $BuildSystemDir = Join-Path $htaDir 'build-system'" & vbCrLf
+    s = s & "        if (-not (Test-Path ""$BuildSystemDir\build-aegis.py"")) {" & vbCrLf
+    s = s & "            $BuildSystemDir = $PWD.Path" & vbCrLf
+    s = s & "        }" & vbCrLf
+    s = s & "    }" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Convert Windows path to WSL path" & vbCrLf
+    s = s & "    $WslBuildDir = '/mnt/' + $BuildSystemDir.Substring(0,1).ToLower() + $BuildSystemDir.Substring(2).Replace('\','/')" & vbCrLf
+    s = s & "    $WslOutputDir = '/mnt/' + $OutputFolder.Substring(0,1).ToLower() + $OutputFolder.Substring(2).Replace('\','/')" & vbCrLf
+    s = s & "    Write-Log ""Build directory: $WslBuildDir""" & vbCrLf
+    s = s & "    Write-Log ""Output directory: $WslOutputDir""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Check and install dependencies if needed" & vbCrLf
+    s = s & "    Write-Progress-File 10 'Dependencies' 'Checking build tools...'" & vbCrLf
+    s = s & "    $depCheck = wsl -d Ubuntu -- bash -c 'which debootstrap mksquashfs xorriso rsync 2>/dev/null | wc -l'" & vbCrLf
+    s = s & "    if ([int]$depCheck -lt 4) {" & vbCrLf
+    s = s & "        Write-Progress-File 15 'Dependencies' 'Installing build tools (this may take a few minutes)...'" & vbCrLf
+    s = s & "        Write-Log 'Installing build dependencies...'" & vbCrLf
+    s = s & "        wsl -d Ubuntu -- sudo apt-get update" & vbCrLf
+    s = s & "        wsl -d Ubuntu -- sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux rsync python3" & vbCrLf
+    s = s & "        Write-Log 'Dependencies installed'" & vbCrLf
+    s = s & "    }" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Create output directory in WSL" & vbCrLf
+    s = s & "    Write-Progress-File 20 'Setup' 'Creating output directories...'" & vbCrLf
+    s = s & "    wsl -d Ubuntu -- mkdir -p ""$WslOutputDir""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Run the build script" & vbCrLf
+    s = s & "    Write-Progress-File 25 'Building' 'Starting Aegis OS build...'" & vbCrLf
+    s = s & "    Write-Log ""Running: python3 build-aegis.py --edition $Edition $BuildMode""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    $buildCmd = ""cd '$WslBuildDir' && sudo python3 build-aegis.py --edition $Edition $BuildMode --verbose 2>&1""" & vbCrLf
+    s = s & "    $buildOutput = wsl -d Ubuntu -- bash -c $buildCmd" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Log the output" & vbCrLf
+    s = s & "    foreach ($line in $buildOutput) {" & vbCrLf
+    s = s & "        Write-Log $line" & vbCrLf
+    s = s & "        if ($line -match 'Progress: (\d+)%') {" & vbCrLf
+    s = s & "            $pct = [int]$Matches[1]" & vbCrLf
+    s = s & "            $mappedPct = 25 + [int]($pct * 0.6)" & vbCrLf
+    s = s & "            Write-Progress-File $mappedPct 'Building' $line" & vbCrLf
+    s = s & "        }" & vbCrLf
+    s = s & "    }" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    # Find the generated ISO" & vbCrLf
+    s = s & "    Write-Progress-File 90 'Copying' 'Locating generated ISO...'" & vbCrLf
+    s = s & "    $isoPattern = ""aegis-$Edition-*.iso""" & vbCrLf
+    s = s & "    $wslIsoPath = wsl -d Ubuntu -- bash -c ""ls -t '$WslBuildDir/output/'$isoPattern 2>/dev/null | head -1""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "    if ($wslIsoPath -and $wslIsoPath.Trim() -ne '') {" & vbCrLf
+    s = s & "        $wslIsoPath = $wslIsoPath.Trim()" & vbCrLf
+    s = s & "        $isoName = Split-Path $wslIsoPath -Leaf" & vbCrLf
+    s = s & "        $destIso = Join-Path $OutputFolder $isoName" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "        Write-Progress-File 92 'Copying' 'Copying ISO to output folder...'" & vbCrLf
+    s = s & "        Write-Log ""Copying ISO from $wslIsoPath to $destIso""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "        wsl -d Ubuntu -- cp ""$wslIsoPath"" ""$WslOutputDir/""" & vbCrLf
+    s = s & "" & vbCrLf
+    s = s & "        # Get file size and checksum" & vbCrLf
+    s = s & "        Write-Progress-File 95 'Verifying' 'Calculating checksum...'" & vbCrLf
+    s = s & "        if (Test-Path $destIso) {" & vbCrLf
+    s = s & "            $fileSize = (Get-Item $destIso).Length" & vbCrLf
+    s = s & "            $fileSizeMB = [math]::Round($fileSize / 1MB, 2)" & vbCrLf
+    s = s & "            $hash = (Get-FileHash $destIso -Algorithm SHA256).Hash" & vbCrLf
+    s = s & "            Write-Log ""ISO Size: $fileSizeMB MB""" & vbCrLf
+    s = s & "            Write-Log ""SHA256: $hash""" & vbCrLf
+    s = s & "            Write-Progress-File 100 'DONE' ""$destIso|$fileSizeMB|$hash""" & vbCrLf
+    s = s & "        } else {" & vbCrLf
+    s = s & "            Write-Progress-File -1 'ERROR' 'ISO file not found after copy'" & vbCrLf
+    s = s & "        }" & vbCrLf
+    s = s & "    } else {" & vbCrLf
+    s = s & "        # Check if it was a simulation" & vbCrLf
+    s = s & "        if ($BuildMode -eq '--simulate') {" & vbCrLf
+    s = s & "            $manifestPath = ""$WslBuildDir/manifests/aegis-$Edition-*.json""" & vbCrLf
+    s = s & "            $manifest = wsl -d Ubuntu -- bash -c ""ls -t $manifestPath 2>/dev/null | head -1""" & vbCrLf
+    s = s & "            if ($manifest) {" & vbCrLf
+    s = s & "                Write-Log 'Simulation completed - manifest generated'" & vbCrLf
+    s = s & "                Write-Progress-File 100 'SIMULATION' ""$($manifest.Trim())|0|SIMULATION_MODE""" & vbCrLf
+    s = s & "            } else {" & vbCrLf
+    s = s & "                Write-Progress-File 100 'SIMULATION' 'Simulation completed|0|SIMULATION_MODE'" & vbCrLf
+    s = s & "            }" & vbCrLf
+    s = s & "        } else {" & vbCrLf
+    s = s & "            Write-Progress-File -1 'ERROR' 'No ISO file was generated'" & vbCrLf
+    s = s & "        }" & vbCrLf
+    s = s & "    }" & vbCrLf
+    s = s & "}" & vbCrLf
+    s = s & "catch {" & vbCrLf
+    s = s & "    Write-Log ""ERROR: $($_.Exception.Message)""" & vbCrLf
+    s = s & "    Write-Progress-File -1 'ERROR' $_.Exception.Message" & vbCrLf
+    s = s & "}" & vbCrLf
+    
+    BuildPowerShellScript = s
+End Function
+
+Sub CheckBuildProgress()
+    Dim sFile, oTS, sLine, arr, pct, status, detail
+    On Error Resume Next
+    
+    sFile = document.getElementById("progressFile").value
+    If oFSO.FileExists(sFile) Then
+        Set oTS = oFSO.OpenTextFile(sFile, 1)
+        If Not oTS.AtEndOfStream Then sLine = Trim(oTS.ReadLine)
+        oTS.Close
+        
+        If Len(sLine) > 0 Then
+            arr = Split(sLine, "|")
+            pct = CInt(arr(0))
+            status = arr(1)
+            detail = ""
+            If UBound(arr) >= 2 Then detail = arr(2)
+            
+            If pct = -1 Then
+                window.clearInterval nTimer
+                bBuilding = False
+                UpdateProgress 0, "Error: " & detail
+                AddLog "BUILD FAILED: " & detail, "error"
+                document.getElementById("btnBuild").disabled = False
+                document.getElementById("btnBuild").innerText = "Retry Build"
+            ElseIf pct = 100 Then
+                window.clearInterval nTimer
+                bBuilding = False
+                UpdateProgress 100, "Build complete!"
+                
+                If status = "DONE" Then
+                    Dim parts
+                    parts = Split(detail, "|")
+                    ShowBuildResult parts(0), parts(1), parts(2)
+                    AddLog "BUILD SUCCESSFUL!", "ok"
+                    AddLog "ISO: " & parts(0), "ok"
+                    AddLog "Size: " & parts(1) & " MB", "info"
+                    AddLog "SHA256: " & parts(2), "info"
+                ElseIf status = "SIMULATION" Then
+                    ShowSimulationResult detail
+                    AddLog "SIMULATION COMPLETE", "ok"
+                End If
+                
+                document.getElementById("btnBuild").disabled = False
+                document.getElementById("btnBuild").innerText = "Build Another"
+            Else
+                UpdateProgress pct, status & ": " & detail
+                If InStr(detail, "Installing") > 0 Or InStr(detail, "Building") > 0 Then
+                    AddLog detail, "info"
+                End If
+            End If
+        End If
+    End If
+    
+    ReadBuildLog
+    On Error Goto 0
+End Sub
+
+Sub ReadBuildLog()
+    Dim sFile, oTS, sLine
+    On Error Resume Next
+    sFile = document.getElementById("logFileInput").value
+    If oFSO.FileExists(sFile) Then
+        Set oTS = oFSO.OpenTextFile(sFile, 1)
+        Do While Not oTS.AtEndOfStream
+            sLine = oTS.ReadLine
+            If InStr(sLine, "ERROR") > 0 Or InStr(sLine, "error") > 0 Then
+                AddLog sLine, "error"
+            ElseIf InStr(sLine, "WARNING") > 0 Or InStr(sLine, "warning") > 0 Then
+                AddLog sLine, "warn"
+            End If
+        Loop
+        oTS.Close
+    End If
+    On Error Goto 0
+End Sub
+
+Sub UpdateProgress(pct, sText)
+    document.getElementById("progressBar").style.width = pct & "%"
+    document.getElementById("progressBar").innerText = pct & "%"
+    document.getElementById("progressText").innerText = sText
+End Sub
+
+Sub ShowBuildResult(sPath, sSize, sHash)
+    document.getElementById("buildProgress").className = "hidden"
+    document.getElementById("buildResult").className = ""
+    document.getElementById("resultPath").innerText = sPath
+    document.getElementById("resultSize").innerText = sSize & " MB"
+    document.getElementById("resultHash").innerText = sHash
+End Sub
+
+Sub ShowSimulationResult(sDetail)
+    document.getElementById("buildProgress").className = "hidden"
+    document.getElementById("buildResult").className = ""
+    document.getElementById("resultTitle").innerText = "Simulation Complete"
+    document.getElementById("resultPath").innerText = "No ISO generated (simulation mode)"
+    document.getElementById("resultSize").innerText = "N/A"
+    document.getElementById("resultHash").innerText = "N/A"
+End Sub
+
+Sub OpenOutputFolder()
+    oShell.Run "explorer """ & sOutputFolder & """"
+End Sub
+
+Sub OpenEtcher()
+    oShell.Run "https://etcher.balena.io/"
+End Sub
+
+Sub RefreshPrereqs()
+    AddLog "Refreshing prerequisites check...", "info"
+    CheckPrerequisites
+End Sub
+
+Function IIf(bCondition, vTrue, vFalse)
+    If bCondition Then IIf = vTrue Else IIf = vFalse
+End Function
+</script>
+</head>
+<body>
+<input type="hidden" id="prereqResult" value="">
+<input type="hidden" id="progressFile" value="">
+<input type="hidden" id="logFileInput" value="">
+
+<div class="header">
+    <h1>&#9876; Aegis OS Builder</h1>
+    <p>Build bootable Aegis OS ISOs using WSL2 on Windows</p>
+</div>
+
+<div class="content">
+    <div class="section">
+        <h3>&#128736; Prerequisites</h3>
+        <div class="prereq-item">
+            <span class="prereq-icon">&#9881;</span>
+            <span class="prereq-text">WSL2 (Windows Subsystem for Linux)</span>
+            <span class="prereq-status prereq-checking" id="prereq_wsl">Checking...</span>
+        </div>
+        <div class="prereq-item">
+            <span class="prereq-icon">&#128039;</span>
+            <span class="prereq-text">Ubuntu Distribution in WSL</span>
+            <span class="prereq-status prereq-checking" id="prereq_ubuntu">Checking...</span>
+        </div>
+        <div class="prereq-item">
+            <span class="prereq-icon">&#128295;</span>
+            <span class="prereq-text">Build Tools (debootstrap, squashfs-tools, xorriso, rsync)</span>
+            <span class="prereq-status prereq-checking" id="prereq_deps">Checking...</span>
+        </div>
+        <div style="margin-top: 10px; text-align: right;">
+            <button class="btn" onclick="RefreshPrereqs()">&#8635; Refresh</button>
+            <button class="btn btn-success" onclick="InstallWSL()">Install WSL2 + Ubuntu</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>&#128190; Build Configuration</h3>
+        <div class="row">
+            <div class="col">
+                <div class="label">Edition</div>
+                <select id="editionSelect" onchange="UpdateEditionDescription()">
+                    <option value="freemium">Freemium (Free)</option>
+                    <option value="basic">Basic</option>
+                    <option value="workplace">Workplace</option>
+                    <option value="gamer">Gamer</option>
+                    <option value="ai">AI Developer</option>
+                    <option value="gamer-ai">Gamer + AI</option>
+                    <option value="server">Server</option>
+                </select>
+                <div class="edition-desc" id="editionDesc">Basic Linux with XFCE desktop - Free edition (~1.5 GB)</div>
+            </div>
+            <div class="col">
+                <div class="label">Build Mode</div>
+                <div class="toggle-container" style="margin-top: 10px;">
+                    <span class="toggle-label">Simulation</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="realBuildToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label">Real Build</span>
+                </div>
+            </div>
+        </div>
+        <div style="margin-top: 15px;">
+            <div class="label">Output Folder</div>
+            <div class="path-box">
+                <input type="text" id="outputPath" readonly>
+                <button class="btn" onclick="PickOutputFolder()">Browse...</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section" id="buildProgress" class="hidden">
+        <h3>&#128640; Build Progress</h3>
+        <div class="progress-container">
+            <div class="progress-bar-bg">
+                <div class="progress-bar" id="progressBar">0%</div>
+            </div>
+            <div class="progress-text" id="progressText">Ready to build</div>
+        </div>
+    </div>
+
+    <div class="section hidden" id="buildResult">
+        <h3 id="resultTitle">&#10004; Build Complete!</h3>
+        <div class="result-box">
+            <div class="result-item">
+                <div class="result-label">ISO Location</div>
+                <div class="result-value" id="resultPath"></div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">File Size</div>
+                <div class="result-value" id="resultSize"></div>
+            </div>
+            <div class="result-item">
+                <div class="result-label">SHA256 Checksum</div>
+                <div class="result-value" id="resultHash"></div>
+            </div>
+            <div style="margin-top: 15px; text-align: center;">
+                <button class="btn" onclick="OpenOutputFolder()">&#128193; Open Folder</button>
+                <button class="btn btn-primary" onclick="OpenEtcher()">&#128293; Get Balena Etcher</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h3>&#128220; Build Log</h3>
+        <div class="status-box" id="logOutput"><span class="status-info">[Ready] Aegis OS Builder v2.0</span>
+</div>
+    </div>
+</div>
+
+<div class="footer">
+    <button class="btn" onclick="window.close()">Close</button>
+    <button class="btn btn-primary" id="btnBuild" onclick="StartBuild()" disabled>Checking...</button>
+</div>
+</body>
+</html>
