@@ -18,7 +18,7 @@ class AegisLicenseSystem:
         self.secret_key = secret_key
 
     def generate_license_key(self, tier: str, license_type: str, email: str, 
-                            stripe_session_id: str = None) -> Dict:
+                            stripe_session_id: Optional[str] = None) -> Dict:
         """
         Generate a unique license key for a customer
 
@@ -49,15 +49,26 @@ class AegisLicenseSystem:
             expires_at = datetime.utcnow() + timedelta(days=365)
             metadata['expires_at'] = expires_at.isoformat()
         else:
-            metadata['expires_at'] = None  # Lifetime licenses don't expire
+            metadata['expires_at'] = ''  # Lifetime licenses don't expire
 
         # Generate signature for tamper protection
         signature = self._generate_signature(metadata)
 
         # Create the license key (format: AEGIS-TIER-XXXXX-XXXXX-XXXXX)
+        # Use specific tier codes to avoid issues with hyphens
+        tier_codes = {
+            'basic': 'BAS',
+            'gamer': 'GAM', 
+            'workplace': 'WOR',
+            'ai-dev': 'AID',
+            'server': 'SER',
+            'gamer-ai': 'GAI'
+        }
+        tier_code = tier_codes.get(tier, tier.upper()[:3].replace('-', ''))
+        
         key_parts = [
             'AEGIS',
-            tier.upper()[:3],
+            tier_code,
             license_id[:5].upper(),
             license_id[5:10].upper(),
             signature[:5].upper()
@@ -92,8 +103,15 @@ class AegisLicenseSystem:
 
             # Extract tier from key
             tier_code = parts[1].lower()
-            tier_map = {'bas': 'basic', 'gam': 'gamer', 'wor': 'workplace', 'ai-': 'ai-dev', 'ser': 'server'}
-            tier = tier_map.get(tier_code[:3], 'freemium')
+            tier_map = {
+                'bas': 'basic', 
+                'gam': 'gamer', 
+                'wor': 'workplace', 
+                'aid': 'ai-dev', 
+                'ser': 'server',
+                'gai': 'gamer-ai'
+            }
+            tier = tier_map.get(tier_code, 'freemium')
 
             # If we have stored metadata, validate it
             if stored_metadata:
@@ -304,7 +322,7 @@ class AegisLicenseSystem:
         return features.get(tier, features['freemium'])
 
 # License validation API for boot-time checks
-def validate_license_on_boot(license_key: str, hardware_id: str = None) -> Dict:
+def validate_license_on_boot(license_key: str, hardware_id: Optional[str] = None) -> Dict:
     """
     Validate license during OS boot
 

@@ -33,7 +33,7 @@ body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font
 .link { color:#66aaff; cursor:pointer; text-decoration:underline; }
 </style>
 <script language="VBScript">
-Dim shell, fso, progressTimer, downloadFolder, currentStep
+Dim shell, fso, progressTimer, downloadFolder, currentStep, objShell, objFolder
 
 Sub Window_OnLoad()
     window.resizeTo 580, 550
@@ -41,7 +41,7 @@ Sub Window_OnLoad()
     Set fso = CreateObject("Scripting.FileSystemObject")
     downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
     currentStep = 1
-    ShowStep 1
+    document.getElementById("folderPath").innerText = downloadFolder
 End Sub
 
 Sub ShowStep(stepNum)
@@ -49,11 +49,14 @@ Sub ShowStep(stepNum)
     document.getElementById("step2").style.display = "none"
     document.getElementById("step3").style.display = "none"
     document.getElementById("step" & stepNum).style.display = ""
+    document.getElementById("footerStep1").style.display = "none"
+    document.getElementById("footerStep3").style.display = "none"
+    If stepNum = 1 Then document.getElementById("footerStep1").style.display = ""
+    If stepNum = 3 Then document.getElementById("footerStep3").style.display = ""
     currentStep = stepNum
 End Sub
 
 Sub BrowseFolder()
-    Dim folderPath
     Set objShell = CreateObject("Shell.Application")
     Set objFolder = objShell.BrowseForFolder(0, "Select download location:", 0, downloadFolder)
     If Not objFolder Is Nothing Then
@@ -113,7 +116,7 @@ Function GetDownloadScript()
 End Function
 
 Sub CheckProgress()
-    Dim progressFile, ts, line, parts, pct, status, detail
+    Dim progressFile, ts, line, parts, pct, status, detail, successParts
     progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
     On Error Resume Next
     If fso.FileExists(progressFile) Then
@@ -134,7 +137,6 @@ Sub CheckProgress()
             document.getElementById("progressBar").style.background = "#E53935"
         ElseIf pct = 100 Then
             window.clearInterval progressTimer
-            Dim successParts
             successParts = Split(detail, "|")
             document.getElementById("isoPath").innerText = successParts(0)
             document.getElementById("isoHash").innerText = successParts(1)
@@ -260,18 +262,5 @@ End Sub
         <button class="btn btn-primary" onclick="CloseApp()">Done</button>
     </span>
 </div>
-<script language="VBScript">
-Sub ShowStep(stepNum)
-    document.getElementById("step1").style.display = "none"
-    document.getElementById("step2").style.display = "none"
-    document.getElementById("step3").style.display = "none"
-    document.getElementById("step" & stepNum).style.display = ""
-    document.getElementById("footerStep1").style.display = "none"
-    document.getElementById("footerStep3").style.display = "none"
-    If stepNum = 1 Then document.getElementById("footerStep1").style.display = ""
-    If stepNum = 3 Then document.getElementById("footerStep3").style.display = ""
-    currentStep = stepNum
-End Sub
-</script>
 </body>
 </html>
