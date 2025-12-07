@@ -37,7 +37,7 @@ body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font
 .link { color:#0066CC; cursor:pointer; text-decoration:underline; }
 </style>
 <script language="VBScript">
-Dim shell, fso, progressTimer, downloadFolder, currentStep
+Dim shell, fso, progressTimer, downloadFolder, currentStep, objShell, objFolder
 
 Sub Window_OnLoad()
     window.resizeTo 600, 520
@@ -45,6 +45,7 @@ Sub Window_OnLoad()
     Set fso = CreateObject("Scripting.FileSystemObject")
     downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
     currentStep = 1
+    document.getElementById("folderPath").innerText = downloadFolder
     ShowStep 1
 End Sub
 
@@ -57,7 +58,6 @@ Sub ShowStep(stepNum)
 End Sub
 
 Sub BrowseFolder()
-    Dim folderPath
     Set objShell = CreateObject("Shell.Application")
     Set objFolder = objShell.BrowseForFolder(0, "Select download location:", 0, downloadFolder)
     If Not objFolder Is Nothing Then
