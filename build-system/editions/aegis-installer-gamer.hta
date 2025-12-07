@@ -1,268 +1,188 @@
 <html>
 <head>
-<title>Aegis OS ISO Downloader - Gamer Edition</title>
-<HTA:APPLICATION ID="AegisGamerDownloader" APPLICATIONNAME="Aegis OS Gamer Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="5.0" SCROLL="yes"/>
+<title>Aegis OS - Gamer Edition</title>
+<HTA:APPLICATION ID="Aegis" APPLICATIONNAME="Aegis OS Gamer" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="1.0" SCROLL="no"/>
 <style>
-body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font-size:13px; background:#1a1a2e; color:#eee; }
-.header { background:linear-gradient(135deg,#CC0000 0%,#990000 100%); color:white; padding:15px 20px; }
-.header h1 { margin:0; font-size:18px; font-weight:600; }
-.header .edition { font-size:11px; opacity:0.9; margin-top:2px; }
-.content { padding:15px 20px; overflow-y:auto; }
-.footer { background:#252540; padding:10px 20px; border-top:1px solid #444; text-align:right; }
-.btn { padding:8px 16px; margin-left:6px; border:none; background:#444; color:#fff; font-size:12px; cursor:pointer; border-radius:3px; }
-.btn:hover { background:#555; }
-.btn-primary { background:#CC0000; font-weight:600; }
-.btn-primary:hover { background:#990000; }
-.section { background:#252540; border:1px solid #333; border-radius:4px; margin-bottom:12px; padding:12px; }
-.section-title { font-weight:600; font-size:13px; margin-bottom:8px; color:#ff4444; }
-.progress-container { text-align:center; padding:30px; }
-.progress-pct { font-size:48px; font-weight:300; color:#ff4444; }
-.progress-bar-bg { background:#333; height:6px; border-radius:3px; margin:15px 0; }
-.progress-bar { height:100%; background:#CC0000; border-radius:3px; transition:width 0.3s; }
-.progress-status { font-size:13px; color:#ccc; }
-.progress-detail { font-size:11px; color:#888; margin-top:4px; }
-.success-box { text-align:center; padding:20px; }
-.success-icon { font-size:48px; color:#4CAF50; }
-.success-title { font-size:16px; font-weight:600; color:#4CAF50; margin:10px 0; }
-.info-box { background:#2a2a4a; border:1px solid #CC0000; border-radius:4px; padding:10px; margin:10px 0; font-size:12px; }
-.warning-box { background:#3a3020; border:1px solid #FFA000; border-radius:4px; padding:10px; margin:10px 0; font-size:12px; }
-.feature-grid { display:flex; flex-wrap:wrap; gap:6px; }
-.feature-tag { background:#333; padding:4px 8px; border-radius:3px; font-size:10px; color:#ccc; }
-.feature-tag:before { content:"\2713 "; color:#ff4444; }
-.checksum { font-family:Consolas; font-size:10px; background:#1a1a2e; padding:6px; border-radius:3px; word-break:break-all; }
-.link { color:#66aaff; cursor:pointer; text-decoration:underline; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, sans-serif; font-size: 14px; background: #f0f0f0; color: #333; }
+.header { background: linear-gradient(135deg, #CC0000, #990000); color: white; padding: 20px; text-align: center; }
+.header h1 { margin: 0 0 5px 0; font-size: 22px; }
+.header p { margin: 0; opacity: 0.9; font-size: 13px; }
+.content { padding: 20px; }
+.section { background: white; border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-bottom: 15px; }
+.section h3 { margin: 0 0 10px 0; color: #CC0000; font-size: 15px; }
+.footer { background: #e0e0e0; padding: 15px 20px; text-align: right; border-top: 1px solid #ccc; }
+.btn { padding: 10px 25px; border: 1px solid #aaa; background: white; font-size: 13px; cursor: pointer; border-radius: 4px; margin-left: 10px; }
+.btn:hover { background: #f5f5f5; }
+.btn-primary { background: #CC0000; color: white; border-color: #CC0000; font-weight: bold; }
+.btn-primary:hover { background: #990000; }
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.progress-box { text-align: center; padding: 30px 0; }
+.progress-pct { font-size: 42px; color: #CC0000; margin-bottom: 10px; }
+.progress-bar-bg { background: #ddd; height: 8px; border-radius: 4px; margin: 10px 0; }
+.progress-bar { background: #CC0000; height: 100%; border-radius: 4px; width: 0%; transition: width 0.3s; }
+.progress-text { color: #666; font-size: 13px; }
+.success { color: #CC0000; font-size: 20px; }
+.error { color: #d32f2f; }
+.path { font-family: Consolas, monospace; font-size: 12px; background: #f5f5f5; padding: 8px; border-radius: 4px; word-break: break-all; }
+.features { list-style: none; padding: 0; margin: 0; columns: 2; }
+.features li { padding: 4px 0 4px 20px; position: relative; font-size: 12px; }
+.features li:before { content: "✓"; position: absolute; left: 0; color: #CC0000; font-weight: bold; }
+.link { color: #0066cc; cursor: pointer; text-decoration: underline; }
+.hidden { display: none; }
 </style>
 <script language="VBScript">
-Dim shell, fso, progressTimer, downloadFolder, currentStep, objShell, objFolder
+Option Explicit
+Dim oShell, oFSO, sFolder, nTimer
 
 Sub Window_OnLoad()
-    window.resizeTo 580, 550
-    Set shell = CreateObject("WScript.Shell")
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
-    currentStep = 1
-    document.getElementById("folderPath").innerText = downloadFolder
-    ShowStep 1
+    window.resizeTo 550, 520
+    Set oShell = CreateObject("WScript.Shell")
+    Set oFSO = CreateObject("Scripting.FileSystemObject")
+    sFolder = oShell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
+    document.getElementById("folderPath").innerText = sFolder
 End Sub
 
-Sub ShowStep(stepNum)
-    document.getElementById("step1").style.display = "none"
-    document.getElementById("step2").style.display = "none"
-    document.getElementById("step3").style.display = "none"
-    document.getElementById("step" & stepNum).style.display = ""
-    document.getElementById("footerStep1").style.display = "none"
-    document.getElementById("footerStep3").style.display = "none"
-    If stepNum = 1 Then document.getElementById("footerStep1").style.display = ""
-    If stepNum = 3 Then document.getElementById("footerStep3").style.display = ""
-    currentStep = stepNum
-End Sub
-
-Sub BrowseFolder()
-    Set objShell = CreateObject("Shell.Application")
-    Set objFolder = objShell.BrowseForFolder(0, "Select download location:", 0, downloadFolder)
-    If Not objFolder Is Nothing Then
-        downloadFolder = objFolder.Self.Path
-        document.getElementById("folderPath").innerText = downloadFolder
+Sub PickFolder()
+    Dim oApp, oDir
+    Set oApp = CreateObject("Shell.Application")
+    Set oDir = oApp.BrowseForFolder(0, "Choose download folder:", 0, sFolder)
+    If Not oDir Is Nothing Then
+        sFolder = oDir.Self.Path
+        document.getElementById("folderPath").innerText = sFolder
     End If
 End Sub
 
-Sub StartDownload()
-    Dim tempDir, psFile, progressFile, psCode, ts
-    tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
-    psFile = tempDir & "\aegis_download.ps1"
-    progressFile = tempDir & "\aegis_progress.txt"
-    If fso.FileExists(progressFile) Then fso.DeleteFile progressFile
-    psCode = GetDownloadScript()
-    Set ts = fso.CreateTextFile(psFile, True)
-    ts.Write psCode
-    ts.Close
-    ShowStep 2
-    progressTimer = window.setInterval(GetRef("CheckProgress"), 500)
-    shell.Run "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & psFile & """ -DownloadFolder """ & downloadFolder & """ -ProgressFile """ & progressFile & """", 0, False
+Sub BeginDownload()
+    Dim sTmp, sPS, sProg, sCode, oFile
+    document.getElementById("step1").className = "hidden"
+    document.getElementById("step2").className = ""
+    document.getElementById("btnStart").disabled = True
+    sTmp = oShell.ExpandEnvironmentStrings("%TEMP%")
+    sPS = sTmp & "\aegis_dl_" & Timer & ".ps1"
+    sProg = sTmp & "\aegis_prog_" & Timer & ".txt"
+    sCode = "param($Folder,$ProgFile)" & vbCrLf & "$ErrorActionPreference='Stop'" & vbCrLf & "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12" & vbCrLf & "function WP($p,$s,$d){'$p|$s|$d'|Out-File $ProgFile -Force}" & vbCrLf & "try{WP 0 'Connecting...' '';$iso=$Folder+'\AegisOS-Gamer.iso';$urls=@('https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso','https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso');$hash='DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216';$ok=$false;foreach($u in $urls){try{$r=[Net.HttpWebRequest]::Create($u);$r.Timeout=30000;$rsp=$r.GetResponse();$len=$rsp.ContentLength;$rs=$rsp.GetResponseStream();$fs=[IO.File]::Create($iso);$buf=New-Object byte[] 1MB;$dl=0;$t0=Get-Date;$t1=$t0;while(($n=$rs.Read($buf,0,$buf.Length))-gt 0){$fs.Write($buf,0,$n);$dl+=$n;$now=Get-Date;if(($now-$t1).TotalSeconds -ge 1){$pct=[int]($dl/$len*90);$spd=[math]::Round($dl/($now-$t0).TotalSeconds/1MB,1);WP $pct ('Downloading: '+[int]($dl/$len*100)+'%') ($spd+' MB/s');$t1=$now}};$fs.Close();$rs.Close();$ok=$true;break}catch{continue}};if(-not $ok){WP -1 'ERROR' 'Download failed';exit 1};WP 92 'Verifying...' '';$h=(Get-FileHash $iso SHA256).Hash;if($h -ne $hash){WP -1 'ERROR' 'Checksum mismatch';exit 1};WP 100 'DONE' ($iso+'|'+$h)}catch{WP -1 'ERROR' $_.Exception.Message}"
+    Set oFile = oFSO.CreateTextFile(sPS, True)
+    oFile.Write sCode
+    oFile.Close
+    oShell.Run "powershell -EP Bypass -WindowStyle Hidden -File """ & sPS & """ -Folder """ & sFolder & """ -ProgFile """ & sProg & """", 0, False
+    nTimer = window.setInterval(GetRef("CheckProg"), 800)
+    document.getElementById("progFile").value = sProg
 End Sub
 
-Function GetDownloadScript()
-    Dim code
-    code = "param([string]$DownloadFolder, [string]$ProgressFile)" & vbCrLf
-    code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
-    code = code & "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls" & vbCrLf
-    code = code & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
-    code = code & "try {" & vbCrLf
-    code = code & "Write-P 0 'Initializing download...' 'Aegis OS Gamer Edition'" & vbCrLf
-    code = code & "$isoPath = Join-Path $DownloadFolder 'AegisOS-Gamer.iso'" & vbCrLf
-    code = code & "$mirrors = @('https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso','https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso')" & vbCrLf
-    code = code & "$expectedHash = 'DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216'" & vbCrLf
-    code = code & "Write-P 2 'Connecting to server...' ''" & vbCrLf
-    code = code & "$dlSuccess = $false" & vbCrLf
-    code = code & "foreach ($url in $mirrors) {" & vbCrLf
-    code = code & "  try {" & vbCrLf
-    code = code & "    $web = [Net.HttpWebRequest]::Create($url); $web.UserAgent = 'AegisOS/5.0'; $web.Timeout = 30000; $resp = $web.GetResponse(); $total = $resp.ContentLength; $rs = $resp.GetResponseStream(); $fs = [IO.File]::Create($isoPath); $buf = New-Object byte[] 8MB; $dl = 0; $st = Get-Date; $lt = $st" & vbCrLf
-    code = code & "    while (($br = $rs.Read($buf, 0, $buf.Length)) -gt 0) {" & vbCrLf
-    code = code & "      $fs.Write($buf, 0, $br); $dl += $br; $now = Get-Date" & vbCrLf
-    code = code & "      if (($now - $lt).TotalSeconds -ge 0.5) {" & vbCrLf
-    code = code & "        $p = [int](($dl / $total) * 100); $el = ($now - $st).TotalSeconds" & vbCrLf
-    code = code & "        if ($el -gt 0) { $spd = $dl / $el / 1MB; $rem = ($total - $dl) / ($dl / $el); $eta = [TimeSpan]::FromSeconds([Math]::Max(0,$rem)).ToString('mm\\:ss') }" & vbCrLf
-    code = code & "        Write-P ([int]($p * 0.90)) ""Downloading: $p%"" ""$([math]::Round($spd,1)) MB/s - $eta remaining""; $lt = $now" & vbCrLf
-    code = code & "      }" & vbCrLf
-    code = code & "    }" & vbCrLf
-    code = code & "    $fs.Close(); $rs.Close(); $dlSuccess = $true; break" & vbCrLf
-    code = code & "  } catch { continue }" & vbCrLf
-    code = code & "}" & vbCrLf
-    code = code & "if (-not $dlSuccess) { Write-P -1 'ERROR: Download failed' 'Could not connect to download servers'; exit 1 }" & vbCrLf
-    code = code & "Write-P 92 'Verifying checksum...' 'This may take a moment'" & vbCrLf
-    code = code & "$hash = (Get-FileHash $isoPath -Algorithm SHA256).Hash" & vbCrLf
-    code = code & "if ($hash -ne $expectedHash) { Write-P -1 'ERROR: Checksum failed' 'File may be corrupted'; exit 1 }" & vbCrLf
-    code = code & "Write-P 100 'SUCCESS' ""$isoPath|$hash""" & vbCrLf
-    code = code & "} catch { Write-P -1 ""ERROR: $($_.Exception.Message)"" 'Download failed'; exit 1 }" & vbCrLf
-    GetDownloadScript = code
-End Function
-
-Sub CheckProgress()
-    Dim progressFile, ts, line, parts, pct, status, detail, successParts
-    progressFile = shell.ExpandEnvironmentStrings("%TEMP%") & "\aegis_progress.txt"
+Sub CheckProg()
+    Dim sFile, oTS, sLine, arr, pct, msg, det, parts
     On Error Resume Next
-    If fso.FileExists(progressFile) Then
-        Set ts = fso.OpenTextFile(progressFile, 1)
-        line = ts.ReadLine()
-        ts.Close
-        parts = Split(line, "|")
-        pct = CInt(parts(0))
-        status = parts(1)
-        detail = ""
-        If UBound(parts) >= 2 Then detail = parts(2)
-        If pct = -1 Then
-            window.clearInterval progressTimer
-            document.getElementById("progressStatus").innerText = status
-            document.getElementById("progressDetail").innerText = detail
-            document.getElementById("progressPct").innerText = "!"
-            document.getElementById("progressBar").style.width = "100%"
-            document.getElementById("progressBar").style.background = "#E53935"
-        ElseIf pct = 100 Then
-            window.clearInterval progressTimer
-            successParts = Split(detail, "|")
-            document.getElementById("isoPath").innerText = successParts(0)
-            document.getElementById("isoHash").innerText = successParts(1)
-            ShowStep 3
-        Else
-            document.getElementById("progressPct").innerText = pct & "%"
-            document.getElementById("progressBar").style.width = pct & "%"
-            document.getElementById("progressStatus").innerText = status
-            document.getElementById("progressDetail").innerText = detail
+    sFile = document.getElementById("progFile").value
+    If oFSO.FileExists(sFile) Then
+        Set oTS = oFSO.OpenTextFile(sFile, 1)
+        If Not oTS.AtEndOfStream Then sLine = oTS.ReadLine
+        oTS.Close
+        If Len(sLine) > 0 Then
+            arr = Split(sLine, "|")
+            pct = CInt(arr(0))
+            msg = arr(1)
+            det = ""
+            If UBound(arr) >= 2 Then det = arr(2)
+            If pct = -1 Then
+                window.clearInterval nTimer
+                document.getElementById("progressPct").innerText = "!"
+                document.getElementById("progressPct").className = "progress-pct error"
+                document.getElementById("progressText").innerText = msg & ": " & det
+                document.getElementById("btnStart").disabled = False
+            ElseIf pct = 100 Then
+                window.clearInterval nTimer
+                parts = Split(det, "|")
+                document.getElementById("isoPath").innerText = parts(0)
+                document.getElementById("isoHash").innerText = parts(1)
+                document.getElementById("step2").className = "hidden"
+                document.getElementById("step3").className = ""
+            Else
+                document.getElementById("progressPct").innerText = pct & "%"
+                document.getElementById("progressBar").style.width = pct & "%"
+                document.getElementById("progressText").innerText = msg & " " & det
+            End If
         End If
     End If
     On Error Goto 0
 End Sub
 
 Sub OpenFolder()
-    shell.Run "explorer.exe """ & downloadFolder & """"
+    oShell.Run "explorer """ & sFolder & """"
 End Sub
 
 Sub OpenEtcher()
-    shell.Run "https://etcher.balena.io/"
+    oShell.Run "https://etcher.balena.io/"
 End Sub
 
-Sub CloseApp()
+Sub CloseWindow()
+    If nTimer <> 0 Then window.clearInterval nTimer
     window.close
 End Sub
 </script>
 </head>
 <body>
+<input type="hidden" id="progFile" value="">
 <div class="header">
     <h1>Aegis OS Gamer Edition</h1>
-    <div class="edition">Ultimate Gaming Experience on Linux</div>
+    <p>Professional Linux Distribution</p>
 </div>
 <div class="content">
     <div id="step1">
         <div class="section">
-            <div class="section-title">Included Features</div>
-            <div class="feature-grid">
-                <span class="feature-tag">Neural Upscaler (ANU)</span>
-                <span class="feature-tag">FSR 1.0/2.0/3.0</span>
-                <span class="feature-tag">AI Frame Gen</span>
-                <span class="feature-tag">Steam/GOG/Epic</span>
-                <span class="feature-tag">Proton-GE</span>
-                <span class="feature-tag">Wine-GE</span>
-                <span class="feature-tag">DXVK/VKD3D</span>
-                <span class="feature-tag">GameMode</span>
-                <span class="feature-tag">MangoHud</span>
-                <span class="feature-tag">GPU OC Tools</span>
-                <span class="feature-tag">OBS Studio</span>
-                <span class="feature-tag">Instant Replay</span>
-                <span class="feature-tag">AI Highlights</span>
-                <span class="feature-tag">Twitch/YouTube</span>
-                <span class="feature-tag">Controller Support</span>
-                <span class="feature-tag">Steam Input</span>
-                <span class="feature-tag">Gyro Aiming</span>
-                <span class="feature-tag">OpenRGB</span>
-                <span class="feature-tag">Fan Control</span>
-                <span class="feature-tag">Discord RPC</span>
-                <span class="feature-tag">LAN Party Mode</span>
-                <span class="feature-tag">Voice Chat</span>
-                <span class="feature-tag">Steam Workshop</span>
-                <span class="feature-tag">Nexus Mods</span>
-                <span class="feature-tag">ReShade</span>
-                <span class="feature-tag">Save Manager</span>
-                <span class="feature-tag">RetroArch</span>
-                <span class="feature-tag">Dolphin</span>
-                <span class="feature-tag">PCSX2</span>
-                <span class="feature-tag">RPCS3</span>
-                <span class="feature-tag">Yuzu</span>
-                <span class="feature-tag">Performance Profiles</span>
-            </div>
+            <h3>Included Features</h3>
+            <ul class="features">
+                <li>Steam/GOG/Epic</li>
+                <li>Proton-GE</li>
+                <li>Wine-GE</li>
+                <li>DXVK/VKD3D</li>
+                <li>GameMode</li>
+                <li>MangoHud</li>
+                <li>Neural Upscaler</li>
+                <li>OBS Studio</li>
+            </ul>
         </div>
         <div class="section">
-            <div class="section-title">Download Location</div>
-            <p style="font-size:12px;"><strong id="folderPath">C:\Users\...\Downloads</strong></p>
-            <button class="btn" onclick="BrowseFolder()">Change Folder</button>
+            <h3>Download Location</h3>
+            <p class="path" id="folderPath">Loading...</p>
+            <button class="btn" onclick="PickFolder()">Change Folder</button>
         </div>
-        <div class="info-box">
-            <strong>Requirements:</strong> ~3 GB disk space, stable internet, 8GB+ USB drive
+        <div class="section">
+            <h3>Requirements</h3>
+            <p>~3 GB disk space, stable internet, 8GB+ USB drive</p>
         </div>
     </div>
-    <div id="step2" style="display:none;">
+    <div id="step2" class="hidden">
         <div class="section">
-            <div class="progress-container">
+            <div class="progress-box">
                 <div class="progress-pct" id="progressPct">0%</div>
                 <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
-                <div class="progress-status" id="progressStatus">Starting download...</div>
-                <div class="progress-detail" id="progressDetail"></div>
+                <div class="progress-text" id="progressText">Starting download...</div>
             </div>
-        </div>
-        <div class="warning-box">
-            <strong>Please wait</strong> - Do not close this window while downloading.
         </div>
     </div>
-    <div id="step3" style="display:none;">
-        <div class="section">
-            <div class="success-box">
-                <div class="success-icon">&#10004;</div>
-                <div class="success-title">Download Complete!</div>
-            </div>
+    <div id="step3" class="hidden">
+        <div class="section" style="text-align:center;">
+            <div class="success">&#10004; Download Complete!</div>
         </div>
         <div class="section">
-            <div class="section-title">ISO Location</div>
-            <p id="isoPath" class="checksum"></p>
+            <h3>ISO File</h3>
+            <p class="path" id="isoPath"></p>
         </div>
         <div class="section">
-            <div class="section-title">SHA256 Checksum</div>
-            <p id="isoHash" class="checksum"></p>
+            <h3>SHA256</h3>
+            <p class="path" id="isoHash"></p>
         </div>
         <div class="section">
-            <div class="section-title">Next Steps</div>
-            <p style="font-size:12px;">1. Download <span class="link" onclick="OpenEtcher()">Balena Etcher</span> (free)</p>
-            <p style="font-size:12px;">2. Open Etcher, select the ISO, select your USB drive</p>
-            <p style="font-size:12px;">3. Click "Flash!" to create bootable USB</p>
+            <h3>Next: Create Bootable USB</h3>
+            <p>1. Download <span class="link" onclick="OpenEtcher()">Balena Etcher</span></p>
+            <p>2. Select ISO, select USB, click Flash</p>
         </div>
     </div>
 </div>
 <div class="footer">
-    <span id="footerStep1">
-        <button class="btn btn-primary" onclick="StartDownload()">Download ISO</button>
-    </span>
-    <span id="footerStep3" style="display:none;">
-        <button class="btn" onclick="OpenFolder()">Open Folder</button>
-        <button class="btn btn-primary" onclick="CloseApp()">Done</button>
-    </span>
+    <button class="btn" onclick="CloseWindow()">Cancel</button>
+    <button class="btn btn-primary" id="btnStart" onclick="BeginDownload()">Download ISO</button>
 </div>
 </body>
 </html>
