@@ -31,8 +31,8 @@ class AegisLicenseSystem:
         Returns:
             Dictionary with license details
         """
-        # Generate unique license ID
-        license_id = str(uuid.uuid4())
+        # Generate unique license ID (remove hyphens for key generation)
+        license_id = str(uuid.uuid4()).replace('-', '')
 
         # Create license metadata
         metadata = {

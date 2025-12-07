@@ -1,46 +1,42 @@
 <html>
 <head>
 <title>Aegis OS ISO Downloader - Gamer Edition</title>
-<HTA:APPLICATION ID="AegisGamerDownloader" APPLICATIONNAME="Aegis OS Gamer Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="5.0" SCROLL="no"/>
+<HTA:APPLICATION ID="AegisGamerDownloader" APPLICATIONNAME="Aegis OS Gamer Edition" BORDER="thick" BORDERSTYLE="raised" CAPTION="yes" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="yes" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SYSMENU="yes" VERSION="5.0" SCROLL="yes"/>
 <style>
-body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font-size:13px; background:#F3F3F3; color:#1A1A1A; }
-.header { background:linear-gradient(135deg,#CC0000 0%,#990000 100%); color:white; padding:20px; }
-.header h1 { margin:0; font-size:20px; font-weight:600; }
-.header .edition { font-size:12px; opacity:0.9; margin-top:4px; }
-.content { padding:20px; }
-.footer { background:#E6E6E6; padding:12px 20px; border-top:1px solid #CCCCCC; text-align:right; }
-.btn { padding:10px 20px; margin-left:8px; border:1px solid #CCCCCC; background:white; font-size:13px; font-family:inherit; cursor:pointer; border-radius:3px; min-width:100px; }
-.btn:hover { background:#F0F0F0; border-color:#999999; }
-.btn:disabled { background:#F5F5F5; color:#999999; cursor:not-allowed; }
-.btn-primary { background:#CC0000; color:white; border-color:#CC0000; font-weight:600; }
-.btn-primary:hover { background:#990000; border-color:#990000; }
-.btn-primary:disabled { background:#E68080; border-color:#E68080; }
-.section { background:white; border:1px solid #E0E0E0; border-radius:4px; margin-bottom:16px; padding:16px; }
-.section-title { font-weight:600; font-size:14px; margin-bottom:10px; color:#CC0000; }
-.progress-container { text-align:center; padding:20px; }
-.progress-pct { font-size:48px; font-weight:300; color:#CC0000; margin-bottom:10px; }
-.progress-bar-bg { background:#E0E0E0; height:8px; border-radius:4px; overflow:hidden; margin-bottom:12px; }
-.progress-bar { height:100%; background:#CC0000; transition:width 0.3s ease; }
-.progress-status { font-size:14px; color:#333333; margin-bottom:4px; }
-.progress-detail { font-size:12px; color:#666666; }
+body { margin:0; padding:0; font-family:'Segoe UI',Tahoma,Arial,sans-serif; font-size:13px; background:#1a1a2e; color:#eee; }
+.header { background:linear-gradient(135deg,#CC0000 0%,#990000 100%); color:white; padding:15px 20px; }
+.header h1 { margin:0; font-size:18px; font-weight:600; }
+.header .edition { font-size:11px; opacity:0.9; margin-top:2px; }
+.content { padding:15px 20px; overflow-y:auto; }
+.footer { background:#252540; padding:10px 20px; border-top:1px solid #444; text-align:right; }
+.btn { padding:8px 16px; margin-left:6px; border:none; background:#444; color:#fff; font-size:12px; cursor:pointer; border-radius:3px; }
+.btn:hover { background:#555; }
+.btn-primary { background:#CC0000; font-weight:600; }
+.btn-primary:hover { background:#990000; }
+.section { background:#252540; border:1px solid #333; border-radius:4px; margin-bottom:12px; padding:12px; }
+.section-title { font-weight:600; font-size:13px; margin-bottom:8px; color:#ff4444; }
+.progress-container { text-align:center; padding:30px; }
+.progress-pct { font-size:48px; font-weight:300; color:#ff4444; }
+.progress-bar-bg { background:#333; height:6px; border-radius:3px; margin:15px 0; }
+.progress-bar { height:100%; background:#CC0000; border-radius:3px; transition:width 0.3s; }
+.progress-status { font-size:13px; color:#ccc; }
+.progress-detail { font-size:11px; color:#888; margin-top:4px; }
 .success-box { text-align:center; padding:20px; }
-.success-icon { font-size:48px; color:#CC0000; margin-bottom:10px; }
-.success-title { font-size:18px; font-weight:600; color:#CC0000; margin-bottom:8px; }
-.info-box { background:#FFE8E8; border:1px solid #CC0000; border-radius:4px; padding:14px; margin:12px 0; }
-.warning-box { background:#FFF8E1; border:1px solid #FFA000; border-radius:4px; padding:14px; margin:12px 0; }
-.steps-list { margin:10px 0; padding-left:20px; }
-.steps-list li { padding:6px 0; }
-.features-list { margin:8px 0; padding-left:0; list-style:none; columns:2; column-gap:12px; }
-.features-list li { padding:3px 0 3px 16px; position:relative; font-size:11px; break-inside:avoid; }
-.features-list li:before { content:"\2713"; position:absolute; left:0; color:#CC0000; font-weight:bold; }
-.checksum { font-family:Consolas,monospace; font-size:11px; background:#F5F5F5; padding:8px; border-radius:3px; word-break:break-all; margin-top:8px; }
-.link { color:#0066CC; cursor:pointer; text-decoration:underline; }
+.success-icon { font-size:48px; color:#4CAF50; }
+.success-title { font-size:16px; font-weight:600; color:#4CAF50; margin:10px 0; }
+.info-box { background:#2a2a4a; border:1px solid #CC0000; border-radius:4px; padding:10px; margin:10px 0; font-size:12px; }
+.warning-box { background:#3a3020; border:1px solid #FFA000; border-radius:4px; padding:10px; margin:10px 0; font-size:12px; }
+.feature-grid { display:flex; flex-wrap:wrap; gap:6px; }
+.feature-tag { background:#333; padding:4px 8px; border-radius:3px; font-size:10px; color:#ccc; }
+.feature-tag:before { content:"\2713 "; color:#ff4444; }
+.checksum { font-family:Consolas; font-size:10px; background:#1a1a2e; padding:6px; border-radius:3px; word-break:break-all; }
+.link { color:#66aaff; cursor:pointer; text-decoration:underline; }
 </style>
 <script language="VBScript">
 Dim shell, fso, progressTimer, downloadFolder, currentStep
 
 Sub Window_OnLoad()
-    window.resizeTo 700, 700
+    window.resizeTo 580, 550
     Set shell = CreateObject("WScript.Shell")
     Set fso = CreateObject("Scripting.FileSystemObject")
     downloadFolder = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\Downloads"
@@ -168,153 +164,62 @@ End Sub
 </head>
 <body>
 <div class="header">
-    <h1>Aegis OS ISO Downloader</h1>
-    <div class="edition">Gamer Edition - Ultimate Gaming Experience</div>
+    <h1>Aegis OS Gamer Edition</h1>
+    <div class="edition">Ultimate Gaming Experience on Linux</div>
 </div>
 <div class="content">
     <div id="step1">
         <div class="section">
-            <div class="section-title">Welcome</div>
-            <p>This tool will download the Aegis OS Gamer Edition ISO file to your computer.</p>
-            <p>After downloading, you'll use <strong>Balena Etcher</strong> (free software) to create a bootable USB drive.</p>
-        </div>
-        <div class="section">
-            <div class="section-title">AI & Upscaling</div>
-            <ul class="features-list">
-                <li>Aegis Neural Upscaler (ANU) - Custom AI upscaling</li>
-                <li>FSR 1.0/2.0/3.0 support (AMD FidelityFX)</li>
-                <li>AI frame generation for smoother gameplay</li>
-                <li>Real-ESRGAN texture enhancement</li>
-                <li>Dynamic resolution scaling</li>
-                <li>Anti-lag technology integration</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Game Management</div>
-            <ul class="features-list">
-                <li>Unified game launcher (Steam, GOG, Epic, Lutris, Heroic)</li>
-                <li>Automatic game detection and library import</li>
-                <li>SD card/USB portable game storage</li>
-                <li>Proton-GE and Wine-GE pre-installed</li>
-                <li>DXVK, VKD3D-Proton, and vkBasalt ready</li>
-                <li>Per-game Proton version selection</li>
-                <li>Custom launch options and env variables</li>
-                <li>Game-specific Wine prefix management</li>
-                <li>Automatic shader pre-caching</li>
-                <li>Cloud save sync (Steam, GOG, custom)</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Performance Tools</div>
-            <ul class="features-list">
-                <li>GameMode auto-activation on launch</li>
-                <li>MangoHud real-time overlay (FPS, CPU, GPU, RAM)</li>
-                <li>Per-game performance profiles</li>
-                <li>CPU governor optimization</li>
-                <li>GPU overclocking tools (NVIDIA/AMD)</li>
-                <li>VRAM usage monitoring</li>
-                <li>Latency reduction optimizations</li>
-                <li>Benchmarking suite with historical tracking</li>
-                <li>Frame time analysis</li>
-                <li>Power profile switching (Performance/Balanced/Quiet)</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Streaming & Recording</div>
-            <ul class="features-list">
-                <li>Aegis Stream - local game streaming</li>
-                <li>OBS Studio pre-configured</li>
-                <li>NVENC/VAAPI hardware encoding</li>
-                <li>Instant replay (last 30/60/120 sec)</li>
-                <li>AI-powered highlight detection</li>
-                <li>Twitch/YouTube/Kick integration</li>
-                <li>Multi-platform chat overlay</li>
-                <li>Stream deck support</li>
-                <li>Screenshot manager with cloud backup</li>
-                <li>GIF capture tool</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Controllers & Input</div>
-            <ul class="features-list">
-                <li>Xbox, PlayStation, Switch Pro controller support</li>
-                <li>Steam Input integration</li>
-                <li>Custom controller mapping profiles</li>
-                <li>Gyro aiming support</li>
-                <li>Haptic feedback configuration</li>
-                <li>Mouse acceleration control</li>
-                <li>Keyboard macro support</li>
-                <li>Fight stick and racing wheel support</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">RGB & Hardware</div>
-            <ul class="features-list">
-                <li>OpenRGB for RGB lighting control</li>
-                <li>Razer, Corsair, Logitech, ASUS Aura support</li>
-                <li>Per-game RGB profiles</li>
-                <li>Fan curve customization</li>
-                <li>CPU/GPU temperature monitoring</li>
-                <li>Hardware sensor dashboard</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Multiplayer & Social</div>
-            <ul class="features-list">
-                <li>LAN party network optimization</li>
-                <li>Built-in Discord rich presence</li>
-                <li>Voice chat with noise cancellation</li>
-                <li>Server browser for popular games</li>
-                <li>Game invite system</li>
-                <li>Friend activity feed</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Modding & Customization</div>
-            <ul class="features-list">
-                <li>Steam Workshop integration</li>
-                <li>Nexus Mods manager</li>
-                <li>Mod Organizer 2 support</li>
-                <li>LOOT load order optimizer</li>
-                <li>ENB/ReShade preset manager</li>
-                <li>Save game manager with backups</li>
-                <li>Cheat engine (single-player only)</li>
-                <li>Texture mod tools</li>
-            </ul>
-        </div>
-        <div class="section">
-            <div class="section-title">Emulation</div>
-            <ul class="features-list">
-                <li>RetroArch with 50+ cores pre-installed</li>
-                <li>Dolphin (GameCube/Wii)</li>
-                <li>PCSX2 (PlayStation 2)</li>
-                <li>RPCS3 (PlayStation 3)</li>
-                <li>Yuzu/Ryujinx (Nintendo Switch)</li>
-                <li>CEMU (Wii U)</li>
-                <li>BIOS and firmware management</li>
-                <li>Controller auto-configuration per emulator</li>
-            </ul>
+            <div class="section-title">Included Features</div>
+            <div class="feature-grid">
+                <span class="feature-tag">Neural Upscaler (ANU)</span>
+                <span class="feature-tag">FSR 1.0/2.0/3.0</span>
+                <span class="feature-tag">AI Frame Gen</span>
+                <span class="feature-tag">Steam/GOG/Epic</span>
+                <span class="feature-tag">Proton-GE</span>
+                <span class="feature-tag">Wine-GE</span>
+                <span class="feature-tag">DXVK/VKD3D</span>
+                <span class="feature-tag">GameMode</span>
+                <span class="feature-tag">MangoHud</span>
+                <span class="feature-tag">GPU OC Tools</span>
+                <span class="feature-tag">OBS Studio</span>
+                <span class="feature-tag">Instant Replay</span>
+                <span class="feature-tag">AI Highlights</span>
+                <span class="feature-tag">Twitch/YouTube</span>
+                <span class="feature-tag">Controller Support</span>
+                <span class="feature-tag">Steam Input</span>
+                <span class="feature-tag">Gyro Aiming</span>
+                <span class="feature-tag">OpenRGB</span>
+                <span class="feature-tag">Fan Control</span>
+                <span class="feature-tag">Discord RPC</span>
+                <span class="feature-tag">LAN Party Mode</span>
+                <span class="feature-tag">Voice Chat</span>
+                <span class="feature-tag">Steam Workshop</span>
+                <span class="feature-tag">Nexus Mods</span>
+                <span class="feature-tag">ReShade</span>
+                <span class="feature-tag">Save Manager</span>
+                <span class="feature-tag">RetroArch</span>
+                <span class="feature-tag">Dolphin</span>
+                <span class="feature-tag">PCSX2</span>
+                <span class="feature-tag">RPCS3</span>
+                <span class="feature-tag">Yuzu</span>
+                <span class="feature-tag">Performance Profiles</span>
+            </div>
         </div>
         <div class="section">
             <div class="section-title">Download Location</div>
-            <p>The ISO will be saved to:</p>
-            <p><strong id="folderPath">C:\Users\...\Downloads</strong></p>
+            <p style="font-size:12px;"><strong id="folderPath">C:\Users\...\Downloads</strong></p>
             <button class="btn" onclick="BrowseFolder()">Change Folder</button>
         </div>
         <div class="info-box">
-            <strong>What you'll need:</strong>
-            <ul class="steps-list">
-                <li>About 3 GB of free disk space</li>
-                <li>A stable internet connection</li>
-                <li>A USB drive (8 GB or larger) for installation</li>
-            </ul>
+            <strong>Requirements:</strong> ~3 GB disk space, stable internet, 8GB+ USB drive
         </div>
     </div>
     <div id="step2" style="display:none;">
         <div class="section">
             <div class="progress-container">
                 <div class="progress-pct" id="progressPct">0%</div>
-                <div class="progress-bar-bg"><div class="progress-bar" id="progressBar" style="width:0%;"></div></div>
+                <div class="progress-bar-bg"><div class="progress-bar" id="progressBar"></div></div>
                 <div class="progress-status" id="progressStatus">Starting download...</div>
                 <div class="progress-detail" id="progressDetail"></div>
             </div>
@@ -328,34 +233,45 @@ End Sub
             <div class="success-box">
                 <div class="success-icon">&#10004;</div>
                 <div class="success-title">Download Complete!</div>
-                <p>Your ISO file is ready.</p>
             </div>
         </div>
         <div class="section">
-            <div class="section-title">ISO File Location</div>
-            <p id="isoPath" style="font-family:Consolas;font-size:12px;"></p>
-            <button class="btn" onclick="OpenFolder()">Open Folder</button>
+            <div class="section-title">ISO Location</div>
+            <p id="isoPath" class="checksum"></p>
         </div>
         <div class="section">
-            <div class="section-title">SHA256 Checksum (for verification)</div>
-            <div class="checksum" id="isoHash"></div>
+            <div class="section-title">SHA256 Checksum</div>
+            <p id="isoHash" class="checksum"></p>
         </div>
-        <div class="info-box">
-            <div class="section-title">Next Steps - Create Bootable USB</div>
-            <ol class="steps-list">
-                <li>Download and install <span class="link" onclick="OpenEtcher()">Balena Etcher</span> (free)</li>
-                <li>Insert your USB drive (8 GB or larger)</li>
-                <li>Open Balena Etcher and click "Flash from file"</li>
-                <li>Select the downloaded ISO file</li>
-                <li>Select your USB drive and click "Flash!"</li>
-                <li>Once complete, restart your computer and boot from USB</li>
-            </ol>
+        <div class="section">
+            <div class="section-title">Next Steps</div>
+            <p style="font-size:12px;">1. Download <span class="link" onclick="OpenEtcher()">Balena Etcher</span> (free)</p>
+            <p style="font-size:12px;">2. Open Etcher, select the ISO, select your USB drive</p>
+            <p style="font-size:12px;">3. Click "Flash!" to create bootable USB</p>
         </div>
     </div>
 </div>
 <div class="footer">
-    <button class="btn" onclick="CloseApp()" id="btnCancel">Cancel</button>
-    <button class="btn btn-primary" onclick="StartDownload()" id="btnDownload">Download ISO</button>
+    <span id="footerStep1">
+        <button class="btn btn-primary" onclick="StartDownload()">Download ISO</button>
+    </span>
+    <span id="footerStep3" style="display:none;">
+        <button class="btn" onclick="OpenFolder()">Open Folder</button>
+        <button class="btn btn-primary" onclick="CloseApp()">Done</button>
+    </span>
 </div>
+<script language="VBScript">
+Sub ShowStep(stepNum)
+    document.getElementById("step1").style.display = "none"
+    document.getElementById("step2").style.display = "none"
+    document.getElementById("step3").style.display = "none"
+    document.getElementById("step" & stepNum).style.display = ""
+    document.getElementById("footerStep1").style.display = "none"
+    document.getElementById("footerStep3").style.display = "none"
+    If stepNum = 1 Then document.getElementById("footerStep1").style.display = ""
+    If stepNum = 3 Then document.getElementById("footerStep3").style.display = ""
+    currentStep = stepNum
+End Sub
+</script>
 </body>
 </html>

@@ -22,4 +22,5 @@ Build Information:
 - Version: 1.5.0
 - Kernel: 6.8.0-45-generic
 - Base: Ubuntu 24.04 (noble)
-- Build Date: 2025-11-28T03:13:01.660429+00:00
+- Build Date: 2025-12-07T11:48:15.657457+00:00
+- Build Mode: SIMULATION
