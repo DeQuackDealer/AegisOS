@@ -85,6 +85,7 @@ Function GetDownloadScript()
     Dim code
     code = "param([string]$DownloadFolder, [string]$ProgressFile)" & vbCrLf
     code = code & "$ErrorActionPreference = 'Stop'" & vbCrLf
+    code = code & "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls" & vbCrLf
     code = code & "function Write-P { param([int]$P, [string]$S, [string]$D=''); ""$P|$S|$D"" | Out-File $ProgressFile -Encoding UTF8 -Force }" & vbCrLf
     code = code & "try {" & vbCrLf
     code = code & "Write-P 0 'Initializing download...' 'Aegis OS Gamer Edition'" & vbCrLf
