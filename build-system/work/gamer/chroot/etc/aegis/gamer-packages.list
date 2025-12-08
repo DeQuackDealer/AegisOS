@@ -1,252 +1,151 @@
 # Aegis OS Gamer Edition - Comprehensive Gaming Packages
 # This file lists all gaming-related packages for the Gamer edition
-# Format: package_name [install_method] [notes]
+# To be installed via apt during ISO build or first boot
 
 #==============================================================================
 # GAME PLATFORMS
 #==============================================================================
-
-# Steam - Primary gaming platform
-steam                           # apt - Valve Steam client
-steam-devices                   # apt - Steam udev rules for controllers
-
-# Lutris - Multi-platform game manager
-lutris                          # apt - Open source game launcher
-
-# Heroic Games Launcher - Epic/GOG client (Flatpak)
-com.heroicgameslauncher.hgl     # flatpak - Epic Games & GOG launcher
-
-# GOG Galaxy (Wine wrapper)
-# Installed via Lutris/Wine - gog-galaxy-wine script provided
+steam
+steam-devices
+lutris
 
 #==============================================================================
 # WINE / PROTON
 #==============================================================================
+wine
+winetricks
+cabextract
+winbind
 
-# Wine Staging - Latest Wine with experimental patches
-wine-staging                    # apt - Wine with staging patches
-wine-staging-i386               # apt - 32-bit Wine libraries
-wine-staging-amd64              # apt - 64-bit Wine libraries
-
-# Wine tools
-winetricks                      # apt - Wine helper scripts
-cabextract                      # apt - Windows cabinet extractor
-winbind                         # apt - Windows domain auth
-
-# Proton tools
-protontricks                    # pip/apt - Proton prefix helper
-proton-ge-custom                # manual - GloriousEggroll Proton builds
-# Location: ~/.steam/root/compatibilitytools.d/
-
-# Wine dependencies
-libvulkan1                      # apt - Vulkan ICD loader
-libvulkan1:i386                 # apt - Vulkan 32-bit
-mesa-vulkan-drivers             # apt - Mesa Vulkan drivers
-mesa-vulkan-drivers:i386        # apt - Mesa Vulkan 32-bit
-libgl1-mesa-dri                 # apt - Mesa OpenGL
-libgl1-mesa-dri:i386            # apt - Mesa OpenGL 32-bit
+#==============================================================================
+# WINE DEPENDENCIES
+#==============================================================================
+libvulkan1
+mesa-vulkan-drivers
+libgl1-mesa-dri
 
 #==============================================================================
 # GAMING OPTIMIZATIONS
 #==============================================================================
+gamemode
+libgamemodeauto0
+gamescope
+mangohud
+goverlay
+vkbasalt
 
-# GameMode - Feral Interactive game optimizer
-gamemode                        # apt - CPU governor optimization
-libgamemodeauto0                # apt - GameMode auto-injection
-
-# Gamescope - SteamOS compositor
-gamescope                       # apt - Wayland micro-compositor
-
-# MangoHud - Performance overlay
-mangohud                        # apt - Vulkan/OpenGL overlay
-mangohud:i386                   # apt - MangoHud 32-bit
-
-# GOverlay - MangoHud/vkBasalt GUI
-goverlay                        # apt - Graphical overlay config
-
-# vkBasalt - Vulkan post-processing
-vkbasalt                        # apt - ReShade-like for Linux
-
-# Additional optimizations
-libstrangle                     # apt - Frame limiter
-cpu-x                           # apt - CPU information tool
-htop                            # apt - Process viewer
-iotop                           # apt - I/O monitor
+#==============================================================================
+# PERFORMANCE MONITORING
+#==============================================================================
+htop
+iotop
 
 #==============================================================================
 # CONTROLLER SUPPORT
 #==============================================================================
-
-# Steam Controller / SC-Controller
-sc-controller                   # apt/flatpak - Steam Controller driver
-
-# AntiMicroX - Gamepad to keyboard mapper
-antimicrox                      # apt - Controller mapping tool
-
-# Joystick tools
-joystick                        # apt - Joystick testing tools
-jstest-gtk                      # apt - GTK joystick tester
-evtest                          # apt - Input event testing
-xboxdrv                         # apt - Xbox controller driver
-
-# Additional controller support
-game-devices-udev               # apt - Game controller udev rules
-sdl2-gamepad-tool               # manual - SDL2 controller config
+antimicrox
+joystick
+jstest-gtk
+evtest
+xboxdrv
+game-devices-udev
 
 #==============================================================================
 # STREAMING & RECORDING
 #==============================================================================
-
-# OBS Studio - Professional streaming/recording
-obs-studio                      # apt - Open Broadcaster Software
-obs-plugins                     # apt - OBS plugin meta-package
-obs-websocket                   # apt - OBS WebSocket support
-
-# Streamlink - CLI stream viewer
-streamlink                      # apt/pip - Stream to media player
-
-# Additional streaming tools
-ffmpeg                          # apt - Video encoding
-v4l2loopback-dkms               # apt - Virtual camera
-sunshine                        # apt - Game streaming server
-moonlight-qt                    # apt - Game streaming client
+obs-studio
+ffmpeg
+v4l2loopback-dkms
 
 #==============================================================================
-# DISCORD & COMMUNICATION
+# VOICE CHAT
 #==============================================================================
-
-# Discord (Flatpak recommended)
-com.discordapp.Discord          # flatpak - Discord client
-
-# BetterDiscord tools (manual install)
-# betterdiscordctl               # manual - BetterDiscord installer
-# Located at: ~/.config/BetterDiscord/
-
-# Additional voice chat
-mumble                          # apt - Low-latency voice chat
-teamspeak3-client               # apt - TeamSpeak client
+mumble
 
 #==============================================================================
 # PERFORMANCE TOOLS
 #==============================================================================
-
-# CoreCtrl - AMD GPU/CPU control
-corectrl                        # apt - GPU/CPU tuning
-
-# CPU frequency utilities
-cpufrequtils                    # apt - CPU frequency scaling
-cpupower-gui                    # apt - CPU power management GUI
-
-# NVIDIA tools (conditional)
-nvidia-prime                    # apt - NVIDIA Optimus switching
-nvidia-settings                 # apt - NVIDIA control panel
-nvtop                           # apt - NVIDIA GPU monitor
-
-# Monitoring
-lm-sensors                      # apt - Hardware sensors
-psensor                         # apt - Sensor GUI
-glances                         # apt - System monitor
-btop                            # apt - Resource monitor
-
-# Disk performance
-gameconqueror                   # apt - Memory scanner (cheat engine)
-ananicy                         # apt - Auto nice daemon
+corectrl
+cpufrequtils
+nvidia-prime
+nvidia-settings
+nvtop
+lm-sensors
+psensor
+glances
+btop
 
 #==============================================================================
-# EMULATORS
+# EMULATORS (APT)
 #==============================================================================
-
-# RetroArch - Multi-system emulator frontend
-retroarch                       # apt - Libretro frontend
-libretro-core-info              # apt - Core information files
-
-# RetroArch cores (common)
-libretro-bsnes-mercury          # apt - SNES emulator
-libretro-nestopia               # apt - NES emulator
-libretro-gambatte               # apt - Game Boy emulator
-libretro-mgba                   # apt - GBA emulator
-libretro-mupen64plus-next       # apt - N64 emulator
-libretro-beetle-psx-hw          # apt - PlayStation emulator
-libretro-desmume                # apt - Nintendo DS emulator
-libretro-flycast                # apt - Dreamcast emulator
-libretro-ppsspp                 # apt - PSP emulator
-libretro-mame                   # apt - Arcade emulator
-
-# Standalone emulators
-dolphin-emu                     # apt - GameCube/Wii emulator
-pcsx2                           # apt/flatpak - PlayStation 2 emulator
-rpcs3                           # flatpak - PlayStation 3 emulator
-net.rpcs3.RPCS3                 # flatpak - PS3 emulator
-
-# Nintendo Switch (Flatpak - yuzu discontinued, using alternatives)
-org.ryujinx.Ryujinx             # flatpak - Nintendo Switch emulator
-io.github.suyu_emu.suyu         # flatpak - Switch emulator fork
-
-# Other emulators
-duckstation                     # flatpak - PS1 emulator (accurate)
-cemu                            # flatpak - Wii U emulator
-xemu                            # flatpak - Original Xbox emulator
-melonds                         # apt - Nintendo DS emulator
-mgba                            # apt - Game Boy Advance emulator
-ppsspp                          # apt - PSP emulator (standalone)
+retroarch
+libretro-core-info
+libretro-bsnes-mercury
+libretro-nestopia
+libretro-gambatte
+libretro-mgba
+dolphin-emu
+melonds
+mgba
+ppsspp
 
 #==============================================================================
-# MODDING & GAME TOOLS
+# MODDING TOOLS
 #==============================================================================
-
-# r2modman (Flatpak) - BepInEx/mod manager
-com.github.ebkr.r2modman        # flatpak - Thunderstore mod manager
-
-# NexusMods helper (Vortex via Wine/manual)
-# vortex-wine                    # manual - NexusMods Vortex via Wine
-
-# Additional modding tools
-gameimage                       # manual - Game image manager
-lgogdownloader                  # apt - GOG.com downloader
-
-# Cheat/trainer tools (for singleplayer)
-scanmem                         # apt - Memory scanner
-pince                           # manual - Memory debugging
+lgogdownloader
+scanmem
 
 #==============================================================================
 # GAME LIBRARIES & DEPENDENCIES
 #==============================================================================
-
-# SDL libraries
-libsdl2-2.0-0                   # apt - Simple DirectMedia Layer
-libsdl2-image-2.0-0             # apt - SDL2 image loading
-libsdl2-mixer-2.0-0             # apt - SDL2 audio mixing
-libsdl2-net-2.0-0               # apt - SDL2 networking
-libsdl2-ttf-2.0-0               # apt - SDL2 TrueType fonts
-
-# Audio for games
-pipewire                        # apt - Modern audio server
-pipewire-pulse                  # apt - PulseAudio compatibility
-pipewire-alsa                   # apt - ALSA compatibility
-libpipewire-0.3-modules         # apt - PipeWire modules
-
-# Graphics libraries
-libvulkan-dev                   # apt - Vulkan development
-vulkan-tools                    # apt - Vulkan utilities
-vulkan-validationlayers         # apt - Vulkan validation
-mesa-utils                      # apt - OpenGL utilities
+libsdl2-2.0-0
+libsdl2-image-2.0-0
+libsdl2-mixer-2.0-0
+libsdl2-net-2.0-0
+libsdl2-ttf-2.0-0
 
 #==============================================================================
-# FLATPAK GAMING PACKAGES (Summary)
+# AUDIO FOR GAMES
 #==============================================================================
-# Install via: flatpak install flathub <package>
-#
-# com.heroicgameslauncher.hgl    - Heroic Games Launcher
-# com.discordapp.Discord         - Discord
-# com.github.ebkr.r2modman       - r2modman Mod Manager
-# net.rpcs3.RPCS3                - RPCS3 PS3 Emulator
-# org.ryujinx.Ryujinx            - Ryujinx Switch Emulator
-# io.github.suyu_emu.suyu        - Suyu Switch Emulator
-# org.duckstation.DuckStation    - DuckStation PS1 Emulator
-# info.cemu.Cemu                 - Cemu Wii U Emulator
-# app.xemu.xemu                  - xemu Xbox Emulator
-# io.github.AmazonQGames.Lutris  - Lutris (Flatpak alternative)
-# com.usebottles.bottles         - Bottles Wine manager
+pipewire
+pipewire-pulse
+pipewire-alsa
+libpipewire-0.3-modules
+
+#==============================================================================
+# GRAPHICS LIBRARIES
+#==============================================================================
+libvulkan-dev
+vulkan-tools
+vulkan-validationlayers
+mesa-utils
+
+#==============================================================================
+# FLATPAK SUPPORT
+#==============================================================================
+flatpak
+gnome-software-plugin-flatpak
+
+#==============================================================================
+# FLATPAK APPS (Install separately via flatpak)
+# These applications are not available in Ubuntu repos and must be installed
+# via Flatpak: flatpak install flathub <app-id>
+#==============================================================================
+# com.heroicgameslauncher.hgl - Heroic Games Launcher (Epic/GOG)
+# com.discordapp.Discord - Discord
+# com.github.ebkr.r2modman - r2modman Mod Manager
+# net.rpcs3.RPCS3 - RPCS3 PS3 Emulator
+# org.ryujinx.Ryujinx - Ryujinx Switch Emulator
+# io.github.suyu_emu.suyu - Suyu Switch Emulator
+# org.duckstation.DuckStation - DuckStation PS1 Emulator
+# info.cemu.Cemu - Cemu Wii U Emulator
+# app.xemu.xemu - xemu Xbox Emulator
+# io.github.AmazonQGames.Lutris - Lutris (Flatpak alternative)
+# com.usebottles.bottles - Bottles Wine manager
+# org.libretro.RetroArch - RetroArch (Flatpak alternative)
+# com.moonlight_stream.Moonlight - Moonlight game streaming
+# dev.sunshine_app.Sunshine - Sunshine game streaming server
+# com.valvesoftware.Steam - Steam (Flatpak alternative)
 
 #==============================================================================
 # END OF GAMER PACKAGES LIST

@@ -30,12 +30,52 @@ Offers a Windows 10-inspired desktop experience with XFCE, custom GTK themes (Li
 Aims for high Windows application compatibility through pre-configured Wine/Proton settings (`wine-optimization.conf`, `proton-config.json`) and an `Aegis Wine Optimizer` tool for managing optimized prefixes and dependencies.
 
 ### Aegis Exclusive Tools
-Over 25 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter) and CLI modes, with tier-based feature gating and logging. Key tools include:
-*   **aegis-wallpaper-engine**: AI-powered animated wallpaper system.
-*   **aegis-stream**: Local game/desktop streaming solution.
-*   **aegis-security-daemon**: Background security service for integrity monitoring and threat detection.
-*   **aegis-sandbox-policy**: Application sandboxing via AppArmor/Firejail.
-*   **Freemium Lite Tools**: The Freemium edition includes toggleable, limited versions of all premium features for previewing.
+Over 50 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter) and CLI modes, with tier-based feature gating and logging.
+
+**Pro Baseline Tools (All Paid Editions):**
+*   **aegis-office-hub**: LibreOffice wrapper with templates, cloud sync, document converter, AI features
+*   **aegis-meet**: Video conferencing solution (Jitsi, Zoom, Teams, Meet) with virtual camera, recording
+*   **aegis-resolve-studio**: DaVinci Resolve manager with GPU detection, codec packs, render farm
+*   **aegis-creative-suite**: 16+ creative app launcher (GIMP, Blender, Kdenlive, OBS, Inkscape)
+*   **aegis-desktop-link**: Multi-device KVM via Barrier/Deskflow
+*   **aegis-network-display**: Wireless screen casting (Miracast)
+*   **aegis-file-share**: Encrypted peer-to-peer file transfer
+*   **aegis-mobile-link**: Smartphone integration via KDE Connect
+*   **aegis-browser-hub**: Unified browser launcher with profile management
+*   **aegis-cloud-sync**: Unified cloud storage (Nextcloud, Google Drive, OneDrive, Dropbox)
+*   **aegis-screenshot-pro**: Advanced screenshots, recording, annotations, OCR
+*   **aegis-system-monitor**: Real-time system stats, process manager, GPU monitoring
+*   **aegis-layout-switcher**: 8 desktop layouts (Windows 11, macOS, Ubuntu, custom)
+*   **aegis-audio-enhance**: System-wide audio effects via EasyEffects
+
+**Basic Edition Tools:**
+*   **aegis-getting-started**: Onboarding wizard with setup, tour, help resources
+*   **aegis-system-care**: System cleanup, updates, disk management, performance tips
+*   **aegis-security-suite**: ClamAV, UFW, encrypted folders
+*   **aegis-backup-suite**: Scheduled backups with cloud support
+
+**Gamer Edition Tools:**
+*   **aegis-game-center**: Unified game library (Steam, Lutris, Heroic, native)
+*   **aegis-performance-tuner**: CPU/GPU optimization, gaming profiles
+*   **aegis-stream-deck**: OBS integration, streaming controls
+*   **aegis-render-orchestrator**: Dual-GPU split rendering with per-region upscaling
+*   **aegis-upscaler**: FSR/DLSS/ANU neural upscaling with game profiles
+
+**Workplace Edition Tools:**
+*   **aegis-workspace-hub**: Enterprise app launcher with favorites
+*   **aegis-it-toolkit**: Remote desktop, network diagnostics, VPN management
+*   **aegis-document-vault**: Encrypted document storage with OCR and versioning
+
+**AI Developer Edition Tools:**
+*   **aegis-ml-studio**: Jupyter/VS Code/PyCharm launcher with environment management
+*   **aegis-compute-stack**: CUDA/ROCm configuration, multi-GPU management
+*   **aegis-model-hub**: Hugging Face integration, model downloading, quantization
+
+**Legacy/Common Tools:**
+*   **aegis-wallpaper-engine**: AI-powered animated wallpaper system
+*   **aegis-stream**: Local game/desktop streaming solution
+*   **aegis-security-daemon**: Background security for integrity monitoring
+*   **Freemium Lite Tools**: Toggleable, limited versions of premium features
 
 ### AI Security Tiering System
 All editions include AI-powered security with progressive capabilities, from basic heuristics in Freemium to full XDR and ML-powered threat intelligence in Server and AI Developer editions, configured via `tier-security.json` and `aegis_ai_security.py`.
