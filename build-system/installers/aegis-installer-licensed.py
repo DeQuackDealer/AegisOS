@@ -69,7 +69,7 @@ EDITIONS = {
     "gamer": {
         "name": "Aegis OS Gamer",
         "prefix": "GAME",
-        "price": "$89 Lifetime",
+        "price": "$69 Lifetime",
         "size_gb": 4.5,
         "features": [
             "All Basic Features",
@@ -83,7 +83,7 @@ EDITIONS = {
     "aidev": {
         "name": "Aegis OS AI Developer",
         "prefix": "AIDV",
-        "price": "$109 Lifetime",
+        "price": "$89 Lifetime",
         "size_gb": 6.0,
         "features": [
             "All Basic Features",
@@ -97,7 +97,7 @@ EDITIONS = {
     "gamer_ai": {
         "name": "Aegis OS Gamer + AI",
         "prefix": "GMAI",
-        "price": "$149 Lifetime",
+        "price": "$129 Lifetime",
         "size_gb": 8.0,
         "features": [
             "All Gamer Features",

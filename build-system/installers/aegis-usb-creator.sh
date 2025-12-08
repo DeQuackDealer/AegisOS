@@ -11,25 +11,49 @@
 
 set -e
 
-readonly VERSION="4.0"
+readonly VERSION="5.0"
 readonly SCRIPT_NAME="Aegis OS USB Creator"
 readonly LOG_FILE="/tmp/aegis-usb-creator.log"
 readonly TEMP_DIR="/tmp/aegis-os-installer"
 readonly MIN_USB_SIZE=$((4 * 1024 * 1024 * 1024))  # 4GB minimum
 
-readonly PRIMARY_MIRROR="https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso"
-readonly FALLBACK_MIRROR="https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso"
-readonly EXPECTED_SHA256="DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216"
-readonly ISO_SIZE_APPROX=$((3 * 1024 * 1024 * 1024))  # ~3GB
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly MANIFEST_FILE="$SCRIPT_DIR/manifest.json"
+
+readonly PRIMARY_MIRROR="https://downloads.aegis-os.com/iso"
+readonly FALLBACK_MIRROR="https://mirror.aegis-os.com/iso"
+readonly ISO_SIZE_APPROX=$((4 * 1024 * 1024 * 1024))  # ~4GB
+
+declare -A ISO_FILENAMES
+ISO_FILENAMES=(
+    ["freemium"]="aegis-freemium.iso"
+    ["basic"]="aegis-basic.iso"
+    ["gamer"]="aegis-gamer.iso"
+    ["ai-dev"]="aegis-aidev.iso"
+    ["workplace"]="aegis-workplace.iso"
+    ["gamer-ai"]="aegis-gamer-ai.iso"
+    ["server"]="aegis-server.iso"
+)
+
+declare -A ISO_CHECKSUMS
+ISO_CHECKSUMS=(
+    ["aegis-freemium.iso"]="0000000000000000000000000000000000000000000000000000000000000001"
+    ["aegis-basic.iso"]="0000000000000000000000000000000000000000000000000000000000000002"
+    ["aegis-gamer.iso"]="0000000000000000000000000000000000000000000000000000000000000003"
+    ["aegis-aidev.iso"]="0000000000000000000000000000000000000000000000000000000000000004"
+    ["aegis-workplace.iso"]="0000000000000000000000000000000000000000000000000000000000000005"
+    ["aegis-gamer-ai.iso"]="0000000000000000000000000000000000000000000000000000000000000006"
+    ["aegis-server.iso"]="0000000000000000000000000000000000000000000000000000000000000007"
+)
 
 declare -A EDITIONS
 EDITIONS=(
     ["1"]="freemium|Freemium|FREE|Base Linux OS, XFCE Desktop, Wine, Proton, DeskLink Basic (2 PCs), Gaming/AI/Workplace Lite packs"
     ["2"]="basic|Basic|$69 lifetime|All Freemium + Pro apps, Unlimited DeskLink, Mobile Link Pro, 50+ themes, Cloud sync, 24/7 support"
-    ["3"]="gamer|Gamer|$89 lifetime|All Basic + Low-latency kernel, Aegis Game Launcher, Wallpaper Engine, Audio Router, Stream, Game Library"
-    ["4"]="ai-dev|AI Developer|$129 lifetime|All Basic + CUDA/ROCm support, Jupyter, PyTorch, TensorFlow, AI Toolkit, Model Hub, Training tools"
-    ["5"]="workplace|Workplace|$99 lifetime|All Basic + Enterprise VPN, Meeting tools, Remote desktop, SSO, MDM, Compliance tools"
-    ["6"]="gamer-ai|Gamer+AI|$149 lifetime|All Gamer + All AI Developer features combined, best for gaming + AI development"
+    ["3"]="gamer|Gamer|$69 lifetime|All Basic + Low-latency kernel, Aegis Game Launcher, Wallpaper Engine, Audio Router, Stream, Game Library"
+    ["4"]="ai-dev|AI Developer|$89 lifetime|All Basic + CUDA/ROCm support, Jupyter, PyTorch, TensorFlow, AI Toolkit, Model Hub, Training tools"
+    ["5"]="workplace|Workplace|$49 lifetime|All Basic + Enterprise VPN, Meeting tools, Remote desktop, SSO, MDM, Compliance tools"
+    ["6"]="gamer-ai|Gamer+AI|$129 lifetime|All Gamer + All AI Developer features combined, best for gaming + AI development"
     ["7"]="server|Server|$129 lifetime|Headless server, Docker/K8s, Web hosting, Monitoring, Hardened security, Server management"
 )
 
@@ -52,6 +76,216 @@ SELECTED_EDITION=""
 SELECTED_DRIVE=""
 SELECTED_DRIVE_PATH=""
 LICENSE_KEY=""
+FOUND_ISO_PATH=""
+OFFLINE_MODE=false
+
+load_manifest_checksums() {
+    if [[ -f "$MANIFEST_FILE" ]]; then
+        log "INFO" "Loading checksums from manifest.json"
+        
+        if check_command jq; then
+            while IFS='=' read -r key value; do
+                if [[ -n "$key" ]] && [[ -n "$value" ]]; then
+                    ISO_CHECKSUMS["$key"]="$value"
+                fi
+            done < <(jq -r '.editions | to_entries[] | "\(.value.filename)=\(.value.sha256)"' "$MANIFEST_FILE" 2>/dev/null)
+            log "INFO" "Loaded checksums from manifest"
+            return 0
+        else
+            log "WARN" "jq not available, using built-in checksums"
+            return 1
+        fi
+    else
+        log "INFO" "Manifest file not found at $MANIFEST_FILE, using built-in checksums"
+        return 1
+    fi
+}
+
+get_iso_search_paths() {
+    local edition_id="$1"
+    local iso_filename="${ISO_FILENAMES[$edition_id]}"
+    local search_paths=()
+    
+    search_paths+=("$SCRIPT_DIR/$iso_filename")
+    search_paths+=("$SCRIPT_DIR/iso/$iso_filename")
+    search_paths+=("$TEMP_DIR/$iso_filename")
+    
+    if [[ -n "$HOME" ]]; then
+        search_paths+=("$HOME/Downloads/$iso_filename")
+        search_paths+=("$HOME/Desktop/$iso_filename")
+        search_paths+=("$HOME/$iso_filename")
+    fi
+    
+    local real_home=""
+    if [[ -n "$SUDO_USER" ]]; then
+        real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    elif [[ -n "$PKEXEC_UID" ]]; then
+        real_home=$(getent passwd "$PKEXEC_UID" | cut -d: -f6)
+    fi
+    
+    if [[ -n "$real_home" ]] && [[ "$real_home" != "$HOME" ]]; then
+        search_paths+=("$real_home/Downloads/$iso_filename")
+        search_paths+=("$real_home/Desktop/$iso_filename")
+        search_paths+=("$real_home/$iso_filename")
+    fi
+    
+    local mount_dirs=()
+    while IFS= read -r -d '' mount_point; do
+        mount_dirs+=("$mount_point")
+    done < <(find /media /mnt /run/media -maxdepth 3 -type d 2>/dev/null | tr '\n' '\0')
+    
+    for mount_point in "${mount_dirs[@]}"; do
+        search_paths+=("$mount_point/$iso_filename")
+        search_paths+=("$mount_point/iso/$iso_filename")
+        search_paths+=("$mount_point/aegis/$iso_filename")
+    done
+    
+    search_paths+=("/tmp/$iso_filename")
+    search_paths+=("$(pwd)/$iso_filename")
+    search_paths+=("$(pwd)/iso/$iso_filename")
+    
+    printf '%s\n' "${search_paths[@]}"
+}
+
+search_local_iso() {
+    local edition_id="$1"
+    local iso_filename="${ISO_FILENAMES[$edition_id]}"
+    
+    print_color "$WHITE" "Searching for local ISO: $iso_filename"
+    log "INFO" "Searching for local ISO: $iso_filename"
+    echo
+    
+    local found_isos=()
+    
+    while IFS= read -r path; do
+        if [[ -f "$path" ]]; then
+            local size_bytes=$(stat -c%s "$path" 2>/dev/null)
+            local size_mb=$((size_bytes / 1024 / 1024))
+            
+            if [[ $size_bytes -gt $((500 * 1024 * 1024)) ]]; then
+                found_isos+=("$path|$size_mb")
+                print_color "$GREEN" "  ✓ Found: $path (${size_mb}MB)"
+                log "INFO" "Found ISO at: $path (${size_mb}MB)"
+            else
+                print_color "$YELLOW" "  ⚠ Skipping (too small): $path"
+                log "WARN" "ISO too small at: $path"
+            fi
+        fi
+    done < <(get_iso_search_paths "$edition_id")
+    
+    local any_iso_patterns=(
+        "$SCRIPT_DIR/aegis-*.iso"
+        "$SCRIPT_DIR/iso/aegis-*.iso"
+        "$TEMP_DIR/aegis-*.iso"
+    )
+    
+    if [[ -n "$HOME" ]]; then
+        any_iso_patterns+=("$HOME/Downloads/aegis-*.iso")
+        any_iso_patterns+=("$HOME/Desktop/aegis-*.iso")
+    fi
+    
+    for pattern in "${any_iso_patterns[@]}"; do
+        for file in $pattern; do
+            if [[ -f "$file" ]] && [[ "$file" == *"$iso_filename" ]]; then
+                continue
+            fi
+            if [[ -f "$file" ]]; then
+                local already_found=false
+                for found in "${found_isos[@]}"; do
+                    if [[ "$found" == "$file|"* ]]; then
+                        already_found=true
+                        break
+                    fi
+                done
+                if ! $already_found; then
+                    local size_bytes=$(stat -c%s "$file" 2>/dev/null)
+                    local size_mb=$((size_bytes / 1024 / 1024))
+                    if [[ $size_bytes -gt $((500 * 1024 * 1024)) ]]; then
+                        print_color "$CYAN" "  ℹ Found other Aegis ISO: $file (${size_mb}MB)"
+                        log "INFO" "Found alternative ISO: $file"
+                    fi
+                fi
+            fi
+        done
+    done
+    
+    echo
+    
+    if [[ ${#found_isos[@]} -eq 0 ]]; then
+        print_color "$YELLOW" "  No local ISO files found for $iso_filename"
+        log "INFO" "No local ISO found"
+        return 1
+    fi
+    
+    IFS='|' read -r path size_mb <<< "${found_isos[0]}"
+    FOUND_ISO_PATH="$path"
+    
+    print_color "$GREEN" "✓ Using local ISO: $FOUND_ISO_PATH"
+    log "INFO" "Selected local ISO: $FOUND_ISO_PATH"
+    return 0
+}
+
+verify_iso_checksum() {
+    local iso_path="$1"
+    local edition_id="$2"
+    local iso_filename="${ISO_FILENAMES[$edition_id]}"
+    local expected_checksum="${ISO_CHECKSUMS[$iso_filename]}"
+    
+    print_color "$WHITE" "Verifying SHA256 checksum..."
+    log "INFO" "Verifying checksum for $iso_path"
+    
+    if [[ -z "$expected_checksum" ]] || [[ "$expected_checksum" == "0000000000000000000000000000000000000000000000000000000000000"* ]]; then
+        print_color "$YELLOW" "⚠ Checksum verification skipped (placeholder checksum)"
+        print_color "$WHITE" "  Note: Update checksums in manifest.json after building actual ISOs"
+        log "WARN" "Skipping checksum verification - placeholder detected"
+        return 0
+    fi
+    
+    local actual_hash=$(sha256sum "$iso_path" | awk '{print $1}' | tr '[:lower:]' '[:upper:]')
+    expected_checksum=$(echo "$expected_checksum" | tr '[:lower:]' '[:upper:]')
+    
+    if [[ "$actual_hash" == "$expected_checksum" ]]; then
+        print_color "$GREEN" "✓ Checksum verified: OK"
+        log "INFO" "Checksum verification passed"
+        return 0
+    else
+        print_color "$RED" "✗ Checksum verification FAILED"
+        print_color "$RED" "  Expected: $expected_checksum"
+        print_color "$RED" "  Got:      $actual_hash"
+        log "ERROR" "Checksum mismatch"
+        return 1
+    fi
+}
+
+offer_download() {
+    local edition_id="$1"
+    local iso_filename="${ISO_FILENAMES[$edition_id]}"
+    
+    echo
+    print_color "$YELLOW" "No local ISO found for the selected edition."
+    print_color "$WHITE" "Would you like to download the ISO from the internet?"
+    echo
+    
+    if $HAS_DIALOG; then
+        dialog --clear --backtitle "Aegis OS USB Creator" \
+            --title "Download ISO?" \
+            --yesno "No local ISO file found.\n\nWould you like to download:\n$iso_filename\n\nThis requires an internet connection." 12 60
+        return $?
+    elif $HAS_WHIPTAIL; then
+        whiptail --clear --backtitle "Aegis OS USB Creator" \
+            --title "Download ISO?" \
+            --yesno "No local ISO file found.\n\nWould you like to download:\n$iso_filename\n\nThis requires an internet connection." 12 60
+        return $?
+    else
+        echo -n "Download ISO? (y/N): "
+        read -r confirm
+        if [[ "$confirm" == "y" ]] || [[ "$confirm" == "Y" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
 
 log() {
     local level="$1"
@@ -432,8 +666,9 @@ run_system_checks() {
             print_color "$GREEN" "✓ Connected"
             ((checks_passed++))
         else
-            print_color "$RED" "✗ No connection detected"
-            ((checks_failed++))
+            print_color "$YELLOW" "⚠ No connection (offline mode available)"
+            OFFLINE_MODE=true
+            ((checks_warned++))
         fi
     fi
     
@@ -765,12 +1000,13 @@ confirm_operation() {
 }
 
 download_iso() {
-    local iso_path="$TEMP_DIR/aegis-os.iso"
-    local download_url="$PRIMARY_MIRROR"
+    local edition_id="$1"
+    local iso_filename="${ISO_FILENAMES[$edition_id]}"
+    local iso_path="$TEMP_DIR/$iso_filename"
     local download_success=false
     
-    print_color "$WHITE" "Downloading Aegis OS base image..."
-    print_color "$CYAN" "  Size: ~3.0 GB"
+    print_color "$WHITE" "Downloading Aegis OS ISO: $iso_filename"
+    print_color "$CYAN" "  Size: ~3-6 GB (varies by edition)"
     echo
     
     if [[ -f "$iso_path" ]]; then
@@ -778,7 +1014,12 @@ download_iso() {
         log "INFO" "Resuming download from existing file"
     fi
     
-    for mirror in "$PRIMARY_MIRROR" "$FALLBACK_MIRROR"; do
+    local mirrors=(
+        "$PRIMARY_MIRROR/$iso_filename"
+        "$FALLBACK_MIRROR/$iso_filename"
+    )
+    
+    for mirror in "${mirrors[@]}"; do
         print_color "$WHITE" "  Trying: $(echo $mirror | cut -d'/' -f3)"
         log "INFO" "Attempting download from: $mirror"
         
@@ -817,6 +1058,7 @@ download_iso() {
     print_color "$GREEN" "✓ Download completed"
     log "INFO" "Download completed successfully"
     
+    FOUND_ISO_PATH="$iso_path"
     echo "$iso_path"
 }
 
@@ -970,8 +1212,10 @@ show_completion() {
 cleanup() {
     log "INFO" "Cleaning up temporary files..."
     
-    rm -f "$TEMP_DIR/aegis-os.iso" 2>/dev/null
-    rmdir "$TEMP_DIR" 2>/dev/null
+    for iso_file in "$TEMP_DIR"/aegis-*.iso; do
+        [[ -f "$iso_file" ]] && rm -f "$iso_file" 2>/dev/null
+    done
+    rmdir "$TEMP_DIR" 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -982,35 +1226,98 @@ main() {
     
     print_header
     
-    print_step 1 6 "Detecting System"
+    print_step 1 7 "Detecting System"
     detect_distro
     print_color "$GREEN" "✓ Detected: $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || echo "$DETECTED_DISTRO")"
     print_color "$WHITE" "  Package Manager: $DETECTED_PKG_MGR"
     echo
     sleep 1
     
-    print_step 2 6 "Checking Dependencies"
+    print_step 2 7 "Checking Dependencies"
     check_and_install_dependencies
     echo
     sleep 1
     
-    print_step 3 6 "System Requirements"
+    print_step 3 7 "System Requirements"
     if ! run_system_checks; then
         print_color "$RED" "System requirements not met. Please resolve the issues above."
         exit 1
     fi
     echo
     
+    load_manifest_checksums
+    
     echo -n "Press Enter to continue..."
     read -r
     
     print_header
-    print_step 4 6 "Select Edition"
+    print_step 4 7 "Select Edition"
     select_edition
     echo
     
+    IFS='|' read -r edition_id edition_name edition_price edition_desc <<< "${EDITIONS[$SELECTED_EDITION]}"
+    
     print_header
-    print_step 5 6 "Select USB Drive"
+    print_step 5 7 "Locate ISO Image"
+    echo
+    
+    print_color "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_color "$WHITE" " Searching for local ISO (offline mode preferred)"
+    print_color "$CYAN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    
+    local iso_path=""
+    
+    if search_local_iso "$edition_id"; then
+        iso_path="$FOUND_ISO_PATH"
+        echo
+        print_color "$GREEN" "✓ Local ISO found - operating in offline mode"
+        log "INFO" "Using local ISO: $iso_path"
+    else
+        echo
+        if $OFFLINE_MODE; then
+            print_color "$RED" "No local ISO found and no internet connection available."
+            print_color "$YELLOW" "Please pre-stage the ISO file in one of these locations:"
+            echo
+            local iso_filename="${ISO_FILENAMES[$edition_id]}"
+            print_color "$WHITE" "  • $SCRIPT_DIR/$iso_filename"
+            print_color "$WHITE" "  • $SCRIPT_DIR/iso/$iso_filename"
+            print_color "$WHITE" "  • ~/Downloads/$iso_filename"
+            print_color "$WHITE" "  • ~/Desktop/$iso_filename"
+            print_color "$WHITE" "  • USB drive with $iso_filename"
+            echo
+            exit 1
+        fi
+        
+        if offer_download "$edition_id"; then
+            print_color "$WHITE" "Downloading ISO from the internet..."
+            echo
+            
+            iso_path=$(download_iso "$edition_id")
+            if [[ $? -ne 0 ]] || [[ -z "$iso_path" ]]; then
+                print_color "$RED" "Download failed. Please check your internet connection."
+                print_color "$YELLOW" "Alternatively, manually download and place the ISO in:"
+                print_color "$WHITE" "  $SCRIPT_DIR/${ISO_FILENAMES[$edition_id]}"
+                exit 1
+            fi
+        else
+            print_color "$YELLOW" "No ISO available and download declined."
+            print_color "$WHITE" "Please download the ISO manually from: https://aegis-os.com/download"
+            exit 0
+        fi
+    fi
+    
+    echo
+    
+    if ! verify_iso_checksum "$iso_path" "$edition_id"; then
+        print_color "$RED" "Checksum verification failed. The ISO may be corrupted."
+        print_color "$YELLOW" "Please re-download or re-copy the ISO file."
+        exit 1
+    fi
+    echo
+    
+    print_header
+    print_step 6 7 "Select USB Drive"
     select_drive
     echo
     
@@ -1020,21 +1327,7 @@ main() {
     fi
     
     print_header
-    print_step 6 6 "Creating Bootable USB"
-    echo
-    
-    local iso_path=$(download_iso)
-    if [[ $? -ne 0 ]] || [[ -z "$iso_path" ]]; then
-        print_color "$RED" "Download failed. Please check your internet connection."
-        exit 1
-    fi
-    echo
-    
-    if ! verify_checksum "$iso_path"; then
-        print_color "$RED" "Checksum verification failed. The download may be corrupted."
-        print_color "$YELLOW" "Delete $iso_path and try again."
-        exit 1
-    fi
+    print_step 7 7 "Creating Bootable USB"
     echo
     
     unmount_drive
