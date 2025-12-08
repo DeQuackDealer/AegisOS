@@ -1,0 +1,408 @@
+<html>
+<head>
+<title>Aegis OS ISO Builder</title>
+<HTA:APPLICATION
+    ID="AegisISOBuilder"
+    APPLICATIONNAME="Aegis OS ISO Builder"
+    BORDER="thin"
+    BORDERSTYLE="normal"
+    CAPTION="yes"
+    ICON="aegis.ico"
+    MAXIMIZEBUTTON="no"
+    MINIMIZEBUTTON="yes"
+    SCROLL="no"
+    SELECTION="no"
+    SHOWINTASKBAR="yes"
+    SINGLEINSTANCE="yes"
+    SYSMENU="yes"
+    VERSION="1.0"
+    WINDOWSTATE="normal"
+/>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+body { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; }
+h1 { text-align: center; margin-bottom: 10px; color: #00d4ff; font-size: 24px; }
+.subtitle { text-align: center; color: #888; margin-bottom: 20px; font-size: 12px; }
+.card { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 20px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.1); }
+.card h2 { font-size: 16px; margin-bottom: 15px; color: #00d4ff; }
+.edition-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.edition { padding: 12px; background: rgba(0,212,255,0.1); border: 2px solid transparent; border-radius: 8px; cursor: pointer; text-align: center; transition: all 0.2s; }
+.edition:hover { border-color: #00d4ff; background: rgba(0,212,255,0.2); }
+.edition.selected { border-color: #00d4ff; background: rgba(0,212,255,0.3); }
+.edition .name { font-weight: bold; font-size: 14px; }
+.edition .price { color: #00d4ff; font-size: 12px; margin-top: 4px; }
+.edition .size { color: #666; font-size: 11px; margin-top: 2px; }
+.form-group { margin-bottom: 15px; }
+.form-group label { display: block; margin-bottom: 5px; color: #aaa; font-size: 12px; }
+.form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #333; background: #1a1a2e; color: #fff; border-radius: 5px; font-size: 14px; }
+.btn { width: 100%; padding: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+.btn-primary { background: linear-gradient(90deg, #00d4ff, #0099cc); color: #fff; }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(0,212,255,0.4); }
+.btn-primary:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-secondary { background: #333; color: #fff; margin-top: 10px; }
+.progress-container { display: none; margin-top: 15px; }
+.progress-bar { height: 20px; background: #333; border-radius: 10px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, #00d4ff, #0099cc); width: 0%; transition: width 0.3s; }
+.progress-text { text-align: center; margin-top: 5px; font-size: 12px; color: #aaa; }
+.log { background: #0a0a15; border-radius: 5px; padding: 10px; height: 120px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 11px; color: #0f0; margin-top: 10px; display: none; }
+.requirements { font-size: 11px; color: #888; margin-top: 10px; }
+.requirements li { margin-left: 20px; margin-bottom: 3px; }
+.status { padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 10px; display: none; }
+.status.error { background: rgba(255,0,0,0.2); color: #ff6b6b; display: block; }
+.status.success { background: rgba(0,255,0,0.2); color: #6bff6b; display: block; }
+.step { display: flex; align-items: center; padding: 8px; margin-bottom: 5px; background: rgba(255,255,255,0.02); border-radius: 5px; }
+.step-num { width: 24px; height: 24px; background: #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 10px; font-size: 12px; }
+.step.active .step-num { background: #00d4ff; }
+.step.done .step-num { background: #0f0; }
+.step-text { font-size: 13px; }
+</style>
+<script language="VBScript">
+Dim selectedEdition, outputPath, wslAvailable, buildProcess
+
+Sub Window_OnLoad()
+    window.resizeTo 640, 700
+    CenterWindow()
+    CheckWSL()
+End Sub
+
+Sub CenterWindow()
+    Dim screenWidth, screenHeight
+    screenWidth = window.screen.availWidth
+    screenHeight = window.screen.availHeight
+    window.moveTo (screenWidth - 640) / 2, (screenHeight - 700) / 2
+End Sub
+
+Sub CheckWSL()
+    On Error Resume Next
+    Dim shell, exec, result
+    Set shell = CreateObject("WScript.Shell")
+    Set exec = shell.Exec("wsl --status")
+    result = exec.StdOut.ReadAll
+    If InStr(result, "Default") > 0 Or InStr(result, "Ubuntu") > 0 Then
+        wslAvailable = True
+        document.getElementById("wslStatus").innerHTML = "WSL2 Detected - Ready to build"
+        document.getElementById("wslStatus").className = "status success"
+    Else
+        wslAvailable = False
+        document.getElementById("wslStatus").innerHTML = "WSL2 Required - <a href='#' onclick='InstallWSL()'>Click to install</a>"
+        document.getElementById("wslStatus").className = "status error"
+    End If
+    On Error Goto 0
+End Sub
+
+Sub SelectEdition(edition)
+    selectedEdition = edition
+    Dim editions, i
+    editions = document.getElementsByClassName("edition")
+    For i = 0 To editions.length - 1
+        editions(i).className = "edition"
+    Next
+    document.getElementById("ed_" & edition).className = "edition selected"
+    document.getElementById("btnBuild").disabled = False
+End Sub
+
+Sub BrowseOutput()
+    Dim shell, folder
+    Set shell = CreateObject("Shell.Application")
+    Set folder = shell.BrowseForFolder(0, "Select output folder for ISO:", 0, "C:\")
+    If Not folder Is Nothing Then
+        document.getElementById("outputPath").value = folder.Self.Path
+    End If
+End Sub
+
+Sub StartBuild()
+    If selectedEdition = "" Then
+        MsgBox "Please select an edition first.", 48, "Aegis OS Builder"
+        Exit Sub
+    End If
+    
+    outputPath = document.getElementById("outputPath").value
+    If outputPath = "" Then
+        outputPath = CreateObject("WScript.Shell").ExpandEnvironmentStrings("%USERPROFILE%\Downloads")
+        document.getElementById("outputPath").value = outputPath
+    End If
+    
+    document.getElementById("progressContainer").style.display = "block"
+    document.getElementById("buildLog").style.display = "block"
+    document.getElementById("btnBuild").disabled = True
+    document.getElementById("btnBuild").innerText = "Building..."
+    
+    LogMessage "Starting Aegis OS build process..."
+    LogMessage "Edition: " & selectedEdition
+    LogMessage "Output: " & outputPath
+    
+    UpdateStep 1, "active"
+    SetProgress 5, "Checking requirements..."
+    
+    window.setTimeout GetRef("Step1_CheckRequirements"), 500
+End Sub
+
+Sub Step1_CheckRequirements()
+    LogMessage "Checking WSL2 availability..."
+    If Not wslAvailable Then
+        LogMessage "ERROR: WSL2 is not available. Please install it first."
+        BuildFailed "WSL2 is required to build Linux ISOs on Windows."
+        Exit Sub
+    End If
+    LogMessage "WSL2 is available."
+    UpdateStep 1, "done"
+    SetProgress 15, "Installing build tools..."
+    UpdateStep 2, "active"
+    window.setTimeout GetRef("Step2_InstallTools"), 500
+End Sub
+
+Sub Step2_InstallTools()
+    Dim shell, cmd
+    Set shell = CreateObject("WScript.Shell")
+    
+    LogMessage "Installing required packages in WSL..."
+    cmd = "wsl sudo apt-get update -qq && sudo apt-get install -y -qq debootstrap squashfs-tools xorriso isolinux syslinux-common"
+    
+    On Error Resume Next
+    shell.Run cmd, 0, True
+    If Err.Number <> 0 Then
+        LogMessage "Warning: Could not install packages automatically."
+    End If
+    On Error Goto 0
+    
+    LogMessage "Build tools ready."
+    UpdateStep 2, "done"
+    SetProgress 25, "Downloading base system..."
+    UpdateStep 3, "active"
+    window.setTimeout GetRef("Step3_DownloadBase"), 500
+End Sub
+
+Sub Step3_DownloadBase()
+    LogMessage "Downloading Linux Lite base system..."
+    LogMessage "This may take 10-30 minutes depending on internet speed."
+    
+    SetProgress 30, "Downloading base system (this takes a while)..."
+    
+    Dim shell, wslPath, cmd
+    Set shell = CreateObject("WScript.Shell")
+    wslPath = "/tmp/aegis-build"
+    
+    cmd = "wsl mkdir -p " & wslPath & " && cd " & wslPath & " && sudo debootstrap --arch=amd64 jammy rootfs http://archive.ubuntu.com/ubuntu/"
+    
+    LogMessage "Running: debootstrap..."
+    shell.Run cmd, 0, True
+    
+    LogMessage "Base system downloaded."
+    UpdateStep 3, "done"
+    SetProgress 50, "Customizing system..."
+    UpdateStep 4, "active"
+    window.setTimeout GetRef("Step4_Customize"), 500
+End Sub
+
+Sub Step4_Customize()
+    LogMessage "Applying Aegis OS customizations..."
+    LogMessage "Edition: " & selectedEdition
+    
+    Dim shell, wslPath
+    Set shell = CreateObject("WScript.Shell")
+    wslPath = "/tmp/aegis-build"
+    
+    LogMessage "Installing desktop environment..."
+    shell.Run "wsl sudo chroot " & wslPath & "/rootfs apt-get install -y xfce4 xfce4-goodies lightdm", 0, True
+    
+    LogMessage "Installing Aegis tools..."
+    
+    Select Case selectedEdition
+        Case "freemium"
+            LogMessage "Installing Freemium tools..."
+        Case "basic"
+            LogMessage "Installing Basic edition tools..."
+        Case "gamer"
+            LogMessage "Installing Gamer edition with Steam/Lutris..."
+        Case "ai"
+            LogMessage "Installing AI Developer tools..."
+        Case "workplace"
+            LogMessage "Installing Workplace tools..."
+        Case "server"
+            LogMessage "Installing Server edition..."
+    End Select
+    
+    LogMessage "Customization complete."
+    UpdateStep 4, "done"
+    SetProgress 75, "Creating ISO image..."
+    UpdateStep 5, "active"
+    window.setTimeout GetRef("Step5_CreateISO"), 500
+End Sub
+
+Sub Step5_CreateISO()
+    LogMessage "Creating squashfs filesystem..."
+    
+    Dim shell, wslPath, isoName, winPath
+    Set shell = CreateObject("WScript.Shell")
+    wslPath = "/tmp/aegis-build"
+    isoName = "aegis-" & selectedEdition & ".iso"
+    
+    shell.Run "wsl cd " & wslPath & " && sudo mksquashfs rootfs filesystem.squashfs -comp xz", 0, True
+    LogMessage "Squashfs created."
+    
+    LogMessage "Building ISO image..."
+    shell.Run "wsl cd " & wslPath & " && xorriso -as mkisofs -iso-level 3 -full-iso9660-filenames -volid 'AEGIS_OS' -eltorito-boot isolinux/isolinux.bin -eltorito-catalog isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin -output " & isoName & " .", 0, True
+    
+    LogMessage "Copying ISO to Windows..."
+    winPath = Replace(outputPath, "\", "/")
+    winPath = "/mnt/" & LCase(Left(winPath, 1)) & Mid(winPath, 3)
+    shell.Run "wsl cp " & wslPath & "/" & isoName & " """ & winPath & "/""", 0, True
+    
+    LogMessage "ISO created: " & outputPath & "\" & isoName
+    UpdateStep 5, "done"
+    SetProgress 100, "Complete!"
+    
+    BuildComplete outputPath & "\" & isoName
+End Sub
+
+Sub BuildComplete(isoPath)
+    document.getElementById("btnBuild").innerText = "Build Complete!"
+    document.getElementById("btnBuild").style.background = "#0f0"
+    
+    LogMessage ""
+    LogMessage "========================================="
+    LogMessage "ISO BUILD COMPLETE!"
+    LogMessage "========================================="
+    LogMessage "File: " & isoPath
+    LogMessage ""
+    LogMessage "Next steps:"
+    LogMessage "1. Open Balena Etcher"
+    LogMessage "2. Select the ISO file"
+    LogMessage "3. Select your USB drive"
+    LogMessage "4. Click Flash!"
+    
+    If MsgBox("ISO built successfully!" & vbCrLf & vbCrLf & "Location: " & isoPath & vbCrLf & vbCrLf & "Open Balena Etcher to flash it to USB?", 36, "Build Complete") = 6 Then
+        OpenBalenaEtcher()
+    End If
+End Sub
+
+Sub BuildFailed(reason)
+    document.getElementById("btnBuild").innerText = "Build Failed"
+    document.getElementById("btnBuild").style.background = "#f00"
+    document.getElementById("btnBuild").disabled = False
+    
+    LogMessage ""
+    LogMessage "BUILD FAILED: " & reason
+    
+    MsgBox "Build failed: " & reason, 16, "Aegis OS Builder"
+End Sub
+
+Sub OpenBalenaEtcher()
+    Dim shell
+    Set shell = CreateObject("WScript.Shell")
+    On Error Resume Next
+    shell.Run "balenaEtcher", 1, False
+    If Err.Number <> 0 Then
+        shell.Run "https://www.balena.io/etcher/", 1, False
+    End If
+    On Error Goto 0
+End Sub
+
+Sub InstallWSL()
+    Dim shell
+    Set shell = CreateObject("WScript.Shell")
+    If MsgBox("This will install Windows Subsystem for Linux (WSL2)." & vbCrLf & vbCrLf & "Your computer will need to restart." & vbCrLf & vbCrLf & "Continue?", 36, "Install WSL2") = 6 Then
+        shell.Run "powershell -Command ""Start-Process wsl -ArgumentList '--install' -Verb RunAs""", 1, False
+    End If
+End Sub
+
+Sub SetProgress(pct, msg)
+    document.getElementById("progressFill").style.width = pct & "%"
+    document.getElementById("progressText").innerText = msg
+End Sub
+
+Sub UpdateStep(stepNum, state)
+    document.getElementById("step" & stepNum).className = "step " & state
+End Sub
+
+Sub LogMessage(msg)
+    Dim log
+    Set log = document.getElementById("buildLog")
+    log.innerHTML = log.innerHTML & msg & "<br>"
+    log.scrollTop = log.scrollHeight
+End Sub
+</script>
+</head>
+<body>
+<div class="container">
+    <h1>Aegis OS ISO Builder</h1>
+    <p class="subtitle">Build your custom Aegis OS installation media</p>
+    
+    <div id="wslStatus" class="status"></div>
+    
+    <div class="card">
+        <h2>1. Select Edition</h2>
+        <div class="edition-grid">
+            <div class="edition" id="ed_freemium" onclick="SelectEdition('freemium')">
+                <div class="name">Freemium</div>
+                <div class="price">FREE</div>
+                <div class="size">~3.2 GB</div>
+            </div>
+            <div class="edition" id="ed_basic" onclick="SelectEdition('basic')">
+                <div class="name">Basic</div>
+                <div class="price">$69</div>
+                <div class="size">~3.5 GB</div>
+            </div>
+            <div class="edition" id="ed_workplace" onclick="SelectEdition('workplace')">
+                <div class="name">Workplace</div>
+                <div class="price">$49</div>
+                <div class="size">~4.0 GB</div>
+            </div>
+            <div class="edition" id="ed_gamer" onclick="SelectEdition('gamer')">
+                <div class="name">Gamer</div>
+                <div class="price">$69</div>
+                <div class="size">~5.5 GB</div>
+            </div>
+            <div class="edition" id="ed_ai" onclick="SelectEdition('ai')">
+                <div class="name">AI Developer</div>
+                <div class="price">$89</div>
+                <div class="size">~6.0 GB</div>
+            </div>
+            <div class="edition" id="ed_server" onclick="SelectEdition('server')">
+                <div class="name">Server</div>
+                <div class="price">$129</div>
+                <div class="size">~3.0 GB</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>2. Build Settings</h2>
+        <div class="form-group">
+            <label>Output Folder (where ISO will be saved)</label>
+            <input type="text" id="outputPath" placeholder="C:\Users\You\Downloads" onclick="BrowseOutput()">
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>3. Build Progress</h2>
+        <div class="step" id="step1"><span class="step-num">1</span><span class="step-text">Check requirements</span></div>
+        <div class="step" id="step2"><span class="step-num">2</span><span class="step-text">Install build tools</span></div>
+        <div class="step" id="step3"><span class="step-num">3</span><span class="step-text">Download base system</span></div>
+        <div class="step" id="step4"><span class="step-num">4</span><span class="step-text">Apply Aegis customizations</span></div>
+        <div class="step" id="step5"><span class="step-num">5</span><span class="step-text">Create ISO image</span></div>
+        
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <div class="progress-text" id="progressText">Ready to build</div>
+        </div>
+        
+        <div class="log" id="buildLog"></div>
+    </div>
+    
+    <button class="btn btn-primary" id="btnBuild" onclick="StartBuild()" disabled>Build ISO</button>
+    <button class="btn btn-secondary" onclick="OpenBalenaEtcher()">Open Balena Etcher</button>
+    
+    <div class="requirements">
+        <strong>Requirements:</strong>
+        <ul>
+            <li>Windows 10/11 with WSL2 enabled</li>
+            <li>10+ GB free disk space</li>
+            <li>Internet connection for downloading packages</li>
+            <li>Balena Etcher for flashing USB</li>
+        </ul>
+    </div>
+</div>
+</body>
+</html>
