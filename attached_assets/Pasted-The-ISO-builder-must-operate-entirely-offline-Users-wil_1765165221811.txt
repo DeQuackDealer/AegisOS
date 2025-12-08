@@ -1,0 +1,142 @@
+The ISO builder must operate entirely offline. Users will download a single packaged installer from our website, and this installer must already contain all assets, templates, scripts, and components needed to assemble the final ISO without downloading anything else.
+
+The current system attempts to download a .hta file and relies on external files, which leads to runtime failures and breaks the licensing system. Replace all external download behavior with a fully self-contained workflow.
+
+Your task is to fully fix, optimize, and stabilize the ISO builder system while maintaining compatibility with the existing .hta implementation but also suggesting modern replacements that would improve reliability.
+
+Requirements and Fixes
+1. Remove All External Downloads
+
+The installer must not reach out to the internet at any point.
+
+The .hta file must be packaged internally or replaced by another local execution format.
+
+All filesystem templates, data chunks, kernels, modules, and edition configurations must be stored within the installer itself.
+
+2. Fix the Existing .hta Implementation
+
+Even though we’re considering alternatives, the current .hta must still function correctly until replaced.
+
+Fix the following issues internally:
+
+Resolve the “unknown runtime error”
+
+Fix markup/JS errors
+
+Ensure all scripts execute consistently
+
+Ensure Windows runtime launches the .hta without dependency issues
+
+Guarantee stability across Windows 10/11 environments
+
+3. Repair and Harden the Licensing System
+
+Correct any validation logic, hashing, encryption, or key handling problems
+
+Ensure valid licenses always pass
+
+Prevent false “invalid license” errors
+
+Make validation 100% offline-safe and reproducible
+
+Add graceful fallback if a license file is corrupted or missing
+
+4. Make the ISO Build Process Fully Offline
+
+The builder must reliably:
+
+Unpack included filesystem templates
+
+Insert kernel, drivers, and edition-specific modules
+
+Integrate:
+
+AI security bot
+
+AI task optimizer
+
+Built-in upscalers
+
+Prebuilt training environments
+
+Containers, cookers, and runtimes
+
+Gamer Edition assets (game engine, optimizers, GPU tuning templates)
+
+AI Dev Edition assets (ML frameworks, model runners, dataset prep tools)
+
+Generate a verified, bootable, reproducible ISO
+
+Perform checksum validation
+
+Output the finished ISO locally so the user can flash with Balena Etcher
+
+5. Recommended Modern Replacements for .hta
+
+You don’t need to rewrite the .hta now, but provide implementation suggestions for a later upgrade.
+
+Option A — Node.js/Electron Mini Runtime
+
+Small embedded Node runtime
+
+Scriptable
+
+Cross-platform
+
+More stable than .hta
+
+Option B — Python Embedded Installer
+
+Bundled Python (no system Python required)
+
+Runs on all Windows versions
+
+Easy to script the build pipeline
+
+Extremely reliable
+
+Option C — Rust or Go-Based CLI Builder
+
+Fast
+
+Minimal overhead
+
+Easily produces .exe without actual compiling on Replit
+
+Stable output and easy ISO-building routines
+
+Option D — PowerShell GUI (WPF/XAML)
+
+Native Windows
+
+Zero web dependencies
+
+Much safer than .hta
+
+Runtime already exists on all modern Windows systems
+
+Option E — C# WinForms/WPF Single-File EXE
+
+Compiles to one executable
+
+Includes all resources
+
+No external dependencies
+
+Works even on weak or outdated laptops
+
+6. Output Requirements
+
+Deliver back a fully corrected system where:
+
+The builder is self-contained
+
+The .hta works reliably until replaced
+
+Licensing is functional
+
+ISO generation is offline, consistent, and robust
+
+Replacement options are clearly described for future migration
+
+Final output ISO is ready for Balena Etcher without the user needing internet access

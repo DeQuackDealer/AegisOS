@@ -1,12 +1,29 @@
 [Desktop Entry]
-Version=1.0
+Version=2.0
 Type=Application
 Name=Aegis Desktop Link
-GenericName=Mouse/Keyboard Sharing
-Comment=Share mouse and keyboard across multiple computers
+GenericName=Multi-PC KVM Control
+Comment=Share mouse, keyboard, and clipboard across multiple computers with gaming mode support
 Exec=/usr/local/bin/aegis-desktop-link --gui
 Icon=input-keyboard
 Terminal=false
-Categories=Utility;System;
-Keywords=kvm;mouse;keyboard;barrier;synergy;deskflow;share;
+Categories=Utility;System;Network;
+Keywords=kvm;mouse;keyboard;barrier;synergy;deskflow;share;clipboard;gaming;multi-monitor;
 StartupNotify=true
+Actions=discover;start;stop;gaming;
+
+[Desktop Action discover]
+Name=Discover Devices
+Exec=/usr/local/bin/aegis-desktop-link --discover
+
+[Desktop Action start]
+Name=Start Server
+Exec=/usr/local/bin/aegis-desktop-link --start
+
+[Desktop Action stop]
+Name=Stop Server
+Exec=/usr/local/bin/aegis-desktop-link --stop
+
+[Desktop Action gaming]
+Name=Toggle Gaming Mode
+Exec=/usr/local/bin/aegis-desktop-link --gaming low_latency
