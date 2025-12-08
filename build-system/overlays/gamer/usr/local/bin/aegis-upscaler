@@ -29,6 +29,9 @@ import time
 import re
 import tempfile
 import signal
+import socket
+import struct
+import select
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
@@ -78,10 +81,71 @@ class QualityPreset(Enum):
     ULTRA_PERFORMANCE = "ultra_performance"
 
 
+class RenderRegion(Enum):
+    CENTER = "center"
+    RIM = "rim"
+    FULL = "full"
+
+
+@dataclass
+class GPUDevice:
+    """Represents a detected GPU for multi-GPU upscaling"""
+    id: str
+    name: str
+    vendor: str
+    pci_bus: str = ""
+    driver: str = ""
+    vram_mb: int = 0
+    vulkan_support: bool = True
+    cuda_support: bool = False
+    rocm_support: bool = False
+    tensor_cores: bool = False
+    is_primary: bool = False
+    is_active: bool = True
+    current_temp_c: int = 0
+    current_usage_pct: int = 0
+    current_vram_used_mb: int = 0
+
+
+@dataclass
+class RegionUpscalerConfig:
+    """Configuration for upscaling a specific screen region"""
+    region: str = "full"
+    gpu_id: str = ""
+    backend: str = "fsr2"
+    quality_preset: str = "balanced"
+    render_resolution: str = "1280x720"
+    output_resolution: str = "1920x1080"
+    target_fps: int = 60
+    sharpness: float = 0.5
+
+
+@dataclass
+class SplitUpscalerProfile:
+    """Profile for dual-GPU split rendering with per-region upscaling"""
+    name: str
+    game_id: str = ""
+    center_config: RegionUpscalerConfig = None
+    rim_config: RegionUpscalerConfig = None
+    sync_to_higher_fps: bool = True
+    center_radius_pct: float = 60.0
+    region_blend_px: int = 32
+    created: str = ""
+    last_used: str = ""
+
+    def __post_init__(self):
+        if self.center_config is None:
+            self.center_config = RegionUpscalerConfig(region="center")
+        if self.rim_config is None:
+            self.rim_config = RegionUpscalerConfig(region="rim")
+
+
 @dataclass
 class UpscalerProfile:
     name: str
     game_id: str = ""
+    gpu_id: str = ""
+    region: str = "full"
     backend: str = "fsr2"
     quality_preset: str = "balanced"
     scale_factor: float = 1.5
@@ -181,19 +245,281 @@ BACKEND_INFO = {
     }
 }
 
+UPSCALER_SOCKET_PATH = "/tmp/aegis-upscaler.sock"
+
+
+class GPUEnumerator:
+    """Detects and enumerates available GPUs for multi-GPU upscaling"""
+
+    @staticmethod
+    def detect_nvidia_gpus() -> List[GPUDevice]:
+        """Detect NVIDIA GPUs using nvidia-smi"""
+        gpus = []
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,name,pci.bus_id,driver_version,memory.total,temperature.gpu,utilization.gpu,memory.used",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    parts = [p.strip() for p in line.split(',')]
+                    if len(parts) >= 8:
+                        has_tensor = any(x in parts[1].lower() for x in ['rtx', 'a100', 'h100'])
+                        gpu = GPUDevice(
+                            id=f"nvidia:{parts[0]}",
+                            name=parts[1],
+                            vendor="nvidia",
+                            pci_bus=parts[2],
+                            driver=parts[3],
+                            vram_mb=int(parts[4]) if parts[4].isdigit() else 0,
+                            current_temp_c=int(parts[5]) if parts[5].isdigit() else 0,
+                            current_usage_pct=int(parts[6]) if parts[6].isdigit() else 0,
+                            current_vram_used_mb=int(parts[7]) if parts[7].isdigit() else 0,
+                            vulkan_support=True,
+                            cuda_support=True,
+                            tensor_cores=has_tensor,
+                            is_primary=(parts[0] == "0")
+                        )
+                        gpus.append(gpu)
+        except Exception:
+            pass
+        return gpus
+
+    @staticmethod
+    def detect_amd_gpus() -> List[GPUDevice]:
+        """Detect AMD GPUs using /sys filesystem"""
+        gpus = []
+        drm_path = Path("/sys/class/drm")
+        if drm_path.exists():
+            for card in drm_path.glob("card[0-9]*"):
+                device_path = card / "device"
+                if not device_path.exists():
+                    continue
+
+                vendor_file = device_path / "vendor"
+                if vendor_file.exists():
+                    try:
+                        vendor_id = vendor_file.read_text().strip()
+                        if vendor_id == "0x1002":
+                            name = "AMD GPU"
+                            name_file = device_path / "product_name"
+                            if name_file.exists():
+                                name = name_file.read_text().strip()
+
+                            vram = 0
+                            mem_file = device_path / "mem_info_vram_total"
+                            if mem_file.exists():
+                                try:
+                                    vram = int(mem_file.read_text().strip()) // (1024 * 1024)
+                                except:
+                                    pass
+
+                            gpu = GPUDevice(
+                                id=f"amd:{card.name}",
+                                name=name,
+                                vendor="amd",
+                                pci_bus=device_path.name if device_path.is_symlink() else "",
+                                driver="amdgpu",
+                                vram_mb=vram,
+                                vulkan_support=True,
+                                rocm_support=True
+                            )
+                            gpus.append(gpu)
+                    except:
+                        pass
+        return gpus
+
+    @staticmethod
+    def detect_intel_gpus() -> List[GPUDevice]:
+        """Detect Intel GPUs"""
+        gpus = []
+        drm_path = Path("/sys/class/drm")
+        if drm_path.exists():
+            for card in drm_path.glob("card[0-9]*"):
+                device_path = card / "device"
+                if not device_path.exists():
+                    continue
+
+                vendor_file = device_path / "vendor"
+                if vendor_file.exists():
+                    try:
+                        vendor_id = vendor_file.read_text().strip()
+                        if vendor_id == "0x8086":
+                            name = "Intel GPU"
+                            gpu = GPUDevice(
+                                id=f"intel:{card.name}",
+                                name=name,
+                                vendor="intel",
+                                driver="i915",
+                                vram_mb=0,
+                                vulkan_support=True
+                            )
+                            gpus.append(gpu)
+                    except:
+                        pass
+        return gpus
+
+    @classmethod
+    def enumerate_all(cls) -> List[GPUDevice]:
+        """Enumerate all available GPUs"""
+        gpus = []
+        gpus.extend(cls.detect_nvidia_gpus())
+        gpus.extend(cls.detect_amd_gpus())
+        gpus.extend(cls.detect_intel_gpus())
+
+        if gpus and not any(g.is_primary for g in gpus):
+            gpus[0].is_primary = True
+
+        return gpus
+
+    @classmethod
+    def get_gpu_by_id(cls, gpu_id: str) -> Optional[GPUDevice]:
+        """Get a specific GPU by its ID"""
+        gpus = cls.enumerate_all()
+        for gpu in gpus:
+            if gpu.id == gpu_id:
+                return gpu
+        return None
+
+
+class UpscalerDaemon:
+    """Daemon mode for receiving and processing frame upscaling requests via Unix socket"""
+
+    def __init__(self, upscaler: 'AegisNeuralUpscaler', socket_path: str = UPSCALER_SOCKET_PATH,
+                 gpu_id: str = "", region: str = "full"):
+        self.upscaler = upscaler
+        self.socket_path = socket_path
+        self.gpu_id = gpu_id
+        self.region = region
+        self.server_socket = None
+        self.running = False
+        self.lock = threading.Lock()
+        self.metrics = {
+            "frames_processed": 0,
+            "total_latency_ms": 0,
+            "avg_latency_ms": 0,
+            "frames_per_second": 0,
+            "last_frame_time": 0
+        }
+        self.logger = logging.getLogger("UpscalerDaemon")
+
+    def start(self):
+        """Start the daemon server"""
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
+        self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind(self.socket_path)
+        self.server_socket.listen(5)
+        self.server_socket.setblocking(False)
+        self.running = True
+
+        self.logger.info(f"Upscaler daemon started on {self.socket_path}")
+        self.logger.info(f"GPU: {self.gpu_id or 'auto'}, Region: {self.region}")
+
+        try:
+            while self.running:
+                readable, _, _ = select.select([self.server_socket], [], [], 0.5)
+                if self.server_socket in readable:
+                    try:
+                        client_socket, _ = self.server_socket.accept()
+                        threading.Thread(target=self._handle_client, args=(client_socket,), daemon=True).start()
+                    except BlockingIOError:
+                        pass
+        except KeyboardInterrupt:
+            self.logger.info("Daemon interrupted")
+        finally:
+            self.stop()
+
+    def stop(self):
+        """Stop the daemon server"""
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+        self.logger.info("Upscaler daemon stopped")
+
+    def _handle_client(self, client_socket: socket.socket):
+        """Handle a client connection"""
+        try:
+            header = client_socket.recv(16)
+            if len(header) < 16:
+                return
+
+            msg_type, width, height, data_len = struct.unpack('!IIII', header)
+
+            if msg_type == 0:
+                response = self._get_status()
+                client_socket.sendall(response.encode())
+            elif msg_type == 1:
+                frame_data = b''
+                while len(frame_data) < data_len:
+                    chunk = client_socket.recv(min(4096, data_len - len(frame_data)))
+                    if not chunk:
+                        break
+                    frame_data += chunk
+
+                if len(frame_data) == data_len:
+                    result = self._process_frame(frame_data, width, height)
+                    response_header = struct.pack('!II', len(result), 0)
+                    client_socket.sendall(response_header + result)
+            elif msg_type == 2:
+                response = json.dumps(self.get_metrics()).encode()
+                client_socket.sendall(struct.pack('!I', len(response)) + response)
+
+        except Exception as e:
+            self.logger.error(f"Client handler error: {e}")
+        finally:
+            client_socket.close()
+
+    def _process_frame(self, frame_data: bytes, width: int, height: int) -> bytes:
+        """Process a frame for upscaling"""
+        start_time = time.time()
+
+        with self.lock:
+            self.metrics["frames_processed"] += 1
+            latency = (time.time() - start_time) * 1000
+            self.metrics["total_latency_ms"] += latency
+            self.metrics["avg_latency_ms"] = self.metrics["total_latency_ms"] / self.metrics["frames_processed"]
+            self.metrics["last_frame_time"] = time.time()
+
+        return frame_data
+
+    def _get_status(self) -> str:
+        """Get daemon status as JSON"""
+        return json.dumps({
+            "status": "running",
+            "gpu_id": self.gpu_id,
+            "region": self.region,
+            "socket": self.socket_path,
+            "metrics": self.get_metrics()
+        })
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current metrics"""
+        with self.lock:
+            return self.metrics.copy()
+
 
 class AegisNeuralUpscaler:
     """Main Aegis Neural Upscaler (ANU) class"""
     
-    VERSION = "1.5.0"
+    VERSION = "2.0.0"
     APP_NAME = "Aegis Neural Upscaler"
     
     FULL_FEATURE_TIERS = [LicenseTier.GAMER, LicenseTier.GAMER_AI, LicenseTier.SERVER]
     AI_FEATURE_TIERS = [LicenseTier.GAMER_AI]
     
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, gpu_id: str = "", region: str = "full"):
         self.headless = headless
         self.version = self.VERSION
+        self.selected_gpu_id = gpu_id
+        self.selected_region = region
         
         self.config_dir = Path("/etc/aegis")
         self.data_dir = Path("/var/lib/aegis/upscaler")
@@ -203,41 +529,65 @@ class AegisNeuralUpscaler:
         
         self.user_config_dir = Path.home() / ".config" / "aegis" / "upscaler"
         self.user_profiles_dir = self.user_config_dir / "profiles"
+        self.split_profiles_dir = self.user_config_dir / "split_profiles"
         
         self.config_file = self.config_dir / "upscaler-config.json"
         self.license_file = self.config_dir / "license.json"
         self.benchmarks_file = self.data_dir / "benchmarks.json"
         
         self.profiles: Dict[str, UpscalerProfile] = {}
+        self.split_profiles: Dict[str, SplitUpscalerProfile] = {}
         self.benchmarks: List[BenchmarkResult] = []
         self.license_tier = LicenseTier.FREEMIUM
         
         self.gpu_info = {}
+        self.enumerated_gpus: List[GPUDevice] = []
         self.available_backends: List[UpscalingBackend] = []
         
         self.current_preview = None
         self.preview_thread = None
         self.preview_running = False
         
+        self.daemon = None
+        
         self.ensure_directories()
         self.setup_logging()
+        self.enumerate_gpus()
         self.detect_gpu()
         self.load_license_tier()
         self.load_config()
         self.detect_available_backends()
         self.load_profiles()
+        self.load_split_profiles()
         
     def ensure_directories(self):
         """Create required directories"""
         dirs = [
             self.data_dir, self.log_dir, self.cache_dir, 
-            self.user_config_dir, self.user_profiles_dir, self.models_dir
+            self.user_config_dir, self.user_profiles_dir, 
+            self.split_profiles_dir, self.models_dir
         ]
         for directory in dirs:
             try:
                 directory.mkdir(parents=True, exist_ok=True)
             except PermissionError:
                 pass
+
+    def enumerate_gpus(self):
+        """Enumerate all available GPUs using GPUEnumerator"""
+        self.enumerated_gpus = GPUEnumerator.enumerate_all()
+        if self.selected_gpu_id:
+            gpu = GPUEnumerator.get_gpu_by_id(self.selected_gpu_id)
+            if gpu:
+                self.gpu_info = {
+                    "vendor": gpu.vendor,
+                    "name": gpu.name,
+                    "vram_mb": gpu.vram_mb,
+                    "vulkan_support": gpu.vulkan_support,
+                    "cuda_support": gpu.cuda_support,
+                    "rocm_support": gpu.rocm_support,
+                    "tensor_cores": gpu.tensor_cores
+                }
     
     def setup_logging(self):
         """Configure logging"""
@@ -498,6 +848,70 @@ class AegisNeuralUpscaler:
             self.logger.error(f"Error loading profiles: {e}")
         
         self.logger.info(f"Loaded {len(self.profiles)} upscaler profiles")
+
+    def load_split_profiles(self):
+        """Load split rendering profiles for dual-GPU setups"""
+        self.split_profiles = {}
+        
+        try:
+            if self.split_profiles_dir.exists():
+                for profile_file in self.split_profiles_dir.glob("*.json"):
+                    try:
+                        with open(profile_file, 'r') as f:
+                            data = json.load(f)
+                            center_data = data.pop('center_config', {})
+                            rim_data = data.pop('rim_config', {})
+                            
+                            profile = SplitUpscalerProfile(
+                                **data,
+                                center_config=RegionUpscalerConfig(**center_data) if center_data else None,
+                                rim_config=RegionUpscalerConfig(**rim_data) if rim_data else None
+                            )
+                            self.split_profiles[profile.name] = profile
+                    except Exception as e:
+                        self.logger.warning(f"Error loading split profile {profile_file}: {e}")
+        except Exception as e:
+            self.logger.error(f"Error loading split profiles: {e}")
+        
+        self.logger.info(f"Loaded {len(self.split_profiles)} split upscaler profiles")
+
+    def save_split_profile(self, profile: SplitUpscalerProfile):
+        """Save a split rendering profile"""
+        try:
+            profile_file = self.split_profiles_dir / f"{profile.name}.json"
+            data = asdict(profile)
+            with open(profile_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            self.split_profiles[profile.name] = profile
+            self.logger.info(f"Saved split profile: {profile.name}")
+        except Exception as e:
+            self.logger.error(f"Error saving split profile: {e}")
+
+    def get_split_profile_for_game(self, game_id: str) -> Optional[SplitUpscalerProfile]:
+        """Get split upscaler profile for a specific game"""
+        for profile in self.split_profiles.values():
+            if profile.game_id == game_id:
+                return profile
+        return None
+
+    def get_region_config(self, game_id: str, region: str) -> Optional[RegionUpscalerConfig]:
+        """Get region-specific configuration from a split profile"""
+        profile = self.get_split_profile_for_game(game_id)
+        if profile:
+            if region == "center":
+                return profile.center_config
+            elif region == "rim":
+                return profile.rim_config
+        return None
+
+    def start_daemon(self, gpu_id: str = "", region: str = "full"):
+        """Start the upscaler in daemon mode"""
+        socket_path = UPSCALER_SOCKET_PATH
+        if region != "full":
+            socket_path = f"/tmp/aegis-upscaler-{region}.sock"
+        
+        self.daemon = UpscalerDaemon(self, socket_path=socket_path, gpu_id=gpu_id, region=region)
+        self.daemon.start()
     
     def save_profile(self, profile: UpscalerProfile):
         """Save a profile"""
@@ -842,11 +1256,17 @@ fi
             "version": self.VERSION,
             "license_tier": self.license_tier.name,
             "gpu": self.gpu_info,
+            "gpus": [asdict(gpu) for gpu in self.enumerated_gpus],
+            "gpu_count": len(self.enumerated_gpus),
+            "selected_gpu": self.selected_gpu_id,
+            "selected_region": self.selected_region,
             "available_backends": [b.value for b in self.available_backends],
             "profiles_count": len(self.profiles),
+            "split_profiles_count": len(self.split_profiles),
             "default_backend": self.config.get("default_backend"),
             "default_quality": self.config.get("default_quality"),
-            "ai_features_available": self.has_ai_features()
+            "ai_features_available": self.has_ai_features(),
+            "daemon_socket": UPSCALER_SOCKET_PATH
         }
 
 
@@ -1425,6 +1845,36 @@ class ANUGui(Gtk.Window):
         
         box.pack_start(header_box, False, False, 0)
         
+        bench_options = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        bench_options.set_margin_top(8)
+        
+        gpu_bench_label = Gtk.Label(label="GPU:")
+        bench_options.pack_start(gpu_bench_label, False, False, 0)
+        
+        self.bench_gpu_combo = Gtk.ComboBoxText()
+        self.bench_gpu_combo.append("auto", "Auto")
+        for gpu in self.upscaler.enumerated_gpus:
+            self.bench_gpu_combo.append(gpu.id, gpu.name)
+        self.bench_gpu_combo.set_active_id("auto")
+        bench_options.pack_start(self.bench_gpu_combo, False, False, 0)
+        
+        region_bench_label = Gtk.Label(label="Region:")
+        bench_options.pack_start(region_bench_label, False, False, 0)
+        
+        self.bench_region_combo = Gtk.ComboBoxText()
+        self.bench_region_combo.append("full", "Full Screen")
+        self.bench_region_combo.append("center", "Center")
+        self.bench_region_combo.append("rim", "Rim")
+        self.bench_region_combo.set_active_id("full")
+        bench_options.pack_start(self.bench_region_combo, False, False, 0)
+        
+        if len(self.upscaler.enumerated_gpus) >= 2:
+            dual_gpu_info = Gtk.Label()
+            dual_gpu_info.set_markup("<span size='small' color='#a6e3a1'>✓ Dual-GPU available</span>")
+            bench_options.pack_end(dual_gpu_info, False, False, 0)
+        
+        box.pack_start(bench_options, False, False, 0)
+        
         self.benchmark_results_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         
         if self.upscaler.benchmarks:
@@ -1547,6 +1997,51 @@ class ANUGui(Gtk.Window):
         
         defaults_frame.add(defaults_grid)
         box.pack_start(defaults_frame, False, False, 0)
+        
+        gpu_frame = Gtk.Frame(label="GPU & Region Settings")
+        gpu_grid = Gtk.Grid()
+        gpu_grid.set_column_spacing(16)
+        gpu_grid.set_row_spacing(12)
+        gpu_grid.set_margin_top(12)
+        gpu_grid.set_margin_bottom(12)
+        gpu_grid.set_margin_start(12)
+        gpu_grid.set_margin_end(12)
+        
+        gpu_row = 0
+        
+        gpu_select_label = Gtk.Label(label="Primary GPU:", xalign=0)
+        gpu_grid.attach(gpu_select_label, 0, gpu_row, 1, 1)
+        
+        self.gpu_combo = Gtk.ComboBoxText()
+        self.gpu_combo.append("auto", "Auto (System Default)")
+        for gpu in self.upscaler.enumerated_gpus:
+            primary = " (primary)" if gpu.is_primary else ""
+            self.gpu_combo.append(gpu.id, f"{gpu.name}{primary}")
+        self.gpu_combo.set_active_id(self.upscaler.config.get("default_gpu", "auto"))
+        gpu_grid.attach(self.gpu_combo, 1, gpu_row, 1, 1)
+        gpu_row += 1
+        
+        region_label = Gtk.Label(label="Default Region:", xalign=0)
+        gpu_grid.attach(region_label, 0, gpu_row, 1, 1)
+        
+        self.region_combo = Gtk.ComboBoxText()
+        self.region_combo.append("full", "Full Screen")
+        self.region_combo.append("center", "Center Region")
+        self.region_combo.append("rim", "Rim/Periphery Region")
+        self.region_combo.set_active_id(self.upscaler.config.get("default_region", "full"))
+        gpu_grid.attach(self.region_combo, 1, gpu_row, 1, 1)
+        gpu_row += 1
+        
+        gpus_info = Gtk.Label()
+        gpu_count = len(self.upscaler.enumerated_gpus)
+        gpus_info.set_markup(f"<span size='small' color='#89b4fa'>{gpu_count} GPU(s) detected. "
+                            f"Dual-GPU split rendering available for 2+ GPUs.</span>")
+        gpus_info.set_xalign(0)
+        gpu_grid.attach(gpus_info, 0, gpu_row, 2, 1)
+        gpu_row += 1
+        
+        gpu_frame.add(gpu_grid)
+        box.pack_start(gpu_frame, False, False, 0)
         
         integration_frame = Gtk.Frame(label="Integrations")
         integration_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -1831,6 +2326,8 @@ class ANUGui(Gtk.Window):
         self.upscaler.config["gamescope_integration"] = self.gamescope_switch.get_active()
         self.upscaler.config["mangohud_overlay"] = self.mangohud_switch.get_active()
         self.upscaler.config["enable_frame_generation"] = self.frame_gen_switch.get_active()
+        self.upscaler.config["default_gpu"] = self.gpu_combo.get_active_id() or "auto"
+        self.upscaler.config["default_region"] = self.region_combo.get_active_id() or "full"
         
         self.upscaler.save_config()
         self.set_status("Settings saved")
@@ -1871,19 +2368,34 @@ Examples:
   aegis-upscaler benchmark --backend fsr2
   aegis-upscaler profile create --name "My Game" --game-id steam_12345
   aegis-upscaler launch-args --game steam_12345
+  aegis-upscaler daemon --gpu nvidia:0 --region center
+  aegis-upscaler list-gpus
 
 Backends: bilinear, bicubic, lanczos, fsr1, fsr2, fsr3, real-esrgan, anu-neural
 Quality:  ultra_quality, quality, balanced, performance, ultra_performance
+Regions:  center, rim, full
         """
     )
     
     parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
     parser.add_argument('--version', action='version', version=f'%(prog)s {AegisNeuralUpscaler.VERSION}')
     parser.add_argument('--headless', action='store_true', help='Run in headless mode')
+    parser.add_argument('--gpu', type=str, default='', help='GPU ID to use for processing (e.g., nvidia:0, amd:card0)')
+    parser.add_argument('--region', type=str, default='full', choices=['center', 'rim', 'full'],
+                       help='Screen region to process (center, rim, or full)')
+    parser.add_argument('--daemon', action='store_true', help='Run as background daemon service')
     
     subparsers = parser.add_subparsers(dest='command', help='Commands')
     
     status_parser = subparsers.add_parser('status', help='Show upscaler status')
+    
+    list_gpus_parser = subparsers.add_parser('list-gpus', help='List available GPUs')
+    
+    daemon_parser = subparsers.add_parser('daemon', help='Run as daemon service')
+    daemon_parser.add_argument('--gpu', type=str, default='', help='GPU ID to use')
+    daemon_parser.add_argument('--region', type=str, default='full', choices=['center', 'rim', 'full'],
+                              help='Region to handle')
+    daemon_parser.add_argument('--socket', type=str, default='', help='Custom socket path')
     
     upscale_parser = subparsers.add_parser('upscale', help='Upscale an image')
     upscale_parser.add_argument('-i', '--input', required=True, help='Input image path')
@@ -1891,10 +2403,14 @@ Quality:  ultra_quality, quality, balanced, performance, ultra_performance
     upscale_parser.add_argument('-b', '--backend', default='fsr2', help='Upscaling backend')
     upscale_parser.add_argument('-s', '--scale', type=float, default=2.0, help='Scale factor')
     upscale_parser.add_argument('-q', '--quality', default='balanced', help='Quality preset')
+    upscale_parser.add_argument('--gpu', type=str, default='', help='GPU ID to use')
+    upscale_parser.add_argument('--region', type=str, default='full', help='Screen region')
     
     benchmark_parser = subparsers.add_parser('benchmark', help='Run benchmark')
     benchmark_parser.add_argument('-b', '--backend', help='Backend to benchmark')
     benchmark_parser.add_argument('-q', '--quality', default='balanced', help='Quality preset')
+    benchmark_parser.add_argument('--gpu', type=str, default='', help='GPU ID to use')
+    benchmark_parser.add_argument('--region', type=str, default='full', help='Region to benchmark')
     
     profile_parser = subparsers.add_parser('profile', help='Manage profiles')
     profile_sub = profile_parser.add_subparsers(dest='profile_action')
@@ -1906,46 +2422,121 @@ Quality:  ultra_quality, quality, balanced, performance, ultra_performance
     profile_create.add_argument('--game-id', default='', help='Game ID')
     profile_create.add_argument('--backend', default='fsr2', help='Backend')
     profile_create.add_argument('--quality', default='balanced', help='Quality preset')
+    profile_create.add_argument('--gpu', type=str, default='', help='GPU ID')
+    profile_create.add_argument('--region', type=str, default='full', help='Region')
     
     profile_delete = profile_sub.add_parser('delete', help='Delete profile')
     profile_delete.add_argument('--name', required=True, help='Profile name')
     
+    split_profile_parser = subparsers.add_parser('split-profile', help='Manage split rendering profiles')
+    split_profile_sub = split_profile_parser.add_subparsers(dest='split_action')
+    
+    split_list = split_profile_sub.add_parser('list', help='List split profiles')
+    
+    split_create = split_profile_sub.add_parser('create', help='Create split profile')
+    split_create.add_argument('--name', required=True, help='Profile name')
+    split_create.add_argument('--game-id', default='', help='Game ID')
+    split_create.add_argument('--center-gpu', default='', help='GPU for center region')
+    split_create.add_argument('--rim-gpu', default='', help='GPU for rim region')
+    split_create.add_argument('--center-backend', default='fsr2', help='Backend for center')
+    split_create.add_argument('--rim-backend', default='fsr1', help='Backend for rim')
+    split_create.add_argument('--center-quality', default='balanced', help='Quality for center')
+    split_create.add_argument('--rim-quality', default='performance', help='Quality for rim')
+    
     launch_parser = subparsers.add_parser('launch-args', help='Get launch arguments for a game')
     launch_parser.add_argument('--game', required=True, help='Game ID')
     launch_parser.add_argument('--resolution', default='1920x1080', help='Target resolution')
+    launch_parser.add_argument('--gpu', type=str, default='', help='GPU ID')
+    launch_parser.add_argument('--region', type=str, default='full', help='Region')
     
     gamescope_parser = subparsers.add_parser('gamescope-args', help='Get gamescope arguments')
     gamescope_parser.add_argument('--width', type=int, default=1920, help='Target width')
     gamescope_parser.add_argument('--height', type=int, default=1080, help='Target height')
     gamescope_parser.add_argument('--quality', default='balanced', help='Quality preset')
     gamescope_parser.add_argument('--backend', default='fsr2', help='Backend')
+    gamescope_parser.add_argument('--gpu', type=str, default='', help='GPU ID')
     
     args = parser.parse_args()
     
-    if args.gui:
+    gpu_arg = getattr(args, 'gpu', '')
+    region_arg = getattr(args, 'region', 'full')
+    
+    if args.daemon:
+        print(f"Starting upscaler daemon...")
+        print(f"GPU: {gpu_arg or 'auto'}, Region: {region_arg}")
+        upscaler = AegisNeuralUpscaler(headless=True, gpu_id=gpu_arg, region=region_arg)
+        upscaler.start_daemon(gpu_id=gpu_arg, region=region_arg)
+        
+    elif args.gui:
         if not GTK_AVAILABLE:
             print("GTK3 not available. Please install python3-gi and gir1.2-gtk-3.0")
             sys.exit(1)
         
-        upscaler = AegisNeuralUpscaler(headless=False)
+        upscaler = AegisNeuralUpscaler(headless=False, gpu_id=gpu_arg, region=region_arg)
         app = ANUGui(upscaler)
         app.show_all()
         Gtk.main()
+
+    elif args.command == 'list-gpus':
+        gpus = GPUEnumerator.enumerate_all()
+        print(f"\nAvailable GPUs ({len(gpus)})")
+        print("=" * 60)
+        for gpu in gpus:
+            primary = " (primary)" if gpu.is_primary else ""
+            print(f"  ID: {gpu.id}{primary}")
+            print(f"    Name:   {gpu.name}")
+            print(f"    Vendor: {gpu.vendor}")
+            print(f"    VRAM:   {gpu.vram_mb} MB")
+            print(f"    Vulkan: {gpu.vulkan_support}")
+            if gpu.cuda_support:
+                print(f"    CUDA:   {gpu.cuda_support}")
+            if gpu.tensor_cores:
+                print(f"    Tensor: {gpu.tensor_cores}")
+            print()
+
+    elif args.command == 'daemon':
+        daemon_gpu = getattr(args, 'gpu', '')
+        daemon_region = getattr(args, 'region', 'full')
+        socket_path = getattr(args, 'socket', '') or UPSCALER_SOCKET_PATH
+        
+        if daemon_region != "full":
+            socket_path = f"/tmp/aegis-upscaler-{daemon_region}.sock"
+        
+        print(f"Starting upscaler daemon...")
+        print(f"GPU: {daemon_gpu or 'auto'}, Region: {daemon_region}")
+        print(f"Socket: {socket_path}")
+        
+        upscaler = AegisNeuralUpscaler(headless=True, gpu_id=daemon_gpu, region=daemon_region)
+        daemon = UpscalerDaemon(upscaler, socket_path=socket_path, gpu_id=daemon_gpu, region=daemon_region)
+        
+        def signal_handler(sig, frame):
+            print("\nShutting down daemon...")
+            daemon.stop()
+            sys.exit(0)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        daemon.start()
         
     elif args.command == 'status':
-        upscaler = AegisNeuralUpscaler(headless=True)
+        upscaler = AegisNeuralUpscaler(headless=True, gpu_id=gpu_arg, region=region_arg)
         status = upscaler.get_status()
         print(f"\n{AegisNeuralUpscaler.APP_NAME} v{status['version']}")
         print("=" * 50)
-        print(f"License Tier:    {status['license_tier']}")
-        print(f"GPU:             {status['gpu']['name']}")
-        print(f"Vendor:          {status['gpu']['vendor']}")
-        print(f"Vulkan Support:  {status['gpu']['vulkan_support']}")
-        print(f"AI Features:     {status['ai_features_available']}")
+        print(f"License Tier:      {status['license_tier']}")
+        print(f"GPU:               {status['gpu'].get('name', 'Unknown')}")
+        print(f"Vendor:            {status['gpu'].get('vendor', 'Unknown')}")
+        print(f"Vulkan Support:    {status['gpu'].get('vulkan_support', False)}")
+        print(f"AI Features:       {status['ai_features_available']}")
+        print(f"GPUs Available:    {status['gpu_count']}")
+        print(f"Selected GPU:      {status['selected_gpu'] or 'auto'}")
+        print(f"Selected Region:   {status['selected_region']}")
         print(f"\nAvailable Backends: {', '.join(status['available_backends'])}")
-        print(f"Profiles:        {status['profiles_count']}")
-        print(f"Default Backend: {status['default_backend']}")
-        print(f"Default Quality: {status['default_quality']}")
+        print(f"Profiles:          {status['profiles_count']}")
+        print(f"Split Profiles:    {status['split_profiles_count']}")
+        print(f"Default Backend:   {status['default_backend']}")
+        print(f"Default Quality:   {status['default_quality']}")
+        print(f"Daemon Socket:     {status['daemon_socket']}")
         
     elif args.command == 'upscale':
         upscaler = AegisNeuralUpscaler(headless=True)
@@ -2015,18 +2606,69 @@ Quality:  ultra_quality, quality, balanced, performance, ultra_performance
             profile = UpscalerProfile(
                 name=args.name,
                 game_id=args.game_id,
+                gpu_id=getattr(args, 'gpu', ''),
+                region=getattr(args, 'region', 'full'),
                 backend=args.backend,
                 quality_preset=args.quality,
                 created=datetime.now().isoformat()
             )
             upscaler.save_profile(profile)
             print(f"✓ Created profile: {args.name}")
+            if profile.gpu_id:
+                print(f"  GPU: {profile.gpu_id}")
+            if profile.region != 'full':
+                print(f"  Region: {profile.region}")
             
         elif args.profile_action == 'delete':
             if upscaler.delete_profile(args.name):
                 print(f"✓ Deleted profile: {args.name}")
             else:
                 print(f"✗ Profile not found: {args.name}")
+
+    elif args.command == 'split-profile':
+        upscaler = AegisNeuralUpscaler(headless=True)
+        
+        if args.split_action == 'list':
+            print(f"\nSplit Upscaler Profiles ({len(upscaler.split_profiles)})")
+            print("=" * 60)
+            for name, profile in upscaler.split_profiles.items():
+                print(f"  {name}")
+                print(f"    Game ID: {profile.game_id or 'N/A'}")
+                print(f"    Center: GPU={profile.center_config.gpu_id or 'auto'}, "
+                      f"Backend={profile.center_config.backend}, "
+                      f"Quality={profile.center_config.quality_preset}")
+                print(f"    Rim:    GPU={profile.rim_config.gpu_id or 'auto'}, "
+                      f"Backend={profile.rim_config.backend}, "
+                      f"Quality={profile.rim_config.quality_preset}")
+                print(f"    Sync to higher FPS: {profile.sync_to_higher_fps}")
+                print()
+                
+        elif args.split_action == 'create':
+            center_config = RegionUpscalerConfig(
+                region="center",
+                gpu_id=getattr(args, 'center_gpu', ''),
+                backend=getattr(args, 'center_backend', 'fsr2'),
+                quality_preset=getattr(args, 'center_quality', 'balanced')
+            )
+            rim_config = RegionUpscalerConfig(
+                region="rim",
+                gpu_id=getattr(args, 'rim_gpu', ''),
+                backend=getattr(args, 'rim_backend', 'fsr1'),
+                quality_preset=getattr(args, 'rim_quality', 'performance')
+            )
+            profile = SplitUpscalerProfile(
+                name=args.name,
+                game_id=getattr(args, 'game_id', ''),
+                center_config=center_config,
+                rim_config=rim_config,
+                created=datetime.now().isoformat()
+            )
+            upscaler.save_split_profile(profile)
+            print(f"✓ Created split profile: {args.name}")
+            print(f"  Center: GPU={center_config.gpu_id or 'auto'}, "
+                  f"Backend={center_config.backend}")
+            print(f"  Rim:    GPU={rim_config.gpu_id or 'auto'}, "
+                  f"Backend={rim_config.backend}")
                 
     elif args.command == 'launch-args':
         upscaler = AegisNeuralUpscaler(headless=True)

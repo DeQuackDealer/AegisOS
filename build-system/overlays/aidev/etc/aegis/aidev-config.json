@@ -1,5 +1,5 @@
 {
-  "version": "1.5.0",
+  "version": "2.0.0",
   "edition": "aidev",
   "description": "Aegis OS AI Developer Edition Configuration",
   "tier": "aidev",
@@ -9,7 +9,53 @@
       "jupyter_lab": true,
       "jupyter_port": 8888,
       "vscode_extensions": ["ms-python.python", "ms-toolsai.jupyter", "GitHub.copilot"],
-      "default_environment": "conda"
+      "default_environment": "conda",
+      "deep_compute_integration": true
+    },
+    "compute_stack": {
+      "enabled": true,
+      "preferred_backend": "auto",
+      "gpu_power_limit": 100,
+      "enable_tensor_cores": true,
+      "mixed_precision": "fp16",
+      "multi_gpu_strategy": "data_parallel",
+      "backends": {
+        "cuda": true,
+        "rocm": true,
+        "vulkan": true,
+        "opencl": true
+      }
+    },
+    "training_optimizer": {
+      "enabled": true,
+      "default_precision": "fp16",
+      "checkpoint_interval_minutes": 30,
+      "max_checkpoints": 5,
+      "auto_batch_size": true,
+      "vram_buffer_percent": 10,
+      "async_data_loading": true,
+      "num_workers": 4,
+      "prefetch_factor": 2,
+      "gradient_accumulation": 1
+    },
+    "dataset_manager": {
+      "enabled": true,
+      "cache_enabled": true,
+      "max_cache_size_gb": 50,
+      "chunk_size_mb": 256,
+      "prefetch_chunks": 2,
+      "memory_map_threshold_mb": 100,
+      "compression": "lz4",
+      "num_workers": 4
+    },
+    "ai_monitor": {
+      "enabled": true,
+      "poll_interval_ms": 1000,
+      "history_size": 1000,
+      "alert_gpu_temp_c": 85,
+      "alert_vram_percent": 95,
+      "alert_gradient_threshold": 100,
+      "log_metrics": true
     },
     "model_hub": {
       "enabled": true,
@@ -51,7 +97,9 @@
     "data_dir": "/var/lib/aegis/aidev",
     "models_dir": "~/Models",
     "datasets_dir": "~/Datasets",
-    "notebooks_dir": "~/Notebooks"
+    "notebooks_dir": "~/Notebooks",
+    "checkpoints_dir": "/var/lib/aegis/checkpoints",
+    "cache_dir": "/var/cache/aegis/datasets"
   },
   "gpu": {
     "nvidia_driver": "auto",

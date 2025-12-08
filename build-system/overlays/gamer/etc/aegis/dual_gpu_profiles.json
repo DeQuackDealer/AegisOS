@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Aegis OS Dual-GPU Split Rendering Profiles",
+  "global_settings": {
+    "default_sync_mode": "freesync",
+    "default_master_fps": 144,
+    "default_center_radius_pct": 60.0,
+    "default_region_blend_px": 32,
+    "compositor": "gamescope",
+    "latency_target_ms": 6.0,
+    "fallback_mode": "single_gpu"
+  },
+  "device_priority": {
+    "center_preference": ["nvidia", "amd", "intel"],
+    "rim_preference": ["amd", "intel", "nvidia"],
+    "auto_assign": true,
+    "prefer_discrete_for_center": true
+  },
+  "upscaler_defaults": {
+    "center": {
+      "backend": "fsr2",
+      "quality": "balanced",
+      "sharpness": 0.5
+    },
+    "rim": {
+      "backend": "fsr1",
+      "quality": "performance",
+      "sharpness": 0.3
+    }
+  },
+  "resolution_presets": {
+    "4k_ultra": {
+      "output": "3840x2160",
+      "center_render": "2560x1440",
+      "rim_render": "1920x1080"
+    },
+    "1440p_quality": {
+      "output": "2560x1440",
+      "center_render": "1920x1080",
+      "rim_render": "1280x720"
+    },
+    "1080p_performance": {
+      "output": "1920x1080",
+      "center_render": "1280x720",
+      "rim_render": "960x540"
+    }
+  },
+  "profiles": {
+    "default": {
+      "name": "Default Dual-GPU",
+      "description": "Balanced dual-GPU profile for most games",
+      "enabled": true,
+      "sync_mode": "freesync",
+      "master_fps": 144,
+      "center_radius_pct": 60.0,
+      "region_blend_px": 32,
+      "center": {
+        "gpu_id": "auto:primary",
+        "render_resolution": "1920x1080",
+        "output_resolution": "2560x1440",
+        "upscaler_backend": "fsr2",
+        "upscaler_quality": "balanced",
+        "target_fps": 144
+      },
+      "rim": {
+        "gpu_id": "auto:secondary",
+        "render_resolution": "1280x720",
+        "output_resolution": "2560x1440",
+        "upscaler_backend": "fsr1",
+        "upscaler_quality": "performance",
+        "target_fps": 144
+      }
+    },
+    "competitive": {
+      "name": "Competitive Gaming",
+      "description": "Maximum FPS for competitive games",
+      "enabled": true,
+      "sync_mode": "unlocked",
+      "master_fps": 240,
+      "center_radius_pct": 50.0,
+      "region_blend_px": 16,
+      "center": {
+        "gpu_id": "auto:primary",
+        "render_resolution": "1280x720",
+        "output_resolution": "1920x1080",
+        "upscaler_backend": "fsr2",
+        "upscaler_quality": "ultra_performance",
+        "target_fps": 240
+      },
+      "rim": {
+        "gpu_id": "auto:secondary",
+        "render_resolution": "960x540",
+        "output_resolution": "1920x1080",
+        "upscaler_backend": "bilinear",
+        "upscaler_quality": "ultra_performance",
+        "target_fps": 240
+      }
+    },
+    "cinematic": {
+      "name": "Cinematic Experience",
+      "description": "Best quality for story-driven games",
+      "enabled": true,
+      "sync_mode": "freesync",
+      "master_fps": 60,
+      "center_radius_pct": 70.0,
+      "region_blend_px": 48,
+      "center": {
+        "gpu_id": "auto:primary",
+        "render_resolution": "2560x1440",
+        "output_resolution": "3840x2160",
+        "upscaler_backend": "anu-neural",
+        "upscaler_quality": "ultra_quality",
+        "target_fps": 60
+      },
+      "rim": {
+        "gpu_id": "auto:secondary",
+        "render_resolution": "1920x1080",
+        "output_resolution": "3840x2160",
+        "upscaler_backend": "fsr2",
+        "upscaler_quality": "quality",
+        "target_fps": 60
+      }
+    }
+  },
+  "game_overrides": {}
+}

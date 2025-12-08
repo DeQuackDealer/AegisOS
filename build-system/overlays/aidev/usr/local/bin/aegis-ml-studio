@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-Aegis ML Studio - Jupyter Lab and VS Code AI extensions configuration
-Features: Jupyter Lab server, VS Code extensions, conda environments
+Aegis ML Studio - Unified AI/ML Development Environment
+Features: Jupyter Lab, VS Code extensions, conda environments, deep compute integration
+
+Integrates with Aegis deep compute services:
+- aegis-compute-stack: Hardware acceleration
+- aegis-training-optimizer: Training optimization
+- aegis-dataset-manager: Dataset management
+- aegis-ai-monitor: Workload monitoring
 
 Provides GUI (GTK) and CLI modes with tier-based feature gating.
 """
@@ -19,11 +25,16 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 TIER_LIMIT = "aidev"
-VERSION = "1.5.0"
+VERSION = "2.0.0"
 APP_NAME = "Aegis ML Studio"
 
 CONFIG_FILE = "/etc/aegis/aidev-config.json"
 LOG_FILE = "/var/log/aegis/ml-studio.log"
+
+COMPUTE_STACK_BIN = "/usr/local/bin/aegis-compute-stack"
+TRAINING_OPTIMIZER_BIN = "/usr/local/bin/aegis-training-optimizer"
+DATASET_MANAGER_BIN = "/usr/local/bin/aegis-dataset-manager"
+AI_MONITOR_BIN = "/usr/local/bin/aegis-ai-monitor"
 
 try:
     import gi
@@ -87,7 +98,7 @@ class AegisMLStudio:
         log_dir = Path(LOG_FILE).parent
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
+        except (PermissionError, OSError):
             pass
         
         try:
@@ -126,7 +137,8 @@ class AegisMLStudio:
             self.logger.warning(f"Failed to load license tier: {e}")
     
     def is_feature_available(self, feature: str) -> bool:
-        aidev_features = ["jupyter_lab", "vscode_extensions", "conda_envs", "notebooks"]
+        aidev_features = ["jupyter_lab", "vscode_extensions", "conda_envs", "notebooks",
+                          "compute_stack", "training_optimizer", "dataset_manager", "ai_monitor"]
         if feature in aidev_features:
             return self.license_tier >= LicenseTier.AIDEV
         return False
@@ -136,7 +148,9 @@ class AegisMLStudio:
             "jupyter_port": 8888,
             "jupyter_token": "",
             "default_environment": "base",
-            "notebooks_dir": str(Path.home() / "Notebooks")
+            "notebooks_dir": str(Path.home() / "Notebooks"),
+            "datasets_dir": str(Path.home() / "Datasets"),
+            "models_dir": str(Path.home() / "Models")
         }
         
         try:
@@ -158,6 +172,132 @@ class AegisMLStudio:
     
     def check_conda_installed(self) -> bool:
         return shutil.which("conda") is not None or shutil.which("mamba") is not None
+
+    def check_service_available(self, service_path: str) -> bool:
+        return Path(service_path).exists()
+
+    def call_service(self, service_path: str, args: List[str]) -> Dict[str, Any]:
+        if not self.check_service_available(service_path):
+            return {"success": False, "error": f"Service not available: {service_path}"}
+        
+        try:
+            cmd = [service_path] + args
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                try:
+                    return json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    return {"success": True, "output": result.stdout}
+            else:
+                return {"success": False, "error": result.stderr}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Service call timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_compute_stack_status(self) -> Dict[str, Any]:
+        if not self.is_feature_available("compute_stack"):
+            return {"available": False, "error": "Requires AI Developer edition"}
+        
+        return self.call_service(COMPUTE_STACK_BIN, ["--status"])
+
+    def get_training_optimizer_status(self) -> Dict[str, Any]:
+        if not self.is_feature_available("training_optimizer"):
+            return {"available": False, "error": "Requires AI Developer edition"}
+        
+        return self.call_service(TRAINING_OPTIMIZER_BIN, ["--status"])
+
+    def get_dataset_manager_status(self) -> Dict[str, Any]:
+        if not self.is_feature_available("dataset_manager"):
+            return {"available": False, "error": "Requires AI Developer edition"}
+        
+        return self.call_service(DATASET_MANAGER_BIN, ["--status"])
+
+    def get_ai_monitor_status(self) -> Dict[str, Any]:
+        if not self.is_feature_available("ai_monitor"):
+            return {"available": False, "error": "Requires AI Developer edition"}
+        
+        return self.call_service(AI_MONITOR_BIN, ["--status"])
+
+    def get_gpu_metrics(self) -> Dict[str, Any]:
+        return self.call_service(AI_MONITOR_BIN, ["--gpu-metrics"])
+
+    def recommend_batch_size(self, model_params_m: float) -> Dict[str, Any]:
+        return self.call_service(TRAINING_OPTIMIZER_BIN, ["--recommend-batch", str(model_params_m)])
+
+    def scan_compute_hardware(self) -> Dict[str, Any]:
+        return self.call_service(COMPUTE_STACK_BIN, ["--scan"])
+
+    def list_datasets(self) -> Dict[str, Any]:
+        return self.call_service(DATASET_MANAGER_BIN, ["--list", "--json"])
+
+    def get_integrated_services_status(self) -> Dict[str, Any]:
+        services = {
+            "compute_stack": {
+                "name": "Aegis Compute Stack",
+                "binary": COMPUTE_STACK_BIN,
+                "installed": self.check_service_available(COMPUTE_STACK_BIN),
+                "description": "Unified hardware acceleration API"
+            },
+            "training_optimizer": {
+                "name": "Aegis Training Optimizer",
+                "binary": TRAINING_OPTIMIZER_BIN,
+                "installed": self.check_service_available(TRAINING_OPTIMIZER_BIN),
+                "description": "Training optimization & batch tuning"
+            },
+            "dataset_manager": {
+                "name": "Aegis Dataset Manager",
+                "binary": DATASET_MANAGER_BIN,
+                "installed": self.check_service_available(DATASET_MANAGER_BIN),
+                "description": "Dataset pipeline management"
+            },
+            "ai_monitor": {
+                "name": "Aegis AI Monitor",
+                "binary": AI_MONITOR_BIN,
+                "installed": self.check_service_available(AI_MONITOR_BIN),
+                "description": "AI workload monitoring"
+            }
+        }
+        
+        if self.license_tier >= LicenseTier.AIDEV:
+            for service_key, service_info in services.items():
+                if service_info["installed"]:
+                    status_result = self.call_service(service_info["binary"], ["--status"])
+                    service_info["available"] = status_result.get("available", False)
+                    service_info["version"] = status_result.get("version", "unknown")
+                    if "error" in status_result:
+                        service_info["error"] = status_result["error"]
+                else:
+                    service_info["available"] = False
+        else:
+            for service_key, service_info in services.items():
+                service_info["available"] = False
+                service_info["error"] = "Requires AI Developer edition"
+        
+        return services
+
+    def launch_service_gui(self, service_name: str) -> bool:
+        service_map = {
+            "compute_stack": COMPUTE_STACK_BIN,
+            "training_optimizer": TRAINING_OPTIMIZER_BIN,
+            "dataset_manager": DATASET_MANAGER_BIN,
+            "ai_monitor": AI_MONITOR_BIN
+        }
+        
+        if service_name not in service_map:
+            return False
+        
+        service_path = service_map[service_name]
+        if not self.check_service_available(service_path):
+            return False
+        
+        try:
+            subprocess.Popen([service_path, "--gui"], start_new_session=True)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to launch {service_name}: {e}")
+            return False
     
     def start_jupyter_lab(self, port: int = 8888, notebook_dir: Optional[str] = None) -> Dict[str, Any]:
         if not self.is_feature_available("jupyter_lab"):
@@ -270,13 +410,19 @@ class AegisMLStudio:
         return []
     
     def get_status(self) -> Dict[str, Any]:
+        services = self.get_integrated_services_status()
+        all_available = all(s["available"] for s in services.values())
+        
         return {
+            "version": self.version,
+            "tier": "aidev" if self.license_tier >= LicenseTier.AIDEV else "limited",
             "jupyter_installed": self.check_jupyter_installed(),
             "conda_installed": self.check_conda_installed(),
             "vscode_installed": shutil.which("code") is not None or shutil.which("codium") is not None,
             "conda_environments": self.list_conda_environments(),
             "installed_extensions": self.list_installed_extensions()[:5],
-            "tier": self.license_tier
+            "integrated_services": services,
+            "deep_compute_ready": all_available and self.license_tier >= LicenseTier.AIDEV
         }
     
     def run_server(self):
@@ -301,13 +447,14 @@ class AegisMLStudio:
         Gtk.main()
     
     def run_cli(self):
-        print(f"\n{'='*60}")
+        print(f"\n{'='*70}")
         print(f"  {APP_NAME} v{VERSION}")
-        print(f"  License Tier: {'AIDEV+' if self.license_tier >= LicenseTier.AIDEV else 'LIMITED'}")
-        print(f"{'='*60}\n")
+        print(f"  License Tier: {'AI DEVELOPER' if self.license_tier >= LicenseTier.AIDEV else 'LIMITED'}")
+        print(f"{'='*70}\n")
         
         status = self.get_status()
-        print("Environment Status:")
+        
+        print("Development Environment:")
         print(f"  Jupyter Lab: {'✓' if status['jupyter_installed'] else '✗'}")
         print(f"  Conda/Mamba: {'✓' if status['conda_installed'] else '✗'}")
         print(f"  VS Code: {'✓' if status['vscode_installed'] else '✗'}")
@@ -315,9 +462,25 @@ class AegisMLStudio:
         if status['conda_environments']:
             print(f"\nConda Environments: {', '.join(status['conda_environments'][:5])}")
         
-        print("\nRecommended VS Code Extensions:")
+        print("\n" + "-"*70)
+        print("Integrated Deep Compute Services:")
+        print("-"*70)
+        
+        for key, service in status['integrated_services'].items():
+            status_icon = "✓" if service['available'] else "✗"
+            print(f"  {status_icon} {service['name']}")
+            print(f"      {service['description']}")
+        
+        print(f"\nDeep Compute Ready: {'✓ YES' if status['deep_compute_ready'] else '✗ NO'}")
+        
+        print("\n" + "-"*70)
+        print("Recommended VS Code Extensions:")
+        print("-"*70)
         for ext in VSCODE_EXTENSIONS[:5]:
             print(f"  - {ext['name']}: {ext['description']}")
+        
+        print("\nUse --services to view integrated service details")
+        print("Use --launch <service> to open a service GUI")
 
 
 if GTK_AVAILABLE:
@@ -325,7 +488,7 @@ if GTK_AVAILABLE:
         def __init__(self, app: AegisMLStudio):
             super().__init__(title=f"{APP_NAME} v{VERSION}")
             self.app = app
-            self.set_default_size(900, 700)
+            self.set_default_size(1000, 800)
             self.set_border_width(10)
             self.setup_ui()
         
@@ -337,12 +500,71 @@ if GTK_AVAILABLE:
             header.set_markup(f"<big><b>{APP_NAME}</b></big>")
             vbox.pack_start(header, False, False, 10)
             
+            tier_label = Gtk.Label()
+            tier_text = "AI Developer Edition" if self.app.license_tier >= LicenseTier.AIDEV else "Limited Mode"
+            tier_label.set_markup(f"<i>License: {tier_text}</i>")
+            vbox.pack_start(tier_label, False, False, 5)
+            
             notebook = Gtk.Notebook()
             vbox.pack_start(notebook, True, True, 0)
             
+            notebook.append_page(self.create_overview_tab(), Gtk.Label(label="Overview"))
             notebook.append_page(self.create_jupyter_tab(), Gtk.Label(label="Jupyter Lab"))
-            notebook.append_page(self.create_extensions_tab(), Gtk.Label(label="VS Code Extensions"))
-            notebook.append_page(self.create_conda_tab(), Gtk.Label(label="Conda Environments"))
+            notebook.append_page(self.create_extensions_tab(), Gtk.Label(label="VS Code"))
+            notebook.append_page(self.create_conda_tab(), Gtk.Label(label="Conda"))
+            notebook.append_page(self.create_services_tab(), Gtk.Label(label="Deep Compute"))
+        
+        def create_overview_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            status = self.app.get_status()
+            
+            env_frame = Gtk.Frame(label="Development Environment")
+            env_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            env_box.set_margin_top(10)
+            env_box.set_margin_start(10)
+            env_box.set_margin_bottom(10)
+            
+            env_items = [
+                ("Jupyter Lab", status['jupyter_installed']),
+                ("Conda/Mamba", status['conda_installed']),
+                ("VS Code", status['vscode_installed'])
+            ]
+            
+            for name, available in env_items:
+                icon = "✓" if available else "✗"
+                lbl = Gtk.Label(label=f"{icon} {name}")
+                lbl.set_xalign(0)
+                env_box.pack_start(lbl, False, False, 2)
+            
+            env_frame.add(env_box)
+            box.pack_start(env_frame, False, False, 10)
+            
+            dc_frame = Gtk.Frame(label="Deep Compute Integration")
+            dc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            dc_box.set_margin_top(10)
+            dc_box.set_margin_start(10)
+            dc_box.set_margin_bottom(10)
+            
+            for key, service in status['integrated_services'].items():
+                icon = "✓" if service['available'] else "✗"
+                lbl = Gtk.Label(label=f"{icon} {service['name']}")
+                lbl.set_xalign(0)
+                dc_box.pack_start(lbl, False, False, 2)
+            
+            dc_frame.add(dc_box)
+            box.pack_start(dc_frame, False, False, 10)
+            
+            ready_label = Gtk.Label()
+            if status['deep_compute_ready']:
+                ready_label.set_markup("<b><span foreground='green'>✓ Deep Compute Ready</span></b>")
+            else:
+                ready_label.set_markup("<b><span foreground='red'>✗ Deep Compute Not Ready</span></b>")
+            box.pack_start(ready_label, False, False, 10)
+            
+            return box
         
         def create_jupyter_tab(self):
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -399,6 +621,46 @@ if GTK_AVAILABLE:
             
             return box
         
+        def create_services_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            title = Gtk.Label()
+            title.set_markup("<b>Integrated Deep Compute Services</b>")
+            title.set_xalign(0)
+            box.pack_start(title, False, False, 10)
+            
+            services = self.app.get_integrated_services_status()
+            
+            for key, service in services.items():
+                frame = Gtk.Frame(label=service['name'])
+                frame_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+                frame_box.set_margin_top(10)
+                frame_box.set_margin_start(10)
+                frame_box.set_margin_bottom(10)
+                
+                status_icon = "✓ Available" if service['available'] else "✗ Not Available"
+                status_lbl = Gtk.Label(label=status_icon)
+                status_lbl.set_xalign(0)
+                frame_box.pack_start(status_lbl, False, False, 2)
+                
+                desc_lbl = Gtk.Label(label=service['description'])
+                desc_lbl.set_xalign(0)
+                frame_box.pack_start(desc_lbl, False, False, 2)
+                
+                launch_btn = Gtk.Button(label="Open")
+                launch_btn.connect("clicked", self.on_launch_service, key)
+                launch_btn.set_sensitive(
+                    service['available'] and self.app.license_tier >= LicenseTier.AIDEV
+                )
+                frame_box.pack_start(launch_btn, False, False, 5)
+                
+                frame.add(frame_box)
+                box.pack_start(frame, False, False, 10)
+            
+            return box
+        
         def on_start_jupyter(self, button):
             result = self.app.start_jupyter_lab()
             if result["success"]:
@@ -408,10 +670,41 @@ if GTK_AVAILABLE:
                 self.jupyter_status.set_text(f"Error: {result.get('error')}")
         
         def on_install_extension(self, button, ext_id):
-            self.app.install_vscode_extension(ext_id)
+            result = self.app.install_vscode_extension(ext_id)
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.INFO if result else Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text="Extension installed" if result else "Installation failed"
+            )
+            dialog.run()
+            dialog.destroy()
         
         def on_create_env(self, button, name, packages):
-            self.app.create_conda_environment(name, packages)
+            result = self.app.create_conda_environment(name, packages)
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.INFO if result.get("success") else Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Environment '{name}' created" if result.get("success") else result.get("error", "Failed")
+            )
+            dialog.run()
+            dialog.destroy()
+        
+        def on_launch_service(self, button, service_name):
+            result = self.app.launch_service_gui(service_name)
+            if not result:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    flags=0,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Failed to launch {service_name}"
+                )
+                dialog.run()
+                dialog.destroy()
 
 
 def main():
@@ -422,7 +715,15 @@ def main():
     parser.add_argument("--start-jupyter", action="store_true", help="Start Jupyter Lab")
     parser.add_argument("--install-extension", metavar="ID", help="Install VS Code extension")
     parser.add_argument("--create-env", metavar="NAME", help="Create conda environment")
-    parser.add_argument("--status", action="store_true", help="Show status")
+    parser.add_argument("--status", action="store_true", help="Show status as JSON")
+    parser.add_argument("--services", action="store_true", help="Show integrated services status")
+    parser.add_argument("--launch", metavar="SERVICE", 
+                       choices=["compute_stack", "training_optimizer", "dataset_manager", "ai_monitor"],
+                       help="Launch a service GUI")
+    parser.add_argument("--gpu-metrics", action="store_true", help="Get GPU metrics from AI Monitor")
+    parser.add_argument("--recommend-batch", type=float, metavar="PARAMS_M",
+                       help="Get batch size recommendation for model")
+    parser.add_argument("--scan-hardware", action="store_true", help="Scan compute hardware")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     
     args = parser.parse_args()
@@ -445,6 +746,26 @@ def main():
     elif args.status:
         app = AegisMLStudio(headless=True)
         print(json.dumps(app.get_status(), indent=2))
+    elif args.services:
+        app = AegisMLStudio(headless=True)
+        services = app.get_integrated_services_status()
+        print(json.dumps(services, indent=2))
+    elif args.launch:
+        app = AegisMLStudio(headless=True)
+        result = app.launch_service_gui(args.launch)
+        print(f"Launched {args.launch}" if result else f"Failed to launch {args.launch}")
+    elif args.gpu_metrics:
+        app = AegisMLStudio(headless=True)
+        result = app.get_gpu_metrics()
+        print(json.dumps(result, indent=2))
+    elif args.recommend_batch:
+        app = AegisMLStudio(headless=True)
+        result = app.recommend_batch_size(args.recommend_batch)
+        print(json.dumps(result, indent=2))
+    elif args.scan_hardware:
+        app = AegisMLStudio(headless=True)
+        result = app.scan_compute_hardware()
+        print(json.dumps(result, indent=2))
     elif args.cli or not GTK_AVAILABLE:
         app = AegisMLStudio(headless=False)
         app.run_cli()
