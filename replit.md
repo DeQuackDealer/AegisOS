@@ -40,7 +40,8 @@ Over 50 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter)
 *   **aegis-desktop-link**: Multi-device KVM via Barrier/Deskflow
 *   **aegis-network-display**: Wireless screen casting (Miracast)
 *   **aegis-file-share**: Encrypted peer-to-peer file transfer
-*   **aegis-mobile-link**: Smartphone integration via KDE Connect
+*   **aegis-mobile-link**: Smartphone integration (QR pairing, SMS, screen mirroring, file sync)
+*   **aegis-home-nas**: Turn any PC into a NAS server (Samba, NFS, DLNA, RAID, web dashboard)
 *   **aegis-browser-hub**: Unified browser launcher with profile management
 *   **aegis-cloud-sync**: Unified cloud storage (Nextcloud, Google Drive, OneDrive, Dropbox)
 *   **aegis-screenshot-pro**: Advanced screenshots, recording, annotations, OCR
