@@ -1,0 +1,81 @@
+Review and refine the complete user flow for how users obtain, verify, and build the operating system across both freemium and paid editions. The process must be streamlined, offline-capable, secure, and consistent.
+
+1. Freemium Edition Flow
+
+The user downloads a single executable file (currently .hta or a recommended modern alternative).
+
+This executable contains all required assets, templates, and scripts to build the full freemium ISO locally without any internet connection.
+
+When the user opens the executable, it immediately begins the ISO build process using the embedded resources.
+
+After the ISO is generated, the user is instructed to use Balena Etcher to flash the ISO onto a USB drive.
+
+The entire freemium workflow must be:
+
+Self-contained
+
+Offline-safe
+
+Free of runtime errors
+
+Consistent across devices
+
+2. Paid Edition Flow
+
+The user purchases a license through the website.
+
+After successful payment, the system provides:
+
+A valid license key
+
+A download link for the paid-edition executable (same structure as the freemium builder but containing premium resources)
+
+When launching the executable:
+
+The user must enter the license key.
+
+The builder verifies the key offline.
+
+If the key is invalid → abort ISO generation with a clear error message.
+
+If the key is valid → proceed to build the ISO for the selected paid edition (Gamer Edition, AI Dev Edition, etc.)
+
+The builder then generates the fully configured ISO using the embedded premium assets.
+
+The user finishes by flashing the ISO via Balena Etcher.
+
+3. Requirements for Replit AI
+
+You must ensure:
+
+The executable (whether .hta or a modern replacement) contains all resources internally.
+
+No external downloads occur during ISO generation.
+
+The licensing system is stable, correct, and resistant to false negatives.
+
+Valid licenses always allow the ISO to build.
+
+Invalid licenses always block the build.
+
+Both freemium and paid versions use the same user flow except for the license gate.
+
+All messaging and instructions shown to users are clear, consistent, and polished.
+
+The ISO generation process must be reproducible and offline-capable.
+
+4. Optional Recommendation Section
+
+Provide suggestions for safer and more modern alternatives to .hta, such as:
+
+Embedded Python runtime scripts
+
+Node/Electron bootstrapper
+
+Go or Rust single-file CLI
+
+PowerShell GUI wrapper
+
+C# WinForms/WPF single-file executable
+
+These alternatives should support offline operation, reliable execution, and bundling of all required resources for ISO creation.
