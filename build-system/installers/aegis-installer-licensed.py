@@ -111,7 +111,7 @@ EDITIONS = {
     "server": {
         "name": "Aegis OS Server",
         "prefix": "SERV",
-        "price": "Enterprise",
+        "price": "$129 Lifetime",
         "size_gb": 3.0,
         "features": [
             "Headless Server Mode",
