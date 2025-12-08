@@ -1078,13 +1078,22 @@ AEGIS_TIER="{self.config.get('tier', 'free')}"
         )
     
     def apply_overlays(self):
-        """Apply common and edition-specific overlays to chroot"""
+        """Apply common, pro (for paid editions), and edition-specific overlays to chroot
+        
+        Overlay order for paid editions: common -> pro -> edition
+        Overlay order for freemium: common -> freemium
+        
+        This ensures all paid editions get the Pro baseline features (matching/exceeding
+        Zorin OS Pro) plus their edition-specific specializations.
+        """
         self.log("Applying overlays...", "PROGRESS")
         
         common_overlay = OVERLAYS_DIR / "common"
+        pro_overlay = OVERLAYS_DIR / "pro"
         edition_overlay = OVERLAYS_DIR / self.config.get('overlay_name', self.edition)
         
         overlays_applied = []
+        is_paid_edition = self.config.get('tier', 'free') != 'free'
         
         if common_overlay.exists():
             self.log(f"Applying common overlay from {common_overlay}")
@@ -1092,6 +1101,13 @@ AEGIS_TIER="{self.config.get('tier', 'free')}"
             overlays_applied.append("common")
         else:
             self.log(f"Warning: Common overlay not found at {common_overlay}", "WARN")
+        
+        if is_paid_edition and pro_overlay.exists():
+            self.log(f"Applying Pro baseline overlay from {pro_overlay}")
+            self._apply_overlay(pro_overlay)
+            overlays_applied.append("pro")
+        elif is_paid_edition:
+            self.log(f"Warning: Pro overlay not found at {pro_overlay}", "WARN")
         
         if edition_overlay.exists():
             self.log(f"Applying edition overlay from {edition_overlay}")
@@ -1105,7 +1121,9 @@ AEGIS_TIER="{self.config.get('tier', 'free')}"
         self.manifest['overlays'] = {
             'applied': overlays_applied,
             'common_path': str(common_overlay),
+            'pro_path': str(pro_overlay) if is_paid_edition else None,
             'edition_path': str(edition_overlay),
+            'is_paid_edition': is_paid_edition,
             'applied_at': datetime.now(timezone.utc).isoformat()
         }
         

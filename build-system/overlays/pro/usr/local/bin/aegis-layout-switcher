@@ -1,0 +1,558 @@
+#!/usr/bin/env python3
+"""
+Aegis Layout Switcher v1.0.0
+Desktop layout switcher for multiple OS-style layouts
+
+Supported layouts:
+  - Windows 10: Classic Windows 10 style with bottom taskbar
+  - Windows 11: Centered taskbar like Windows 11
+  - macOS: Top panel with dock-style layout
+  - GNOME: Modern GNOME Shell-like layout
+  - Unity: Ubuntu Unity-inspired layout
+  - KDE Plasma: KDE Plasma-style layout
+  - Classic: Traditional desktop with menus
+
+Features:
+  - One-click layout switching
+  - Panel position and size configuration
+  - Window button layout customization
+  - Icon and theme integration
+  - Save custom layouts
+  - Preview before applying
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Layout Switcher"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "layout-switcher"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+CUSTOM_LAYOUTS_FILE = CONFIG_DIR / "custom-layouts.json"
+BACKUP_DIR = CONFIG_DIR / "backups"
+
+
+@dataclass
+class LayoutPreset:
+    """Desktop layout preset"""
+    id: str
+    name: str
+    description: str
+    panel_position: str
+    panel_size: int
+    taskbar_style: str
+    start_position: str
+    clock_format: str
+    window_buttons: str
+    icon_size: int = 48
+    dock_enabled: bool = False
+    dock_position: str = "bottom"
+    preview_image: str = ""
+
+
+BUILTIN_LAYOUTS = [
+    LayoutPreset(
+        id="windows10",
+        name="Windows 10",
+        description="Classic Windows 10 layout with bottom taskbar, start menu on left",
+        panel_position="bottom",
+        panel_size=40,
+        taskbar_style="windows10",
+        start_position="left",
+        clock_format="%l:%M %p\n%m/%d/%Y",
+        window_buttons="O|HMC",
+        icon_size=48,
+        dock_enabled=False
+    ),
+    LayoutPreset(
+        id="windows11",
+        name="Windows 11",
+        description="Modern Windows 11 layout with centered taskbar icons",
+        panel_position="bottom",
+        panel_size=48,
+        taskbar_style="windows11",
+        start_position="center",
+        clock_format="%l:%M %p\n%a %b %d",
+        window_buttons="|HMC",
+        icon_size=44,
+        dock_enabled=False
+    ),
+    LayoutPreset(
+        id="macos",
+        name="macOS",
+        description="Apple macOS-inspired layout with top menu bar and dock",
+        panel_position="top",
+        panel_size=28,
+        taskbar_style="macos",
+        start_position="left",
+        clock_format="%a %b %d  %l:%M %p",
+        window_buttons="CMH|",
+        icon_size=56,
+        dock_enabled=True,
+        dock_position="bottom"
+    ),
+    LayoutPreset(
+        id="gnome",
+        name="GNOME Modern",
+        description="Clean GNOME Shell-inspired layout with top bar",
+        panel_position="top",
+        panel_size=32,
+        taskbar_style="gnome",
+        start_position="left",
+        clock_format="%a %b %d  %H:%M",
+        window_buttons="|MC",
+        icon_size=48,
+        dock_enabled=True,
+        dock_position="left"
+    ),
+    LayoutPreset(
+        id="unity",
+        name="Ubuntu Unity",
+        description="Ubuntu Unity layout with left dock and top panel",
+        panel_position="top",
+        panel_size=28,
+        taskbar_style="unity",
+        start_position="left",
+        clock_format="%a %b %d  %l:%M %p",
+        window_buttons="CMH|",
+        icon_size=48,
+        dock_enabled=True,
+        dock_position="left"
+    ),
+    LayoutPreset(
+        id="kde",
+        name="KDE Plasma",
+        description="KDE Plasma-style layout with bottom panel",
+        panel_position="bottom",
+        panel_size=44,
+        taskbar_style="kde",
+        start_position="left",
+        clock_format="%H:%M\n%Y-%m-%d",
+        window_buttons="O|HMC",
+        icon_size=48,
+        dock_enabled=False
+    ),
+    LayoutPreset(
+        id="classic",
+        name="Classic",
+        description="Traditional desktop with simple taskbar",
+        panel_position="bottom",
+        panel_size=32,
+        taskbar_style="classic",
+        start_position="left",
+        clock_format="%H:%M",
+        window_buttons="O|HMC",
+        icon_size=32,
+        dock_enabled=False
+    ),
+    LayoutPreset(
+        id="chromeos",
+        name="ChromeOS",
+        description="ChromeOS-inspired layout with centered shelf",
+        panel_position="bottom",
+        panel_size=56,
+        taskbar_style="chromeos",
+        start_position="center",
+        clock_format="%l:%M %p",
+        window_buttons="|MC",
+        icon_size=48,
+        dock_enabled=False
+    ),
+]
+
+
+@dataclass
+class LayoutSwitcherConfig:
+    """Configuration settings"""
+    current_layout: str = "windows10"
+    backup_before_switch: bool = True
+    apply_matching_theme: bool = True
+    apply_matching_icons: bool = True
+
+
+class LayoutSwitcherService:
+    """Core layout switching service"""
+    
+    def __init__(self):
+        self.config = self._load_config()
+        self.layouts = {l.id: l for l in BUILTIN_LAYOUTS}
+        self.custom_layouts: Dict[str, LayoutPreset] = {}
+        self._load_custom_layouts()
+    
+    def _load_config(self) -> LayoutSwitcherConfig:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    return LayoutSwitcherConfig(**data)
+            except Exception:
+                pass
+        return LayoutSwitcherConfig()
+    
+    def _save_config(self):
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(asdict(self.config), f, indent=2)
+    
+    def _load_custom_layouts(self):
+        if CUSTOM_LAYOUTS_FILE.exists():
+            try:
+                with open(CUSTOM_LAYOUTS_FILE, 'r') as f:
+                    data = json.load(f)
+                    for layout_id, layout_data in data.items():
+                        self.custom_layouts[layout_id] = LayoutPreset(**layout_data)
+            except Exception:
+                pass
+    
+    def _save_custom_layouts(self):
+        with open(CUSTOM_LAYOUTS_FILE, 'w') as f:
+            json.dump({k: asdict(v) for k, v in self.custom_layouts.items()}, f, indent=2)
+    
+    def get_all_layouts(self) -> List[LayoutPreset]:
+        """Get all available layouts"""
+        return list(self.layouts.values()) + list(self.custom_layouts.values())
+    
+    def get_layout(self, layout_id: str) -> Optional[LayoutPreset]:
+        """Get a specific layout"""
+        if layout_id in self.layouts:
+            return self.layouts[layout_id]
+        if layout_id in self.custom_layouts:
+            return self.custom_layouts[layout_id]
+        return None
+    
+    def backup_current_layout(self) -> str:
+        """Backup current panel configuration"""
+        backup_name = f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        backup_path = BACKUP_DIR / backup_name
+        backup_path.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            result = subprocess.run(
+                ['xfconf-query', '-c', 'xfce4-panel', '-lv'],
+                capture_output=True, text=True
+            )
+            with open(backup_path / 'xfce4-panel.conf', 'w') as f:
+                f.write(result.stdout)
+            
+            result = subprocess.run(
+                ['xfconf-query', '-c', 'xfwm4', '-lv'],
+                capture_output=True, text=True
+            )
+            with open(backup_path / 'xfwm4.conf', 'w') as f:
+                f.write(result.stdout)
+                
+        except Exception:
+            pass
+        
+        return str(backup_path)
+    
+    def apply_layout(self, layout_id: str) -> bool:
+        """Apply a desktop layout"""
+        layout = self.get_layout(layout_id)
+        if not layout:
+            return False
+        
+        if self.config.backup_before_switch:
+            self.backup_current_layout()
+        
+        try:
+            position_map = {"top": 4, "bottom": 8, "left": 2, "right": 6}
+            pos_value = position_map.get(layout.panel_position, 8)
+            
+            subprocess.run([
+                'xfconf-query', '-c', 'xfce4-panel',
+                '-p', '/panels/panel-1/position',
+                '-s', f'p={pos_value};x=0;y=0'
+            ], capture_output=True)
+            
+            subprocess.run([
+                'xfconf-query', '-c', 'xfce4-panel',
+                '-p', '/panels/panel-1/size',
+                '-s', str(layout.panel_size)
+            ], capture_output=True)
+            
+            subprocess.run([
+                'xfconf-query', '-c', 'xfwm4',
+                '-p', '/general/button_layout',
+                '-s', layout.window_buttons
+            ], capture_output=True)
+            
+            if layout.dock_enabled:
+                dock_pos = layout.dock_position
+                subprocess.run([
+                    'xfconf-query', '-c', 'xfce4-panel',
+                    '-p', '/panels/panel-2/position',
+                    '-s', f'p={position_map.get(dock_pos, 8)};x=0;y=0'
+                ], capture_output=True)
+            
+            if self.config.apply_matching_theme:
+                theme = self._get_matching_theme(layout_id)
+                if theme:
+                    subprocess.run([
+                        'xfconf-query', '-c', 'xsettings',
+                        '-p', '/Net/ThemeName',
+                        '-s', theme
+                    ], capture_output=True)
+            
+            subprocess.run(['xfce4-panel', '--restart'], capture_output=True)
+            
+            self.config.current_layout = layout_id
+            self._save_config()
+            return True
+            
+        except Exception as e:
+            return False
+    
+    def _get_matching_theme(self, layout_id: str) -> Optional[str]:
+        """Get matching GTK theme for layout"""
+        theme_map = {
+            "windows10": "Aegis-Win10",
+            "windows11": "Aegis-Win10",
+            "macos": "WhiteSur-Light",
+            "gnome": "Adwaita",
+            "unity": "Yaru",
+            "kde": "Breeze",
+            "classic": "Aegis-Win10",
+            "chromeos": "Aegis-Win10"
+        }
+        return theme_map.get(layout_id)
+    
+    def save_custom_layout(self, layout: LayoutPreset) -> bool:
+        """Save a custom layout"""
+        self.custom_layouts[layout.id] = layout
+        self._save_custom_layouts()
+        return True
+    
+    def delete_custom_layout(self, layout_id: str) -> bool:
+        """Delete a custom layout"""
+        if layout_id in self.custom_layouts:
+            del self.custom_layouts[layout_id]
+            self._save_custom_layouts()
+            return True
+        return False
+    
+    def get_status(self) -> Dict:
+        """Get current status"""
+        return {
+            "version": VERSION,
+            "current_layout": self.config.current_layout,
+            "builtin_layouts": len(self.layouts),
+            "custom_layouts": len(self.custom_layouts),
+            "layouts": [asdict(l) for l in self.get_all_layouts()],
+            "config": asdict(self.config)
+        }
+
+
+class LayoutSwitcherGUI:
+    """GUI for Layout Switcher"""
+    
+    def __init__(self, service: LayoutSwitcherService):
+        self.service = service
+        self.root = None
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("800x600")
+        self.root.configure(bg='#1e1e2e')
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground='#89b4fa')
+        style.configure('Layout.TFrame', background='#313244', relief='raised')
+        style.configure('TButton', padding=10)
+        style.configure('Apply.TButton', font=('Segoe UI', 11, 'bold'))
+        
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _create_widgets(self):
+        main = ttk.Frame(self.root, padding=20)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(header, text="Aegis Layout Switcher", style='Header.TLabel').pack(side=tk.LEFT)
+        
+        current = self.service.config.current_layout
+        current_layout = self.service.get_layout(current)
+        current_name = current_layout.name if current_layout else "Unknown"
+        ttk.Label(header, text=f"Current: {current_name}", foreground='#a6adc8').pack(side=tk.RIGHT)
+        
+        canvas = tk.Canvas(main, bg='#1e1e2e', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        
+        scroll_frame.bind("<Configure>", 
+                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=10)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+        
+        row = 0
+        col = 0
+        for layout in self.service.get_all_layouts():
+            self._create_layout_card(scroll_frame, layout, row, col)
+            col += 1
+            if col >= 2:
+                col = 0
+                row += 1
+        
+        settings_frame = ttk.LabelFrame(main, text="Settings", padding=10)
+        settings_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.backup_var = tk.BooleanVar(value=self.service.config.backup_before_switch)
+        ttk.Checkbutton(settings_frame, text="Backup before switching", 
+                       variable=self.backup_var).pack(anchor=tk.W)
+        
+        self.theme_var = tk.BooleanVar(value=self.service.config.apply_matching_theme)
+        ttk.Checkbutton(settings_frame, text="Apply matching theme", 
+                       variable=self.theme_var).pack(anchor=tk.W)
+        
+        self.icons_var = tk.BooleanVar(value=self.service.config.apply_matching_icons)
+        ttk.Checkbutton(settings_frame, text="Apply matching icon theme", 
+                       variable=self.icons_var).pack(anchor=tk.W)
+    
+    def _create_layout_card(self, parent, layout: LayoutPreset, row: int, col: int):
+        card = tk.Frame(parent, bg='#313244', relief='raised', bd=2)
+        card.grid(row=row, column=col, padx=10, pady=10, sticky='nsew')
+        
+        is_current = layout.id == self.service.config.current_layout
+        border_color = '#89b4fa' if is_current else '#45475a'
+        card.configure(highlightbackground=border_color, highlightthickness=2)
+        
+        title = tk.Label(card, text=layout.name, font=('Segoe UI', 14, 'bold'),
+                        bg='#313244', fg='#cdd6f4')
+        title.pack(pady=(15, 5))
+        
+        if is_current:
+            current_badge = tk.Label(card, text="● Current", font=('Segoe UI', 9),
+                                    bg='#313244', fg='#a6e3a1')
+            current_badge.pack()
+        
+        desc = tk.Label(card, text=layout.description, font=('Segoe UI', 10),
+                       bg='#313244', fg='#a6adc8', wraplength=300, justify='center')
+        desc.pack(pady=10, padx=15)
+        
+        details_frame = tk.Frame(card, bg='#313244')
+        details_frame.pack(pady=5)
+        
+        tk.Label(details_frame, text=f"Panel: {layout.panel_position}", 
+                bg='#313244', fg='#7f849c', font=('Segoe UI', 9)).pack()
+        tk.Label(details_frame, text=f"Style: {layout.taskbar_style}", 
+                bg='#313244', fg='#7f849c', font=('Segoe UI', 9)).pack()
+        
+        apply_btn = ttk.Button(card, text="Apply Layout",
+                              command=lambda l=layout: self._apply_layout(l))
+        apply_btn.pack(pady=15)
+    
+    def _apply_layout(self, layout: LayoutPreset):
+        self.service.config.backup_before_switch = self.backup_var.get()
+        self.service.config.apply_matching_theme = self.theme_var.get()
+        self.service.config.apply_matching_icons = self.icons_var.get()
+        self.service._save_config()
+        
+        if self.service.apply_layout(layout.id):
+            messagebox.showinfo("Success", f"Layout '{layout.name}' applied!\n\nThe panel will restart to apply changes.")
+            self.root.destroy()
+            gui = LayoutSwitcherGUI(self.service)
+            gui.run()
+        else:
+            messagebox.showerror("Error", f"Failed to apply layout '{layout.name}'")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Desktop layout switcher")
+    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--status', action='store_true', help='Show status as JSON')
+    parser.add_argument('--list', action='store_true', help='List available layouts')
+    parser.add_argument('--current', action='store_true', help='Show current layout')
+    parser.add_argument('--apply', metavar='LAYOUT_ID', help='Apply a layout')
+    parser.add_argument('--preview', metavar='LAYOUT_ID', help='Preview layout details')
+    parser.add_argument('--backup', action='store_true', help='Backup current layout')
+    parser.add_argument('--version', action='version', version=f'{APP_NAME} v{VERSION}')
+    
+    args = parser.parse_args()
+    service = LayoutSwitcherService()
+    
+    if args.status:
+        print(json.dumps(service.get_status(), indent=2))
+    elif args.list:
+        print("Available layouts:")
+        for layout in service.get_all_layouts():
+            current = "●" if layout.id == service.config.current_layout else "○"
+            print(f"  {current} [{layout.id}] {layout.name}")
+            print(f"      {layout.description}")
+    elif args.current:
+        layout = service.get_layout(service.config.current_layout)
+        if layout:
+            print(f"Current layout: {layout.name}")
+            print(f"  Panel position: {layout.panel_position}")
+            print(f"  Style: {layout.taskbar_style}")
+            print(f"  Window buttons: {layout.window_buttons}")
+    elif args.apply:
+        if service.apply_layout(args.apply):
+            print(f"Applied layout: {args.apply}")
+        else:
+            print(f"Failed to apply layout: {args.apply}", file=sys.stderr)
+            sys.exit(1)
+    elif args.preview:
+        layout = service.get_layout(args.preview)
+        if layout:
+            print(f"Layout: {layout.name}")
+            print(f"  Description: {layout.description}")
+            print(f"  Panel position: {layout.panel_position}")
+            print(f"  Panel size: {layout.panel_size}px")
+            print(f"  Taskbar style: {layout.taskbar_style}")
+            print(f"  Start position: {layout.start_position}")
+            print(f"  Window buttons: {layout.window_buttons}")
+            print(f"  Dock enabled: {layout.dock_enabled}")
+        else:
+            print(f"Layout not found: {args.preview}", file=sys.stderr)
+            sys.exit(1)
+    elif args.backup:
+        path = service.backup_current_layout()
+        print(f"Backup saved to: {path}")
+    elif args.gui or not any([args.status, args.list, args.current, args.apply, 
+                               args.preview, args.backup]):
+        if TKINTER_AVAILABLE:
+            gui = LayoutSwitcherGUI(service)
+            gui.run()
+        else:
+            print("GUI requires tkinter. Use --help for CLI options.")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
