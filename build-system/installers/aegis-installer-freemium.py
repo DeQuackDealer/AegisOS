@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Aegis OS Freemium Edition Installer
-Python/Tkinter replacement for aegis-installer-freemium.hta
-Downloads the free version of Aegis OS with checksum verification
+100% Offline installer - sources ISOs from local media only
+No internet downloads - works with bundled ISO files
 """
 
 import os
@@ -12,22 +12,21 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
-import urllib.request
-import urllib.error
 import time
 import webbrowser
-import tempfile
+import json
+import shutil
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 APP_NAME = "Aegis OS Freemium Installer"
 
-DOWNLOAD_MIRRORS = [
-    "https://repo.linuxliteos.com/linuxlite/isos/7.2/linux-lite-7.2-64bit.iso",
-    "https://mirror.freedif.org/LinuxLiteOS/isos/7.2/linux-lite-7.2-64bit.iso",
+ISO_FILENAME = "aegis-freemium.iso"
+ALT_ISO_FILENAMES = [
+    "aegis-freemium.iso",
+    "AegisOS-Freemium.iso",
+    "aegis-os-freemium.iso",
+    "aegis_freemium.iso"
 ]
-
-EXPECTED_SHA256 = "DC8955E02C68537815ED0010F7C4C035CE786BBA2C679DD74532B22205DF8216"
-ISO_FILENAME = "AegisOS-Freemium.iso"
 
 FEATURES = [
     "Core desktop environment",
@@ -41,23 +40,174 @@ FEATURES = [
 ]
 
 
+class OfflineISOLocator:
+    """Handles offline ISO detection from local sources"""
+    
+    @staticmethod
+    def get_search_paths():
+        """Get all paths to search for ISO files"""
+        paths = []
+        
+        script_dir = Path(__file__).parent
+        paths.append(script_dir)
+        paths.append(script_dir / "iso")
+        paths.append(script_dir.parent / "iso")
+        paths.append(script_dir.parent.parent / "iso")
+        
+        paths.append(Path.cwd())
+        paths.append(Path.cwd() / "iso")
+        
+        paths.append(Path.home() / "Downloads")
+        paths.append(Path.home() / "Desktop")
+        paths.append(Path.home() / ".aegis" / "iso")
+        
+        usb_paths = OfflineISOLocator.get_usb_mount_points()
+        for usb in usb_paths:
+            paths.append(Path(usb))
+            paths.append(Path(usb) / "aegis")
+            paths.append(Path(usb) / "iso")
+            paths.append(Path(usb) / "AegisOS")
+        
+        return [p for p in paths if p.exists()]
+    
+    @staticmethod
+    def get_usb_mount_points():
+        """Detect USB drive mount points across platforms"""
+        usb_paths = []
+        
+        if sys.platform == "win32":
+            import string
+            for letter in string.ascii_uppercase:
+                drive = f"{letter}:\\"
+                if os.path.exists(drive):
+                    try:
+                        import ctypes
+                        drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive)
+                        if drive_type == 2:
+                            usb_paths.append(drive)
+                    except:
+                        pass
+        
+        elif sys.platform == "darwin":
+            volumes = Path("/Volumes")
+            if volumes.exists():
+                for vol in volumes.iterdir():
+                    if vol.is_dir() and vol.name != "Macintosh HD":
+                        usb_paths.append(str(vol))
+        
+        else:
+            media_paths = [
+                Path("/media") / os.getenv("USER", ""),
+                Path("/mnt"),
+                Path("/run/media") / os.getenv("USER", "")
+            ]
+            for media in media_paths:
+                if media.exists():
+                    for mount in media.iterdir():
+                        if mount.is_dir():
+                            usb_paths.append(str(mount))
+        
+        return usb_paths
+    
+    @staticmethod
+    def load_manifest(search_paths):
+        """Load manifest.json from any search path"""
+        for path in search_paths:
+            manifest_file = Path(path) / "manifest.json"
+            if manifest_file.exists():
+                try:
+                    with open(manifest_file, 'r') as f:
+                        return json.load(f), str(manifest_file)
+                except (json.JSONDecodeError, IOError):
+                    continue
+        return None, None
+    
+    @staticmethod
+    def find_iso(edition="freemium"):
+        """
+        Find ISO file for the specified edition
+        Returns: (iso_path, manifest_data, source_description)
+        """
+        search_paths = OfflineISOLocator.get_search_paths()
+        
+        manifest, manifest_path = OfflineISOLocator.load_manifest(search_paths)
+        expected_sha256 = None
+        expected_filename = None
+        
+        if manifest and "editions" in manifest:
+            edition_data = manifest["editions"].get(edition, {})
+            expected_filename = edition_data.get("filename")
+            expected_sha256 = edition_data.get("sha256")
+        
+        search_names = []
+        if expected_filename:
+            search_names.append(expected_filename)
+        search_names.extend(ALT_ISO_FILENAMES)
+        search_names = list(dict.fromkeys(search_names))
+        
+        for path in search_paths:
+            for filename in search_names:
+                iso_path = Path(path) / filename
+                if iso_path.exists() and iso_path.is_file():
+                    source = OfflineISOLocator._describe_source(path)
+                    return str(iso_path), {
+                        "sha256": expected_sha256,
+                        "manifest_path": manifest_path
+                    }, source
+        
+        for path in search_paths:
+            try:
+                for iso_file in Path(path).glob("*.iso"):
+                    if "freemium" in iso_file.name.lower() or "aegis" in iso_file.name.lower():
+                        source = OfflineISOLocator._describe_source(path)
+                        return str(iso_file), {
+                            "sha256": expected_sha256,
+                            "manifest_path": manifest_path
+                        }, source
+            except PermissionError:
+                continue
+        
+        return None, None, None
+    
+    @staticmethod
+    def _describe_source(path):
+        """Create human-readable source description"""
+        path_str = str(path)
+        
+        if sys.platform == "win32":
+            if len(path_str) >= 2 and path_str[1] == ':':
+                return f"Drive {path_str[0].upper()}:"
+        
+        if "/media/" in path_str or "/mnt/" in path_str or "/Volumes/" in path_str:
+            return f"USB Drive ({Path(path_str).name})"
+        
+        if str(Path.home()) in path_str:
+            rel = Path(path_str).relative_to(Path.home())
+            return f"Home/{rel}"
+        
+        return path_str
+
+
 class AegisFreemiumInstaller:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_NAME)
-        self.root.geometry("550x520")
+        self.root.geometry("550x560")
         self.root.resizable(False, False)
         self.root.configure(bg="#f0f0f0")
         
-        self.download_folder = str(Path.home() / "Downloads")
-        self.download_thread = None
-        self.cancel_download = False
+        self.install_folder = str(Path.home() / "AegisOS")
+        self.copy_thread = None
+        self.cancel_operation = False
         self.iso_path = ""
         self.iso_hash = ""
+        self.iso_source = ""
+        self.manifest_data = None
         
         self._setup_styles()
         self._create_ui()
         self._center_window()
+        self._scan_for_iso()
     
     def _setup_styles(self):
         style = ttk.Style()
@@ -86,6 +236,10 @@ class AegisFreemiumInstaller:
                        foreground="#0078D7")
         style.configure("Error.TLabel", background="white", font=("Segoe UI", 12),
                        foreground="#d32f2f")
+        style.configure("Found.TLabel", background="white", foreground="#28a745",
+                       font=("Segoe UI", 10))
+        style.configure("NotFound.TLabel", background="white", foreground="#dc3545",
+                       font=("Segoe UI", 10))
         
         style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
         style.configure("TButton", font=("Segoe UI", 10))
@@ -113,7 +267,7 @@ class AegisFreemiumInstaller:
                         font=("Segoe UI", 18, "bold"), bg="#0078D7", fg="white")
         title.pack(pady=(15, 2))
         
-        subtitle = tk.Label(header_inner, text="Free Forever - Try Before You Buy",
+        subtitle = tk.Label(header_inner, text="Offline Installer - No Internet Required",
                            font=("Segoe UI", 11), bg="#0078D7", fg="#E0E0E0")
         subtitle.pack()
         
@@ -140,8 +294,9 @@ class AegisFreemiumInstaller:
         self.btn_cancel = ttk.Button(btn_frame, text="Cancel", command=self._on_cancel)
         self.btn_cancel.pack(side="left", padx=5)
         
-        self.btn_start = ttk.Button(btn_frame, text="Download ISO", 
-                                    command=self._start_download, style="Primary.TButton")
+        self.btn_start = ttk.Button(btn_frame, text="Install ISO", 
+                                    command=self._start_install, style="Primary.TButton",
+                                    state="disabled")
         self.btn_start.pack(side="left", padx=5)
     
     def _create_section(self, parent, title):
@@ -159,6 +314,28 @@ class AegisFreemiumInstaller:
         return inner
     
     def _create_step1(self):
+        iso_section = self._create_section(self.step1_frame, "ISO Source (Offline)")
+        
+        self.iso_status_label = tk.Label(iso_section, text="Scanning for ISO...",
+                                        font=("Segoe UI", 10), bg="white", fg="#888888")
+        self.iso_status_label.pack(anchor="w", pady=(5, 0))
+        
+        self.iso_path_label = tk.Label(iso_section, text="",
+                                      font=("Consolas", 9), bg="#f5f5f5",
+                                      wraplength=450, justify="left")
+        self.iso_path_label.pack(fill="x", padx=0, pady=(5, 5))
+        
+        btn_frame = tk.Frame(iso_section, bg="white")
+        btn_frame.pack(anchor="w", pady=(0, 5))
+        
+        self.btn_browse_iso = ttk.Button(btn_frame, text="Browse for ISO...",
+                                        command=self._browse_iso)
+        self.btn_browse_iso.pack(side="left", padx=(0, 5))
+        
+        self.btn_rescan = ttk.Button(btn_frame, text="Rescan",
+                                    command=self._scan_for_iso)
+        self.btn_rescan.pack(side="left")
+        
         features_section = self._create_section(self.step1_frame, "Included Features")
         
         features_frame = tk.Frame(features_section, bg="white")
@@ -182,12 +359,12 @@ class AegisFreemiumInstaller:
             lbl = tk.Label(f_frame, text=f" {feature}", font=("Segoe UI", 9), bg="white")
             lbl.pack(side="left")
         
-        folder_section = self._create_section(self.step1_frame, "Download Location")
+        folder_section = self._create_section(self.step1_frame, "Install Location")
         
         path_frame = tk.Frame(folder_section, bg="#f5f5f5")
         path_frame.pack(fill="x", pady=(8, 5))
         
-        self.folder_label = tk.Label(path_frame, text=self.download_folder,
+        self.folder_label = tk.Label(path_frame, text=self.install_folder,
                                     font=("Consolas", 9), bg="#f5f5f5", 
                                     wraplength=400, justify="left")
         self.folder_label.pack(padx=8, pady=6, anchor="w")
@@ -195,12 +372,6 @@ class AegisFreemiumInstaller:
         btn_browse = ttk.Button(folder_section, text="Change Folder", 
                                command=self._browse_folder)
         btn_browse.pack(anchor="w", pady=(0, 5))
-        
-        req_section = self._create_section(self.step1_frame, "Requirements")
-        
-        req_lbl = tk.Label(req_section, text="~3 GB disk space, stable internet, 8GB+ USB drive",
-                          font=("Segoe UI", 10), bg="white")
-        req_lbl.pack(anchor="w", pady=(5, 0))
     
     def _create_step2(self):
         progress_section = self._create_section(self.step2_frame, None)
@@ -217,7 +388,7 @@ class AegisFreemiumInstaller:
                                            style="Blue.Horizontal.TProgressbar")
         self.progress_bar.pack(pady=10)
         
-        self.progress_text = tk.Label(center_frame, text="Starting download...",
+        self.progress_text = tk.Label(center_frame, text="Preparing...",
                                      font=("Segoe UI", 11), bg="white", fg="#666666")
         self.progress_text.pack()
         
@@ -228,16 +399,16 @@ class AegisFreemiumInstaller:
     def _create_step3(self):
         success_section = self._create_section(self.step3_frame, None)
         
-        success_lbl = tk.Label(success_section, text="✔ Download Complete!",
+        success_lbl = tk.Label(success_section, text="✔ Installation Complete!",
                               font=("Segoe UI", 18), bg="white", fg="#0078D7")
         success_lbl.pack(pady=10)
         
         path_section = self._create_section(self.step3_frame, "ISO File")
         
-        self.iso_path_label = tk.Label(path_section, text="",
-                                      font=("Consolas", 9), bg="#f5f5f5",
-                                      wraplength=450, justify="left")
-        self.iso_path_label.pack(fill="x", padx=8, pady=6)
+        self.final_iso_path_label = tk.Label(path_section, text="",
+                                            font=("Consolas", 9), bg="#f5f5f5",
+                                            wraplength=450, justify="left")
+        self.final_iso_path_label.pack(fill="x", padx=8, pady=6)
         
         hash_section = self._create_section(self.step3_frame, "SHA256 Checksum")
         
@@ -251,13 +422,15 @@ class AegisFreemiumInstaller:
         step1_frame = tk.Frame(next_section, bg="white")
         step1_frame.pack(anchor="w", pady=2)
         
-        tk.Label(step1_frame, text="1. Download ", font=("Segoe UI", 10), bg="white").pack(side="left")
+        tk.Label(step1_frame, text="1. Use ", font=("Segoe UI", 10), bg="white").pack(side="left")
         
         etcher_link = tk.Label(step1_frame, text="Balena Etcher", 
                               font=("Segoe UI", 10, "underline"),
                               bg="white", fg="#0066cc", cursor="hand2")
         etcher_link.pack(side="left")
         etcher_link.bind("<Button-1>", lambda e: self._open_etcher())
+        
+        tk.Label(step1_frame, text=" or similar tool", font=("Segoe UI", 10), bg="white").pack(side="left")
         
         tk.Label(next_section, text="2. Select ISO, select USB, click Flash",
                 font=("Segoe UI", 10), bg="white").pack(anchor="w", pady=2)
@@ -269,110 +442,189 @@ class AegisFreemiumInstaller:
         
         if step == 1:
             self.step1_frame.pack(fill="both", expand=True)
-            self.btn_start.configure(text="Download ISO", state="normal")
+            if self.iso_path:
+                self.btn_start.configure(text="Install ISO", state="normal")
+            else:
+                self.btn_start.configure(text="Install ISO", state="disabled")
         elif step == 2:
             self.step2_frame.pack(fill="both", expand=True)
-            self.btn_start.configure(text="Downloading...", state="disabled")
+            self.btn_start.configure(text="Installing...", state="disabled")
         elif step == 3:
             self.step3_frame.pack(fill="both", expand=True)
             self.btn_start.configure(text="Open Folder", state="normal",
                                     command=self._open_folder)
             self.btn_cancel.configure(text="Close")
     
+    def _scan_for_iso(self):
+        """Scan for ISO file in common locations"""
+        self.iso_status_label.configure(text="Scanning for ISO...", fg="#888888")
+        self.iso_path_label.configure(text="")
+        self.root.update()
+        
+        iso_path, manifest_data, source = OfflineISOLocator.find_iso("freemium")
+        
+        if iso_path:
+            self.iso_path = iso_path
+            self.manifest_data = manifest_data
+            self.iso_source = source
+            
+            self.iso_status_label.configure(
+                text=f"✓ ISO found: {source}",
+                fg="#28a745"
+            )
+            self.iso_path_label.configure(text=iso_path)
+            self.btn_start.configure(state="normal")
+        else:
+            self.iso_path = ""
+            self.manifest_data = None
+            self.iso_source = ""
+            
+            self.iso_status_label.configure(
+                text="✗ No ISO found. Insert USB with ISO or browse manually.",
+                fg="#dc3545"
+            )
+            self.iso_path_label.configure(text="")
+            self.btn_start.configure(state="disabled")
+    
+    def _browse_iso(self):
+        """Browse for ISO file manually"""
+        iso_file = filedialog.askopenfilename(
+            title="Select Aegis OS Freemium ISO",
+            filetypes=[("ISO files", "*.iso"), ("All files", "*.*")],
+            initialdir=str(Path.home() / "Downloads")
+        )
+        
+        if iso_file:
+            self.iso_path = iso_file
+            self.iso_source = "Manual selection"
+            self.manifest_data = None
+            
+            self.iso_status_label.configure(
+                text="✓ ISO selected manually",
+                fg="#28a745"
+            )
+            self.iso_path_label.configure(text=iso_file)
+            self.btn_start.configure(state="normal")
+    
     def _browse_folder(self):
-        folder = filedialog.askdirectory(initialdir=self.download_folder,
-                                        title="Select Download Location")
+        folder = filedialog.askdirectory(initialdir=self.install_folder,
+                                        title="Select Install Location")
         if folder:
-            self.download_folder = folder
+            self.install_folder = folder
             self.folder_label.configure(text=folder)
     
-    def _start_download(self):
-        self.cancel_download = False
+    def _start_install(self):
+        if not self.iso_path:
+            messagebox.showerror("No ISO", "No ISO file found. Please browse for one.")
+            return
+        
+        self.cancel_operation = False
         self._show_step(2)
         
-        self.download_thread = threading.Thread(target=self._download_worker, daemon=True)
-        self.download_thread.start()
+        self.copy_thread = threading.Thread(target=self._install_worker, daemon=True)
+        self.copy_thread.start()
     
-    def _download_worker(self):
-        iso_path = os.path.join(self.download_folder, ISO_FILENAME)
-        
-        for mirror_url in DOWNLOAD_MIRRORS:
-            if self.cancel_download:
+    def _install_worker(self):
+        """Copy ISO to install location with verification"""
+        try:
+            os.makedirs(self.install_folder, exist_ok=True)
+            
+            dest_path = os.path.join(self.install_folder, os.path.basename(self.iso_path))
+            
+            source_size = os.path.getsize(self.iso_path)
+            copied = 0
+            start_time = time.time()
+            last_update = start_time
+            
+            self._update_progress(0, "Verifying source ISO...", "")
+            
+            sha256 = hashlib.sha256()
+            with open(self.iso_path, 'rb') as src:
+                while True:
+                    if self.cancel_operation:
+                        return
+                    
+                    chunk = src.read(8192)
+                    if not chunk:
+                        break
+                    sha256.update(chunk)
+            
+            source_hash = sha256.hexdigest().upper()
+            
+            if self.manifest_data and self.manifest_data.get("sha256"):
+                expected = self.manifest_data["sha256"].upper()
+                if source_hash != expected:
+                    self._show_error("Checksum Mismatch",
+                                    f"ISO checksum does not match manifest.\n"
+                                    f"Expected: {expected[:16]}...\n"
+                                    f"Got: {source_hash[:16]}...")
+                    return
+            
+            if self.iso_path == dest_path:
+                self.iso_hash = source_hash
+                self._install_complete(dest_path)
                 return
             
-            try:
-                self._update_progress(0, f"Connecting to mirror...", "")
-                
-                request = urllib.request.Request(mirror_url, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
-                
-                response = urllib.request.urlopen(request, timeout=30)
-                total_size = int(response.headers.get('Content-Length', 0))
-                
-                if total_size == 0:
-                    continue
-                
-                downloaded = 0
-                start_time = time.time()
-                last_update = start_time
-                
-                with open(iso_path, 'wb') as f:
+            self._update_progress(5, "Copying ISO to install location...", "")
+            
+            with open(self.iso_path, 'rb') as src:
+                with open(dest_path, 'wb') as dst:
                     while True:
-                        if self.cancel_download:
-                            f.close()
+                        if self.cancel_operation:
                             try:
-                                os.remove(iso_path)
+                                os.remove(dest_path)
                             except:
                                 pass
                             return
                         
-                        chunk = response.read(1024 * 1024)
+                        chunk = src.read(1024 * 1024)
                         if not chunk:
                             break
                         
-                        f.write(chunk)
-                        downloaded += len(chunk)
+                        dst.write(chunk)
+                        copied += len(chunk)
                         
                         now = time.time()
-                        if now - last_update >= 0.5:
-                            pct = int((downloaded / total_size) * 90)
+                        if now - last_update >= 0.3:
+                            pct = 5 + int((copied / source_size) * 85)
                             elapsed = now - start_time
-                            speed = downloaded / elapsed / (1024 * 1024) if elapsed > 0 else 0
+                            speed = copied / elapsed / (1024 * 1024) if elapsed > 0 else 0
                             
                             self._update_progress(
                                 pct,
-                                f"Downloading: {int(downloaded/total_size*100)}%",
+                                f"Copying: {int(copied/source_size*100)}%",
                                 f"{speed:.1f} MB/s"
                             )
                             last_update = now
-                
-                self._update_progress(92, "Verifying checksum...", "")
-                
-                file_hash = self._calculate_sha256(iso_path)
-                
-                if file_hash.upper() != EXPECTED_SHA256.upper():
-                    self._show_error("Checksum Mismatch", 
-                                    "The downloaded file is corrupted. Please try again.")
-                    try:
-                        os.remove(iso_path)
-                    except:
-                        pass
-                    return
-                
-                self.iso_path = iso_path
-                self.iso_hash = file_hash.upper()
-                
-                self._download_complete()
+            
+            self._update_progress(92, "Verifying copied file...", "")
+            
+            verify_hash = hashlib.sha256()
+            with open(dest_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(8192), b''):
+                    verify_hash.update(chunk)
+            
+            dest_hash = verify_hash.hexdigest().upper()
+            
+            if dest_hash != source_hash:
+                self._show_error("Copy Verification Failed",
+                                "Copied file does not match source. Please try again.")
+                try:
+                    os.remove(dest_path)
+                except:
+                    pass
                 return
-                
-            except urllib.error.URLError as e:
-                continue
-            except Exception as e:
-                continue
-        
-        self._show_error("Download Failed", 
-                        "Could not download from any mirror. Please check your internet connection.")
+            
+            self.iso_hash = dest_hash
+            self._install_complete(dest_path)
+            
+        except PermissionError:
+            self._show_error("Permission Denied",
+                            "Cannot write to the selected folder. Choose another location.")
+        except OSError as e:
+            self._show_error("File Error", f"Error during installation: {e}")
+        except Exception as e:
+            self._show_error("Installation Failed", str(e))
     
     def _calculate_sha256(self, filepath):
         sha256 = hashlib.sha256()
@@ -390,9 +642,9 @@ class AegisFreemiumInstaller:
         
         self.root.after(0, update)
     
-    def _download_complete(self):
+    def _install_complete(self, dest_path):
         def complete():
-            self.iso_path_label.configure(text=self.iso_path)
+            self.final_iso_path_label.configure(text=dest_path)
             self.hash_label.configure(text=self.iso_hash)
             self._show_step(3)
         
@@ -404,31 +656,31 @@ class AegisFreemiumInstaller:
             self.progress_text.configure(text=message, fg="#d32f2f")
             self.progress_speed.configure(text="")
             self.btn_start.configure(text="Retry", state="normal",
-                                    command=self._retry_download)
+                                    command=self._retry_install)
         
         self.root.after(0, show)
     
-    def _retry_download(self):
+    def _retry_install(self):
         self.progress_pct.configure(fg="#0078D7")
         self.progress_text.configure(fg="#666666")
-        self._start_download()
+        self._start_install()
     
     def _open_folder(self):
         if sys.platform == "win32":
-            os.startfile(self.download_folder)
+            os.startfile(self.install_folder)
         elif sys.platform == "darwin":
-            os.system(f'open "{self.download_folder}"')
+            os.system(f'open "{self.install_folder}"')
         else:
-            os.system(f'xdg-open "{self.download_folder}"')
+            os.system(f'xdg-open "{self.install_folder}"')
     
     def _open_etcher(self):
         webbrowser.open("https://etcher.balena.io/")
     
     def _on_cancel(self):
-        if self.download_thread and self.download_thread.is_alive():
-            if messagebox.askyesno("Cancel Download", 
-                                  "Are you sure you want to cancel the download?"):
-                self.cancel_download = True
+        if self.copy_thread and self.copy_thread.is_alive():
+            if messagebox.askyesno("Cancel Installation", 
+                                  "Are you sure you want to cancel?"):
+                self.cancel_operation = True
                 self.root.destroy()
         else:
             self.root.destroy()

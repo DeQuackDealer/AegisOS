@@ -2403,12 +2403,12 @@ if __name__ == "__main__":
 @app.route('/download-installer')
 @app.route('/download-installer-freemium')
 @app.route('/download-installer-freemium.exe')
-@app.route('/download-installer-freemium.hta')
+@app.route('/download-installer-freemium.py')
 def download_freemium_installer():
-    """Download the Freemium Windows GUI installer (prefers .exe, falls back to .hta)"""
+    """Download the Freemium Windows GUI installer (prefers .exe, falls back to .py source)"""
     try:
         exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'dist', 'AegisInstallerFreemium.exe')
-        hta_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.hta')
+        py_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'aegis-installer-freemium.py')
         
         if os.path.exists(exe_path):
             with open(exe_path, 'rb') as f:
@@ -2421,20 +2421,20 @@ def download_freemium_installer():
                     'Content-Type': 'application/octet-stream'
                 }
             )
-        elif os.path.exists(hta_path):
-            with open(hta_path, 'r', encoding='utf-8') as f:
+        elif os.path.exists(py_path):
+            with open(py_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
 
             return Response(
                 script_content,
-                mimetype='application/hta',
+                mimetype='text/x-python',
                 headers={
-                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.hta',
-                    'Content-Type': 'application/hta; charset=utf-8'
+                    'Content-Disposition': 'attachment; filename=aegis-installer-freemium.py',
+                    'Content-Type': 'text/x-python; charset=utf-8'
                 }
             )
         else:
-            app.logger.error(f"No installer found (checked .exe and .hta)")
+            app.logger.error(f"No installer found (checked .exe and .py)")
             return jsonify({'error': 'Installer file not found'}), 404
 
     except Exception as e:
@@ -2614,13 +2614,13 @@ def generate_license_cache():
 
 @app.route('/download-installer-licensed')
 @app.route('/download-installer-licensed.exe')
-@app.route('/download-installer-licensed.hta')
+@app.route('/download-installer-licensed.py')
 def download_licensed_installer():
-    """Download the Licensed Windows GUI installer (prefers .exe, falls back to .hta)
+    """Download the Licensed Windows GUI installer (prefers .exe, falls back to .py source)
 
     Uses RSA asymmetric cryptography:
     - Server signs licenses with private key
-    - HTA verifies with embedded public key (cannot forge signatures)
+    - Python installer verifies with embedded public key (cannot forge signatures)
 
     SECURITY: Fails closed if LICENSE_SIGNING_PRIVATE_KEY is not configured
     """
@@ -2634,7 +2634,7 @@ def download_licensed_installer():
             }), 503  # Service Unavailable
 
         exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'dist', 'AegisInstallerLicensed.exe')
-        hta_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.hta')
+        py_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'aegis-installer-licensed.py')
         
         if os.path.exists(exe_path):
             with open(exe_path, 'rb') as f:
@@ -2648,65 +2648,20 @@ def download_licensed_installer():
                 }
             )
 
-        installer_path = hta_path
-
-        if os.path.exists(installer_path):
-            with open(installer_path, 'r', encoding='utf-8') as f:
+        if os.path.exists(py_path):
+            with open(py_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
-
-            # Generate RSA-signed license cache (guaranteed to have signatures)
-            cache_data, build_date, public_key_b64, master_sig_short, master_sig_full = generate_license_cache()
-
-            # Double-check RSA is enabled (defense in depth)
-            if public_key_b64 == "PLACEHOLDER_SALT":
-                app.logger.error("SECURITY: RSA signing failed unexpectedly")
-                return jsonify({'error': 'License signing failed'}), 500
-
-            # Inject RSA public key and signed cache into installer
-            script_content = script_content.replace(
-                'Const LICENSE_CACHE = "8cc68ef8c0df7e33:basic:basic|6cfdada10909d632:workplace:workplace|a1b2c3d4e5f67890:gamer:gamer|f0e1d2c3b4a59687:aidev:aidev|1234567890abcdef:gamer_ai:gamer_ai|fedcba0987654321:server:server"',
-                f'Const LICENSE_CACHE = "{cache_data}"'
-            )
-            script_content = script_content.replace(
-                'Const CACHE_BUILD_DATE = "2025-11-30"',
-                f'Const CACHE_BUILD_DATE = "{build_date}"'
-            )
-            # Replace CACHE_SALT value with RSA public key (keep constant name for HTA compatibility)
-            script_content = script_content.replace(
-                'Const CACHE_SALT = "PLACEHOLDER_SALT"',
-                f'Const CACHE_SALT = "{public_key_b64}"'
-            )
-            script_content = script_content.replace(
-                'Const MASTER_SIG = "PLACEHOLDER_MASTER_SIG"',
-                f'Const MASTER_SIG = "{master_sig_full}"'
-            )
-            # Store short signature for display
-            script_content = script_content.replace(
-                'Const INTEGRITY_CHECK = "PLACEHOLDER_INTEGRITY"',
-                f'Const INTEGRITY_CHECK = "{master_sig_short}"'
-            )
-            
-            # Replace serverUrl with actual server URL
-            server_domain = os.environ.get('REPLIT_DEV_DOMAIN', os.environ.get('REPLIT_DOMAINS', 'localhost:5000'))
-            if server_domain and not server_domain.startswith('http'):
-                server_url = f'https://{server_domain}'
-            else:
-                server_url = server_domain or 'http://localhost:5000'
-            script_content = script_content.replace(
-                'serverUrl = "https://aegis-os.replit.app"',
-                f'serverUrl = "{server_url}"'
-            )
 
             return Response(
                 script_content,
-                mimetype='application/hta',
+                mimetype='text/x-python',
                 headers={
-                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.hta',
-                    'Content-Type': 'application/hta; charset=utf-8'
+                    'Content-Disposition': 'attachment; filename=aegis-installer-licensed.py',
+                    'Content-Type': 'text/x-python; charset=utf-8'
                 }
             )
         else:
-            app.logger.error(f"Licensed installer not found at: {installer_path}")
+            app.logger.error(f"Licensed installer not found at: {py_path}")
             return jsonify({'error': 'Installer file not found'}), 404
 
     except Exception as e:
@@ -4949,8 +4904,8 @@ def payment_success():
             </div>''' if license_key else ''}
 
             <div class="download-section">
-                <a href="/download-installer-licensed.hta" class="download-btn">Download Installer</a>
-                <p class="download-info">Windows GUI Installer - Double-click to run</p>
+                <a href="/download-installer-licensed.exe" class="download-btn">Download Installer</a>
+                <p class="download-info">Windows Installer - Requires Python if .py (or double-click if .exe)</p>
             </div>
 
             <div class="steps">
@@ -5603,13 +5558,13 @@ def check_download_rate_limit(ip_address):
 
     return True, "OK"
 
-EDITION_HTA_FILES = {
-    'basic': 'aegis-installer-basic.hta',
-    'workplace': 'aegis-installer-workplace.hta',
-    'gamer': 'aegis-installer-gamer.hta',
-    'ai_developer': 'aegis-installer-aidev.hta',
-    'gamer_ai': 'aegis-installer-gamer-ai.hta',
-    'server': 'aegis-installer-server.hta'
+EDITION_INSTALLER_FILES = {
+    'basic': 'aegis-installer-licensed.py',
+    'workplace': 'aegis-installer-licensed.py',
+    'gamer': 'aegis-installer-licensed.py',
+    'ai_developer': 'aegis-installer-licensed.py',
+    'gamer_ai': 'aegis-installer-licensed.py',
+    'server': 'aegis-installer-licensed.py'
 }
 
 def is_free_period_active(edition=None):
@@ -5637,14 +5592,24 @@ def is_free_period_active(edition=None):
 @app.route('/api/admin/installers', methods=['GET'])
 @require_admin
 def admin_list_installers():
-    """List all available edition-specific HTA installers"""
+    """List all available edition-specific Python installers"""
     installers = []
-    editions_dir = os.path.join(BASE_DIR, '..', 'build-system', 'editions')
+    installers_dir = os.path.join(BASE_DIR, '..', 'build-system', 'installers')
 
-    for edition, filename in EDITION_HTA_FILES.items():
-        filepath = os.path.join(editions_dir, filename)
-        exists = os.path.exists(filepath)
-        size = os.path.getsize(filepath) if exists else 0
+    for edition, filename in EDITION_INSTALLER_FILES.items():
+        filepath = os.path.join(installers_dir, filename)
+        exe_path = os.path.join(installers_dir, 'dist', 'AegisInstallerLicensed.exe')
+        
+        py_exists = os.path.exists(filepath)
+        exe_exists = os.path.exists(exe_path)
+        exists = py_exists or exe_exists
+        
+        if exe_exists:
+            size = os.path.getsize(exe_path)
+        elif py_exists:
+            size = os.path.getsize(filepath)
+        else:
+            size = 0
 
         edition_info = OS_EDITIONS.get(edition, {})
 
@@ -5652,6 +5617,7 @@ def admin_list_installers():
             'edition': edition,
             'filename': filename,
             'exists': exists,
+            'exe_available': exe_exists,
             'size': size,
             'size_formatted': f"{size / 1024:.1f} KB" if exists else "N/A",
             'edition_name': edition_info.get('name', edition.replace('_', ' ').title()),
@@ -5674,41 +5640,55 @@ def admin_list_installers():
 
 @app.route('/api/admin/installers/<edition>/download', methods=['GET'])
 @require_build_access
-def admin_download_edition_hta(edition):
-    """Download a specific edition HTA installer (no license validation)"""
+def admin_download_edition_installer(edition):
+    """Download a specific edition Python installer (prefers .exe if available)"""
     edition = sanitize_input(edition.lower().replace('-', '_'))
 
-    if edition not in EDITION_HTA_FILES:
+    if edition not in EDITION_INSTALLER_FILES:
         return jsonify({
             'error': f'Unknown edition: {edition}',
-            'available': list(EDITION_HTA_FILES.keys())
+            'available': list(EDITION_INSTALLER_FILES.keys())
         }), 404
 
-    filename = EDITION_HTA_FILES[edition]
-    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
+    filename = EDITION_INSTALLER_FILES[edition]
+    installers_dir = os.path.join(BASE_DIR, '..', 'build-system', 'installers')
+    exe_path = os.path.join(installers_dir, 'dist', 'AegisInstallerLicensed.exe')
+    py_path = os.path.join(installers_dir, filename)
 
-    if not os.path.exists(filepath):
-        return jsonify({
-            'error': f'Installer file not found: {filename}',
-            'hint': 'The edition installer may not have been generated yet.'
-        }), 404
-
-    tamper_protected_audit_log("ADMIN_HTA_DOWNLOAD", {
+    tamper_protected_audit_log("ADMIN_INSTALLER_DOWNLOAD", {
         "username": g.admin_user,
         "role": g.admin_role,
         "edition": edition,
         "filename": filename
     }, "HIGH")
 
-    with open(filepath, 'r', encoding='utf-8') as f:
+    if os.path.exists(exe_path):
+        with open(exe_path, 'rb') as f:
+            content = f.read()
+        return Response(
+            content,
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Installer.exe',
+                'Content-Type': 'application/octet-stream'
+            }
+        )
+
+    if not os.path.exists(py_path):
+        return jsonify({
+            'error': f'Installer file not found: {filename}',
+            'hint': 'The Python installer may not exist. Check build-system/installers/ directory.'
+        }), 404
+
+    with open(py_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
     return Response(
         content,
-        mimetype='application/hta',
+        mimetype='text/x-python',
         headers={
-            'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Installer.hta',
-            'Content-Type': 'application/hta; charset=utf-8'
+            'Content-Disposition': f'attachment; filename={filename}',
+            'Content-Type': 'text/x-python; charset=utf-8'
         }
     )
 
@@ -5745,7 +5725,7 @@ def public_check_free_period():
 
     # List available editions (exclude server)
     editions = []
-    for edition, filename in EDITION_HTA_FILES.items():
+    for edition, filename in EDITION_INSTALLER_FILES.items():
         if edition == 'server':
             continue
         edition_info = OS_EDITIONS.get(edition, {})
@@ -5788,7 +5768,7 @@ def public_list_free_editions():
             already_claimed = existing.edition
 
     editions = []
-    for edition, filename in EDITION_HTA_FILES.items():
+    for edition, filename in EDITION_INSTALLER_FILES.items():
         if edition == 'server':
             continue
         edition_info = OS_EDITIONS.get(edition, {})
@@ -5808,7 +5788,7 @@ def public_list_free_editions():
 
 @app.route('/api/free/download/<edition>', methods=['GET'])
 def public_free_download(edition):
-    """Download a free edition HTA (1 per IP for entire free period)"""
+    """Download a free edition Python installer (1 per IP for entire free period)"""
     if not is_free_period_active():
         return jsonify({
             'error': 'Free downloads are not currently available',
@@ -5820,13 +5800,13 @@ def public_free_download(edition):
     if edition == 'server':
         return jsonify({
             'error': 'Server edition is not available for free download',
-            'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
+            'available': [e for e in EDITION_INSTALLER_FILES.keys() if e != 'server']
         }), 403
 
-    if edition not in EDITION_HTA_FILES:
+    if edition not in EDITION_INSTALLER_FILES:
         return jsonify({
             'error': f'Unknown edition: {edition}',
-            'available': [e for e in EDITION_HTA_FILES.keys() if e != 'server']
+            'available': [e for e in EDITION_INSTALLER_FILES.keys() if e != 'server']
         }), 404
 
     # Get client IP
@@ -5875,18 +5855,32 @@ def public_free_download(edition):
         "period_id": period_id
     }, "INFO")
 
-    filename = EDITION_HTA_FILES[edition]
-    filepath = os.path.join(BASE_DIR, '..', 'build-system', 'editions', filename)
+    filename = EDITION_INSTALLER_FILES[edition]
+    installers_dir = os.path.join(BASE_DIR, '..', 'build-system', 'installers')
+    exe_path = os.path.join(installers_dir, 'dist', 'AegisInstallerLicensed.exe')
+    py_path = os.path.join(installers_dir, filename)
 
-    with open(filepath, 'r', encoding='utf-8') as f:
+    if os.path.exists(exe_path):
+        with open(exe_path, 'rb') as f:
+            content = f.read()
+        return Response(
+            content,
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Free-Installer.exe',
+                'Content-Type': 'application/octet-stream'
+            }
+        )
+
+    with open(py_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
     return Response(
         content,
-        mimetype='application/hta',
+        mimetype='text/x-python',
         headers={
-            'Content-Disposition': f'attachment; filename=AegisOS-{edition.replace("_", "-").title()}-Free-Installer.hta',
-            'Content-Type': 'application/hta; charset=utf-8'
+            'Content-Disposition': f'attachment; filename=aegis-installer-{edition.replace("_", "-")}-free.py',
+            'Content-Type': 'text/x-python; charset=utf-8'
         }
     )
 
@@ -7226,48 +7220,64 @@ def admin_installers_page():
         logger.error(f"Error serving admin installers: {e}")
         return jsonify({'error': 'Admin page not found'}), 404
 
-@app.route('/admin/hta/<edition>')
+@app.route('/admin/installer/<edition>')
 @rate_limit(limit=50)
-def admin_hta_download(edition):
-    """Direct HTA file download"""
+def admin_installer_download(edition):
+    """Direct Python installer file download (prefers .exe if available)"""
     edition = sanitize_input(edition.lower().replace('-', '_'))
     
-    hta_files = {
-        'freemium': ('build-system', 'aegis-installer-freemium.hta'),
-        'licensed': ('build-system', 'aegis-installer-licensed.hta'),
-        'basic': ('build-system/editions', 'aegis-installer-basic.hta'),
-        'workplace': ('build-system/editions', 'aegis-installer-workplace.hta'),
-        'gamer': ('build-system/editions', 'aegis-installer-gamer.hta'),
-        'aidev': ('build-system/editions', 'aegis-installer-aidev.hta'),
-        'ai_developer': ('build-system/editions', 'aegis-installer-aidev.hta'),
-        'gamer_ai': ('build-system/editions', 'aegis-installer-gamer-ai.hta'),
-        'server': ('build-system/editions', 'aegis-installer-server.hta'),
+    installer_files = {
+        'freemium': ('build-system/installers', 'aegis-installer-freemium.py', 'AegisInstallerFreemium.exe'),
+        'licensed': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'basic': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'workplace': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'gamer': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'aidev': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'ai_developer': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'gamer_ai': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
+        'server': ('build-system/installers', 'aegis-installer-licensed.py', 'AegisInstallerLicensed.exe'),
     }
     
-    if edition not in hta_files:
+    if edition not in installer_files:
         return jsonify({'error': f'Unknown edition: {edition}'}), 404
     
-    folder, filename = hta_files[edition]
-    filepath = os.path.join(BASE_DIR, '..', folder, filename)
+    folder, py_filename, exe_filename = installer_files[edition]
     
-    if not os.path.exists(filepath):
-        return jsonify({'error': f'HTA file not found: {filename}'}), 404
+    exe_path = os.path.join(BASE_DIR, '..', folder, 'dist', exe_filename)
+    if os.path.exists(exe_path):
+        try:
+            with open(exe_path, 'rb') as f:
+                content = f.read()
+            return Response(
+                content,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Disposition': f'attachment; filename=AegisOS-{edition.title()}-Installer.exe',
+                    'Content-Type': 'application/octet-stream'
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error serving exe file: {e}")
+    
+    py_path = os.path.join(BASE_DIR, '..', folder, py_filename)
+    if not os.path.exists(py_path):
+        return jsonify({'error': f'Installer file not found: {py_filename}'}), 404
     
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(py_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
         return Response(
             content,
-            mimetype='application/hta',
+            mimetype='text/x-python',
             headers={
-                'Content-Disposition': f'attachment; filename={filename}',
-                'Content-Type': 'application/hta; charset=utf-8'
+                'Content-Disposition': f'attachment; filename={py_filename}',
+                'Content-Type': 'text/x-python; charset=utf-8'
             }
         )
     except Exception as e:
-        logger.error(f"Error serving HTA file: {e}")
-        return jsonify({'error': 'Failed to serve HTA file'}), 500
+        logger.error(f"Error serving Python installer file: {e}")
+        return jsonify({'error': 'Failed to serve installer file'}), 500
 
 
 if __name__ == '__main__':
