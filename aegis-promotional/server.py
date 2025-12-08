@@ -2402,14 +2402,27 @@ if __name__ == "__main__":
 
 @app.route('/download-installer')
 @app.route('/download-installer-freemium')
+@app.route('/download-installer-freemium.exe')
 @app.route('/download-installer-freemium.hta')
 def download_freemium_installer():
-    """Download the Freemium Windows GUI installer (.hta file)"""
+    """Download the Freemium Windows GUI installer (prefers .exe, falls back to .hta)"""
     try:
-        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.hta')
-
-        if os.path.exists(installer_path):
-            with open(installer_path, 'r', encoding='utf-8') as f:
+        exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'dist', 'AegisInstallerFreemium.exe')
+        hta_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-freemium.hta')
+        
+        if os.path.exists(exe_path):
+            with open(exe_path, 'rb') as f:
+                exe_content = f.read()
+            return Response(
+                exe_content,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Freemium-Installer.exe',
+                    'Content-Type': 'application/octet-stream'
+                }
+            )
+        elif os.path.exists(hta_path):
+            with open(hta_path, 'r', encoding='utf-8') as f:
                 script_content = f.read()
 
             return Response(
@@ -2421,7 +2434,7 @@ def download_freemium_installer():
                 }
             )
         else:
-            app.logger.error(f"Installer not found at: {installer_path}")
+            app.logger.error(f"No installer found (checked .exe and .hta)")
             return jsonify({'error': 'Installer file not found'}), 404
 
     except Exception as e:
@@ -2600,9 +2613,10 @@ def generate_license_cache():
     return cache_data, build_date, public_key_b64, master_sig_short, master_sig
 
 @app.route('/download-installer-licensed')
+@app.route('/download-installer-licensed.exe')
 @app.route('/download-installer-licensed.hta')
 def download_licensed_installer():
-    """Download the Licensed Windows GUI installer (.hta file) for paid editions
+    """Download the Licensed Windows GUI installer (prefers .exe, falls back to .hta)
 
     Uses RSA asymmetric cryptography:
     - Server signs licenses with private key
@@ -2619,7 +2633,22 @@ def download_licensed_installer():
                 'message': 'The server administrator must configure LICENSE_SIGNING_PRIVATE_KEY to enable license signing.'
             }), 503  # Service Unavailable
 
-        installer_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.hta')
+        exe_path = os.path.join(BASE_DIR, '..', 'build-system', 'installers', 'dist', 'AegisInstallerLicensed.exe')
+        hta_path = os.path.join(BASE_DIR, '..', 'build-system', 'aegis-installer-licensed.hta')
+        
+        if os.path.exists(exe_path):
+            with open(exe_path, 'rb') as f:
+                exe_content = f.read()
+            return Response(
+                exe_content,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Disposition': 'attachment; filename=AegisOS-Installer.exe',
+                    'Content-Type': 'application/octet-stream'
+                }
+            )
+
+        installer_path = hta_path
 
         if os.path.exists(installer_path):
             with open(installer_path, 'r', encoding='utf-8') as f:
