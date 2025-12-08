@@ -2,6 +2,115 @@
 
 Complete guide for building Windows .exe installers using PyInstaller.
 
+## Quick Start - Running the Installer Directly
+
+### Using the Batch Launcher (Recommended for End Users)
+
+The easiest way to run the installer on Windows is to use the included batch launcher:
+
+```cmd
+AegisInstaller.bat
+```
+
+This will automatically:
+1. Check if Python 3.11+ is installed
+2. Download and install Python if needed (prompts user for permission)
+3. Install required dependencies (cryptography)
+4. Let you choose between Freemium or Licensed installer
+5. Launch the installer GUI
+
+**No admin rights required** for user-level Python installation.
+
+### Using PowerShell (More Reliable)
+
+For better error handling and progress display:
+
+```powershell
+.\AegisInstaller.ps1
+```
+
+PowerShell options:
+```powershell
+# Run Freemium installer directly (skip selection prompt)
+.\AegisInstaller.ps1 -Freemium
+
+# Run Licensed installer directly
+.\AegisInstaller.ps1 -Licensed
+
+# Skip Python check (if you know Python is installed)
+.\AegisInstaller.ps1 -SkipPythonCheck
+
+# Silent mode (auto-accept prompts)
+.\AegisInstaller.ps1 -Silent -Freemium
+```
+
+### Setup Dependencies Only
+
+To install dependencies without running the installer:
+
+```cmd
+setup-dependencies.bat
+```
+
+This installs:
+- `cryptography` (for license verification)
+- `pyinstaller` (for building executables)
+
+## How the ISO System Works
+
+### Offline-Only Installation
+
+The Aegis installers are designed to work 100% offline:
+
+1. **No Internet Downloads**: ISOs are never downloaded during installation
+2. **Local Source Only**: ISOs must be present on local storage or USB drives
+3. **Automatic Detection**: Installer scans common locations for ISO files
+
+### ISO Search Locations
+
+The installer searches for ISO files in this order:
+
+1. **Same folder as installer** - `./aegis-freemium.iso`
+2. **Subfolder** - `./iso/aegis-freemium.iso`
+3. **User directories**:
+   - `~/Downloads/`
+   - `~/Desktop/`
+   - `~/.aegis/iso/`
+4. **USB drives** (Windows: `D:\`, `E:\`, etc.; Linux: `/media/`, `/mnt/`)
+   - Root of USB drive
+   - `aegis/` subfolder
+   - `AegisOS/` subfolder
+
+### ISO Naming Convention
+
+The installer recognizes these filename patterns:
+- `aegis-freemium.iso`
+- `AegisOS-Freemium.iso`
+- `aegis-os-freemium.iso`
+- Any `.iso` file containing "aegis" or "freemium"
+
+### Manifest File (Optional)
+
+Include a `manifest.json` alongside ISOs for checksum verification:
+
+```json
+{
+  "version": "2.0.0",
+  "editions": {
+    "freemium": {
+      "filename": "aegis-freemium.iso",
+      "sha256": "abc123...",
+      "size_gb": 3.2
+    },
+    "basic": {
+      "filename": "aegis-basic.iso",
+      "sha256": "def456...",
+      "size_gb": 3.5
+    }
+  }
+}
+```
+
 ## Prerequisites
 
 ### Required Software
@@ -261,6 +370,105 @@ exe = EXE(
 
 For automated builds, see the GitHub Actions workflow at:
 `.github/workflows/build-installers.yml`
+
+## Packaging for Distribution
+
+### Creating a Distribution Package
+
+For distributing the installer to end users, create a package with all necessary files:
+
+#### Option 1: Python Script Distribution (Smaller Download)
+
+Include these files in a ZIP:
+```
+AegisOS-Installer/
+├── AegisInstaller.bat           # Main launcher for users
+├── AegisInstaller.ps1           # PowerShell alternative
+├── setup-dependencies.bat       # Dependency installer
+├── aegis-installer-freemium.py  # Freemium installer script
+├── aegis-installer-licensed.py  # Licensed installer script
+├── iso/                         # Optional: Include ISO files
+│   └── aegis-freemium.iso
+└── README.txt                   # Brief instructions
+```
+
+Users run `AegisInstaller.bat` and Python is installed automatically if needed.
+
+**Pros**: Smaller download (~50 KB without ISO), auto-updates Python
+**Cons**: Requires internet for first run if Python not installed
+
+#### Option 2: Standalone Executable (No Dependencies)
+
+Build with PyInstaller for a true standalone experience:
+
+```cmd
+cd build-system\installers
+python build-windows.py
+```
+
+Creates a single .exe that includes Python and all dependencies.
+
+Distribution package:
+```
+AegisOS-Installer/
+├── AegisInstallerFreemium.exe   # Standalone executable (~20 MB)
+├── iso/                         # Include ISO files
+│   └── aegis-freemium.iso
+└── README.txt
+```
+
+**Pros**: Works offline, no Python required, single click
+**Cons**: Larger download, needs rebuild for updates
+
+#### Option 3: USB Distribution Package
+
+For offline distribution via USB drive:
+
+```
+USB_DRIVE/
+├── AegisInstaller.bat           # Auto-runs Python installer
+├── AegisInstaller.ps1
+├── aegis-installer-freemium.py
+├── aegis-installer-licensed.py
+├── iso/
+│   ├── aegis-freemium.iso
+│   ├── aegis-basic.iso
+│   └── manifest.json            # Checksums
+├── python/
+│   └── python-3.12.0-amd64.exe  # Bundled Python installer
+└── autorun.inf                  # Optional: Auto-launch on insert
+```
+
+### Creating USB Distribution
+
+1. Format USB drive (FAT32 or NTFS for large ISO files)
+2. Copy all installer files
+3. Download Python installer and place in `python/` folder
+4. Create `autorun.inf` (optional):
+
+```ini
+[autorun]
+label=Aegis OS Installer
+icon=aegis-icon.ico
+open=AegisInstaller.bat
+action=Install Aegis OS
+```
+
+### License File Distribution
+
+For licensed editions, include the license file:
+
+```
+AegisOS-Licensed/
+├── AegisInstaller.bat
+├── aegis-installer-licensed.py
+├── license.json                 # Customer's license file
+├── iso/
+│   └── aegis-basic.iso
+└── README.txt
+```
+
+The installer automatically detects `license.json` in the same folder.
 
 ## Support
 

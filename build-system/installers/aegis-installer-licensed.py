@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Aegis OS Licensed Edition Installer
-100% Offline installer with RSA-2048 license verification
-No internet downloads - works with bundled ISO files and license files
+Offline installer with download fallback and RSA-2048 license verification
+Works with bundled ISO files and license files, with option to download from Aegis servers
 """
 
 import os
@@ -19,6 +19,9 @@ import base64
 import binascii
 from datetime import datetime
 from typing import Optional, Tuple, Any
+import urllib.request
+import ssl
+import socket
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -34,8 +37,12 @@ except ImportError:
     default_backend = None
     InvalidSignature = Exception
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 APP_NAME = "Aegis OS Licensed Installer"
+
+ISO_DOWNLOAD_BASE_URL = "https://download.aegis-os.com/iso/licensed"
+ISO_DOWNLOAD_FALLBACK_URL = "https://mirror.aegis-os.com/iso/licensed"
+DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads" / "AegisOS"
 
 EDITIONS = {
     "basic": {
@@ -414,11 +421,246 @@ class RSALicenseValidator:
         return self.verify_license(license_data)
 
 
+class ISODownloader:
+    """Handles ISO downloads with progress, resume support, and checksum verification"""
+    
+    def __init__(self, progress_callback=None):
+        self.progress_callback = progress_callback
+        self.cancelled = False
+        self.download_thread = None
+        self._last_bytes = 0
+        self._last_time = 0
+    
+    def cancel(self):
+        """Cancel the current download"""
+        self.cancelled = True
+    
+    def _get_ssl_context(self):
+        """Create SSL context with fallback for certificate issues"""
+        try:
+            context = ssl.create_default_context()
+            return context
+        except Exception:
+            context = ssl._create_unverified_context()
+            return context
+    
+    def _check_internet(self):
+        """Check if internet connection is available"""
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=3)
+            return True
+        except OSError:
+            return False
+    
+    def _get_remote_file_size(self, url):
+        """Get the size of the remote file"""
+        try:
+            context = self._get_ssl_context()
+            request = urllib.request.Request(url, method='HEAD')
+            request.add_header('User-Agent', f'AegisOS-Installer/{VERSION}')
+            
+            with urllib.request.urlopen(request, timeout=10, context=context) as response:
+                return int(response.headers.get('Content-Length', 0))
+        except Exception:
+            return 0
+    
+    def _fetch_checksum(self, checksum_url):
+        """Fetch SHA-256 checksum from server"""
+        try:
+            context = self._get_ssl_context()
+            request = urllib.request.Request(checksum_url)
+            request.add_header('User-Agent', f'AegisOS-Installer/{VERSION}')
+            
+            with urllib.request.urlopen(request, timeout=10, context=context) as response:
+                content = response.read().decode('utf-8').strip()
+                if len(content) >= 64:
+                    return content[:64].upper()
+                return None
+        except Exception:
+            return None
+    
+    def download(self, url, destination, expected_sha256=None, fallback_url=None, checksum_url=None):
+        """
+        Download ISO with progress, resume support, and verification
+        
+        Args:
+            url: Primary download URL
+            destination: Local file path to save to
+            expected_sha256: Expected SHA-256 hash (optional)
+            fallback_url: Fallback URL if primary fails
+            checksum_url: URL to fetch checksum from (optional)
+        
+        Returns:
+            (success, message, sha256_hash)
+        """
+        self.cancelled = False
+        dest_path = Path(destination)
+        
+        if not self._check_internet():
+            return False, "No internet connection available", None
+        
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        if not expected_sha256 and checksum_url:
+            expected_sha256 = self._fetch_checksum(checksum_url)
+        
+        partial_path = Path(str(destination) + ".partial")
+        
+        success, message, sha256_hash = self._download_with_resume(
+            url, destination, partial_path, expected_sha256
+        )
+        
+        if not success and fallback_url and not self.cancelled:
+            if self.progress_callback:
+                self.progress_callback(0, "Trying fallback server...", "")
+            success, message, sha256_hash = self._download_with_resume(
+                fallback_url, destination, partial_path, expected_sha256
+            )
+        
+        return success, message, sha256_hash
+    
+    def _download_with_resume(self, url, destination, partial_path, expected_sha256):
+        """Download with resume support"""
+        try:
+            context = self._get_ssl_context()
+            
+            existing_size = 0
+            if partial_path.exists():
+                existing_size = partial_path.stat().st_size
+            
+            request = urllib.request.Request(url)
+            request.add_header('User-Agent', f'AegisOS-Installer/{VERSION}')
+            
+            if existing_size > 0:
+                request.add_header('Range', f'bytes={existing_size}-')
+            
+            try:
+                response = urllib.request.urlopen(request, timeout=30, context=context)
+            except urllib.error.HTTPError as e:
+                if e.code == 416:
+                    if partial_path.exists():
+                        partial_path.rename(destination)
+                        return self._verify_download(destination, expected_sha256)
+                raise
+            
+            content_length = response.headers.get('Content-Length')
+            total_size = int(content_length) if content_length else 0
+            
+            if existing_size > 0 and response.status == 206:
+                content_range = response.headers.get('Content-Range', '')
+                if '/' in content_range:
+                    total_size = int(content_range.split('/')[-1])
+            else:
+                existing_size = 0
+                total_size = int(content_length) if content_length else 0
+            
+            downloaded = existing_size
+            start_time = time.time()
+            self._last_bytes = downloaded
+            self._last_time = start_time
+            
+            mode = 'ab' if existing_size > 0 and response.status == 206 else 'wb'
+            
+            with open(partial_path, mode) as f:
+                while True:
+                    if self.cancelled:
+                        return False, "Download cancelled by user", None
+                    
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    now = time.time()
+                    if now - self._last_time >= 0.3:
+                        elapsed = now - start_time
+                        speed_bytes = (downloaded - existing_size) / elapsed if elapsed > 0 else 0
+                        speed_mb = speed_bytes / (1024 * 1024)
+                        
+                        if total_size > 0:
+                            pct = int((downloaded / total_size) * 100)
+                            remaining = total_size - downloaded
+                            eta_secs = remaining / speed_bytes if speed_bytes > 0 else 0
+                            
+                            if eta_secs > 3600:
+                                eta_str = f"{int(eta_secs/3600)}h {int((eta_secs%3600)/60)}m"
+                            elif eta_secs > 60:
+                                eta_str = f"{int(eta_secs/60)}m {int(eta_secs%60)}s"
+                            else:
+                                eta_str = f"{int(eta_secs)}s"
+                            
+                            size_mb = downloaded / (1024 * 1024)
+                            total_mb = total_size / (1024 * 1024)
+                            
+                            if self.progress_callback:
+                                self.progress_callback(
+                                    pct,
+                                    f"Downloading: {size_mb:.0f} / {total_mb:.0f} MB",
+                                    f"{speed_mb:.1f} MB/s • ETA: {eta_str}"
+                                )
+                        else:
+                            size_mb = downloaded / (1024 * 1024)
+                            if self.progress_callback:
+                                self.progress_callback(
+                                    -1,
+                                    f"Downloading: {size_mb:.0f} MB",
+                                    f"{speed_mb:.1f} MB/s"
+                                )
+                        
+                        self._last_time = now
+                        self._last_bytes = downloaded
+            
+            partial_path.rename(destination)
+            
+            return self._verify_download(destination, expected_sha256)
+            
+        except urllib.error.URLError as e:
+            if hasattr(e, 'reason'):
+                return False, f"Connection failed: {e.reason}", None
+            return False, f"URL error: {e}", None
+        except socket.timeout:
+            return False, "Connection timed out", None
+        except Exception as e:
+            return False, f"Download failed: {str(e)}", None
+    
+    def _verify_download(self, filepath, expected_sha256):
+        """Verify downloaded file checksum"""
+        if self.progress_callback:
+            self.progress_callback(99, "Verifying checksum...", "")
+        
+        sha256 = hashlib.sha256()
+        file_size = Path(filepath).stat().st_size
+        processed = 0
+        
+        with open(filepath, 'rb') as f:
+            while True:
+                if self.cancelled:
+                    return False, "Verification cancelled", None
+                
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                sha256.update(chunk)
+                processed += len(chunk)
+        
+        actual_hash = sha256.hexdigest().upper()
+        
+        if expected_sha256:
+            expected = expected_sha256.upper()
+            if actual_hash != expected:
+                Path(filepath).unlink(missing_ok=True)
+                return False, f"Checksum mismatch!\nExpected: {expected[:16]}...\nGot: {actual_hash[:16]}...", None
+        
+        return True, "Download completed successfully", actual_hash
+
+
 class AegisLicensedInstaller:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_NAME)
-        self.root.geometry("600x600")
+        self.root.geometry("600x660")
         self.root.resizable(False, False)
         self.root.configure(bg="#f0f0f0")
         
@@ -427,6 +669,9 @@ class AegisLicensedInstaller:
         self.cancel_operation = False
         self.iso_path = ""
         self.iso_hash = ""
+        self.is_downloading = False
+        self.iso_downloader = None
+        self.manifest_data = None
         
         self.license_validator = RSALicenseValidator()
         self.license_path = None
@@ -572,7 +817,7 @@ class AegisLicensedInstaller:
         self.features_frame = tk.Frame(edition_section, bg="white")
         self.features_frame.pack(fill="x", pady=(8, 0))
         
-        self.iso_section = self._create_section(self.step1_frame, "ISO Source (Offline)")
+        self.iso_section = self._create_section(self.step1_frame, "ISO Source")
         
         self.iso_status_label = tk.Label(self.iso_section, text="Validate license first",
                                         font=("Segoe UI", 10), bg="white", fg="#888888")
@@ -582,6 +827,19 @@ class AegisLicensedInstaller:
                                       font=("Consolas", 9), bg="#f5f5f5",
                                       wraplength=450, justify="left")
         self.iso_path_label.pack(fill="x", padx=0, pady=(5, 5))
+        
+        iso_btn_frame = tk.Frame(self.iso_section, bg="white")
+        iso_btn_frame.pack(anchor="w", pady=(0, 5))
+        
+        self.btn_browse_iso = ttk.Button(iso_btn_frame, text="Browse for ISO...",
+                                        command=self._browse_iso)
+        self.btn_browse_iso.pack(side="left", padx=(0, 5))
+        self.btn_browse_iso.pack_forget()
+        
+        self.btn_download_iso = ttk.Button(iso_btn_frame, text="Download ISO...",
+                                          command=self._start_download)
+        self.btn_download_iso.pack(side="left")
+        self.btn_download_iso.pack_forget()
         
         folder_section = self._create_section(self.step1_frame, "Install Location")
         
@@ -745,6 +1003,8 @@ class AegisLicensedInstaller:
         
         self.iso_status_label.configure(text="Scanning for ISO...", fg="#888888")
         self.iso_path_label.configure(text="")
+        self.btn_browse_iso.pack_forget()
+        self.btn_download_iso.pack_forget()
         self.root.update()
         
         iso_path, manifest_data, source = OfflineISOLocator.find_iso(self.validated_edition_id)
@@ -759,13 +1019,171 @@ class AegisLicensedInstaller:
             )
             self.iso_path_label.configure(text=iso_path)
             self.btn_start.configure(state="normal")
+            self.btn_browse_iso.pack_forget()
+            self.btn_download_iso.pack_forget()
         else:
             self.iso_path = ""
             self.iso_status_label.configure(
-                text=f"✗ No ISO found for {self.validated_edition_name}. Insert USB with ISO.",
+                text=f"✗ No ISO found locally. Browse for ISO or download from Aegis servers.",
                 fg="#dc3545"
             )
             self.btn_start.configure(state="disabled")
+            self.btn_browse_iso.pack(side="left", padx=(0, 5))
+            self.btn_download_iso.pack(side="left")
+    
+    def _browse_iso(self):
+        """Browse for ISO file manually"""
+        if not self.validated_edition_id:
+            messagebox.showerror("No License", "Please validate your license first.")
+            return
+        
+        iso_file = filedialog.askopenfilename(
+            title=f"Select {self.validated_edition_name} ISO",
+            filetypes=[("ISO files", "*.iso"), ("All files", "*.*")],
+            initialdir=str(Path.home() / "Downloads")
+        )
+        
+        if iso_file:
+            self.iso_path = iso_file
+            self.manifest_data = None
+            
+            self.iso_status_label.configure(
+                text="✓ ISO selected manually",
+                fg="#28a745"
+            )
+            self.iso_path_label.configure(text=iso_file)
+            self.btn_start.configure(state="normal")
+            self.btn_browse_iso.pack_forget()
+            self.btn_download_iso.pack_forget()
+    
+    def _start_download(self):
+        """Prompt user for download location and start download"""
+        if not self.validated_edition_id:
+            messagebox.showerror("No License", "Please validate your license first.")
+            return
+        
+        edition = EDITIONS.get(self.validated_edition_id)
+        if not edition:
+            messagebox.showerror("Error", "Invalid edition")
+            return
+        
+        download_dir = filedialog.askdirectory(
+            title="Select Download Location",
+            initialdir=str(DEFAULT_DOWNLOAD_DIR.parent)
+        )
+        
+        if not download_dir:
+            download_dir = str(DEFAULT_DOWNLOAD_DIR)
+        
+        iso_filename = edition.get("iso_filename", f"aegis-{self.validated_edition_id}.iso")
+        destination = os.path.join(download_dir, iso_filename)
+        
+        if os.path.exists(destination):
+            if not messagebox.askyesno("File Exists",
+                                       f"ISO already exists at:\n{destination}\n\nReplace it?"):
+                self.iso_path = destination
+                self.iso_status_label.configure(
+                    text=f"✓ Using existing ISO",
+                    fg="#28a745"
+                )
+                self.iso_path_label.configure(text=destination)
+                self.btn_start.configure(state="normal")
+                self.btn_browse_iso.pack_forget()
+                self.btn_download_iso.pack_forget()
+                return
+        
+        self.cancel_operation = False
+        self.is_downloading = True
+        self._show_step(2)
+        self.progress_text.configure(text="Starting download...")
+        
+        self.download_thread = threading.Thread(
+            target=self._download_worker,
+            args=(destination, iso_filename),
+            daemon=True
+        )
+        self.download_thread.start()
+    
+    def _download_worker(self, destination, iso_filename):
+        """Background worker for ISO download"""
+        def progress_callback(pct, text, speed):
+            self._update_progress(pct if pct >= 0 else 0, text, speed)
+        
+        self.iso_downloader = ISODownloader(progress_callback=progress_callback)
+        
+        primary_url = f"{ISO_DOWNLOAD_BASE_URL}/{iso_filename}"
+        fallback_url = f"{ISO_DOWNLOAD_FALLBACK_URL}/{iso_filename}"
+        checksum_url = f"{ISO_DOWNLOAD_BASE_URL}/{iso_filename}.sha256"
+        
+        success, message, sha256_hash = self.iso_downloader.download(
+            url=primary_url,
+            destination=destination,
+            fallback_url=fallback_url,
+            checksum_url=checksum_url
+        )
+        
+        if success:
+            self.iso_path = destination
+            self.iso_hash = sha256_hash
+            self.is_downloading = False
+            self._download_complete(destination, sha256_hash)
+        else:
+            self.is_downloading = False
+            if not self.cancel_operation:
+                self._show_download_error(message)
+    
+    def _download_complete(self, dest_path, sha256_hash):
+        """Handle successful download completion"""
+        def complete():
+            self.final_edition_label.configure(text=self.validated_edition_name)
+            if self.license_data:
+                self.final_license_label.configure(
+                    text=f"Key: {self.license_data.get('license_key', 'N/A')}"
+                )
+            self.final_iso_path_label.configure(text=dest_path)
+            self._show_step(3)
+        
+        self.root.after(0, complete)
+    
+    def _show_download_error(self, message):
+        """Show download error and allow retry"""
+        def show():
+            self.progress_pct.configure(text="!", fg="#d32f2f")
+            self.progress_text.configure(text=message, fg="#d32f2f")
+            self.progress_speed.configure(text="")
+            self.btn_start.configure(text="Retry Download", state="normal",
+                                    command=self._retry_download)
+            self.btn_cancel.configure(text="Back", command=self._go_back)
+        
+        self.root.after(0, show)
+    
+    def _retry_download(self):
+        """Retry the download"""
+        self.progress_pct.configure(fg="#005A9E")
+        self.progress_text.configure(fg="#666666")
+        
+        edition = EDITIONS.get(self.validated_edition_id)
+        if not edition:
+            return
+        
+        download_dir = str(DEFAULT_DOWNLOAD_DIR)
+        iso_filename = edition.get("iso_filename", f"aegis-{self.validated_edition_id}.iso")
+        destination = os.path.join(download_dir, iso_filename)
+        
+        self.cancel_operation = False
+        self.is_downloading = True
+        
+        self.download_thread = threading.Thread(
+            target=self._download_worker,
+            args=(destination, iso_filename),
+            daemon=True
+        )
+        self.download_thread.start()
+    
+    def _go_back(self):
+        """Go back to step 1"""
+        self._show_step(1)
+        self.btn_cancel.configure(text="Cancel", command=self._on_cancel)
     
     def _browse_license(self):
         """Browse for license file manually"""
@@ -986,7 +1404,13 @@ class AegisLicensedInstaller:
         webbrowser.open("https://etcher.balena.io/")
     
     def _on_cancel(self):
-        if self.copy_thread and self.copy_thread.is_alive():
+        if self.is_downloading and self.iso_downloader:
+            if messagebox.askyesno("Cancel Download", 
+                                  "Are you sure you want to cancel the download?"):
+                self.cancel_operation = True
+                self.iso_downloader.cancel()
+                self._go_back()
+        elif self.copy_thread and self.copy_thread.is_alive():
             if messagebox.askyesno("Cancel Installation",
                                   "Are you sure you want to cancel?"):
                 self.cancel_operation = True
