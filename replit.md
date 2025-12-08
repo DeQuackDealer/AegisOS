@@ -14,8 +14,24 @@ Leverages Buildroot and Python scripts for a multi-stage pipeline: source obfusc
 ### Promotional Website
 A Flask-based marketing website with a Windows 10-inspired static HTML frontend. Features robust security (rate limiting, JWT, CSRF, audit logging), manages six OS editions with features and pricing from `TIER_FEATURES.json`, and provides RESTful APIs for license management, monitoring, analytics, and user authentication.
 
-### Installer System
-Cross-platform GUI installers include Windows HTA (HTML Application) and macOS/Linux shell scripts with TUI. They handle ISO downloads, SHA256 verification, USB detection, and support Freemium and licensed editions with distinct UIs. Licensed installers utilize RSA-2048 asymmetric cryptography for license signature verification.
+### Installer System (December 2025 - Fully Offline)
+Cross-platform Python/tkinter GUI installers packaged via PyInstaller for Windows. **100% offline operation** - no internet downloads required.
+
+**Key Components:**
+*   **aegis-installer-freemium.py**: Detects and verifies local/USB ISOs using manifest.json SHA-256 checksums
+*   **aegis-installer-licensed.py**: Full RSA-2048 license verification using cryptography library (PKCS1v15 + SHA-256)
+*   **manifest.json**: Offline ISO manifest with SHA-256 checksums for all editions
+*   **keys/**: RSA key management (generate-keys.py, sign-license.py) for license signing
+
+**License Verification Flow:**
+1. License file searched in ~/.aegis/license.json, ./license.json, or USB drive
+2. Signature verified against embedded public key
+3. Edition, expiry date, and integrity validated before installation proceeds
+
+**Building Installers:**
+*   PyInstaller spec files for both installers
+*   build-windows.py automation script
+*   Optional code signing support
 
 ### Payment & License System
 Manages user accounts, generates license keys (e.g., `PREFIX-XXXX-XXXX-XXXX`), and processes payments via Stripe. It tracks users, licenses, Stripe events, and email logs, sending confirmation emails with license keys via SendGrid. An admin panel supports "free period" mode for promotions, bypassing license validation.
