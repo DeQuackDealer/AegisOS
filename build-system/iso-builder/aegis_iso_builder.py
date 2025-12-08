@@ -418,7 +418,7 @@ class AegisISOBuilder(tk.Tk):
         key = self.license_var.get().strip()
         valid, message, edition_key = LicenseValidator.validate_license_key(key)
         
-        if valid:
+        if valid and edition_key:
             self.edition = EDITIONS[edition_key]
             self.output_path = get_output_path(edition_key)
             self.license_status.config(text=f"✓ {message} - {self.edition['name']} Edition", fg=SUCCESS_GREEN)
@@ -601,8 +601,9 @@ class AegisISOBuilder(tk.Tk):
         self.build_thread.start()
     
     def _build_worker(self):
-        success, message = self.builder.build(self.output_path)
-        self.after(0, lambda: self._build_complete(success, message))
+        if self.builder:
+            success, message = self.builder.build(self.output_path)
+            self.after(0, lambda: self._build_complete(success, message))
     
     def _build_complete(self, success, message):
         self.is_building = False
