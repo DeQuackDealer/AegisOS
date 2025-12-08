@@ -1313,21 +1313,37 @@ greeter-session=lightdm-gtk-greeter
         self.log("Display manager configured")
     
     def install_packages(self, chroot_dir: Path):
-        """Install edition-specific packages"""
+        """Install edition-specific packages plus Pro baseline packages for paid editions"""
         self.log(f"Installing packages for {self.edition}...", "PROGRESS")
         
-        packages = self.config['packages']
+        packages = list(self.config['packages'])
+        is_paid_edition = self.config.get('tier', 'free') != 'free'
+        pro_packages = []
+        
+        if is_paid_edition:
+            pro_packages_file = OVERLAYS_DIR / "pro" / "etc" / "aegis" / "pro-packages.list"
+            if pro_packages_file.exists():
+                self.log(f"Loading Pro baseline packages from {pro_packages_file}")
+                with open(pro_packages_file, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            pro_packages.append(line)
+                packages = list(set(packages + pro_packages))
+                self.log(f"Added {len(pro_packages)} Pro baseline packages")
         
         pkg_list = chroot_dir / "var/lib/aegis/packages.list"
         pkg_list.parent.mkdir(parents=True, exist_ok=True)
         
         with open(pkg_list, 'w') as f:
-            for pkg in packages:
+            for pkg in sorted(packages):
                 f.write(f"{pkg}\n")
         
         self.manifest['packages'] = {
             'count': len(packages),
-            'list': packages,
+            'edition_packages': len(self.config['packages']),
+            'pro_packages': len(pro_packages) if is_paid_edition else 0,
+            'list': sorted(packages),
             'installed_at': datetime.now(timezone.utc).isoformat()
         }
         

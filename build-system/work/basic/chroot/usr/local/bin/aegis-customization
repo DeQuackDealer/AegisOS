@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""
+Aegis Customization - Desktop customization tool for Basic edition
+Features: 100+ themes, 50+ icon packs, widgets, custom wallpapers
+
+Provides GUI (tkinter) and CLI modes with tier-based feature gating.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "basic"
+VERSION = "1.5.0"
+APP_NAME = "Aegis Customization"
+
+CONFIG_FILE = "/etc/aegis/basic-config.json"
+LOG_FILE = "/var/log/aegis/customization.log"
+THEMES_DIR = "/usr/share/themes"
+ICONS_DIR = "/usr/share/icons"
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+
+class LicenseTier:
+    FREEMIUM = 1
+    BASIC = 2
+    GAMER = 3
+    GAMER_AI = 4
+    SERVER = 5
+
+
+THEME_CATALOG = {
+    "aegis-win10": {"name": "Aegis Win10", "type": "gtk", "dark_variant": True},
+    "aegis-win10-dark": {"name": "Aegis Win10 Dark", "type": "gtk", "dark_variant": False},
+    "aegis-macos": {"name": "Aegis macOS", "type": "gtk", "dark_variant": True},
+    "aegis-ubuntu": {"name": "Aegis Ubuntu", "type": "gtk", "dark_variant": True},
+    "aegis-nord": {"name": "Aegis Nord", "type": "gtk", "dark_variant": True},
+    "aegis-dracula": {"name": "Aegis Dracula", "type": "gtk", "dark_variant": False},
+    "aegis-gruvbox": {"name": "Aegis Gruvbox", "type": "gtk", "dark_variant": True},
+    "aegis-solarized": {"name": "Aegis Solarized", "type": "gtk", "dark_variant": True},
+    "aegis-catppuccin": {"name": "Aegis Catppuccin", "type": "gtk", "dark_variant": True},
+    "aegis-tokyo-night": {"name": "Aegis Tokyo Night", "type": "gtk", "dark_variant": False}
+}
+
+ICON_CATALOG = {
+    "aegis-win10-icons": {"name": "Aegis Win10 Icons", "type": "icons"},
+    "papirus": {"name": "Papirus", "type": "icons"},
+    "papirus-dark": {"name": "Papirus Dark", "type": "icons"},
+    "numix": {"name": "Numix", "type": "icons"},
+    "numix-circle": {"name": "Numix Circle", "type": "icons"},
+    "tela": {"name": "Tela", "type": "icons"},
+    "fluent": {"name": "Fluent", "type": "icons"},
+    "whitesur": {"name": "WhiteSur", "type": "icons"},
+    "reversal": {"name": "Reversal", "type": "icons"},
+    "qogir": {"name": "Qogir", "type": "icons"}
+}
+
+DESKTOP_LAYOUTS = {
+    "windows": {"name": "Windows-like", "panel_position": "bottom", "dock": False},
+    "macos": {"name": "macOS-like", "panel_position": "top", "dock": True},
+    "gnome": {"name": "GNOME-like", "panel_position": "top", "dock": True},
+    "unity": {"name": "Unity-like", "panel_position": "top", "dock": True},
+    "kde": {"name": "KDE-like", "panel_position": "bottom", "dock": False},
+    "traditional": {"name": "Traditional", "panel_position": "bottom", "dock": False},
+    "minimal": {"name": "Minimal", "panel_position": "top", "dock": False},
+    "gamer": {"name": "Gamer", "panel_position": "bottom", "dock": True},
+    "productivity": {"name": "Productivity", "panel_position": "top", "dock": True},
+    "retro": {"name": "Retro", "panel_position": "bottom", "dock": False}
+}
+
+
+class AegisCustomization:
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = VERSION
+        self.config = {}
+        self.license_tier = LicenseTier.FREEMIUM
+        self.current_theme = None
+        self.current_icons = None
+        self.current_layout = None
+        
+        self.setup_logging()
+        self.load_license_tier()
+        self.load_config()
+        self.detect_current_settings()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
+        
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(LOG_FILE) if os.access(str(log_dir), os.W_OK) else logging.NullHandler(),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except Exception:
+            logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
+        
+        self.logger = logging.getLogger("AegisCustomization")
+        self.logger.info(f"Starting {APP_NAME} v{VERSION}")
+    
+    def load_license_tier(self):
+        license_file = Path("/etc/aegis/license.json")
+        try:
+            if license_file.exists():
+                with open(license_file, 'r') as f:
+                    license_data = json.load(f)
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'gamer': LicenseTier.GAMER,
+                    'gamer-ai': LicenseTier.GAMER_AI,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                if Path("/etc/aegis-basic-marker").exists():
+                    self.license_tier = LicenseTier.BASIC
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+    
+    def is_feature_available(self, feature: str) -> bool:
+        basic_features = ["themes", "icons", "layouts", "wallpapers", "widgets"]
+        if feature in basic_features:
+            return self.license_tier >= LicenseTier.BASIC
+        return False
+    
+    def load_config(self):
+        default_config = {
+            "themes_count": 100,
+            "icon_packs_count": 50,
+            "widgets_enabled": True,
+            "custom_wallpapers": True,
+            "desktop_layouts": 10
+        }
+        
+        try:
+            if Path(CONFIG_FILE).exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    file_config = json.load(f)
+                    if "features" in file_config and "customization" in file_config["features"]:
+                        self.config = {**default_config, **file_config["features"]["customization"]}
+                    else:
+                        self.config = default_config
+            else:
+                self.config = default_config
+        except Exception as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def detect_current_settings(self):
+        try:
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "gtk-theme"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                self.current_theme = result.stdout.strip().strip("'")
+            
+            result = subprocess.run(
+                ["gsettings", "get", "org.gnome.desktop.interface", "icon-theme"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                self.current_icons = result.stdout.strip().strip("'")
+        except Exception as e:
+            self.logger.warning(f"Failed to detect current settings: {e}")
+    
+    def list_available_themes(self) -> List[Dict[str, Any]]:
+        themes = []
+        
+        for theme_id, info in THEME_CATALOG.items():
+            themes.append({
+                "id": theme_id,
+                "name": info["name"],
+                "type": info["type"],
+                "has_dark_variant": info.get("dark_variant", False),
+                "installed": Path(THEMES_DIR) / theme_id.replace("-", " ").title().replace(" ", "-")
+            })
+        
+        themes_path = Path(THEMES_DIR)
+        if themes_path.exists():
+            for theme_dir in themes_path.iterdir():
+                if theme_dir.is_dir() and theme_dir.name not in [t["id"] for t in themes]:
+                    themes.append({
+                        "id": theme_dir.name,
+                        "name": theme_dir.name,
+                        "type": "gtk",
+                        "has_dark_variant": False,
+                        "installed": True
+                    })
+        
+        return themes
+    
+    def list_available_icons(self) -> List[Dict[str, Any]]:
+        icons = []
+        
+        for icon_id, info in ICON_CATALOG.items():
+            icons.append({
+                "id": icon_id,
+                "name": info["name"],
+                "type": info["type"]
+            })
+        
+        icons_path = Path(ICONS_DIR)
+        if icons_path.exists():
+            for icon_dir in icons_path.iterdir():
+                if icon_dir.is_dir() and icon_dir.name not in [i["id"] for i in icons]:
+                    icons.append({
+                        "id": icon_dir.name,
+                        "name": icon_dir.name,
+                        "type": "icons"
+                    })
+        
+        return icons
+    
+    def list_desktop_layouts(self) -> List[Dict[str, Any]]:
+        return [
+            {"id": layout_id, **info}
+            for layout_id, info in DESKTOP_LAYOUTS.items()
+        ]
+    
+    def apply_theme(self, theme_name: str) -> bool:
+        if not self.is_feature_available("themes"):
+            self.logger.warning("Theme customization requires Basic edition")
+            return False
+        
+        try:
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", theme_name],
+                check=True
+            )
+            
+            subprocess.run(
+                ["xfconf-query", "-c", "xsettings", "-p", "/Net/ThemeName", "-s", theme_name],
+                capture_output=True
+            )
+            
+            self.current_theme = theme_name
+            self.logger.info(f"Applied theme: {theme_name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to apply theme: {e}")
+            return False
+    
+    def apply_icons(self, icon_name: str) -> bool:
+        if not self.is_feature_available("icons"):
+            self.logger.warning("Icon customization requires Basic edition")
+            return False
+        
+        try:
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.desktop.interface", "icon-theme", icon_name],
+                check=True
+            )
+            
+            subprocess.run(
+                ["xfconf-query", "-c", "xsettings", "-p", "/Net/IconThemeName", "-s", icon_name],
+                capture_output=True
+            )
+            
+            self.current_icons = icon_name
+            self.logger.info(f"Applied icon theme: {icon_name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to apply icon theme: {e}")
+            return False
+    
+    def apply_layout(self, layout_id: str) -> bool:
+        if not self.is_feature_available("layouts"):
+            self.logger.warning("Layout customization requires Basic edition")
+            return False
+        
+        if layout_id not in DESKTOP_LAYOUTS:
+            self.logger.error(f"Unknown layout: {layout_id}")
+            return False
+        
+        layout = DESKTOP_LAYOUTS[layout_id]
+        
+        try:
+            panel_position = layout["panel_position"]
+            position_value = 0 if panel_position == "top" else 1
+            
+            subprocess.run(
+                ["xfconf-query", "-c", "xfce4-panel", "-p", "/panels/panel-1/position", "-s", f"p={position_value}"],
+                capture_output=True
+            )
+            
+            self.current_layout = layout_id
+            self.logger.info(f"Applied layout: {layout['name']}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to apply layout: {e}")
+            return False
+    
+    def set_wallpaper(self, wallpaper_path: str) -> bool:
+        if not self.is_feature_available("wallpapers"):
+            self.logger.warning("Wallpaper customization requires Basic edition")
+            return False
+        
+        if not Path(wallpaper_path).exists():
+            self.logger.error(f"Wallpaper not found: {wallpaper_path}")
+            return False
+        
+        try:
+            subprocess.run(
+                ["gsettings", "set", "org.gnome.desktop.background", "picture-uri", f"file://{wallpaper_path}"],
+                check=True
+            )
+            
+            subprocess.run(
+                ["xfconf-query", "-c", "xfce4-desktop", "-p", "/backdrop/screen0/monitor0/workspace0/last-image", "-s", wallpaper_path],
+                capture_output=True
+            )
+            
+            self.logger.info(f"Set wallpaper: {wallpaper_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set wallpaper: {e}")
+            return False
+    
+    def get_current_settings(self) -> Dict[str, Any]:
+        return {
+            "theme": self.current_theme,
+            "icons": self.current_icons,
+            "layout": self.current_layout,
+            "tier": self.license_tier,
+            "features_available": self.license_tier >= LicenseTier.BASIC
+        }
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            print("GTK not available. Use --cli mode.")
+            return self.run_cli()
+        
+        win = CustomizationWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+    
+    def run_cli(self):
+        print(f"\n{'='*60}")
+        print(f"  {APP_NAME} v{VERSION}")
+        print(f"  License Tier: {'BASIC+' if self.license_tier >= LicenseTier.BASIC else 'FREEMIUM (Limited)'}")
+        print(f"{'='*60}\n")
+        
+        print("Current Settings:")
+        print(f"  Theme: {self.current_theme or 'Default'}")
+        print(f"  Icons: {self.current_icons or 'Default'}")
+        print(f"  Layout: {self.current_layout or 'Default'}")
+        
+        print(f"\nAvailable Themes: {len(THEME_CATALOG)}")
+        print(f"Available Icon Packs: {len(ICON_CATALOG)}")
+        print(f"Available Layouts: {len(DESKTOP_LAYOUTS)}")
+        
+        if self.license_tier < LicenseTier.BASIC:
+            print("\n⚠ Upgrade to Basic edition for full customization features")
+            print("  Visit: https://aegis-os.com/pricing")
+
+
+if GTK_AVAILABLE:
+    class CustomizationWindow(Gtk.Window):
+        def __init__(self, app: AegisCustomization):
+            super().__init__(title=f"{APP_NAME} v{VERSION}")
+            self.app = app
+            self.set_default_size(900, 700)
+            self.set_border_width(10)
+            self.setup_ui()
+        
+        def setup_ui(self):
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            self.add(vbox)
+            
+            header = Gtk.Label()
+            header.set_markup(f"<big><b>{APP_NAME}</b></big>")
+            vbox.pack_start(header, False, False, 10)
+            
+            if self.app.license_tier < LicenseTier.BASIC:
+                warning = Gtk.Label()
+                warning.set_markup("<span foreground='orange'>⚠ Limited features - Upgrade to Basic for full access</span>")
+                vbox.pack_start(warning, False, False, 5)
+            
+            notebook = Gtk.Notebook()
+            vbox.pack_start(notebook, True, True, 0)
+            
+            notebook.append_page(self.create_themes_tab(), Gtk.Label(label="Themes"))
+            notebook.append_page(self.create_icons_tab(), Gtk.Label(label="Icons"))
+            notebook.append_page(self.create_layouts_tab(), Gtk.Label(label="Layouts"))
+        
+        def create_themes_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            themes = self.app.list_available_themes()
+            
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            
+            for theme in themes:
+                row = Gtk.ListBoxRow()
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                hbox.set_margin_top(5)
+                hbox.set_margin_bottom(5)
+                
+                label = Gtk.Label(label=theme["name"])
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                apply_btn = Gtk.Button(label="Apply")
+                apply_btn.connect("clicked", self.on_apply_theme, theme["id"])
+                apply_btn.set_sensitive(self.app.license_tier >= LicenseTier.BASIC)
+                hbox.pack_end(apply_btn, False, False, 10)
+                
+                row.add(hbox)
+                listbox.add(row)
+            
+            scrolled.add(listbox)
+            box.pack_start(scrolled, True, True, 0)
+            
+            return box
+        
+        def create_icons_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            icons = self.app.list_available_icons()
+            
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            
+            listbox = Gtk.ListBox()
+            
+            for icon in icons:
+                row = Gtk.ListBoxRow()
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                hbox.set_margin_top(5)
+                hbox.set_margin_bottom(5)
+                
+                label = Gtk.Label(label=icon["name"])
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 10)
+                
+                apply_btn = Gtk.Button(label="Apply")
+                apply_btn.connect("clicked", self.on_apply_icons, icon["id"])
+                apply_btn.set_sensitive(self.app.license_tier >= LicenseTier.BASIC)
+                hbox.pack_end(apply_btn, False, False, 10)
+                
+                row.add(hbox)
+                listbox.add(row)
+            
+            scrolled.add(listbox)
+            box.pack_start(scrolled, True, True, 0)
+            
+            return box
+        
+        def create_layouts_tab(self):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+            box.set_margin_top(20)
+            box.set_margin_start(20)
+            
+            layouts = self.app.list_desktop_layouts()
+            
+            for layout in layouts:
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                
+                label = Gtk.Label(label=f"{layout['name']} (Panel: {layout['panel_position']})")
+                label.set_xalign(0)
+                hbox.pack_start(label, True, True, 0)
+                
+                apply_btn = Gtk.Button(label="Apply")
+                apply_btn.connect("clicked", self.on_apply_layout, layout["id"])
+                apply_btn.set_sensitive(self.app.license_tier >= LicenseTier.BASIC)
+                hbox.pack_end(apply_btn, False, False, 0)
+                
+                box.pack_start(hbox, False, False, 5)
+            
+            return box
+        
+        def on_apply_theme(self, button, theme_id):
+            if self.app.apply_theme(theme_id):
+                self.show_message("Theme applied successfully")
+        
+        def on_apply_icons(self, button, icon_id):
+            if self.app.apply_icons(icon_id):
+                self.show_message("Icon theme applied successfully")
+        
+        def on_apply_layout(self, button, layout_id):
+            if self.app.apply_layout(layout_id):
+                self.show_message("Layout applied successfully")
+        
+        def show_message(self, message):
+            dialog = Gtk.MessageDialog(
+                parent=self,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text=message
+            )
+            dialog.run()
+            dialog.destroy()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Desktop customization tool")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode")
+    parser.add_argument("--list-themes", action="store_true", help="List available themes")
+    parser.add_argument("--list-icons", action="store_true", help="List available icon packs")
+    parser.add_argument("--list-layouts", action="store_true", help="List desktop layouts")
+    parser.add_argument("--apply-theme", metavar="THEME", help="Apply theme")
+    parser.add_argument("--apply-icons", metavar="ICONS", help="Apply icon theme")
+    parser.add_argument("--apply-layout", metavar="LAYOUT", help="Apply desktop layout")
+    parser.add_argument("--set-wallpaper", metavar="PATH", help="Set wallpaper")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    
+    if args.list_themes:
+        app = AegisCustomization(headless=True)
+        themes = app.list_available_themes()
+        for theme in themes:
+            print(f"{theme['id']}: {theme['name']}")
+    elif args.list_icons:
+        app = AegisCustomization(headless=True)
+        icons = app.list_available_icons()
+        for icon in icons:
+            print(f"{icon['id']}: {icon['name']}")
+    elif args.list_layouts:
+        app = AegisCustomization(headless=True)
+        layouts = app.list_desktop_layouts()
+        for layout in layouts:
+            print(f"{layout['id']}: {layout['name']}")
+    elif args.apply_theme:
+        app = AegisCustomization(headless=True)
+        result = app.apply_theme(args.apply_theme)
+        print("Theme applied" if result else "Failed to apply theme")
+    elif args.apply_icons:
+        app = AegisCustomization(headless=True)
+        result = app.apply_icons(args.apply_icons)
+        print("Icons applied" if result else "Failed to apply icons")
+    elif args.apply_layout:
+        app = AegisCustomization(headless=True)
+        result = app.apply_layout(args.apply_layout)
+        print("Layout applied" if result else "Failed to apply layout")
+    elif args.set_wallpaper:
+        app = AegisCustomization(headless=True)
+        result = app.set_wallpaper(args.set_wallpaper)
+        print("Wallpaper set" if result else "Failed to set wallpaper")
+    elif args.cli or not GTK_AVAILABLE:
+        app = AegisCustomization(headless=False)
+        app.run_cli()
+    else:
+        app = AegisCustomization(headless=False)
+        app.run_gui()
+
+
+if __name__ == "__main__":
+    main()

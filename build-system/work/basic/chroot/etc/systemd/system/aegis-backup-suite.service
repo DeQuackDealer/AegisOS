@@ -1,0 +1,28 @@
+[Unit]
+Description=Aegis Backup Suite - Scheduled backup service for Basic edition
+Documentation=https://aegis-os.com/docs/backup-suite
+After=multi-user.target local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/bin/aegis-backup-suite --scheduled
+RemainAfterExit=no
+
+TimeoutStartSec=3600
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis-backup-suite
+
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=false
+
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target
