@@ -1078,18 +1078,21 @@ AEGIS_TIER="{self.config.get('tier', 'free')}"
         )
     
     def apply_overlays(self):
-        """Apply common, pro (for paid editions), and edition-specific overlays to chroot
+        """Apply common, pro (for paid editions), pro-productivity, and edition-specific overlays
         
-        Overlay order for paid editions: common -> pro -> edition
+        Overlay order for paid editions: common -> pro -> pro-productivity -> edition
         Overlay order for freemium: common -> freemium
         
-        This ensures all paid editions get the Pro baseline features (matching/exceeding
-        Zorin OS Pro) plus their edition-specific specializations.
+        This ensures all paid editions get:
+        - Pro baseline features (cross-device, creative suite) 
+        - Pro productivity (office, video conferencing, DaVinci Resolve)
+        - Edition-specific specializations
         """
         self.log("Applying overlays...", "PROGRESS")
         
         common_overlay = OVERLAYS_DIR / "common"
         pro_overlay = OVERLAYS_DIR / "pro"
+        pro_productivity_overlay = OVERLAYS_DIR / "pro-productivity"
         edition_overlay = OVERLAYS_DIR / self.config.get('overlay_name', self.edition)
         
         overlays_applied = []
@@ -1108,6 +1111,11 @@ AEGIS_TIER="{self.config.get('tier', 'free')}"
             overlays_applied.append("pro")
         elif is_paid_edition:
             self.log(f"Warning: Pro overlay not found at {pro_overlay}", "WARN")
+        
+        if is_paid_edition and pro_productivity_overlay.exists():
+            self.log(f"Applying Pro productivity overlay from {pro_productivity_overlay}")
+            self._apply_overlay(pro_productivity_overlay)
+            overlays_applied.append("pro-productivity")
         
         if edition_overlay.exists():
             self.log(f"Applying edition overlay from {edition_overlay}")
@@ -1321,16 +1329,31 @@ greeter-session=lightdm-gtk-greeter
         pro_packages = []
         
         if is_paid_edition:
-            pro_packages_file = OVERLAYS_DIR / "pro" / "etc" / "aegis" / "pro-packages.list"
-            if pro_packages_file.exists():
-                self.log(f"Loading Pro baseline packages from {pro_packages_file}")
-                with open(pro_packages_file, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            pro_packages.append(line)
-                packages = list(set(packages + pro_packages))
-                self.log(f"Added {len(pro_packages)} Pro baseline packages")
+            package_lists = [
+                ("pro", OVERLAYS_DIR / "pro" / "etc" / "aegis" / "pro-packages.list"),
+                ("pro-productivity", OVERLAYS_DIR / "pro-productivity" / "etc" / "aegis" / "productivity-packages.list"),
+            ]
+            
+            if self.edition == "workplace":
+                package_lists.append(("workplace", OVERLAYS_DIR / "workplace" / "etc" / "aegis" / "workplace-packages.list"))
+            elif self.edition in ["gamer", "gamer_ai"]:
+                package_lists.append(("gamer", OVERLAYS_DIR / "gamer" / "etc" / "aegis" / "gamer-packages.list"))
+            elif self.edition == "basic":
+                package_lists.append(("basic", OVERLAYS_DIR / "basic" / "etc" / "aegis" / "basic-packages.list"))
+            
+            for list_name, pkg_file in package_lists:
+                if pkg_file.exists():
+                    self.log(f"Loading {list_name} packages from {pkg_file}")
+                    count = 0
+                    with open(pkg_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                pro_packages.append(line)
+                                count += 1
+                    self.log(f"Added {count} {list_name} packages")
+            
+            packages = list(set(packages + pro_packages))
         
         pkg_list = chroot_dir / "var/lib/aegis/packages.list"
         pkg_list.parent.mkdir(parents=True, exist_ok=True)

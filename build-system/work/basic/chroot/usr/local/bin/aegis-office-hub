@@ -1,0 +1,1074 @@
+#!/usr/bin/env python3
+"""
+Aegis Office Hub v1.0.0
+LibreOffice wrapper with enhanced productivity features
+
+Features:
+  - GTK3 GUI launcher for all LibreOffice applications
+  - Quick access to recent documents
+  - Template gallery with pre-made business templates
+  - Cloud sync integration (Nextcloud, Google Drive, OneDrive)
+  - Document converter (batch convert between formats)
+  - AI features placeholder (grammar check, summarization)
+  - Tier gating support
+
+Applications included:
+  - Writer (Document Processing)
+  - Calc (Spreadsheets)
+  - Impress (Presentations)
+  - Draw (Vector Graphics)
+  - Base (Database)
+  - Math (Formulas)
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+import glob
+import hashlib
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Office Hub"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "office-hub"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+RECENT_FILE = CONFIG_DIR / "recent.json"
+TEMPLATES_DIR = CONFIG_DIR / "templates"
+TIER_CONFIG = Path("/etc/aegis/tier.conf")
+
+
+class Tier(Enum):
+    FREE = "free"
+    BASIC = "basic"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+
+
+class DocumentType(Enum):
+    DOCUMENT = "document"
+    SPREADSHEET = "spreadsheet"
+    PRESENTATION = "presentation"
+    DRAWING = "drawing"
+    DATABASE = "database"
+    FORMULA = "formula"
+
+
+@dataclass
+class LibreOfficeApp:
+    """Represents a LibreOffice application"""
+    id: str
+    name: str
+    command: str
+    doc_type: str
+    icon: str
+    description: str
+    extensions: List[str]
+    installed: bool = False
+
+
+LIBREOFFICE_APPS = [
+    LibreOfficeApp(
+        "writer", "Writer", "libreoffice --writer",
+        "document", "libreoffice-writer",
+        "Word Processing",
+        [".odt", ".doc", ".docx", ".rtf", ".txt"]
+    ),
+    LibreOfficeApp(
+        "calc", "Calc", "libreoffice --calc",
+        "spreadsheet", "libreoffice-calc",
+        "Spreadsheets",
+        [".ods", ".xls", ".xlsx", ".csv"]
+    ),
+    LibreOfficeApp(
+        "impress", "Impress", "libreoffice --impress",
+        "presentation", "libreoffice-impress",
+        "Presentations",
+        [".odp", ".ppt", ".pptx"]
+    ),
+    LibreOfficeApp(
+        "draw", "Draw", "libreoffice --draw",
+        "drawing", "libreoffice-draw",
+        "Vector Graphics",
+        [".odg", ".svg", ".png"]
+    ),
+    LibreOfficeApp(
+        "base", "Base", "libreoffice --base",
+        "database", "libreoffice-base",
+        "Database Management",
+        [".odb", ".mdb", ".accdb"]
+    ),
+    LibreOfficeApp(
+        "math", "Math", "libreoffice --math",
+        "formula", "libreoffice-math",
+        "Formula Editor",
+        [".odf", ".mml"]
+    ),
+]
+
+
+@dataclass
+class CloudProvider:
+    """Cloud storage provider configuration"""
+    id: str
+    name: str
+    enabled: bool
+    path: str
+    icon: str
+
+
+DEFAULT_CLOUD_PROVIDERS = [
+    CloudProvider("nextcloud", "Nextcloud", True, 
+                  str(Path.home() / "Nextcloud"), "folder-cloud"),
+    CloudProvider("gdrive", "Google Drive", True,
+                  str(Path.home() / "Google Drive"), "folder-google-drive"),
+    CloudProvider("onedrive", "OneDrive", True,
+                  str(Path.home() / "OneDrive"), "folder-onedrive"),
+    CloudProvider("dropbox", "Dropbox", True,
+                  str(Path.home() / "Dropbox"), "folder-dropbox"),
+]
+
+
+@dataclass
+class DocumentTemplate:
+    """Document template definition"""
+    id: str
+    name: str
+    category: str
+    doc_type: str
+    filepath: str
+    description: str
+    tier_required: str = "free"
+
+
+DEFAULT_TEMPLATES = [
+    DocumentTemplate("business-letter", "Business Letter", "correspondence", 
+                     "document", "business-letter.ott", "Professional business letter template"),
+    DocumentTemplate("invoice", "Invoice", "financial",
+                     "spreadsheet", "invoice.ots", "Standard invoice template"),
+    DocumentTemplate("meeting-agenda", "Meeting Agenda", "business",
+                     "document", "meeting-agenda.ott", "Meeting agenda template"),
+    DocumentTemplate("project-proposal", "Project Proposal", "business",
+                     "document", "project-proposal.ott", "Project proposal template", "pro"),
+    DocumentTemplate("expense-report", "Expense Report", "financial",
+                     "spreadsheet", "expense-report.ots", "Expense tracking template"),
+    DocumentTemplate("presentation-modern", "Modern Presentation", "presentation",
+                     "presentation", "modern-presentation.otp", "Clean modern slide deck", "pro"),
+    DocumentTemplate("resume", "Professional Resume", "personal",
+                     "document", "resume.ott", "Professional resume template"),
+    DocumentTemplate("contract", "Contract Agreement", "legal",
+                     "document", "contract.ott", "Basic contract template", "pro"),
+    DocumentTemplate("budget-planner", "Budget Planner", "financial",
+                     "spreadsheet", "budget-planner.ots", "Personal/business budget template"),
+    DocumentTemplate("newsletter", "Newsletter", "marketing",
+                     "document", "newsletter.ott", "Newsletter template", "enterprise"),
+]
+
+
+@dataclass
+class RecentDocument:
+    """Recent document entry"""
+    filepath: str
+    app_id: str
+    app_name: str
+    opened: str
+    doc_type: str
+
+
+@dataclass
+class ConversionJob:
+    """Document conversion job"""
+    source: str
+    target_format: str
+    output_dir: str
+    status: str = "pending"
+    result: str = ""
+
+
+@dataclass
+class OfficeHubConfig:
+    """Main configuration"""
+    default_save_path: str = ""
+    auto_save_interval: int = 10
+    recent_limit: int = 25
+    cloud_providers: List[Dict] = field(default_factory=list)
+    show_templates_on_start: bool = True
+    enable_ai_features: bool = True
+    theme: str = "system"
+    sidebar_visible: bool = True
+
+
+class TierManager:
+    """Manage tier-based feature access"""
+    
+    def __init__(self):
+        self.current_tier = self._load_tier()
+    
+    def _load_tier(self) -> Tier:
+        """Load tier from configuration"""
+        if TIER_CONFIG.exists():
+            try:
+                with open(TIER_CONFIG, 'r') as f:
+                    content = f.read().strip()
+                    for line in content.split('\n'):
+                        if line.startswith('TIER='):
+                            tier_value = line.split('=')[1].strip().strip('"\'').lower()
+                            try:
+                                return Tier(tier_value)
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+        return Tier.FREE
+    
+    def has_access(self, required_tier: str) -> bool:
+        """Check if current tier has access to a feature"""
+        tier_hierarchy = {
+            Tier.FREE: 0,
+            Tier.BASIC: 1,
+            Tier.PRO: 2,
+            Tier.ENTERPRISE: 3
+        }
+        
+        try:
+            required = Tier(required_tier)
+        except ValueError:
+            return True
+        
+        return tier_hierarchy.get(self.current_tier, 0) >= tier_hierarchy.get(required, 0)
+    
+    def get_tier_name(self) -> str:
+        """Get current tier name"""
+        return self.current_tier.value.title()
+
+
+class OfficeHubService:
+    """Core Office Hub service"""
+    
+    def __init__(self):
+        self.config = self._load_config()
+        self.apps = {app.id: app for app in LIBREOFFICE_APPS}
+        self.templates = {t.id: t for t in DEFAULT_TEMPLATES}
+        self.cloud_providers = {p.id: p for p in DEFAULT_CLOUD_PROVIDERS}
+        self.recent: List[RecentDocument] = []
+        self.tier_manager = TierManager()
+        self._check_installed_apps()
+        self._load_recent()
+        self._init_cloud_providers()
+    
+    def _load_config(self) -> OfficeHubConfig:
+        """Load configuration"""
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+        
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    return OfficeHubConfig(**data)
+            except Exception:
+                pass
+        
+        config = OfficeHubConfig()
+        config.default_save_path = str(Path.home() / "Documents")
+        self._save_config(config)
+        return config
+    
+    def _save_config(self, config: Optional[OfficeHubConfig] = None):
+        """Save configuration"""
+        if config:
+            self.config = config
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(asdict(self.config), f, indent=2)
+    
+    def _load_recent(self):
+        """Load recent documents"""
+        if RECENT_FILE.exists():
+            try:
+                with open(RECENT_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.recent = [RecentDocument(**r) for r in data]
+            except Exception:
+                pass
+    
+    def _save_recent(self):
+        """Save recent documents"""
+        with open(RECENT_FILE, 'w') as f:
+            json.dump([asdict(r) for r in self.recent[:self.config.recent_limit]], f, indent=2)
+    
+    def _check_installed_apps(self):
+        """Check if LibreOffice is installed"""
+        libreoffice_installed = shutil.which("libreoffice") is not None
+        for app_id, app in self.apps.items():
+            app.installed = libreoffice_installed
+    
+    def _init_cloud_providers(self):
+        """Initialize cloud provider paths"""
+        for provider_id, provider in self.cloud_providers.items():
+            provider_path = Path(provider.path)
+            provider.enabled = provider_path.exists() and provider_path.is_dir()
+    
+    def get_installed_apps(self) -> List[LibreOfficeApp]:
+        """Get list of installed apps"""
+        return [app for app in self.apps.values() if app.installed]
+    
+    def launch_app(self, app_id: str, filepath: Optional[str] = None) -> bool:
+        """Launch a LibreOffice application"""
+        if app_id not in self.apps:
+            return False
+        
+        app = self.apps[app_id]
+        if not app.installed:
+            return False
+        
+        try:
+            cmd = app.command.split()
+            if filepath and Path(filepath).exists():
+                cmd.append(filepath)
+                self.add_recent_document(filepath, app_id, app.name, app.doc_type)
+            
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception:
+            return False
+    
+    def add_recent_document(self, filepath: str, app_id: str, app_name: str, doc_type: str):
+        """Add document to recent list"""
+        self.recent = [r for r in self.recent if r.filepath != filepath]
+        self.recent.insert(0, RecentDocument(
+            filepath=filepath,
+            app_id=app_id,
+            app_name=app_name,
+            opened=datetime.now().isoformat(),
+            doc_type=doc_type
+        ))
+        self._save_recent()
+    
+    def get_recent_documents(self, limit: int = 10) -> List[RecentDocument]:
+        """Get recent documents"""
+        valid_recent = []
+        for doc in self.recent[:limit * 2]:
+            if Path(doc.filepath).exists():
+                valid_recent.append(doc)
+                if len(valid_recent) >= limit:
+                    break
+        return valid_recent
+    
+    def get_templates(self, category: Optional[str] = None) -> List[DocumentTemplate]:
+        """Get available templates filtered by tier access"""
+        templates = []
+        for template in self.templates.values():
+            if self.tier_manager.has_access(template.tier_required):
+                if category is None or template.category == category:
+                    templates.append(template)
+        return templates
+    
+    def get_template_categories(self) -> List[str]:
+        """Get unique template categories"""
+        return list(set(t.category for t in self.templates.values()))
+    
+    def create_from_template(self, template_id: str, save_path: str) -> bool:
+        """Create new document from template"""
+        if template_id not in self.templates:
+            return False
+        
+        template = self.templates[template_id]
+        if not self.tier_manager.has_access(template.tier_required):
+            return False
+        
+        try:
+            for app in self.apps.values():
+                if app.doc_type == template.doc_type:
+                    cmd = app.command.split()
+                    cmd.append(save_path)
+                    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return True
+        except Exception:
+            pass
+        return False
+    
+    def get_cloud_folders(self) -> List[CloudProvider]:
+        """Get available cloud sync folders"""
+        return [p for p in self.cloud_providers.values() if p.enabled]
+    
+    def browse_cloud_folder(self, provider_id: str) -> List[Dict]:
+        """List documents in cloud folder"""
+        if provider_id not in self.cloud_providers:
+            return []
+        
+        provider = self.cloud_providers[provider_id]
+        if not provider.enabled:
+            return []
+        
+        documents = []
+        provider_path = Path(provider.path)
+        
+        extensions = []
+        for app in self.apps.values():
+            extensions.extend(app.extensions)
+        
+        try:
+            for ext in extensions:
+                for filepath in provider_path.rglob(f"*{ext}"):
+                    if filepath.is_file():
+                        documents.append({
+                            "name": filepath.name,
+                            "path": str(filepath),
+                            "modified": datetime.fromtimestamp(filepath.stat().st_mtime).isoformat(),
+                            "size": filepath.stat().st_size
+                        })
+        except Exception:
+            pass
+        
+        return sorted(documents, key=lambda x: x["modified"], reverse=True)[:50]
+    
+    def convert_document(self, source: str, target_format: str, 
+                        output_dir: Optional[str] = None) -> Tuple[bool, str]:
+        """Convert document to different format"""
+        source_path = Path(source)
+        if not source_path.exists():
+            return False, "Source file not found"
+        
+        if output_dir is None:
+            output_dir = str(source_path.parent)
+        
+        try:
+            cmd = [
+                "libreoffice",
+                "--headless",
+                "--convert-to", target_format,
+                "--outdir", output_dir,
+                source
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if result.returncode == 0:
+                output_file = Path(output_dir) / f"{source_path.stem}.{target_format}"
+                return True, str(output_file)
+            else:
+                return False, result.stderr or "Conversion failed"
+        except subprocess.TimeoutExpired:
+            return False, "Conversion timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def batch_convert(self, sources: List[str], target_format: str,
+                     output_dir: str) -> List[Dict]:
+        """Batch convert multiple documents"""
+        results = []
+        for source in sources:
+            success, result = self.convert_document(source, target_format, output_dir)
+            results.append({
+                "source": source,
+                "success": success,
+                "result": result
+            })
+        return results
+    
+    def ai_grammar_check(self, text: str) -> Dict:
+        """AI grammar check placeholder"""
+        if not self.tier_manager.has_access("pro"):
+            return {"error": "AI features require Pro tier or higher"}
+        
+        return {
+            "status": "placeholder",
+            "message": "AI grammar checking will be available in a future update",
+            "suggestions": []
+        }
+    
+    def ai_summarize(self, text: str) -> Dict:
+        """AI summarization placeholder"""
+        if not self.tier_manager.has_access("pro"):
+            return {"error": "AI features require Pro tier or higher"}
+        
+        return {
+            "status": "placeholder",
+            "message": "AI summarization will be available in a future update",
+            "summary": ""
+        }
+    
+    def get_status(self) -> Dict:
+        """Get current status for --status CLI"""
+        installed_apps = self.get_installed_apps()
+        cloud_folders = self.get_cloud_folders()
+        
+        return {
+            "version": VERSION,
+            "status": "healthy" if installed_apps else "degraded",
+            "tier": self.tier_manager.get_tier_name(),
+            "libreoffice_installed": len(installed_apps) > 0,
+            "apps": {
+                "total": len(self.apps),
+                "installed": len(installed_apps),
+                "list": [asdict(a) for a in installed_apps]
+            },
+            "cloud_sync": {
+                "providers_available": len(cloud_folders),
+                "providers": [asdict(p) for p in cloud_folders]
+            },
+            "templates": {
+                "total": len(self.templates),
+                "accessible": len(self.get_templates()),
+                "categories": self.get_template_categories()
+            },
+            "recent_documents": len(self.recent),
+            "ai_features": {
+                "enabled": self.config.enable_ai_features,
+                "accessible": self.tier_manager.has_access("pro")
+            },
+            "config": asdict(self.config)
+        }
+
+
+class OfficeHubGUI:
+    """GTK3/Tkinter GUI for Office Hub"""
+    
+    def __init__(self, service: OfficeHubService):
+        self.service = service
+        self.root = None
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available for GUI mode")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1000x700")
+        self.root.configure(bg='#1e1e2e')
+        
+        self._setup_styles()
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        """Setup ttk styles"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('Header.TLabel', font=('Segoe UI', 20, 'bold'), 
+                       foreground='#89b4fa', background='#1e1e2e')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 14, 'bold'),
+                       foreground='#a6adc8', background='#1e1e2e')
+        style.configure('TButton', padding=12, font=('Segoe UI', 10))
+        style.configure('App.TButton', padding=20, font=('Segoe UI', 12))
+        style.configure('TNotebook', background='#1e1e2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Segoe UI', 10))
+    
+    def _create_widgets(self):
+        """Create main window widgets"""
+        main = ttk.Frame(self.root, padding=20)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(header, text="Aegis Office Hub", 
+                 style='Header.TLabel').pack(side=tk.LEFT)
+        
+        tier_text = f"Tier: {self.service.tier_manager.get_tier_name()}"
+        ttk.Label(header, text=tier_text, foreground='#fab387').pack(side=tk.RIGHT)
+        
+        notebook = ttk.Notebook(main)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        apps_frame = self._create_apps_tab()
+        notebook.add(apps_frame, text="Applications")
+        
+        recent_frame = self._create_recent_tab()
+        notebook.add(recent_frame, text="Recent Documents")
+        
+        templates_frame = self._create_templates_tab()
+        notebook.add(templates_frame, text="Templates")
+        
+        cloud_frame = self._create_cloud_tab()
+        notebook.add(cloud_frame, text="Cloud Sync")
+        
+        convert_frame = self._create_convert_tab()
+        notebook.add(convert_frame, text="Convert")
+        
+        ai_frame = self._create_ai_tab()
+        notebook.add(ai_frame, text="AI Features")
+    
+    def _create_apps_tab(self) -> ttk.Frame:
+        """Create applications tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="LibreOffice Applications",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        apps_container = ttk.Frame(frame)
+        apps_container.pack(fill=tk.BOTH, expand=True)
+        
+        row = 0
+        col = 0
+        for app in self.service.apps.values():
+            app_frame = ttk.Frame(apps_container)
+            app_frame.grid(row=row, column=col, padx=10, pady=10, sticky='nsew')
+            
+            status = "✓ Available" if app.installed else "✗ Not Installed"
+            status_color = '#a6e3a1' if app.installed else '#f38ba8'
+            
+            btn = ttk.Button(
+                app_frame,
+                text=f"{app.name}\n{app.description}",
+                style='App.TButton',
+                command=lambda a=app: self._launch_app(a)
+            )
+            btn.pack(fill=tk.X)
+            
+            status_label = ttk.Label(app_frame, text=status, foreground=status_color)
+            status_label.pack()
+            
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+        
+        for i in range(3):
+            apps_container.columnconfigure(i, weight=1)
+        
+        return frame
+    
+    def _create_recent_tab(self) -> ttk.Frame:
+        """Create recent documents tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Recent Documents",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        columns = ('name', 'type', 'opened', 'path')
+        tree = ttk.Treeview(frame, columns=columns, show='headings', height=15)
+        
+        tree.heading('name', text='Document Name')
+        tree.heading('type', text='Type')
+        tree.heading('opened', text='Last Opened')
+        tree.heading('path', text='Location')
+        
+        tree.column('name', width=250)
+        tree.column('type', width=100)
+        tree.column('opened', width=150)
+        tree.column('path', width=400)
+        
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        recent_docs = self.service.get_recent_documents(20)
+        for doc in recent_docs:
+            name = Path(doc.filepath).name
+            opened = doc.opened[:10] if doc.opened else "Unknown"
+            tree.insert('', tk.END, values=(name, doc.app_name, opened, doc.filepath))
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        def on_double_click(event):
+            selection = tree.selection()
+            if selection:
+                item = tree.item(selection[0])
+                filepath = item['values'][3]
+                app_type = item['values'][1].lower()
+                for app in self.service.apps.values():
+                    if app.name == item['values'][1]:
+                        self.service.launch_app(app.id, filepath)
+                        break
+        
+        tree.bind('<Double-1>', on_double_click)
+        
+        return frame
+    
+    def _create_templates_tab(self) -> ttk.Frame:
+        """Create templates tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Document Templates",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        categories = self.service.get_template_categories()
+        
+        canvas = tk.Canvas(frame, bg='#1e1e2e', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        
+        scroll_frame.bind("<Configure>",
+                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        for category in sorted(categories):
+            cat_frame = ttk.Frame(scroll_frame)
+            cat_frame.pack(fill=tk.X, pady=10, padx=5)
+            
+            ttk.Label(cat_frame, text=category.title(),
+                     style='SubHeader.TLabel').pack(anchor=tk.W)
+            
+            templates_row = ttk.Frame(cat_frame)
+            templates_row.pack(fill=tk.X, pady=5)
+            
+            templates = self.service.get_templates(category)
+            for template in templates:
+                tier_badge = ""
+                if template.tier_required != "free":
+                    tier_badge = f" [{template.tier_required.upper()}]"
+                
+                btn = ttk.Button(
+                    templates_row,
+                    text=f"{template.name}{tier_badge}\n{template.description}",
+                    command=lambda t=template: self._create_from_template(t)
+                )
+                btn.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        return frame
+    
+    def _create_cloud_tab(self) -> ttk.Frame:
+        """Create cloud sync tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Cloud Storage",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        providers = self.service.cloud_providers.values()
+        
+        providers_frame = ttk.Frame(frame)
+        providers_frame.pack(fill=tk.X, pady=10)
+        
+        for provider in providers:
+            status = "✓ Connected" if provider.enabled else "✗ Not Found"
+            status_color = '#a6e3a1' if provider.enabled else '#a6adc8'
+            
+            prov_frame = ttk.Frame(providers_frame)
+            prov_frame.pack(side=tk.LEFT, padx=20, pady=10)
+            
+            ttk.Label(prov_frame, text=provider.name,
+                     font=('Segoe UI', 12, 'bold')).pack()
+            ttk.Label(prov_frame, text=status, foreground=status_color).pack()
+            
+            if provider.enabled:
+                ttk.Button(prov_frame, text="Browse",
+                          command=lambda p=provider: self._browse_cloud(p)).pack(pady=5)
+        
+        ttk.Label(frame, text="\nCloud folder paths:",
+                 foreground='#a6adc8').pack(anchor=tk.W)
+        
+        for provider in providers:
+            path_text = f"{provider.name}: {provider.path}"
+            ttk.Label(frame, text=path_text, foreground='#6c7086').pack(anchor=tk.W)
+        
+        return frame
+    
+    def _create_convert_tab(self) -> ttk.Frame:
+        """Create document converter tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Document Converter",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        input_frame = ttk.Frame(frame)
+        input_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(input_frame, text="Source File:").pack(anchor=tk.W)
+        
+        file_row = ttk.Frame(input_frame)
+        file_row.pack(fill=tk.X, pady=5)
+        
+        self.source_var = tk.StringVar()
+        source_entry = ttk.Entry(file_row, textvariable=self.source_var, width=60)
+        source_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(file_row, text="Browse...",
+                  command=self._browse_source).pack(side=tk.LEFT)
+        
+        format_frame = ttk.Frame(frame)
+        format_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(format_frame, text="Convert to:").pack(anchor=tk.W)
+        
+        formats = ['pdf', 'docx', 'odt', 'xlsx', 'ods', 'pptx', 'odp', 'html', 'txt', 'csv']
+        self.format_var = tk.StringVar(value='pdf')
+        format_combo = ttk.Combobox(format_frame, textvariable=self.format_var,
+                                   values=formats, width=20)
+        format_combo.pack(anchor=tk.W, pady=5)
+        
+        output_frame = ttk.Frame(frame)
+        output_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(output_frame, text="Output Directory:").pack(anchor=tk.W)
+        
+        out_row = ttk.Frame(output_frame)
+        out_row.pack(fill=tk.X, pady=5)
+        
+        self.output_var = tk.StringVar(value=str(Path.home() / "Documents"))
+        output_entry = ttk.Entry(out_row, textvariable=self.output_var, width=60)
+        output_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(out_row, text="Browse...",
+                  command=self._browse_output).pack(side=tk.LEFT)
+        
+        ttk.Button(frame, text="Convert Document",
+                  command=self._convert_document).pack(pady=20)
+        
+        self.convert_result = ttk.Label(frame, text="", foreground='#a6adc8')
+        self.convert_result.pack()
+        
+        return frame
+    
+    def _create_ai_tab(self) -> ttk.Frame:
+        """Create AI features tab"""
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="AI Features",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        if not self.service.tier_manager.has_access("pro"):
+            ttk.Label(frame, text="🔒 AI features require Pro tier or higher",
+                     foreground='#fab387', font=('Segoe UI', 12)).pack(pady=20)
+            ttk.Label(frame, text="Upgrade your tier to access:\n"
+                     "• Grammar checking\n"
+                     "• Document summarization\n"
+                     "• Writing suggestions\n"
+                     "• Auto-formatting",
+                     foreground='#a6adc8').pack()
+        else:
+            ttk.Label(frame, text="AI features placeholder",
+                     foreground='#a6adc8').pack(pady=20)
+            
+            features_frame = ttk.Frame(frame)
+            features_frame.pack(fill=tk.X, pady=10)
+            
+            ttk.Button(features_frame, text="Grammar Check",
+                      command=self._ai_grammar).pack(side=tk.LEFT, padx=10)
+            ttk.Button(features_frame, text="Summarize",
+                      command=self._ai_summarize).pack(side=tk.LEFT, padx=10)
+            
+            ttk.Label(frame, text="\nNote: AI features will be available in a future update.",
+                     foreground='#6c7086').pack(pady=20)
+        
+        return frame
+    
+    def _launch_app(self, app: LibreOfficeApp):
+        """Launch LibreOffice application"""
+        if app.installed:
+            if self.service.launch_app(app.id):
+                pass
+            else:
+                messagebox.showerror("Error", f"Failed to launch {app.name}")
+        else:
+            messagebox.showwarning("Not Installed",
+                                  f"LibreOffice {app.name} is not installed.\n"
+                                  "Install LibreOffice to use this feature.")
+    
+    def _create_from_template(self, template: DocumentTemplate):
+        """Create document from template"""
+        if not self.service.tier_manager.has_access(template.tier_required):
+            messagebox.showwarning("Tier Required",
+                                  f"This template requires {template.tier_required.title()} tier.")
+            return
+        
+        save_path = filedialog.asksaveasfilename(
+            title=f"Create {template.name}",
+            initialdir=self.service.config.default_save_path,
+            defaultextension=".odt"
+        )
+        
+        if save_path:
+            if self.service.create_from_template(template.id, save_path):
+                messagebox.showinfo("Created", f"Document created: {Path(save_path).name}")
+    
+    def _browse_cloud(self, provider: CloudProvider):
+        """Browse cloud folder"""
+        docs = self.service.browse_cloud_folder(provider.id)
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{provider.name} Documents")
+        dialog.geometry("600x400")
+        dialog.configure(bg='#1e1e2e')
+        
+        columns = ('name', 'modified', 'size')
+        tree = ttk.Treeview(dialog, columns=columns, show='headings')
+        
+        tree.heading('name', text='Document')
+        tree.heading('modified', text='Modified')
+        tree.heading('size', text='Size')
+        
+        for doc in docs:
+            size_kb = doc['size'] // 1024
+            tree.insert('', tk.END, values=(doc['name'], doc['modified'][:10], f"{size_kb} KB"))
+        
+        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    def _browse_source(self):
+        """Browse for source file"""
+        filepath = filedialog.askopenfilename(
+            title="Select Document",
+            filetypes=[
+                ("Office Documents", "*.odt *.ods *.odp *.doc *.docx *.xls *.xlsx *.ppt *.pptx"),
+                ("All Files", "*.*")
+            ]
+        )
+        if filepath:
+            self.source_var.set(filepath)
+    
+    def _browse_output(self):
+        """Browse for output directory"""
+        directory = filedialog.askdirectory(title="Select Output Directory")
+        if directory:
+            self.output_var.set(directory)
+    
+    def _convert_document(self):
+        """Convert document"""
+        source = self.source_var.get()
+        target_format = self.format_var.get()
+        output_dir = self.output_var.get()
+        
+        if not source:
+            messagebox.showerror("Error", "Please select a source file")
+            return
+        
+        self.convert_result.configure(text="Converting...", foreground='#89b4fa')
+        self.root.update()
+        
+        success, result = self.service.convert_document(source, target_format, output_dir)
+        
+        if success:
+            self.convert_result.configure(text=f"✓ Converted: {Path(result).name}",
+                                         foreground='#a6e3a1')
+        else:
+            self.convert_result.configure(text=f"✗ Error: {result}", foreground='#f38ba8')
+    
+    def _ai_grammar(self):
+        """AI grammar check"""
+        result = self.service.ai_grammar_check("")
+        messagebox.showinfo("AI Grammar", result.get("message", "Coming soon"))
+    
+    def _ai_summarize(self):
+        """AI summarization"""
+        result = self.service.ai_summarize("")
+        messagebox.showinfo("AI Summarize", result.get("message", "Coming soon"))
+
+
+def cli_mode(service: OfficeHubService, args: argparse.Namespace):
+    """Handle CLI mode operations"""
+    if args.cli_command == "list-apps":
+        apps = service.get_installed_apps()
+        print(f"LibreOffice Applications ({len(apps)} installed):")
+        for app in service.apps.values():
+            status = "✓" if app.installed else "✗"
+            print(f"  {status} {app.name} - {app.description}")
+    
+    elif args.cli_command == "launch":
+        if not args.app:
+            print("Error: --app required", file=sys.stderr)
+            sys.exit(1)
+        filepath = args.file if hasattr(args, 'file') else None
+        if service.launch_app(args.app, filepath):
+            print(f"Launched {args.app}")
+        else:
+            print(f"Failed to launch {args.app}", file=sys.stderr)
+            sys.exit(1)
+    
+    elif args.cli_command == "recent":
+        recent = service.get_recent_documents(10)
+        if recent:
+            print("Recent documents:")
+            for doc in recent:
+                print(f"  - {Path(doc.filepath).name} ({doc.app_name})")
+        else:
+            print("No recent documents")
+    
+    elif args.cli_command == "templates":
+        templates = service.get_templates()
+        categories = service.get_template_categories()
+        print(f"Available templates ({len(templates)}):")
+        for category in sorted(categories):
+            print(f"\n  {category.title()}:")
+            for t in service.get_templates(category):
+                tier = f" [{t.tier_required}]" if t.tier_required != "free" else ""
+                print(f"    - {t.name}{tier}: {t.description}")
+    
+    elif args.cli_command == "convert":
+        if not args.source or not args.format:
+            print("Error: --source and --format required", file=sys.stderr)
+            sys.exit(1)
+        output = args.output if hasattr(args, 'output') and args.output else None
+        success, result = service.convert_document(args.source, args.format, output)
+        if success:
+            print(f"Converted: {result}")
+        else:
+            print(f"Error: {result}", file=sys.stderr)
+            sys.exit(1)
+    
+    elif args.cli_command == "cloud":
+        providers = service.get_cloud_folders()
+        if providers:
+            print("Cloud storage providers:")
+            for p in providers:
+                print(f"  ✓ {p.name}: {p.path}")
+        else:
+            print("No cloud storage folders found")
+    
+    else:
+        print(f"Unknown command: {args.cli_command}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=f"{APP_NAME} - LibreOffice wrapper with enhanced features"
+    )
+    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--status', action='store_true', help='Show status as JSON')
+    parser.add_argument('--cli', dest='cli_command', metavar='COMMAND',
+                       help='CLI mode: list-apps, launch, recent, templates, convert, cloud')
+    parser.add_argument('--app', metavar='APP_ID', help='App ID for launch command')
+    parser.add_argument('--file', metavar='FILE', help='File to open')
+    parser.add_argument('--source', metavar='FILE', help='Source file for conversion')
+    parser.add_argument('--format', metavar='FORMAT', help='Target format for conversion')
+    parser.add_argument('--output', metavar='DIR', help='Output directory for conversion')
+    parser.add_argument('--version', action='version', version=f'{APP_NAME} v{VERSION}')
+    
+    args = parser.parse_args()
+    service = OfficeHubService()
+    
+    if args.status:
+        print(json.dumps(service.get_status(), indent=2))
+    elif args.cli_command:
+        cli_mode(service, args)
+    elif args.gui or not any([args.status, args.cli_command]):
+        if TKINTER_AVAILABLE:
+            gui = OfficeHubGUI(service)
+            gui.run()
+        else:
+            print("GUI mode requires tkinter. Use --status or --cli for CLI options.")
+            print("Try: --cli list-apps, --cli recent, --cli templates")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

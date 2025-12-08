@@ -1,0 +1,1655 @@
+#!/usr/bin/env python3
+"""
+Aegis Resolve Studio v1.0.0
+DaVinci Resolve manager and enhancer
+
+Features:
+  - GTK3 GUI for managing DaVinci Resolve installation
+  - Automatic download helper for DaVinci Resolve Free from Blackmagic
+  - GPU detection and configuration (NVIDIA CUDA, AMD ROCm, Intel OpenCL)
+  - Codec pack installer (additional format support)
+  - Project templates for common workflows
+  - Media cache manager
+  - Render farm setup helper
+  - Proxy workflow configuration
+  - Fusion integration settings
+  - Color management profiles
+  - --status CLI for health check
+  - Tier gating (Basic: manual install, Gamer+/AI: auto-config with GPU optimization)
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+import tempfile
+import urllib.request
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Resolve Studio"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "resolve-studio"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+CACHE_DIR = CONFIG_DIR / "cache"
+TEMPLATES_DIR = CONFIG_DIR / "templates"
+PROFILES_DIR = CONFIG_DIR / "color-profiles"
+TIER_CONFIG = Path("/etc/aegis/tier.conf")
+
+RESOLVE_PATHS = [
+    Path("/opt/resolve"),
+    Path("/opt/DaVinci Resolve"),
+    Path("/opt/blackmagic/DaVinci Resolve"),
+    Path.home() / "DaVinci Resolve"
+]
+
+BLACKMAGIC_DOWNLOAD_URL = "https://www.blackmagicdesign.com/products/davinciresolve"
+
+
+class Tier(Enum):
+    FREE = "free"
+    BASIC = "basic"
+    GAMER = "gamer"
+    AI = "ai"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+
+
+class GPUVendor(Enum):
+    NVIDIA = "nvidia"
+    AMD = "amd"
+    INTEL = "intel"
+    UNKNOWN = "unknown"
+
+
+class GPUAcceleration(Enum):
+    CUDA = "cuda"
+    ROCM = "rocm"
+    OPENCL = "opencl"
+    METAL = "metal"
+    NONE = "none"
+
+
+@dataclass
+class GPUDevice:
+    id: str
+    name: str
+    vendor: str
+    driver: str
+    vram_mb: int
+    acceleration: str
+    cuda_version: str = ""
+    rocm_version: str = ""
+    opencl_version: str = ""
+    is_compatible: bool = False
+    is_primary: bool = False
+
+
+@dataclass
+class ResolveInstallation:
+    installed: bool = False
+    version: str = ""
+    path: str = ""
+    edition: str = "free"
+    gpu_mode: str = "auto"
+    fusion_enabled: bool = True
+    fairlight_enabled: bool = True
+
+
+@dataclass
+class ProjectTemplate:
+    id: str
+    name: str
+    category: str
+    resolution: str
+    framerate: str
+    color_space: str
+    description: str
+    tier_required: str = "free"
+
+
+DEFAULT_TEMPLATES = [
+    ProjectTemplate("youtube-1080p", "YouTube 1080p", "social", "1920x1080", "30", "Rec.709",
+                   "Standard YouTube upload preset"),
+    ProjectTemplate("youtube-4k", "YouTube 4K", "social", "3840x2160", "30", "Rec.709",
+                   "4K YouTube upload preset", "gamer"),
+    ProjectTemplate("instagram-square", "Instagram Square", "social", "1080x1080", "30", "Rec.709",
+                   "Instagram square video"),
+    ProjectTemplate("tiktok-vertical", "TikTok Vertical", "social", "1080x1920", "30", "Rec.709",
+                   "TikTok/Reels vertical video"),
+    ProjectTemplate("film-2k", "Film 2K", "cinema", "2048x1080", "24", "DCI-P3",
+                   "Cinema 2K digital intermediate", "pro"),
+    ProjectTemplate("film-4k", "Film 4K", "cinema", "4096x2160", "24", "DCI-P3",
+                   "Cinema 4K digital intermediate", "pro"),
+    ProjectTemplate("broadcast-hd", "Broadcast HD", "broadcast", "1920x1080", "25", "Rec.709",
+                   "European broadcast standard", "gamer"),
+    ProjectTemplate("broadcast-ntsc", "Broadcast NTSC", "broadcast", "1920x1080", "29.97", "Rec.709",
+                   "North American broadcast", "gamer"),
+    ProjectTemplate("hdr-4k", "HDR 4K", "hdr", "3840x2160", "24", "Rec.2100 HLG",
+                   "HDR content creation", "pro"),
+    ProjectTemplate("raw-grading", "RAW Color Grade", "color", "4096x2160", "24", "DaVinci Wide Gamut",
+                   "RAW footage color grading", "pro"),
+]
+
+
+@dataclass
+class ColorProfile:
+    id: str
+    name: str
+    input_space: str
+    output_space: str
+    lut_path: str = ""
+    description: str = ""
+
+
+DEFAULT_COLOR_PROFILES = [
+    ColorProfile("rec709-standard", "Rec.709 Standard", "Rec.709", "Rec.709",
+                description="Standard HD color space"),
+    ColorProfile("rec709-to-srgb", "Rec.709 to sRGB", "Rec.709", "sRGB",
+                description="Web/computer display"),
+    ColorProfile("slog3-to-rec709", "S-Log3 to Rec.709", "S-Gamut3.Cine/S-Log3", "Rec.709",
+                description="Sony camera footage"),
+    ColorProfile("vlog-to-rec709", "V-Log to Rec.709", "V-Gamut/V-Log", "Rec.709",
+                description="Panasonic camera footage"),
+    ColorProfile("clog3-to-rec709", "C-Log3 to Rec.709", "Cinema Gamut/C-Log3", "Rec.709",
+                description="Canon camera footage"),
+    ColorProfile("arri-logc-to-rec709", "ARRI LogC to Rec.709", "ARRI Wide Gamut/LogC", "Rec.709",
+                description="ARRI camera footage"),
+    ColorProfile("redlog3g10-to-rec709", "REDLog3G10 to Rec.709", "REDWideGamutRGB/Log3G10", "Rec.709",
+                description="RED camera footage"),
+    ColorProfile("aces-cct", "ACES CCT", "ACEScct", "Rec.709",
+                description="ACES color management"),
+    ColorProfile("davinci-wide-gamut", "DaVinci Wide Gamut", "DaVinci Wide Gamut", "Rec.709",
+                description="DaVinci intermediate"),
+    ColorProfile("hdr-hlg", "HDR HLG", "Rec.2100 HLG", "Rec.2100 HLG",
+                description="HDR Hybrid Log-Gamma"),
+    ColorProfile("hdr-pq", "HDR PQ", "Rec.2100 PQ", "Rec.2100 PQ",
+                description="HDR Perceptual Quantizer"),
+]
+
+
+@dataclass
+class CodecPack:
+    id: str
+    name: str
+    description: str
+    packages: List[str]
+    installed: bool = False
+
+
+DEFAULT_CODEC_PACKS = [
+    CodecPack("prores", "Apple ProRes", "ProRes encoding/decoding support",
+              ["ffmpeg"]),
+    CodecPack("dnxhd", "Avid DNxHD/DNxHR", "DNxHD/DNxHR professional codec",
+              ["ffmpeg"]),
+    CodecPack("cineform", "GoPro CineForm", "CineForm intermediate codec",
+              ["ffmpeg"]),
+    CodecPack("hevc", "HEVC/H.265", "High efficiency video coding",
+              ["ffmpeg", "x265"]),
+    CodecPack("av1", "AV1", "Next-generation open codec",
+              ["ffmpeg", "libaom"]),
+    CodecPack("raw-formats", "RAW Camera Formats", "BRAW, R3D, ARRIRAW support",
+              []),
+]
+
+
+@dataclass
+class RenderNode:
+    hostname: str
+    ip_address: str
+    port: int = 5050
+    status: str = "unknown"
+    gpu_info: str = ""
+    enabled: bool = True
+
+
+@dataclass
+class ProxySettings:
+    enabled: bool = True
+    resolution: str = "Quarter"
+    format: str = "ProRes Proxy"
+    location: str = ""
+    auto_generate: bool = False
+
+
+@dataclass
+class FusionSettings:
+    enabled: bool = True
+    gpu_acceleration: bool = True
+    memory_limit_gb: int = 4
+    disk_cache_gb: int = 20
+    render_quality: str = "auto"
+
+
+@dataclass
+class MediaCacheSettings:
+    location: str = ""
+    max_size_gb: int = 50
+    auto_cleanup: bool = True
+    cleanup_days: int = 30
+    optimized_media_location: str = ""
+    proxy_location: str = ""
+
+
+@dataclass
+class ResolveStudioConfig:
+    installation: ResolveInstallation = field(default_factory=ResolveInstallation)
+    media_cache: MediaCacheSettings = field(default_factory=MediaCacheSettings)
+    proxy_settings: ProxySettings = field(default_factory=ProxySettings)
+    fusion_settings: FusionSettings = field(default_factory=FusionSettings)
+    render_nodes: List[Dict] = field(default_factory=list)
+    color_profile: str = "rec709-standard"
+    default_template: str = "youtube-1080p"
+    auto_gpu_config: bool = True
+    performance_mode: str = "balanced"
+
+
+class TierManager:
+    def __init__(self):
+        self.current_tier = self._load_tier()
+    
+    def _load_tier(self) -> Tier:
+        if TIER_CONFIG.exists():
+            try:
+                with open(TIER_CONFIG, 'r') as f:
+                    content = f.read().strip()
+                    for line in content.split('\n'):
+                        if line.startswith('TIER='):
+                            tier_value = line.split('=')[1].strip().strip('"\'').lower()
+                            try:
+                                return Tier(tier_value)
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+        return Tier.FREE
+    
+    def has_access(self, required_tier: str) -> bool:
+        tier_hierarchy = {
+            Tier.FREE: 0,
+            Tier.BASIC: 1,
+            Tier.GAMER: 2,
+            Tier.AI: 2,
+            Tier.PRO: 3,
+            Tier.ENTERPRISE: 4
+        }
+        
+        try:
+            required = Tier(required_tier)
+        except ValueError:
+            return True
+        
+        return tier_hierarchy.get(self.current_tier, 0) >= tier_hierarchy.get(required, 0)
+    
+    def can_auto_config(self) -> bool:
+        return self.current_tier in [Tier.GAMER, Tier.AI, Tier.PRO, Tier.ENTERPRISE]
+    
+    def get_tier_name(self) -> str:
+        return self.current_tier.value.title()
+
+
+class GPUDetector:
+    @staticmethod
+    def detect_nvidia() -> List[GPUDevice]:
+        gpus = []
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index,name,driver_version,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    parts = [p.strip() for p in line.split(',')]
+                    if len(parts) >= 4:
+                        cuda_version = GPUDetector._get_cuda_version()
+                        gpu = GPUDevice(
+                            id=f"nvidia:{parts[0]}",
+                            name=parts[1],
+                            vendor="nvidia",
+                            driver=parts[2],
+                            vram_mb=int(parts[3]) if parts[3].isdigit() else 0,
+                            acceleration="cuda" if cuda_version else "opencl",
+                            cuda_version=cuda_version,
+                            is_compatible=True,
+                            is_primary=(parts[0] == "0")
+                        )
+                        gpus.append(gpu)
+        except Exception:
+            pass
+        return gpus
+    
+    @staticmethod
+    def _get_cuda_version() -> str:
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                nvcc_result = subprocess.run(
+                    ["nvcc", "--version"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if nvcc_result.returncode == 0:
+                    for line in nvcc_result.stdout.split('\n'):
+                        if "release" in line.lower():
+                            parts = line.split("release")
+                            if len(parts) > 1:
+                                version = parts[1].strip().split(',')[0].strip()
+                                return version
+                return "available"
+        except Exception:
+            pass
+        return ""
+    
+    @staticmethod
+    def detect_amd() -> List[GPUDevice]:
+        gpus = []
+        try:
+            result = subprocess.run(
+                ["rocm-smi", "--showproductname"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                rocm_version = GPUDetector._get_rocm_version()
+                drm_path = Path("/sys/class/drm")
+                idx = 0
+                for card in drm_path.glob("card[0-9]*"):
+                    device_path = card / "device"
+                    vendor_file = device_path / "vendor"
+                    if vendor_file.exists():
+                        vendor_id = vendor_file.read_text().strip()
+                        if vendor_id == "0x1002":
+                            name = "AMD GPU"
+                            name_file = device_path / "product_name"
+                            if name_file.exists():
+                                name = name_file.read_text().strip()
+                            
+                            gpu = GPUDevice(
+                                id=f"amd:{card.name}",
+                                name=name,
+                                vendor="amd",
+                                driver="amdgpu",
+                                vram_mb=0,
+                                acceleration="rocm" if rocm_version else "opencl",
+                                rocm_version=rocm_version,
+                                is_compatible=bool(rocm_version),
+                                is_primary=(idx == 0)
+                            )
+                            gpus.append(gpu)
+                            idx += 1
+        except Exception:
+            pass
+        
+        if not gpus:
+            drm_path = Path("/sys/class/drm")
+            if drm_path.exists():
+                idx = 0
+                for card in drm_path.glob("card[0-9]*"):
+                    device_path = card / "device"
+                    vendor_file = device_path / "vendor"
+                    if vendor_file.exists():
+                        try:
+                            vendor_id = vendor_file.read_text().strip()
+                            if vendor_id == "0x1002":
+                                gpu = GPUDevice(
+                                    id=f"amd:{card.name}",
+                                    name="AMD GPU",
+                                    vendor="amd",
+                                    driver="amdgpu",
+                                    vram_mb=0,
+                                    acceleration="opencl",
+                                    is_compatible=False,
+                                    is_primary=(idx == 0)
+                                )
+                                gpus.append(gpu)
+                                idx += 1
+                        except Exception:
+                            pass
+        return gpus
+    
+    @staticmethod
+    def _get_rocm_version() -> str:
+        try:
+            result = subprocess.run(
+                ["rocminfo"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if "ROCm" in line and "Version" in line:
+                        parts = line.split(":")
+                        if len(parts) > 1:
+                            return parts[1].strip()
+                return "available"
+        except Exception:
+            pass
+        return ""
+    
+    @staticmethod
+    def detect_intel() -> List[GPUDevice]:
+        gpus = []
+        drm_path = Path("/sys/class/drm")
+        if drm_path.exists():
+            idx = 0
+            for card in drm_path.glob("card[0-9]*"):
+                device_path = card / "device"
+                vendor_file = device_path / "vendor"
+                if vendor_file.exists():
+                    try:
+                        vendor_id = vendor_file.read_text().strip()
+                        if vendor_id == "0x8086":
+                            opencl_version = GPUDetector._get_intel_opencl()
+                            gpu = GPUDevice(
+                                id=f"intel:{card.name}",
+                                name="Intel GPU",
+                                vendor="intel",
+                                driver="i915",
+                                vram_mb=0,
+                                acceleration="opencl" if opencl_version else "none",
+                                opencl_version=opencl_version,
+                                is_compatible=bool(opencl_version),
+                                is_primary=(idx == 0)
+                            )
+                            gpus.append(gpu)
+                            idx += 1
+                    except Exception:
+                        pass
+        return gpus
+    
+    @staticmethod
+    def _get_intel_opencl() -> str:
+        try:
+            result = subprocess.run(
+                ["clinfo", "-l"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and "Intel" in result.stdout:
+                return "available"
+        except Exception:
+            pass
+        return ""
+    
+    @classmethod
+    def detect_all(cls) -> List[GPUDevice]:
+        gpus = []
+        gpus.extend(cls.detect_nvidia())
+        gpus.extend(cls.detect_amd())
+        gpus.extend(cls.detect_intel())
+        
+        if gpus and not any(g.is_primary for g in gpus):
+            gpus[0].is_primary = True
+        
+        return gpus
+
+
+class ResolveStudioService:
+    def __init__(self):
+        self._init_directories()
+        self.config = self._load_config()
+        self.tier_manager = TierManager()
+        self.templates = {t.id: t for t in DEFAULT_TEMPLATES}
+        self.color_profiles = {p.id: p for p in DEFAULT_COLOR_PROFILES}
+        self.codec_packs = {c.id: c for c in DEFAULT_CODEC_PACKS}
+        self._detect_installation()
+        self._check_codecs()
+    
+    def _init_directories(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+        PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def _load_config(self) -> ResolveStudioConfig:
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    config = ResolveStudioConfig()
+                    if 'installation' in data:
+                        config.installation = ResolveInstallation(**data['installation'])
+                    if 'media_cache' in data:
+                        config.media_cache = MediaCacheSettings(**data['media_cache'])
+                    if 'proxy_settings' in data:
+                        config.proxy_settings = ProxySettings(**data['proxy_settings'])
+                    if 'fusion_settings' in data:
+                        config.fusion_settings = FusionSettings(**data['fusion_settings'])
+                    if 'render_nodes' in data:
+                        config.render_nodes = data['render_nodes']
+                    for key in ['color_profile', 'default_template', 'auto_gpu_config', 'performance_mode']:
+                        if key in data:
+                            setattr(config, key, data[key])
+                    return config
+            except Exception:
+                pass
+        
+        config = ResolveStudioConfig()
+        config.media_cache.location = str(CONFIG_DIR / "media-cache")
+        config.proxy_settings.location = str(CONFIG_DIR / "proxy-media")
+        self._save_config(config)
+        return config
+    
+    def _save_config(self, config: Optional[ResolveStudioConfig] = None):
+        if config:
+            self.config = config
+        
+        data = {
+            'installation': asdict(self.config.installation),
+            'media_cache': asdict(self.config.media_cache),
+            'proxy_settings': asdict(self.config.proxy_settings),
+            'fusion_settings': asdict(self.config.fusion_settings),
+            'render_nodes': self.config.render_nodes,
+            'color_profile': self.config.color_profile,
+            'default_template': self.config.default_template,
+            'auto_gpu_config': self.config.auto_gpu_config,
+            'performance_mode': self.config.performance_mode,
+        }
+        
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    def _detect_installation(self):
+        for resolve_path in RESOLVE_PATHS:
+            if resolve_path.exists():
+                bin_path = resolve_path / "bin" / "resolve"
+                if not bin_path.exists():
+                    bin_path = resolve_path / "resolve"
+                
+                if bin_path.exists() or (resolve_path / "bin").exists():
+                    self.config.installation.installed = True
+                    self.config.installation.path = str(resolve_path)
+                    
+                    version = self._get_resolve_version(resolve_path)
+                    if version:
+                        self.config.installation.version = version
+                    
+                    if "Studio" in str(resolve_path) or self._check_studio_license():
+                        self.config.installation.edition = "studio"
+                    else:
+                        self.config.installation.edition = "free"
+                    
+                    self._save_config()
+                    return
+        
+        resolve_bin = shutil.which("resolve")
+        if resolve_bin:
+            self.config.installation.installed = True
+            self.config.installation.path = str(Path(resolve_bin).parent.parent)
+            self._save_config()
+    
+    def _get_resolve_version(self, resolve_path: Path) -> str:
+        version_file = resolve_path / "docs" / "version"
+        if version_file.exists():
+            try:
+                return version_file.read_text().strip()
+            except Exception:
+                pass
+        
+        readme = resolve_path / "docs" / "ReadMe.txt"
+        if readme.exists():
+            try:
+                content = readme.read_text()
+                for line in content.split('\n'):
+                    if "version" in line.lower():
+                        parts = line.split()
+                        for part in parts:
+                            if part[0].isdigit():
+                                return part.strip('.,')
+            except Exception:
+                pass
+        return ""
+    
+    def _check_studio_license(self) -> bool:
+        license_paths = [
+            Path.home() / ".license" / "davinci",
+            Path("/var/lib/blackmagic/DaVinci Resolve/license"),
+        ]
+        for path in license_paths:
+            if path.exists():
+                return True
+        return False
+    
+    def _check_codecs(self):
+        for codec_id, codec in self.codec_packs.items():
+            if not codec.packages:
+                codec.installed = False
+                continue
+            
+            all_installed = True
+            for pkg in codec.packages:
+                if not shutil.which(pkg):
+                    if pkg == "ffmpeg":
+                        result = subprocess.run(
+                            ["which", "ffmpeg"],
+                            capture_output=True, text=True
+                        )
+                        if result.returncode != 0:
+                            all_installed = False
+                            break
+                    elif pkg not in ["x265", "libaom"]:
+                        all_installed = False
+                        break
+            
+            codec.installed = all_installed
+    
+    def detect_gpus(self) -> List[GPUDevice]:
+        return GPUDetector.detect_all()
+    
+    def get_recommended_gpu_config(self) -> Dict:
+        gpus = self.detect_gpus()
+        
+        config = {
+            "primary_gpu": None,
+            "acceleration": "none",
+            "cuda_available": False,
+            "rocm_available": False,
+            "opencl_available": False,
+            "recommended_settings": {}
+        }
+        
+        nvidia_gpus = [g for g in gpus if g.vendor == "nvidia"]
+        amd_gpus = [g for g in gpus if g.vendor == "amd"]
+        intel_gpus = [g for g in gpus if g.vendor == "intel"]
+        
+        if nvidia_gpus:
+            primary = nvidia_gpus[0]
+            config["primary_gpu"] = asdict(primary)
+            config["acceleration"] = "cuda"
+            config["cuda_available"] = bool(primary.cuda_version)
+            config["recommended_settings"] = {
+                "gpu_processing_mode": "CUDA",
+                "gpu_selection": primary.id,
+                "decode_mode": "GPU",
+                "encode_mode": "GPU",
+            }
+        elif amd_gpus:
+            primary = amd_gpus[0]
+            config["primary_gpu"] = asdict(primary)
+            config["acceleration"] = "rocm" if primary.rocm_version else "opencl"
+            config["rocm_available"] = bool(primary.rocm_version)
+            config["opencl_available"] = True
+            config["recommended_settings"] = {
+                "gpu_processing_mode": "OpenCL",
+                "gpu_selection": primary.id,
+                "decode_mode": "GPU",
+                "encode_mode": "GPU" if primary.rocm_version else "CPU",
+            }
+        elif intel_gpus:
+            primary = intel_gpus[0]
+            config["primary_gpu"] = asdict(primary)
+            config["acceleration"] = "opencl"
+            config["opencl_available"] = bool(primary.opencl_version)
+            config["recommended_settings"] = {
+                "gpu_processing_mode": "OpenCL",
+                "gpu_selection": primary.id,
+                "decode_mode": "GPU",
+                "encode_mode": "CPU",
+            }
+        else:
+            config["recommended_settings"] = {
+                "gpu_processing_mode": "CPU",
+                "decode_mode": "CPU",
+                "encode_mode": "CPU",
+            }
+        
+        return config
+    
+    def apply_gpu_optimization(self) -> Tuple[bool, str]:
+        if not self.tier_manager.can_auto_config():
+            return False, "GPU auto-configuration requires Gamer tier or higher"
+        
+        gpu_config = self.get_recommended_gpu_config()
+        
+        if gpu_config["primary_gpu"]:
+            self.config.installation.gpu_mode = gpu_config["acceleration"]
+            self._save_config()
+            return True, f"Applied {gpu_config['acceleration'].upper()} acceleration settings"
+        
+        return False, "No compatible GPU detected"
+    
+    def launch_resolve(self, project_file: Optional[str] = None) -> bool:
+        if not self.config.installation.installed:
+            return False
+        
+        resolve_bin = Path(self.config.installation.path) / "bin" / "resolve"
+        if not resolve_bin.exists():
+            resolve_bin = shutil.which("resolve")
+        
+        if not resolve_bin:
+            return False
+        
+        try:
+            cmd = [str(resolve_bin)]
+            if project_file and Path(project_file).exists():
+                cmd.append(project_file)
+            
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception:
+            return False
+    
+    def get_download_info(self) -> Dict:
+        return {
+            "url": BLACKMAGIC_DOWNLOAD_URL,
+            "registration_required": True,
+            "free_version_available": True,
+            "studio_version_price": "$295",
+            "system_requirements": {
+                "min_ram_gb": 16,
+                "recommended_ram_gb": 32,
+                "min_vram_gb": 2,
+                "recommended_vram_gb": 8,
+                "disk_space_gb": 10,
+            },
+            "supported_gpus": {
+                "nvidia": "CUDA 11.0+ (Kepler architecture or newer)",
+                "amd": "ROCm 5.0+ (Vega architecture or newer)",
+                "intel": "OpenCL 1.2+ (6th gen or newer)",
+            }
+        }
+    
+    def open_download_page(self) -> bool:
+        try:
+            import webbrowser
+            webbrowser.open(BLACKMAGIC_DOWNLOAD_URL)
+            return True
+        except Exception:
+            return False
+    
+    def get_templates(self, category: Optional[str] = None) -> List[ProjectTemplate]:
+        templates = []
+        for template in self.templates.values():
+            if self.tier_manager.has_access(template.tier_required):
+                if category is None or template.category == category:
+                    templates.append(template)
+        return templates
+    
+    def get_template_categories(self) -> List[str]:
+        return list(set(t.category for t in self.templates.values()))
+    
+    def get_color_profiles(self) -> List[ColorProfile]:
+        return list(self.color_profiles.values())
+    
+    def get_codec_packs(self) -> List[CodecPack]:
+        return list(self.codec_packs.values())
+    
+    def install_codec_pack(self, codec_id: str) -> Tuple[bool, str]:
+        if codec_id not in self.codec_packs:
+            return False, "Unknown codec pack"
+        
+        codec = self.codec_packs[codec_id]
+        if codec.installed:
+            return True, "Already installed"
+        
+        if not codec.packages:
+            return False, "This codec requires manual installation from Blackmagic"
+        
+        try:
+            for pkg in codec.packages:
+                result = subprocess.run(
+                    ["pkexec", "apt-get", "install", "-y", pkg],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode != 0:
+                    return False, f"Failed to install {pkg}"
+            
+            codec.installed = True
+            return True, f"Successfully installed {codec.name}"
+        except subprocess.TimeoutExpired:
+            return False, "Installation timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def add_render_node(self, hostname: str, ip_address: str, port: int = 5050) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access("pro"):
+            return False, "Render farm requires Pro tier"
+        
+        for node in self.config.render_nodes:
+            if node.get('hostname') == hostname or node.get('ip_address') == ip_address:
+                return False, "Node already exists"
+        
+        new_node = asdict(RenderNode(
+            hostname=hostname,
+            ip_address=ip_address,
+            port=port
+        ))
+        self.config.render_nodes.append(new_node)
+        self._save_config()
+        return True, f"Added render node: {hostname}"
+    
+    def remove_render_node(self, hostname: str) -> Tuple[bool, str]:
+        for i, node in enumerate(self.config.render_nodes):
+            if node.get('hostname') == hostname:
+                self.config.render_nodes.pop(i)
+                self._save_config()
+                return True, f"Removed render node: {hostname}"
+        return False, "Node not found"
+    
+    def check_render_node(self, hostname: str) -> Dict:
+        import socket
+        
+        for node in self.config.render_nodes:
+            if node.get('hostname') == hostname:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(3)
+                    result = sock.connect_ex((node['ip_address'], node['port']))
+                    sock.close()
+                    
+                    if result == 0:
+                        node['status'] = 'online'
+                    else:
+                        node['status'] = 'offline'
+                except Exception:
+                    node['status'] = 'error'
+                
+                return node
+        return {"status": "not_found"}
+    
+    def get_cache_size(self) -> Dict:
+        cache_info = {
+            "media_cache_mb": 0,
+            "proxy_cache_mb": 0,
+            "optimized_media_mb": 0,
+            "total_mb": 0
+        }
+        
+        cache_path = Path(self.config.media_cache.location)
+        if cache_path.exists():
+            try:
+                cache_info["media_cache_mb"] = sum(
+                    f.stat().st_size for f in cache_path.rglob('*') if f.is_file()
+                ) // (1024 * 1024)
+            except Exception:
+                pass
+        
+        proxy_path = Path(self.config.proxy_settings.location)
+        if proxy_path.exists():
+            try:
+                cache_info["proxy_cache_mb"] = sum(
+                    f.stat().st_size for f in proxy_path.rglob('*') if f.is_file()
+                ) // (1024 * 1024)
+            except Exception:
+                pass
+        
+        cache_info["total_mb"] = cache_info["media_cache_mb"] + cache_info["proxy_cache_mb"]
+        return cache_info
+    
+    def clear_cache(self, cache_type: str = "all") -> Tuple[bool, str]:
+        cleared = 0
+        
+        try:
+            if cache_type in ["all", "media"]:
+                cache_path = Path(self.config.media_cache.location)
+                if cache_path.exists():
+                    for f in cache_path.rglob('*'):
+                        if f.is_file():
+                            f.unlink()
+                            cleared += 1
+            
+            if cache_type in ["all", "proxy"]:
+                proxy_path = Path(self.config.proxy_settings.location)
+                if proxy_path.exists():
+                    for f in proxy_path.rglob('*'):
+                        if f.is_file():
+                            f.unlink()
+                            cleared += 1
+            
+            return True, f"Cleared {cleared} cached files"
+        except Exception as e:
+            return False, str(e)
+    
+    def get_status(self) -> Dict:
+        gpus = self.detect_gpus()
+        gpu_config = self.get_recommended_gpu_config()
+        cache_info = self.get_cache_size()
+        
+        compatible_gpus = [g for g in gpus if g.is_compatible]
+        
+        status = "healthy"
+        issues = []
+        
+        if not self.config.installation.installed:
+            status = "not_installed"
+            issues.append("DaVinci Resolve is not installed")
+        elif not compatible_gpus:
+            status = "degraded"
+            issues.append("No compatible GPU detected - CPU-only mode")
+        
+        return {
+            "version": VERSION,
+            "status": status,
+            "issues": issues,
+            "tier": self.tier_manager.get_tier_name(),
+            "can_auto_config": self.tier_manager.can_auto_config(),
+            "installation": asdict(self.config.installation),
+            "gpus": {
+                "detected": len(gpus),
+                "compatible": len(compatible_gpus),
+                "devices": [asdict(g) for g in gpus],
+                "recommended_config": gpu_config
+            },
+            "cache": cache_info,
+            "templates": {
+                "total": len(self.templates),
+                "accessible": len(self.get_templates()),
+                "categories": self.get_template_categories()
+            },
+            "color_profiles": len(self.color_profiles),
+            "codec_packs": {
+                "total": len(self.codec_packs),
+                "installed": len([c for c in self.codec_packs.values() if c.installed]),
+                "packs": [{"id": c.id, "name": c.name, "installed": c.installed} 
+                         for c in self.codec_packs.values()]
+            },
+            "render_farm": {
+                "nodes": len(self.config.render_nodes),
+                "accessible": self.tier_manager.has_access("pro")
+            },
+            "proxy_settings": asdict(self.config.proxy_settings),
+            "fusion_settings": asdict(self.config.fusion_settings),
+            "media_cache": asdict(self.config.media_cache)
+        }
+
+
+class ResolveStudioGUI:
+    def __init__(self, service: ResolveStudioService):
+        self.service = service
+        self.root = None
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available for GUI mode")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1100x750")
+        self.root.configure(bg='#1a1a2e')
+        
+        self._setup_styles()
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1a1a2e')
+        style.configure('TLabel', background='#1a1a2e', foreground='#e0e0e0')
+        style.configure('Header.TLabel', font=('Segoe UI', 20, 'bold'),
+                       foreground='#ff6b6b', background='#1a1a2e')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 14, 'bold'),
+                       foreground='#4ecdc4', background='#1a1a2e')
+        style.configure('Section.TLabel', font=('Segoe UI', 12, 'bold'),
+                       foreground='#ffe66d', background='#1a1a2e')
+        style.configure('TButton', padding=12, font=('Segoe UI', 10))
+        style.configure('Action.TButton', padding=15, font=('Segoe UI', 11, 'bold'))
+        style.configure('TNotebook', background='#1a1a2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Segoe UI', 10))
+        style.configure('TCheckbutton', background='#1a1a2e', foreground='#e0e0e0')
+    
+    def _create_widgets(self):
+        main = ttk.Frame(self.root, padding=20)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 15))
+        
+        ttk.Label(header, text="Aegis Resolve Studio",
+                 style='Header.TLabel').pack(side=tk.LEFT)
+        
+        status_frame = ttk.Frame(header)
+        status_frame.pack(side=tk.RIGHT)
+        
+        tier_text = f"Tier: {self.service.tier_manager.get_tier_name()}"
+        ttk.Label(status_frame, text=tier_text, foreground='#ffe66d').pack(side=tk.RIGHT)
+        
+        if self.service.config.installation.installed:
+            install_text = f"Resolve {self.service.config.installation.version or 'Installed'}"
+            color = '#4ecdc4'
+        else:
+            install_text = "Not Installed"
+            color = '#ff6b6b'
+        ttk.Label(status_frame, text=f" | {install_text}", foreground=color).pack(side=tk.RIGHT)
+        
+        notebook = ttk.Notebook(main)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        overview_frame = self._create_overview_tab()
+        notebook.add(overview_frame, text="Overview")
+        
+        gpu_frame = self._create_gpu_tab()
+        notebook.add(gpu_frame, text="GPU Config")
+        
+        templates_frame = self._create_templates_tab()
+        notebook.add(templates_frame, text="Templates")
+        
+        codecs_frame = self._create_codecs_tab()
+        notebook.add(codecs_frame, text="Codecs")
+        
+        cache_frame = self._create_cache_tab()
+        notebook.add(cache_frame, text="Media Cache")
+        
+        render_frame = self._create_render_farm_tab()
+        notebook.add(render_frame, text="Render Farm")
+        
+        color_frame = self._create_color_tab()
+        notebook.add(color_frame, text="Color Management")
+        
+        settings_frame = self._create_settings_tab()
+        notebook.add(settings_frame, text="Settings")
+    
+    def _create_overview_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        if not self.service.config.installation.installed:
+            install_frame = ttk.Frame(frame)
+            install_frame.pack(fill=tk.X, pady=20)
+            
+            ttk.Label(install_frame, text="DaVinci Resolve Not Installed",
+                     style='SubHeader.TLabel').pack()
+            ttk.Label(install_frame, 
+                     text="Download DaVinci Resolve from Blackmagic Design",
+                     foreground='#a0a0a0').pack(pady=10)
+            
+            ttk.Button(install_frame, text="Open Download Page",
+                      style='Action.TButton',
+                      command=self._open_download).pack(pady=10)
+            
+            download_info = self.service.get_download_info()
+            ttk.Label(install_frame,
+                     text=f"Note: Free registration required. Studio version: {download_info['studio_version_price']}",
+                     foreground='#808080').pack()
+        else:
+            installed_frame = ttk.Frame(frame)
+            installed_frame.pack(fill=tk.X, pady=10)
+            
+            ttk.Label(installed_frame, text="DaVinci Resolve",
+                     style='SubHeader.TLabel').pack(anchor=tk.W)
+            
+            info = self.service.config.installation
+            ttk.Label(installed_frame, 
+                     text=f"Version: {info.version or 'Unknown'}  |  Edition: {info.edition.title()}  |  Path: {info.path}",
+                     foreground='#a0a0a0').pack(anchor=tk.W, pady=5)
+            
+            ttk.Button(installed_frame, text="Launch DaVinci Resolve",
+                      style='Action.TButton',
+                      command=self._launch_resolve).pack(anchor=tk.W, pady=10)
+        
+        gpu_summary = ttk.Frame(frame)
+        gpu_summary.pack(fill=tk.X, pady=20)
+        
+        ttk.Label(gpu_summary, text="GPU Status", style='Section.TLabel').pack(anchor=tk.W)
+        
+        gpus = self.service.detect_gpus()
+        if gpus:
+            for gpu in gpus:
+                status_color = '#4ecdc4' if gpu.is_compatible else '#ff6b6b'
+                status = "Compatible" if gpu.is_compatible else "Limited Support"
+                ttk.Label(gpu_summary,
+                         text=f"• {gpu.name} ({gpu.vendor.upper()}) - {gpu.acceleration.upper()} - {status}",
+                         foreground=status_color).pack(anchor=tk.W, padx=20)
+        else:
+            ttk.Label(gpu_summary, text="• No GPU detected - CPU mode only",
+                     foreground='#ff6b6b').pack(anchor=tk.W, padx=20)
+        
+        quick_actions = ttk.Frame(frame)
+        quick_actions.pack(fill=tk.X, pady=20)
+        
+        ttk.Label(quick_actions, text="Quick Actions", style='Section.TLabel').pack(anchor=tk.W)
+        
+        actions_row = ttk.Frame(quick_actions)
+        actions_row.pack(fill=tk.X, pady=10)
+        
+        if self.service.tier_manager.can_auto_config():
+            ttk.Button(actions_row, text="Auto GPU Config",
+                      command=self._auto_gpu_config).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(actions_row, text="Clear Cache",
+                  command=self._clear_cache).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(actions_row, text="Check Status",
+                  command=self._show_status).pack(side=tk.LEFT, padx=5)
+        
+        return frame
+    
+    def _create_gpu_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="GPU Detection & Configuration",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        gpus = self.service.detect_gpus()
+        
+        if gpus:
+            for gpu in gpus:
+                gpu_frame = ttk.Frame(frame)
+                gpu_frame.pack(fill=tk.X, pady=10, padx=10)
+                
+                primary_indicator = " (Primary)" if gpu.is_primary else ""
+                ttk.Label(gpu_frame, text=f"{gpu.name}{primary_indicator}",
+                         style='Section.TLabel').pack(anchor=tk.W)
+                
+                details = [
+                    f"Vendor: {gpu.vendor.upper()}",
+                    f"Driver: {gpu.driver}",
+                    f"VRAM: {gpu.vram_mb}MB" if gpu.vram_mb else "VRAM: Unknown",
+                    f"Acceleration: {gpu.acceleration.upper()}",
+                ]
+                
+                if gpu.cuda_version:
+                    details.append(f"CUDA: {gpu.cuda_version}")
+                if gpu.rocm_version:
+                    details.append(f"ROCm: {gpu.rocm_version}")
+                if gpu.opencl_version:
+                    details.append(f"OpenCL: {gpu.opencl_version}")
+                
+                ttk.Label(gpu_frame, text="  |  ".join(details),
+                         foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+                
+                status = "✓ Compatible with DaVinci Resolve" if gpu.is_compatible else "⚠ Limited compatibility"
+                color = '#4ecdc4' if gpu.is_compatible else '#ffe66d'
+                ttk.Label(gpu_frame, text=status, foreground=color).pack(anchor=tk.W, padx=20)
+        else:
+            ttk.Label(frame, text="No GPU detected. DaVinci Resolve will run in CPU-only mode.",
+                     foreground='#ff6b6b').pack(pady=20)
+        
+        config_frame = ttk.Frame(frame)
+        config_frame.pack(fill=tk.X, pady=20)
+        
+        ttk.Label(config_frame, text="Recommended Configuration",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        gpu_config = self.service.get_recommended_gpu_config()
+        for key, value in gpu_config.get("recommended_settings", {}).items():
+            ttk.Label(config_frame, text=f"• {key}: {value}",
+                     foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+        
+        if self.service.tier_manager.can_auto_config():
+            ttk.Button(config_frame, text="Apply Recommended Settings",
+                      style='Action.TButton',
+                      command=self._auto_gpu_config).pack(anchor=tk.W, pady=15)
+        else:
+            ttk.Label(config_frame, 
+                     text="Upgrade to Gamer tier or higher for automatic GPU optimization",
+                     foreground='#ffe66d').pack(anchor=tk.W, pady=15)
+        
+        return frame
+    
+    def _create_templates_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Project Templates",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        canvas = tk.Canvas(frame, bg='#1a1a2e', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        
+        scroll_frame.bind("<Configure>",
+                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        categories = {}
+        for template in self.service.templates.values():
+            if template.category not in categories:
+                categories[template.category] = []
+            categories[template.category].append(template)
+        
+        for category, templates in categories.items():
+            cat_frame = ttk.Frame(scroll_frame)
+            cat_frame.pack(fill=tk.X, pady=10, padx=5)
+            
+            ttk.Label(cat_frame, text=category.title(),
+                     style='Section.TLabel').pack(anchor=tk.W)
+            
+            for template in templates:
+                accessible = self.service.tier_manager.has_access(template.tier_required)
+                
+                template_frame = ttk.Frame(cat_frame)
+                template_frame.pack(fill=tk.X, pady=5, padx=20)
+                
+                name_text = template.name
+                if not accessible:
+                    name_text += f" ({template.tier_required.title()} tier)"
+                
+                color = '#e0e0e0' if accessible else '#606060'
+                ttk.Label(template_frame, text=name_text, foreground=color).pack(anchor=tk.W)
+                
+                details = f"{template.resolution} @ {template.framerate}fps | {template.color_space}"
+                ttk.Label(template_frame, text=details, foreground='#808080').pack(anchor=tk.W)
+        
+        return frame
+    
+    def _create_codecs_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Codec Packs",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        for codec in self.service.codec_packs.values():
+            codec_frame = ttk.Frame(frame)
+            codec_frame.pack(fill=tk.X, pady=10, padx=10)
+            
+            header_frame = ttk.Frame(codec_frame)
+            header_frame.pack(fill=tk.X)
+            
+            ttk.Label(header_frame, text=codec.name,
+                     style='Section.TLabel').pack(side=tk.LEFT)
+            
+            if codec.installed:
+                ttk.Label(header_frame, text="✓ Installed",
+                         foreground='#4ecdc4').pack(side=tk.RIGHT)
+            else:
+                ttk.Button(header_frame, text="Install",
+                          command=lambda c=codec: self._install_codec(c)).pack(side=tk.RIGHT)
+            
+            ttk.Label(codec_frame, text=codec.description,
+                     foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+        
+        return frame
+    
+    def _create_cache_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Media Cache Manager",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        cache_info = self.service.get_cache_size()
+        
+        info_frame = ttk.Frame(frame)
+        info_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(info_frame, text=f"Media Cache: {cache_info['media_cache_mb']} MB",
+                 foreground='#a0a0a0').pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Proxy Cache: {cache_info['proxy_cache_mb']} MB",
+                 foreground='#a0a0a0').pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Total: {cache_info['total_mb']} MB",
+                 foreground='#ffe66d').pack(anchor=tk.W, pady=5)
+        
+        settings_frame = ttk.Frame(frame)
+        settings_frame.pack(fill=tk.X, pady=20)
+        
+        ttk.Label(settings_frame, text="Cache Settings",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        ttk.Label(settings_frame, 
+                 text=f"Location: {self.service.config.media_cache.location}",
+                 foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+        ttk.Label(settings_frame,
+                 text=f"Max Size: {self.service.config.media_cache.max_size_gb} GB",
+                 foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+        
+        actions_frame = ttk.Frame(frame)
+        actions_frame.pack(fill=tk.X, pady=20)
+        
+        ttk.Button(actions_frame, text="Clear All Cache",
+                  command=self._clear_cache).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Clear Media Cache Only",
+                  command=lambda: self._clear_specific_cache("media")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Clear Proxy Cache Only",
+                  command=lambda: self._clear_specific_cache("proxy")).pack(side=tk.LEFT, padx=5)
+        
+        return frame
+    
+    def _create_render_farm_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Render Farm Setup",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        if not self.service.tier_manager.has_access("pro"):
+            ttk.Label(frame,
+                     text="Render Farm requires Pro tier or higher",
+                     foreground='#ff6b6b').pack(pady=20)
+            return frame
+        
+        nodes_frame = ttk.Frame(frame)
+        nodes_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(nodes_frame, text="Render Nodes",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        if self.service.config.render_nodes:
+            for node in self.service.config.render_nodes:
+                node_frame = ttk.Frame(nodes_frame)
+                node_frame.pack(fill=tk.X, pady=5, padx=20)
+                
+                status = node.get('status', 'unknown')
+                color = '#4ecdc4' if status == 'online' else '#ff6b6b'
+                
+                ttk.Label(node_frame,
+                         text=f"{node.get('hostname')} ({node.get('ip_address')}:{node.get('port')}) - {status}",
+                         foreground=color).pack(side=tk.LEFT)
+                
+                ttk.Button(node_frame, text="Remove",
+                          command=lambda h=node.get('hostname'): self._remove_node(h)).pack(side=tk.RIGHT)
+        else:
+            ttk.Label(nodes_frame, text="No render nodes configured",
+                     foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+        
+        add_frame = ttk.Frame(frame)
+        add_frame.pack(fill=tk.X, pady=20)
+        
+        ttk.Label(add_frame, text="Add Render Node",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        input_frame = ttk.Frame(add_frame)
+        input_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        ttk.Label(input_frame, text="Hostname:").pack(side=tk.LEFT)
+        self.hostname_entry = ttk.Entry(input_frame, width=20)
+        self.hostname_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(input_frame, text="IP:").pack(side=tk.LEFT)
+        self.ip_entry = ttk.Entry(input_frame, width=15)
+        self.ip_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(input_frame, text="Port:").pack(side=tk.LEFT)
+        self.port_entry = ttk.Entry(input_frame, width=6)
+        self.port_entry.insert(0, "5050")
+        self.port_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(input_frame, text="Add Node",
+                  command=self._add_node).pack(side=tk.LEFT, padx=10)
+        
+        return frame
+    
+    def _create_color_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Color Management Profiles",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        profiles = self.service.get_color_profiles()
+        
+        for profile in profiles:
+            profile_frame = ttk.Frame(frame)
+            profile_frame.pack(fill=tk.X, pady=5, padx=10)
+            
+            ttk.Label(profile_frame, text=profile.name,
+                     style='Section.TLabel').pack(anchor=tk.W)
+            ttk.Label(profile_frame,
+                     text=f"{profile.input_space} → {profile.output_space}",
+                     foreground='#a0a0a0').pack(anchor=tk.W, padx=20)
+            if profile.description:
+                ttk.Label(profile_frame, text=profile.description,
+                         foreground='#808080').pack(anchor=tk.W, padx=20)
+        
+        return frame
+    
+    def _create_settings_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Settings",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        proxy_frame = ttk.Frame(frame)
+        proxy_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(proxy_frame, text="Proxy Workflow",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        self.proxy_enabled_var = tk.BooleanVar(value=self.service.config.proxy_settings.enabled)
+        ttk.Checkbutton(proxy_frame, text="Enable Proxy Workflow",
+                       variable=self.proxy_enabled_var).pack(anchor=tk.W, padx=20)
+        
+        self.auto_proxy_var = tk.BooleanVar(value=self.service.config.proxy_settings.auto_generate)
+        ttk.Checkbutton(proxy_frame, text="Auto-generate Proxies",
+                       variable=self.auto_proxy_var).pack(anchor=tk.W, padx=20)
+        
+        fusion_frame = ttk.Frame(frame)
+        fusion_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(fusion_frame, text="Fusion Integration",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        self.fusion_enabled_var = tk.BooleanVar(value=self.service.config.fusion_settings.enabled)
+        ttk.Checkbutton(fusion_frame, text="Enable Fusion Page",
+                       variable=self.fusion_enabled_var).pack(anchor=tk.W, padx=20)
+        
+        self.fusion_gpu_var = tk.BooleanVar(value=self.service.config.fusion_settings.gpu_acceleration)
+        ttk.Checkbutton(fusion_frame, text="GPU Acceleration for Fusion",
+                       variable=self.fusion_gpu_var).pack(anchor=tk.W, padx=20)
+        
+        perf_frame = ttk.Frame(frame)
+        perf_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(perf_frame, text="Performance Mode",
+                 style='Section.TLabel').pack(anchor=tk.W)
+        
+        self.perf_mode_var = tk.StringVar(value=self.service.config.performance_mode)
+        for mode in ["balanced", "quality", "performance"]:
+            ttk.Radiobutton(perf_frame, text=mode.title(),
+                           variable=self.perf_mode_var, value=mode).pack(anchor=tk.W, padx=20)
+        
+        ttk.Button(frame, text="Save Settings",
+                  style='Action.TButton',
+                  command=self._save_settings).pack(anchor=tk.W, pady=20)
+        
+        return frame
+    
+    def _open_download(self):
+        if self.service.open_download_page():
+            messagebox.showinfo("Download", 
+                              "Opening Blackmagic Design download page.\n\n"
+                              "Note: Free registration is required to download DaVinci Resolve.")
+        else:
+            messagebox.showerror("Error", "Could not open download page")
+    
+    def _launch_resolve(self):
+        if self.service.launch_resolve():
+            pass
+        else:
+            messagebox.showerror("Error", "Could not launch DaVinci Resolve")
+    
+    def _auto_gpu_config(self):
+        success, message = self.service.apply_gpu_optimization()
+        if success:
+            messagebox.showinfo("GPU Configuration", message)
+        else:
+            messagebox.showerror("Error", message)
+    
+    def _clear_cache(self):
+        if messagebox.askyesno("Clear Cache", "Clear all media cache? This cannot be undone."):
+            success, message = self.service.clear_cache("all")
+            if success:
+                messagebox.showinfo("Cache Cleared", message)
+            else:
+                messagebox.showerror("Error", message)
+    
+    def _clear_specific_cache(self, cache_type: str):
+        success, message = self.service.clear_cache(cache_type)
+        if success:
+            messagebox.showinfo("Cache Cleared", message)
+        else:
+            messagebox.showerror("Error", message)
+    
+    def _show_status(self):
+        status = self.service.get_status()
+        messagebox.showinfo("Status", 
+                          f"Status: {status['status']}\n"
+                          f"Tier: {status['tier']}\n"
+                          f"GPUs: {status['gpus']['detected']} detected, {status['gpus']['compatible']} compatible\n"
+                          f"Cache: {status['cache']['total_mb']} MB")
+    
+    def _install_codec(self, codec: CodecPack):
+        if messagebox.askyesno("Install Codec", f"Install {codec.name}?"):
+            success, message = self.service.install_codec_pack(codec.id)
+            if success:
+                messagebox.showinfo("Installed", message)
+            else:
+                messagebox.showerror("Error", message)
+    
+    def _add_node(self):
+        hostname = self.hostname_entry.get().strip()
+        ip = self.ip_entry.get().strip()
+        port_str = self.port_entry.get().strip()
+        
+        if not hostname or not ip:
+            messagebox.showerror("Error", "Hostname and IP address are required")
+            return
+        
+        try:
+            port = int(port_str)
+        except ValueError:
+            port = 5050
+        
+        success, message = self.service.add_render_node(hostname, ip, port)
+        if success:
+            messagebox.showinfo("Node Added", message)
+            self.hostname_entry.delete(0, tk.END)
+            self.ip_entry.delete(0, tk.END)
+        else:
+            messagebox.showerror("Error", message)
+    
+    def _remove_node(self, hostname: str):
+        if messagebox.askyesno("Remove Node", f"Remove render node {hostname}?"):
+            success, message = self.service.remove_render_node(hostname)
+            if success:
+                messagebox.showinfo("Removed", message)
+            else:
+                messagebox.showerror("Error", message)
+    
+    def _save_settings(self):
+        self.service.config.proxy_settings.enabled = self.proxy_enabled_var.get()
+        self.service.config.proxy_settings.auto_generate = self.auto_proxy_var.get()
+        self.service.config.fusion_settings.enabled = self.fusion_enabled_var.get()
+        self.service.config.fusion_settings.gpu_acceleration = self.fusion_gpu_var.get()
+        self.service.config.performance_mode = self.perf_mode_var.get()
+        self.service._save_config()
+        messagebox.showinfo("Saved", "Settings saved successfully")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - DaVinci Resolve manager and enhancer")
+    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--status', action='store_true', help='Show status as JSON')
+    parser.add_argument('--detect-gpus', action='store_true', help='Detect available GPUs')
+    parser.add_argument('--auto-config', action='store_true', help='Apply automatic GPU configuration')
+    parser.add_argument('--launch', action='store_true', help='Launch DaVinci Resolve')
+    parser.add_argument('--download', action='store_true', help='Open download page')
+    parser.add_argument('--templates', action='store_true', help='List project templates')
+    parser.add_argument('--codecs', action='store_true', help='List codec packs')
+    parser.add_argument('--install-codec', metavar='ID', help='Install a codec pack')
+    parser.add_argument('--cache-info', action='store_true', help='Show cache information')
+    parser.add_argument('--clear-cache', metavar='TYPE', nargs='?', const='all',
+                       help='Clear cache (all/media/proxy)')
+    parser.add_argument('--add-render-node', nargs=3, metavar=('HOSTNAME', 'IP', 'PORT'),
+                       help='Add a render node')
+    parser.add_argument('--list-render-nodes', action='store_true', help='List render nodes')
+    parser.add_argument('--color-profiles', action='store_true', help='List color profiles')
+    parser.add_argument('--version', action='version', version=f'{APP_NAME} v{VERSION}')
+    
+    args = parser.parse_args()
+    service = ResolveStudioService()
+    
+    if args.status:
+        print(json.dumps(service.get_status(), indent=2))
+    elif args.detect_gpus:
+        gpus = service.detect_gpus()
+        if gpus:
+            print("Detected GPUs:")
+            for gpu in gpus:
+                print(f"  {gpu.name} ({gpu.vendor.upper()}) - {gpu.acceleration.upper()}")
+                if gpu.is_compatible:
+                    print(f"    ✓ Compatible with DaVinci Resolve")
+                else:
+                    print(f"    ⚠ Limited compatibility")
+        else:
+            print("No GPUs detected - CPU-only mode")
+    elif args.auto_config:
+        success, message = service.apply_gpu_optimization()
+        print(message)
+        sys.exit(0 if success else 1)
+    elif args.launch:
+        if service.launch_resolve():
+            print("Launched DaVinci Resolve")
+        else:
+            print("Failed to launch DaVinci Resolve", file=sys.stderr)
+            sys.exit(1)
+    elif args.download:
+        if service.open_download_page():
+            print("Opened download page")
+        else:
+            print("Failed to open download page", file=sys.stderr)
+            sys.exit(1)
+    elif args.templates:
+        print("Project Templates:")
+        for template in service.get_templates():
+            print(f"  [{template.id}] {template.name}")
+            print(f"      {template.resolution} @ {template.framerate}fps | {template.color_space}")
+    elif args.codecs:
+        print("Codec Packs:")
+        for codec in service.get_codec_packs():
+            status = "✓" if codec.installed else "○"
+            print(f"  {status} [{codec.id}] {codec.name} - {codec.description}")
+    elif args.install_codec:
+        success, message = service.install_codec_pack(args.install_codec)
+        print(message)
+        sys.exit(0 if success else 1)
+    elif args.cache_info:
+        cache = service.get_cache_size()
+        print("Cache Information:")
+        print(f"  Media Cache: {cache['media_cache_mb']} MB")
+        print(f"  Proxy Cache: {cache['proxy_cache_mb']} MB")
+        print(f"  Total: {cache['total_mb']} MB")
+    elif args.clear_cache:
+        success, message = service.clear_cache(args.clear_cache)
+        print(message)
+        sys.exit(0 if success else 1)
+    elif args.add_render_node:
+        hostname, ip, port = args.add_render_node
+        success, message = service.add_render_node(hostname, ip, int(port))
+        print(message)
+        sys.exit(0 if success else 1)
+    elif args.list_render_nodes:
+        if service.config.render_nodes:
+            print("Render Nodes:")
+            for node in service.config.render_nodes:
+                print(f"  {node.get('hostname')} ({node.get('ip_address')}:{node.get('port')})")
+        else:
+            print("No render nodes configured")
+    elif args.color_profiles:
+        print("Color Management Profiles:")
+        for profile in service.get_color_profiles():
+            print(f"  [{profile.id}] {profile.name}")
+            print(f"      {profile.input_space} → {profile.output_space}")
+    elif args.gui or not any([args.status, args.detect_gpus, args.auto_config, args.launch,
+                               args.download, args.templates, args.codecs, args.install_codec,
+                               args.cache_info, args.clear_cache, args.add_render_node,
+                               args.list_render_nodes, args.color_profiles]):
+        if TKINTER_AVAILABLE:
+            gui = ResolveStudioGUI(service)
+            gui.run()
+        else:
+            print("GUI requires tkinter. Use --help for CLI options.")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

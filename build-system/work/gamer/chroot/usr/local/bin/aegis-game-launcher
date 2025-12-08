@@ -15,6 +15,8 @@ Features:
 - Post-game performance reports with stats
 - Game categories and organization
 - Recently played section
+- Dual-GPU Split Rendering Management
+- Per-game GPU profile configuration
 """
 
 import os
@@ -29,6 +31,7 @@ import re
 import shutil
 import signal
 import hashlib
+import socket
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -50,6 +53,9 @@ except ImportError:
     PIL_AVAILABLE = False
 
 
+ORCHESTRATOR_SOCKET_PATH = "/tmp/aegis-render-orchestrator.sock"
+
+
 class LicenseTier(Enum):
     FREEMIUM = 1
     BASIC = 2
@@ -65,6 +71,14 @@ class GameRunner(Enum):
     RETROARCH = "retroarch"
     STEAM = "steam"
     LUTRIS = "lutris"
+
+
+class SyncMode(Enum):
+    VSYNC = "vsync"
+    FREESYNC = "freesync"
+    GSYNC = "gsync"
+    ADAPTIVE = "adaptive"
+    UNLOCKED = "unlocked"
 
 
 @dataclass
@@ -83,6 +97,56 @@ class GameManifest:
     genre: str = ""
     min_ram_mb: int = 0
     min_disk_mb: int = 0
+
+
+@dataclass
+class RegionConfig:
+    """Configuration for a render region (center or rim)"""
+    region: str
+    gpu_id: str = ""
+    render_resolution: str = "1920x1080"
+    output_resolution: str = "2560x1440"
+    upscaler_backend: str = "fsr2"
+    upscaler_quality: str = "balanced"
+    target_fps: int = 60
+
+
+@dataclass
+class SplitRenderProfile:
+    """Dual-GPU split rendering profile"""
+    name: str
+    game_id: str = ""
+    description: str = ""
+    enabled: bool = True
+    center_gpu: str = ""
+    rim_gpu: str = ""
+    center_radius_pct: float = 60.0
+    region_blend_px: int = 32
+    sync_mode: str = "freesync"
+    master_fps: int = 144
+    center_render_res: str = "1920x1080"
+    center_output_res: str = "2560x1440"
+    center_upscaler: str = "fsr2"
+    center_quality: str = "balanced"
+    center_target_fps: int = 144
+    rim_render_res: str = "1280x720"
+    rim_output_res: str = "2560x1440"
+    rim_upscaler: str = "fsr1"
+    rim_quality: str = "performance"
+    rim_target_fps: int = 144
+
+
+@dataclass
+class GPUDevice:
+    """Represents a detected GPU"""
+    id: str
+    name: str
+    vendor: str
+    vram_mb: int = 0
+    is_primary: bool = False
+    driver: str = ""
+    current_usage_pct: int = 0
+    current_temp_c: int = 0
 
 
 @dataclass
@@ -117,6 +181,8 @@ class Game:
     last_session_fps_avg: float = 0.0
     last_session_fps_min: float = 0.0
     last_session_fps_max: float = 0.0
+    split_render_enabled: bool = False
+    split_render_profile: str = ""
 
 
 @dataclass
@@ -138,18 +204,139 @@ class PerformanceReport:
     upscaler_used: str = ""
     upscaler_quality: str = ""
     resolution: str = ""
+    split_render_used: bool = False
+    center_gpu: str = ""
+    rim_gpu: str = ""
+
+
+class OrchestratorClient:
+    """Client for communicating with the aegis-render-orchestrator daemon"""
+    
+    def __init__(self, socket_path: str = ORCHESTRATOR_SOCKET_PATH):
+        self.socket_path = socket_path
+        self.connected = False
+        self.last_error = ""
+    
+    def is_available(self) -> bool:
+        """Check if orchestrator daemon is available"""
+        return os.path.exists(self.socket_path)
+    
+    def _send_command(self, command: Dict) -> Dict:
+        """Send command to daemon and receive response"""
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            sock.connect(self.socket_path)
+            sock.sendall(json.dumps(command).encode())
+            response = sock.recv(65536).decode()
+            sock.close()
+            self.connected = True
+            self.last_error = ""
+            return json.loads(response)
+        except socket.timeout:
+            self.connected = False
+            self.last_error = "Connection timeout"
+            return {"success": False, "error": "Connection timeout"}
+        except ConnectionRefusedError:
+            self.connected = False
+            self.last_error = "Daemon not running"
+            return {"success": False, "error": "Daemon not running"}
+        except FileNotFoundError:
+            self.connected = False
+            self.last_error = "Daemon socket not found"
+            return {"success": False, "error": "Daemon socket not found"}
+        except Exception as e:
+            self.connected = False
+            self.last_error = str(e)
+            return {"success": False, "error": str(e)}
+    
+    def get_status(self) -> Dict:
+        """Get orchestrator daemon status"""
+        return self._send_command({"command": "status"})
+    
+    def enumerate_gpus(self) -> List[GPUDevice]:
+        """Get list of detected GPUs"""
+        result = self._send_command({"command": "enumerate_gpus"})
+        gpus = []
+        if result.get("success") and result.get("data"):
+            for gpu_data in result["data"]:
+                gpus.append(GPUDevice(
+                    id=gpu_data.get("id", ""),
+                    name=gpu_data.get("name", "Unknown GPU"),
+                    vendor=gpu_data.get("vendor", "unknown"),
+                    vram_mb=gpu_data.get("vram_mb", 0),
+                    is_primary=gpu_data.get("is_primary", False),
+                    driver=gpu_data.get("driver", ""),
+                    current_usage_pct=gpu_data.get("current_usage_pct", 0),
+                    current_temp_c=gpu_data.get("current_temp_c", 0)
+                ))
+        return gpus
+    
+    def list_profiles(self) -> List[str]:
+        """Get list of saved profile names"""
+        result = self._send_command({"command": "list_profiles"})
+        if result.get("success"):
+            return result.get("data", [])
+        return []
+    
+    def get_profile(self, name: str) -> Optional[Dict]:
+        """Get a specific profile"""
+        result = self._send_command({"command": "get_profile", "name": name})
+        if result.get("success"):
+            return result.get("data")
+        return None
+    
+    def save_profile(self, profile: Dict) -> bool:
+        """Save a profile to the daemon"""
+        result = self._send_command({"command": "save_profile", "profile": profile})
+        return result.get("success", False)
+    
+    def start_session(self, profile_name: str, game_command: List[str]) -> Tuple[bool, str]:
+        """Start a split-render gaming session"""
+        result = self._send_command({
+            "command": "start_session",
+            "profile": profile_name,
+            "game_command": game_command
+        })
+        return result.get("success", False), result.get("message", result.get("error", "Unknown error"))
+    
+    def stop_session(self) -> Tuple[bool, str]:
+        """Stop the active split-render session"""
+        result = self._send_command({"command": "stop_session"})
+        return result.get("success", False), result.get("message", result.get("error", "Unknown error"))
+    
+    def validate_profile(self, name: str) -> Tuple[bool, str]:
+        """Validate a profile can run on current hardware"""
+        result = self._send_command({"command": "validate_profile", "name": name})
+        if result.get("success"):
+            return result.get("valid", False), result.get("message", "")
+        return False, result.get("error", "Unknown error")
+    
+    def get_metrics(self) -> Dict:
+        """Get real-time metrics from active session"""
+        result = self.get_status()
+        if result.get("success") and result.get("data"):
+            return result["data"].get("metrics", {})
+        return {}
 
 
 class AegisGameLauncher:
     """Main game launcher class"""
     
-    VERSION = "1.5.0"
+    VERSION = "2.0.0"
     APP_NAME = "Aegis Game Launcher"
     
     FULL_FEATURE_TIERS = [LicenseTier.GAMER, LicenseTier.GAMER_AI, LicenseTier.SERVER]
     
     EXTERNAL_MOUNT_BASE = Path("/run/aegis/external-games")
     UDEV_RULES_PATH = Path("/etc/udev/rules.d/99-aegis-game-media.rules")
+    
+    UPSCALER_BACKENDS = ["fsr1", "fsr2", "fsr3", "anu-neural", "bilinear", "lanczos", "none"]
+    QUALITY_PRESETS = ["ultra_quality", "quality", "balanced", "performance", "ultra_performance"]
+    RESOLUTION_PRESETS = [
+        "3840x2160", "2560x1440", "1920x1080", "1600x900",
+        "1280x720", "960x540", "640x360"
+    ]
     
     def __init__(self, headless: bool = False):
         self.headless = headless
@@ -160,6 +347,7 @@ class AegisGameLauncher:
         self.log_dir = Path("/var/log/aegis")
         self.cache_dir = Path.home() / ".cache" / "aegis-games"
         self.backup_dir = Path("/var/lib/aegis/backup/game-saves")
+        self.profiles_dir = Path.home() / ".config/aegis/gpu-profiles"
         
         self.config_file = self.config_dir / "game-launcher.json"
         self.library_file = self.data_dir / "library.json"
@@ -167,20 +355,29 @@ class AegisGameLauncher:
         self.favorites_file = self.data_dir / "favorites.json"
         self.saves_index_file = self.data_dir / "saves-index.json"
         self.license_file = self.config_dir / "license.json"
+        self.gpu_profiles_file = self.data_dir / "gpu-profiles.json"
         
         self.home_dir = Path.home()
         self.games: Dict[str, Game] = {}
         self.favorites: List[str] = []
         self.external_devices: Dict[str, dict] = {}
         self.running_games: Dict[str, dict] = {}
+        self.gpu_profiles: Dict[str, SplitRenderProfile] = {}
+        self.detected_gpus: List[GPUDevice] = []
         
         self.gamemode_available = False
         self.mangohud_available = False
         self.upscaler_available = False
         self.license_tier = LicenseTier.FREEMIUM
         
+        self.orchestrator_client = OrchestratorClient()
+        self.orchestrator_available = False
+        
         self.device_monitor_thread = None
         self.monitoring = False
+        self.metrics_thread = None
+        self.metrics_running = False
+        self.current_metrics: Dict = {}
         
         self.categories: List[str] = ["Action", "RPG", "Strategy", "Simulation", "Sports", "Indie", "Multiplayer"]
         self.performance_reports: List[PerformanceReport] = []
@@ -192,12 +389,15 @@ class AegisGameLauncher:
         self.load_config()
         self.load_library()
         self.load_favorites()
+        self.load_gpu_profiles()
+        self.refresh_gpu_list()
         
     def ensure_directories(self):
         """Create required directories"""
         dirs = [
             self.config_dir, self.data_dir, self.log_dir, 
-            self.cache_dir, self.backup_dir, self.EXTERNAL_MOUNT_BASE
+            self.cache_dir, self.backup_dir, self.EXTERNAL_MOUNT_BASE,
+            self.profiles_dir
         ]
         for directory in dirs:
             try:
@@ -234,11 +434,13 @@ class AegisGameLauncher:
         self.upscaler_available = Path("/usr/local/bin/aegis-upscaler").exists() or \
                                   shutil.which("aegis-upscaler") is not None
         self.gamescope_available = shutil.which("gamescope") is not None
+        self.orchestrator_available = self.orchestrator_client.is_available()
         
         self.logger.info(f"GameMode available: {self.gamemode_available}")
         self.logger.info(f"MangoHud available: {self.mangohud_available}")
         self.logger.info(f"ANU Upscaler available: {self.upscaler_available}")
         self.logger.info(f"GameScope available: {self.gamescope_available}")
+        self.logger.info(f"Render Orchestrator available: {self.orchestrator_available}")
     
     def load_license_tier(self):
         """Load and determine license tier"""
@@ -312,7 +514,11 @@ class AegisGameLauncher:
             "view_mode": "grid",
             "show_hidden_games": False,
             "last_scan": None,
-            "ui_theme": "dark"
+            "ui_theme": "dark",
+            "split_render_enabled": False,
+            "default_split_profile": "default",
+            "auto_start_orchestrator": True,
+            "show_gpu_metrics": True
         }
         
         try:
@@ -341,6 +547,10 @@ class AegisGameLauncher:
                 with open(self.library_file, 'r') as f:
                     data = json.load(f)
                     for game_id, game_data in data.get('games', {}).items():
+                        if 'split_render_enabled' not in game_data:
+                            game_data['split_render_enabled'] = False
+                        if 'split_render_profile' not in game_data:
+                            game_data['split_render_profile'] = ""
                         self.games[game_id] = Game(**game_data)
         except Exception as e:
             self.logger.error(f"Error loading library: {e}")
@@ -375,6 +585,237 @@ class AegisGameLauncher:
                 json.dump(self.favorites, f, indent=2)
         except PermissionError:
             self.logger.warning("Cannot save favorites - permission denied")
+    
+    def load_gpu_profiles(self):
+        """Load GPU split-render profiles"""
+        try:
+            if self.gpu_profiles_file.exists():
+                with open(self.gpu_profiles_file, 'r') as f:
+                    data = json.load(f)
+                    for name, profile_data in data.get('profiles', {}).items():
+                        self.gpu_profiles[name] = SplitRenderProfile(**profile_data)
+            
+            if not self.gpu_profiles:
+                self.gpu_profiles["default"] = SplitRenderProfile(
+                    name="default",
+                    description="Default dual-GPU profile",
+                    center_radius_pct=60.0,
+                    region_blend_px=32,
+                    sync_mode="freesync",
+                    master_fps=144
+                )
+                self.save_gpu_profiles()
+                
+        except Exception as e:
+            self.logger.error(f"Error loading GPU profiles: {e}")
+            self.gpu_profiles = {
+                "default": SplitRenderProfile(name="default", description="Default profile")
+            }
+    
+    def save_gpu_profiles(self):
+        """Save GPU split-render profiles"""
+        try:
+            data = {
+                'version': self.VERSION,
+                'last_updated': datetime.now().isoformat(),
+                'profiles': {name: asdict(p) for name, p in self.gpu_profiles.items()}
+            }
+            with open(self.gpu_profiles_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save GPU profiles - permission denied")
+    
+    def refresh_gpu_list(self):
+        """Refresh the list of detected GPUs from orchestrator"""
+        if self.orchestrator_available:
+            self.detected_gpus = self.orchestrator_client.enumerate_gpus()
+            self.logger.info(f"Detected {len(self.detected_gpus)} GPUs")
+        else:
+            self.detected_gpus = []
+    
+    def get_gpu_by_id(self, gpu_id: str) -> Optional[GPUDevice]:
+        """Get a GPU device by ID"""
+        for gpu in self.detected_gpus:
+            if gpu.id == gpu_id:
+                return gpu
+        return None
+    
+    def create_gpu_profile(self, name: str, description: str = "") -> SplitRenderProfile:
+        """Create a new GPU profile"""
+        profile = SplitRenderProfile(
+            name=name,
+            description=description,
+            center_radius_pct=60.0,
+            region_blend_px=32,
+            sync_mode="freesync",
+            master_fps=144
+        )
+        
+        if len(self.detected_gpus) >= 2:
+            profile.center_gpu = self.detected_gpus[0].id
+            profile.rim_gpu = self.detected_gpus[1].id
+        elif len(self.detected_gpus) == 1:
+            profile.center_gpu = self.detected_gpus[0].id
+            profile.rim_gpu = self.detected_gpus[0].id
+        
+        self.gpu_profiles[name] = profile
+        self.save_gpu_profiles()
+        return profile
+    
+    def update_gpu_profile(self, name: str, **kwargs) -> bool:
+        """Update an existing GPU profile"""
+        if name not in self.gpu_profiles:
+            return False
+        
+        profile = self.gpu_profiles[name]
+        for key, value in kwargs.items():
+            if hasattr(profile, key):
+                setattr(profile, key, value)
+        
+        self.save_gpu_profiles()
+        return True
+    
+    def delete_gpu_profile(self, name: str) -> bool:
+        """Delete a GPU profile"""
+        if name in self.gpu_profiles and name != "default":
+            del self.gpu_profiles[name]
+            self.save_gpu_profiles()
+            return True
+        return False
+    
+    def export_gpu_profile(self, name: str, filepath: Path) -> bool:
+        """Export a GPU profile to a file"""
+        if name not in self.gpu_profiles:
+            return False
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(asdict(self.gpu_profiles[name]), f, indent=2)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error exporting profile: {e}")
+            return False
+    
+    def import_gpu_profile(self, filepath: Path) -> Optional[str]:
+        """Import a GPU profile from a file"""
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            name = data.get('name', filepath.stem)
+            if name in self.gpu_profiles:
+                name = f"{name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            data['name'] = name
+            
+            profile = SplitRenderProfile(**data)
+            self.gpu_profiles[name] = profile
+            self.save_gpu_profiles()
+            return name
+        except Exception as e:
+            self.logger.error(f"Error importing profile: {e}")
+            return None
+    
+    def set_game_gpu_profile(self, game_id: str, profile_name: str, enabled: bool = True) -> bool:
+        """Assign a GPU profile to a game"""
+        if game_id not in self.games:
+            return False
+        if profile_name and profile_name not in self.gpu_profiles:
+            return False
+        
+        self.games[game_id].split_render_profile = profile_name
+        self.games[game_id].split_render_enabled = enabled
+        self.save_library()
+        return True
+    
+    def sync_profile_to_orchestrator(self, profile_name: str) -> bool:
+        """Sync a local profile to the orchestrator daemon"""
+        if not self.orchestrator_available:
+            return False
+        if profile_name not in self.gpu_profiles:
+            return False
+        
+        profile = self.gpu_profiles[profile_name]
+        orchestrator_profile = {
+            "name": profile.name,
+            "game_id": profile.game_id,
+            "description": profile.description,
+            "sync_mode": profile.sync_mode,
+            "master_fps": profile.master_fps,
+            "center_radius_pct": profile.center_radius_pct,
+            "region_blend_px": profile.region_blend_px,
+            "center_config": {
+                "region": "center",
+                "gpu_id": profile.center_gpu,
+                "render_resolution": profile.center_render_res,
+                "output_resolution": profile.center_output_res,
+                "upscaler_backend": profile.center_upscaler,
+                "upscaler_quality": profile.center_quality,
+                "target_fps": profile.center_target_fps
+            },
+            "rim_config": {
+                "region": "rim",
+                "gpu_id": profile.rim_gpu,
+                "render_resolution": profile.rim_render_res,
+                "output_resolution": profile.rim_output_res,
+                "upscaler_backend": profile.rim_upscaler,
+                "upscaler_quality": profile.rim_quality,
+                "target_fps": profile.rim_target_fps
+            }
+        }
+        
+        return self.orchestrator_client.save_profile(orchestrator_profile)
+    
+    def start_split_render_session(self, game_id: str, game_command: List[str]) -> Tuple[bool, str]:
+        """Start a split-render session for a game"""
+        if not self.orchestrator_available:
+            return False, "Render orchestrator not available"
+        
+        game = self.games.get(game_id)
+        if not game:
+            return False, "Game not found"
+        
+        profile_name = game.split_render_profile or self.config.get("default_split_profile", "default")
+        
+        if profile_name not in self.gpu_profiles:
+            return False, f"GPU profile '{profile_name}' not found"
+        
+        if not self.sync_profile_to_orchestrator(profile_name):
+            return False, "Failed to sync profile to orchestrator"
+        
+        return self.orchestrator_client.start_session(profile_name, game_command)
+    
+    def stop_split_render_session(self) -> Tuple[bool, str]:
+        """Stop the current split-render session"""
+        if not self.orchestrator_available:
+            return False, "Render orchestrator not available"
+        return self.orchestrator_client.stop_session()
+    
+    def get_orchestrator_status(self) -> Dict:
+        """Get the orchestrator daemon status"""
+        if not self.orchestrator_available:
+            return {"running": False, "error": "Orchestrator not available"}
+        return self.orchestrator_client.get_status()
+    
+    def start_metrics_monitoring(self, callback=None):
+        """Start monitoring real-time metrics"""
+        if self.metrics_running:
+            return
+        
+        self.metrics_running = True
+        
+        def metrics_loop():
+            while self.metrics_running:
+                if self.orchestrator_available:
+                    self.current_metrics = self.orchestrator_client.get_metrics()
+                    if callback:
+                        callback(self.current_metrics)
+                time.sleep(0.5)
+        
+        self.metrics_thread = threading.Thread(target=metrics_loop, daemon=True)
+        self.metrics_thread.start()
+    
+    def stop_metrics_monitoring(self):
+        """Stop monitoring real-time metrics"""
+        self.metrics_running = False
     
     def detect_external_devices(self) -> List[dict]:
         """Detect connected SD cards and USB drives"""
@@ -590,313 +1031,227 @@ class AegisGameLauncher:
                         self.logger.warning(f"Error parsing {acf_file}: {e}")
                         
             except Exception as e:
-                self.logger.error(f"Error scanning Steam path {steam_path}: {e}")
+                self.logger.error(f"Error scanning Steam games: {e}")
         
         return games
     
-    def _parse_acf_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse Steam ACF manifest file"""
+    def _parse_acf_file(self, acf_path: Path) -> Optional[dict]:
+        """Parse a Steam ACF manifest file"""
         try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(acf_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
             data = {}
-            key_pattern = re.compile(r'"(\w+)"\s+"([^"]*)"')
+            for match in re.finditer(r'"(\w+)"\s+"([^"]*)"', content):
+                data[match.group(1)] = match.group(2)
             
-            for match in key_pattern.finditer(content):
-                key, value = match.groups()
-                data[key.lower()] = value
-            
-            if 'appid' not in data:
-                return None
-            
-            return {
-                "appid": data.get("appid"),
-                "name": data.get("name", "Unknown"),
-                "installdir": data.get("installdir", "")
-            }
+            if 'appid' in data and 'name' in data:
+                return data
             
         except Exception as e:
-            self.logger.error(f"Error parsing ACF file {filepath}: {e}")
-            return None
+            self.logger.warning(f"Error parsing ACF file {acf_path}: {e}")
+        
+        return None
+    
+    def scan_lutris_games(self) -> List[Game]:
+        """Scan for Lutris games"""
+        games = []
+        lutris_path = Path(self.config.get("lutris_path", ""))
+        
+        if not lutris_path.exists():
+            return games
+        
+        try:
+            games_db = lutris_path / "pga.db"
+            if games_db.exists():
+                import sqlite3
+                conn = sqlite3.connect(str(games_db))
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, name, slug, runner, directory FROM games WHERE installed = 1")
+                
+                for row in cursor.fetchall():
+                    game_id = f"lutris_{row[0]}"
+                    game = Game(
+                        id=game_id,
+                        name=row[1] or "Unknown",
+                        platform="lutris",
+                        runner=row[3] or "wine",
+                        install_path=row[4] or "",
+                        launch_command=f"lutris:rungame/{row[2]}",
+                        added_date=datetime.now().isoformat()
+                    )
+                    games.append(game)
+                
+                conn.close()
+                
+        except Exception as e:
+            self.logger.warning(f"Error scanning Lutris games: {e}")
+        
+        return games
     
     def scan_heroic_games(self) -> List[Game]:
-        """Scan for Heroic Games Launcher games (Epic, GOG, Amazon)"""
+        """Scan for Heroic games (Epic/GOG)"""
         games = []
-        heroic_path = Path(self.config.get("heroic_path", str(self.home_dir / ".config/heroic")))
+        heroic_path = Path(self.config.get("heroic_path", ""))
         
         if not heroic_path.exists():
             return games
         
         try:
-            gog_installed = heroic_path / "gog_store" / "installed.json"
-            if gog_installed.exists():
-                with open(gog_installed, 'r') as f:
-                    data = json.load(f)
-                    for app_name, game_info in data.get("installed", {}).items():
-                        game_id = f"heroic_gog_{app_name}"
+            for store in ["legendary", "gog"]:
+                installed_file = heroic_path / store / "installed.json"
+                if installed_file.exists():
+                    with open(installed_file, 'r') as f:
+                        installed = json.load(f)
+                    
+                    for app_name, app_data in installed.items():
+                        game_id = f"heroic_{store}_{app_name}"
                         game = Game(
                             id=game_id,
-                            name=game_info.get("title", app_name),
-                            platform="heroic_gog",
-                            install_path=game_info.get("install_path", ""),
+                            name=app_data.get("title", app_name),
+                            platform=f"heroic_{store}",
+                            install_path=app_data.get("install_path", ""),
                             runner="wine",
-                            added_date=datetime.now().isoformat()
-                        )
-                        games.append(game)
-            
-            legendary_installed = heroic_path / "legendaryConfig" / "legendary" / "installed.json"
-            if legendary_installed.exists():
-                with open(legendary_installed, 'r') as f:
-                    data = json.load(f)
-                    for app_name, game_info in data.items():
-                        game_id = f"heroic_epic_{app_name}"
-                        game = Game(
-                            id=game_id,
-                            name=game_info.get("title", app_name),
-                            platform="heroic_epic",
-                            install_path=game_info.get("install_path", ""),
-                            runner="wine",
-                            added_date=datetime.now().isoformat()
-                        )
-                        games.append(game)
-            
-            nile_installed = heroic_path / "nile_store" / "installed.json"
-            if nile_installed.exists():
-                with open(nile_installed, 'r') as f:
-                    data = json.load(f)
-                    for app_name, game_info in data.get("installed", {}).items():
-                        game_id = f"heroic_amazon_{app_name}"
-                        game = Game(
-                            id=game_id,
-                            name=game_info.get("title", app_name),
-                            platform="heroic_amazon",
-                            install_path=game_info.get("install_path", ""),
-                            runner="wine",
+                            launch_command=f"heroic://launch/{store}/{app_name}",
                             added_date=datetime.now().isoformat()
                         )
                         games.append(game)
                         
         except Exception as e:
-            self.logger.error(f"Error scanning Heroic games: {e}")
-        
-        return games
-    
-    def scan_lutris_games(self) -> List[Game]:
-        """Scan for Lutris games"""
-        games = []
-        lutris_games_path = Path(self.config.get("lutris_path", "")) / "games"
-        
-        if not lutris_games_path.exists():
-            return games
-        
-        try:
-            for yml_file in lutris_games_path.glob("*.yml"):
-                try:
-                    import yaml
-                    with open(yml_file, 'r') as f:
-                        game_data = yaml.safe_load(f)
-                    
-                    if not game_data:
-                        continue
-                    
-                    game_slug = yml_file.stem
-                    game_id = f"lutris_{game_slug}"
-                    
-                    game = Game(
-                        id=game_id,
-                        name=game_data.get("name", game_slug),
-                        platform="lutris",
-                        runner=game_data.get("runner", "wine"),
-                        launch_command=f"lutris:rungame/{game_slug}",
-                        added_date=datetime.now().isoformat()
-                    )
-                    games.append(game)
-                    
-                except ImportError:
-                    self.logger.warning("PyYAML not available for Lutris scanning")
-                    break
-                except Exception as e:
-                    self.logger.warning(f"Error parsing Lutris game {yml_file}: {e}")
-                    
-        except Exception as e:
-            self.logger.error(f"Error scanning Lutris games: {e}")
+            self.logger.warning(f"Error scanning Heroic games: {e}")
         
         return games
     
     def scan_native_games(self) -> List[Game]:
-        """Scan for native Linux games from .desktop files"""
+        """Scan for native Linux games from desktop entries"""
         games = []
         
-        for apps_path in self.config.get("native_paths", []):
-            apps_dir = Path(apps_path)
-            
-            if not apps_dir.exists():
+        for app_path in self.config.get("native_paths", []):
+            path = Path(app_path)
+            if not path.exists():
                 continue
             
             try:
-                for desktop_file in apps_dir.glob("*.desktop"):
+                for desktop_file in path.glob("*.desktop"):
                     try:
                         game_data = self._parse_desktop_file(desktop_file)
-                        
-                        if not game_data:
-                            continue
-                        
-                        categories = game_data.get("categories", "").lower()
-                        if "game" not in categories:
-                            continue
-                        
-                        game_id = f"native_{desktop_file.stem}"
-                        
-                        game = Game(
-                            id=game_id,
-                            name=game_data.get("name", desktop_file.stem),
-                            platform="native",
-                            executable=game_data.get("exec", ""),
-                            icon_path=game_data.get("icon", ""),
-                            runner="native",
-                            launch_command=game_data.get("exec", ""),
-                            added_date=datetime.now().isoformat(),
-                            hidden=game_data.get("hidden", False)
-                        )
-                        games.append(game)
-                        
+                        if game_data and game_data.get('is_game', False):
+                            game_id = f"native_{desktop_file.stem}"
+                            game = Game(
+                                id=game_id,
+                                name=game_data.get("name", desktop_file.stem),
+                                platform="native",
+                                executable=game_data.get("exec", ""),
+                                icon_path=game_data.get("icon", ""),
+                                runner="native",
+                                added_date=datetime.now().isoformat()
+                            )
+                            games.append(game)
                     except Exception as e:
                         self.logger.warning(f"Error parsing {desktop_file}: {e}")
                         
             except Exception as e:
-                self.logger.error(f"Error scanning native games in {apps_path}: {e}")
+                self.logger.error(f"Error scanning native games: {e}")
         
         return games
     
-    def _parse_desktop_file(self, filepath: Path) -> Optional[Dict]:
+    def _parse_desktop_file(self, desktop_path: Path) -> Optional[dict]:
         """Parse a .desktop file"""
         try:
-            data = {}
-            current_section = None
-            
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            data = {'is_game': False}
+            with open(desktop_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
                     line = line.strip()
-                    
-                    if line.startswith('['):
-                        current_section = line[1:-1]
-                        continue
-                    
-                    if current_section != "Desktop Entry":
-                        continue
-                    
                     if '=' in line:
                         key, value = line.split('=', 1)
-                        data[key.lower()] = value
-            
-            return {
-                "name": data.get("name", ""),
-                "exec": data.get("exec", ""),
-                "icon": data.get("icon", ""),
-                "categories": data.get("categories", ""),
-                "hidden": data.get("nodisplay", "false").lower() == "true"
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing desktop file {filepath}: {e}")
+                        if key == 'Name':
+                            data['name'] = value
+                        elif key == 'Exec':
+                            data['exec'] = value.split()[0] if value else ""
+                        elif key == 'Icon':
+                            data['icon'] = value
+                        elif key == 'Categories':
+                            if 'Game' in value:
+                                data['is_game'] = True
+            return data
+        except Exception:
             return None
     
-    def scan_all_games(self, callback=None) -> Dict[str, int]:
+    def scan_all_games(self, callback=None) -> dict:
         """Scan all game sources"""
-        self.logger.info("Starting full game library scan...")
-        
         results = {
-            "steam": 0,
-            "lutris": 0,
-            "heroic": 0,
-            "native": 0,
-            "external": 0,
-            "total": 0,
-            "errors": []
+            'steam': 0, 'lutris': 0, 'heroic': 0, 
+            'native': 0, 'external': 0, 'total': 0, 'errors': []
         }
         
         if callback:
             callback("Scanning Steam games...")
-        try:
-            steam_games = self.scan_steam_games()
-            for game in steam_games:
-                self._add_or_update_game(game)
-            results["steam"] = len(steam_games)
-        except Exception as e:
-            results["errors"].append(f"Steam: {e}")
+        steam_games = self.scan_steam_games()
+        results['steam'] = len(steam_games)
+        for game in steam_games:
+            self._add_or_update_game(game)
         
         if callback:
             callback("Scanning Lutris games...")
-        try:
-            lutris_games = self.scan_lutris_games()
-            for game in lutris_games:
-                self._add_or_update_game(game)
-            results["lutris"] = len(lutris_games)
-        except Exception as e:
-            results["errors"].append(f"Lutris: {e}")
+        lutris_games = self.scan_lutris_games()
+        results['lutris'] = len(lutris_games)
+        for game in lutris_games:
+            self._add_or_update_game(game)
         
         if callback:
-            callback("Scanning Heroic games (Epic/GOG/Amazon)...")
-        try:
-            heroic_games = self.scan_heroic_games()
-            for game in heroic_games:
-                self._add_or_update_game(game)
-            results["heroic"] = len(heroic_games)
-        except Exception as e:
-            results["errors"].append(f"Heroic: {e}")
+            callback("Scanning Heroic games...")
+        heroic_games = self.scan_heroic_games()
+        results['heroic'] = len(heroic_games)
+        for game in heroic_games:
+            self._add_or_update_game(game)
         
         if callback:
             callback("Scanning native games...")
-        try:
-            native_games = self.scan_native_games()
-            for game in native_games:
-                self._add_or_update_game(game)
-            results["native"] = len(native_games)
-        except Exception as e:
-            results["errors"].append(f"Native: {e}")
+        native_games = self.scan_native_games()
+        results['native'] = len(native_games)
+        for game in native_games:
+            self._add_or_update_game(game)
         
         if self.is_full_version():
             if callback:
                 callback("Scanning external devices...")
-            try:
-                devices = self.detect_external_devices()
-                for device in devices:
-                    if device.get('mountpoint'):
-                        ext_games = self.scan_external_games(Path(device['mountpoint']))
-                        for game in ext_games:
-                            self._add_or_update_game(game)
-                        results["external"] += len(ext_games)
-            except Exception as e:
-                results["errors"].append(f"External: {e}")
+            for device in self.detect_external_devices():
+                if device.get('mountpoint'):
+                    external_games = self.scan_external_games(Path(device['mountpoint']))
+                    results['external'] += len(external_games)
+                    for game in external_games:
+                        self._add_or_update_game(game)
         
-        results["total"] = sum([results["steam"], results["lutris"], results["heroic"],
-                               results["native"], results["external"]])
-        
-        self.config["last_scan"] = datetime.now().isoformat()
-        self.save_config()
+        results['total'] = len(self.games)
         self.save_library()
+        self.config['last_scan'] = datetime.now().isoformat()
+        self.save_config()
         
-        if callback:
-            callback(f"Scan complete! Found {results['total']} games")
-        
-        self.logger.info(f"Scan complete: {results}")
         return results
     
     def _add_or_update_game(self, game: Game):
         """Add or update a game in the library"""
-        existing = self.games.get(game.id)
-        if existing:
-            game.added_date = existing.added_date
-            game.last_played = existing.last_played
+        if game.id in self.games:
+            existing = self.games[game.id]
             game.play_count = existing.play_count
             game.total_playtime = existing.total_playtime
             game.favorite = existing.favorite
+            game.last_played = existing.last_played
+            game.category = existing.category
+            game.upscaler_enabled = existing.upscaler_enabled
+            game.upscaler_profile = existing.upscaler_profile
+            game.split_render_enabled = existing.split_render_enabled
+            game.split_render_profile = existing.split_render_profile
+            game.last_session_fps_avg = existing.last_session_fps_avg
+            game.last_session_fps_min = existing.last_session_fps_min
+            game.last_session_fps_max = existing.last_session_fps_max
+        
         self.games[game.id] = game
     
-    def get_games(self, search: str = None, platform: str = None,
-                  favorites_only: bool = False, external_only: bool = False) -> List[Game]:
-        """Get games with optional filtering"""
+    def get_games(self, search: str = None, platform: str = None, 
+                  favorites_only: bool = False, external_only: bool = False,
+                  sort_by: str = None) -> List[Game]:
+        """Get filtered and sorted games list"""
         games = list(self.games.values())
         
         if not self.config.get("show_hidden_games", False):
@@ -906,8 +1261,8 @@ class AegisGameLauncher:
             search_lower = search.lower()
             games = [g for g in games if search_lower in g.name.lower()]
         
-        if platform and platform != "all":
-            games = [g for g in games if g.platform == platform]
+        if platform:
+            games = [g for g in games if platform in g.platform]
         
         if favorites_only:
             games = [g for g in games if g.id in self.favorites]
@@ -915,15 +1270,15 @@ class AegisGameLauncher:
         if external_only:
             games = [g for g in games if g.is_external]
         
-        sort_key = self.config.get("sort_by", "name")
-        if sort_key == "name":
+        sort_by = sort_by or self.config.get("sort_by", "name")
+        if sort_by == "name":
             games.sort(key=lambda x: x.name.lower())
-        elif sort_key == "last_played":
-            games.sort(key=lambda x: x.last_played or "", reverse=True)
-        elif sort_key == "play_count":
-            games.sort(key=lambda x: x.play_count, reverse=True)
-        elif sort_key == "playtime":
+        elif sort_by == "playtime":
             games.sort(key=lambda x: x.total_playtime, reverse=True)
+        elif sort_by == "last_played":
+            games.sort(key=lambda x: x.last_played or "", reverse=True)
+        elif sort_by == "platform":
+            games.sort(key=lambda x: (x.platform, x.name.lower()))
         
         return games
     
@@ -932,24 +1287,22 @@ class AegisGameLauncher:
         return [self.games[gid] for gid in self.favorites if gid in self.games]
     
     def toggle_favorite(self, game_id: str) -> bool:
-        """Toggle game favorite status"""
+        """Toggle favorite status for a game"""
         if game_id in self.favorites:
             self.favorites.remove(game_id)
             if game_id in self.games:
                 self.games[game_id].favorite = False
-            result = False
         else:
             self.favorites.append(game_id)
             if game_id in self.games:
                 self.games[game_id].favorite = True
-            result = True
         
         self.save_favorites()
         self.save_library()
-        return result
+        return game_id in self.favorites
     
     def build_launch_command(self, game: Game) -> List[str]:
-        """Build the full launch command with performance tools"""
+        """Build the launch command for a game"""
         cmd = []
         
         if self.config.get("gamemode_enabled") and self.gamemode_available:
@@ -967,10 +1320,9 @@ class AegisGameLauncher:
             return ["xdg-open", game.launch_command]
         
         elif runner == "wine":
-            wine_cmd = ["wine"]
+            wine_cmd = ["wine", game.executable]
             if game.launch_options:
                 wine_cmd.extend(game.launch_options.split())
-            wine_cmd.append(game.executable)
             return cmd + wine_cmd
         
         elif runner == "proton":
@@ -1043,7 +1395,8 @@ class AegisGameLauncher:
             "game_name": game.name,
             "platform": game.platform,
             "start_time": datetime.now().isoformat(),
-            "error": None
+            "error": None,
+            "split_render": False
         }
         
         self.logger.info(f"Launching game: {game.name} ({game.platform})")
@@ -1058,6 +1411,28 @@ class AegisGameLauncher:
                 return result
             
             self.logger.info(f"Launch command: {' '.join(launch_cmd)}")
+            
+            use_split_render = (
+                game.split_render_enabled and 
+                self.orchestrator_available and 
+                self.is_full_version() and
+                len(self.detected_gpus) >= 2
+            )
+            
+            if use_split_render:
+                if callback:
+                    callback(f"Starting split-render session...")
+                success, msg = self.start_split_render_session(game_id, launch_cmd)
+                if success:
+                    result["split_render"] = True
+                    result["success"] = True
+                    game.play_count += 1
+                    game.last_played = datetime.now().isoformat()
+                    self.save_library()
+                    self.start_metrics_monitoring()
+                    return result
+                else:
+                    self.logger.warning(f"Split-render failed: {msg}, falling back to normal launch")
             
             env = os.environ.copy()
             
@@ -1082,7 +1457,7 @@ class AegisGameLauncher:
                 if callback:
                     callback(f"ANU Upscaler: {upscaler_env.get('AEGIS_UPSCALER_QUALITY', 'balanced')}")
             
-            if game.upscaler_enabled and self.gamescope_available:
+            if game.upscaler_enabled and self.gamescope_available and not use_split_render:
                 gamescope_args = self.get_gamescope_args(game)
                 if gamescope_args:
                     launch_cmd = gamescope_args + launch_cmd
@@ -1108,7 +1483,8 @@ class AegisGameLauncher:
                 'start_time': start_time,
                 'session_start': session_start,
                 'game': game,
-                'upscaler_enabled': game.upscaler_enabled
+                'upscaler_enabled': game.upscaler_enabled,
+                'split_render': use_split_render
             }
             
             game.play_count += 1
@@ -1136,6 +1512,7 @@ class AegisGameLauncher:
         process = session['process']
         game = session['game']
         session_start = session.get('session_start', datetime.now().isoformat())
+        use_split_render = session.get('split_render', False)
         
         while process.poll() is None:
             time.sleep(5)
@@ -1147,7 +1524,11 @@ class AegisGameLauncher:
         game.total_playtime += playtime
         self.save_library()
         
-        report = self.generate_performance_report(game_id, session_start, session_end, playtime)
+        if use_split_render:
+            self.stop_split_render_session()
+            self.stop_metrics_monitoring()
+        
+        report = self.generate_performance_report(game_id, session_start, session_end, playtime, use_split_render)
         if report:
             self.logger.info(f"Performance report: Avg FPS: {report.avg_fps:.1f}, "
                            f"Min: {report.min_fps:.1f}, Max: {report.max_fps:.1f}")
@@ -1403,7 +1784,8 @@ class AegisGameLauncher:
         return args
     
     def generate_performance_report(self, game_id: str, session_start: str, 
-                                    session_end: str, playtime: int) -> Optional[PerformanceReport]:
+                                    session_end: str, playtime: int,
+                                    split_render_used: bool = False) -> Optional[PerformanceReport]:
         """Generate post-game performance report"""
         game = self.games.get(game_id)
         if not game:
@@ -1414,8 +1796,15 @@ class AegisGameLauncher:
             game_name=game.name,
             session_start=session_start,
             session_end=session_end,
-            duration_seconds=playtime
+            duration_seconds=playtime,
+            split_render_used=split_render_used
         )
+        
+        if split_render_used and game.split_render_profile:
+            profile = self.gpu_profiles.get(game.split_render_profile)
+            if profile:
+                report.center_gpu = profile.center_gpu
+                report.rim_gpu = profile.rim_gpu
         
         mangohud_log = self.cache_dir / f"mangohud_{game_id}.log"
         if mangohud_log.exists():
@@ -1494,6 +1883,18 @@ class AegisGameLauncher:
             return self.games[game_id].upscaler_enabled
         return False
     
+    def toggle_game_split_render(self, game_id: str) -> bool:
+        """Toggle split-render for a game"""
+        if not self.is_full_version():
+            self.logger.warning("Split-render requires Gamer edition or higher")
+            return False
+        
+        if game_id in self.games:
+            self.games[game_id].split_render_enabled = not self.games[game_id].split_render_enabled
+            self.save_library()
+            return self.games[game_id].split_render_enabled
+        return False
+    
     def set_game_upscaler_profile(self, game_id: str, profile: str) -> bool:
         """Set upscaler profile for a game"""
         if game_id in self.games:
@@ -1538,7 +1939,11 @@ class AegisGameLauncher:
             "mangohud_enabled": self.config.get("mangohud_enabled", False),
             "upscaler_available": self.upscaler_available,
             "gamescope_available": self.gamescope_available,
+            "orchestrator_available": self.orchestrator_available,
             "games_with_upscaler": len([g for g in self.games.values() if g.upscaler_enabled]),
+            "games_with_split_render": len([g for g in self.games.values() if g.split_render_enabled]),
+            "gpu_count": len(self.detected_gpus),
+            "gpu_profiles_count": len(self.gpu_profiles),
             "categories_used": list(set(g.category for g in self.games.values() if g.category)),
             "heroic_games": len([g for g in self.games.values() if g.platform.startswith("heroic")]),
             "license_tier": self.license_tier.name
@@ -1546,13 +1951,15 @@ class AegisGameLauncher:
 
 
 class AegisGameLauncherGUI:
-    """GUI interface for the game launcher"""
+    """GUI interface for the game launcher with dual-GPU management"""
     
     def __init__(self, launcher: AegisGameLauncher):
         self.launcher = launcher
         self.root = None
         self.game_frames = {}
         self.selected_game = None
+        self.metrics_update_id = None
+        self.current_tab = "library"
         
     def run(self):
         """Run the GUI"""
@@ -1562,8 +1969,8 @@ class AegisGameLauncherGUI:
         
         self.root = tk.Tk()
         self.root.title(f"{self.launcher.APP_NAME} v{self.launcher.VERSION}")
-        self.root.geometry("1200x800")
-        self.root.minsize(800, 600)
+        self.root.geometry("1400x900")
+        self.root.minsize(1000, 700)
         
         self._setup_styles()
         self._create_widgets()
@@ -1586,20 +1993,30 @@ class AegisGameLauncherGUI:
         fg_color = '#eee'
         accent_color = '#e94560'
         secondary_color = '#16213e'
+        highlight_color = '#0f3460'
         
         style.configure('TFrame', background=bg_color)
         style.configure('TLabel', background=bg_color, foreground=fg_color)
         style.configure('TButton', background=secondary_color, foreground=fg_color)
         style.configure('Header.TLabel', font=('Helvetica', 16, 'bold'))
         style.configure('Title.TLabel', font=('Helvetica', 12, 'bold'))
+        style.configure('Subtitle.TLabel', font=('Helvetica', 10))
         style.configure('Game.TFrame', background=secondary_color)
         style.configure('Favorite.TButton', background=accent_color)
+        style.configure('Tab.TButton', background=highlight_color, foreground=fg_color, padding=10)
+        style.configure('ActiveTab.TButton', background=accent_color, foreground='white', padding=10)
+        style.configure('TNotebook', background=bg_color)
+        style.configure('TNotebook.Tab', background=secondary_color, foreground=fg_color, padding=[15, 8])
+        style.map('TNotebook.Tab', background=[('selected', accent_color)])
+        style.configure('TScale', background=bg_color, troughcolor=secondary_color)
+        style.configure('TCombobox', fieldbackground=secondary_color, background=secondary_color)
         
         self.root.configure(bg=bg_color)
         self.bg_color = bg_color
         self.fg_color = fg_color
         self.accent_color = accent_color
         self.secondary_color = secondary_color
+        self.highlight_color = highlight_color
     
     def _create_widgets(self):
         """Create GUI widgets"""
@@ -1622,6 +2039,11 @@ class AegisGameLauncherGUI:
         tier_label = ttk.Label(header_frame, text=tier_text)
         tier_label.pack(side=tk.LEFT, padx=20)
         
+        if self.launcher.orchestrator_available:
+            gpu_count = len(self.launcher.detected_gpus)
+            gpu_label = ttk.Label(header_frame, text=f"🖥️ {gpu_count} GPU(s) detected")
+            gpu_label.pack(side=tk.LEFT, padx=10)
+        
         controls_frame = ttk.Frame(header_frame)
         controls_frame.pack(side=tk.RIGHT)
         
@@ -1635,28 +2057,46 @@ class AegisGameLauncherGUI:
         scan_btn = ttk.Button(controls_frame, text="🔄 Scan", command=self._scan_games)
         scan_btn.pack(side=tk.LEFT, padx=2)
         
-        if self.launcher.mangohud_available:
-            self.mangohud_var = tk.BooleanVar(value=self.launcher.config.get("mangohud_enabled", False))
-            mangohud_btn = ttk.Checkbutton(
-                controls_frame, text="📊 MangoHud", 
-                variable=self.mangohud_var,
-                command=self._toggle_mangohud
-            )
-            mangohud_btn.pack(side=tk.LEFT, padx=5)
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
         
-        if self.launcher.gamemode_available:
-            self.gamemode_var = tk.BooleanVar(value=self.launcher.config.get("gamemode_enabled", False))
-            gamemode_btn = ttk.Checkbutton(
-                controls_frame, text="⚡ GameMode",
-                variable=self.gamemode_var,
-                command=self._toggle_gamemode
-            )
-            gamemode_btn.pack(side=tk.LEFT, padx=5)
+        self.library_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.library_tab, text="🎮 Game Library")
         
-        content_frame = ttk.Frame(main_frame)
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        self.gpu_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.gpu_tab, text="🖥️ GPU Setup")
         
-        sidebar_frame = ttk.Frame(content_frame, width=200)
+        self.metrics_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.metrics_tab, text="📊 Metrics")
+        
+        self.settings_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.settings_tab, text="⚙️ Settings")
+        
+        self._create_library_tab()
+        self._create_gpu_tab()
+        self._create_metrics_tab()
+        self._create_settings_tab()
+        
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(status_frame, textvariable=self.status_var)
+        status_label.pack(side=tk.LEFT)
+        
+        stats = self.launcher.get_stats()
+        stats_text = f"Games: {stats['total_games']} | Playtime: {stats['total_playtime_formatted']}"
+        if stats.get('gpu_count', 0) > 0:
+            stats_text += f" | GPUs: {stats['gpu_count']}"
+        stats_label = ttk.Label(status_frame, text=stats_text)
+        stats_label.pack(side=tk.RIGHT)
+    
+    def _create_library_tab(self):
+        """Create the game library tab"""
+        content_frame = ttk.Frame(self.library_tab)
+        content_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        sidebar_frame = ttk.Frame(content_frame, width=220)
         sidebar_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         sidebar_frame.pack_propagate(False)
         
@@ -1685,6 +2125,34 @@ class AegisGameLauncherGUI:
         )
         fav_check.pack(anchor=tk.W, padx=10, pady=10)
         
+        self.split_render_only_var = tk.BooleanVar()
+        split_check = ttk.Checkbutton(
+            sidebar_frame, text="🖥️ Split Render Games",
+            variable=self.split_render_only_var, command=self._filter_games
+        )
+        split_check.pack(anchor=tk.W, padx=10)
+        
+        quick_actions = ttk.LabelFrame(sidebar_frame, text="Quick Actions")
+        quick_actions.pack(fill=tk.X, padx=5, pady=10)
+        
+        if self.launcher.mangohud_available:
+            self.mangohud_var = tk.BooleanVar(value=self.launcher.config.get("mangohud_enabled", False))
+            mangohud_btn = ttk.Checkbutton(
+                quick_actions, text="📊 MangoHud", 
+                variable=self.mangohud_var,
+                command=self._toggle_mangohud
+            )
+            mangohud_btn.pack(anchor=tk.W, padx=5, pady=2)
+        
+        if self.launcher.gamemode_available:
+            self.gamemode_var = tk.BooleanVar(value=self.launcher.config.get("gamemode_enabled", False))
+            gamemode_btn = ttk.Checkbutton(
+                quick_actions, text="⚡ GameMode",
+                variable=self.gamemode_var,
+                command=self._toggle_gamemode
+            )
+            gamemode_btn.pack(anchor=tk.W, padx=5, pady=2)
+        
         games_frame = ttk.Frame(content_frame)
         games_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -1701,18 +2169,280 @@ class AegisGameLauncherGUI:
         
         self.games_container.bind('<Configure>', 
             lambda e: self.games_canvas.configure(scrollregion=self.games_canvas.bbox("all")))
+    
+    def _create_gpu_tab(self):
+        """Create the GPU setup/split render tab"""
+        content = ttk.Frame(self.gpu_tab)
+        content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        status_frame = ttk.Frame(main_frame)
-        status_frame.pack(fill=tk.X, pady=(10, 0))
+        left_panel = ttk.Frame(content, width=350)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        left_panel.pack_propagate(False)
         
-        self.status_var = tk.StringVar(value="Ready")
-        status_label = ttk.Label(status_frame, textvariable=self.status_var)
-        status_label.pack(side=tk.LEFT)
+        gpu_info_frame = ttk.LabelFrame(left_panel, text="🖥️ Detected GPUs")
+        gpu_info_frame.pack(fill=tk.X, pady=(0, 10))
         
-        stats = self.launcher.get_stats()
-        stats_text = f"Games: {stats['total_games']} | Playtime: {stats['total_playtime_formatted']}"
-        stats_label = ttk.Label(status_frame, text=stats_text)
-        stats_label.pack(side=tk.RIGHT)
+        self.gpu_list_frame = ttk.Frame(gpu_info_frame)
+        self.gpu_list_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self._refresh_gpu_list_display()
+        
+        refresh_btn = ttk.Button(gpu_info_frame, text="🔄 Refresh GPUs", command=self._refresh_gpus)
+        refresh_btn.pack(pady=5)
+        
+        profiles_frame = ttk.LabelFrame(left_panel, text="📋 GPU Profiles")
+        profiles_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.profile_listbox = tk.Listbox(
+            profiles_frame, bg=self.secondary_color, fg=self.fg_color,
+            selectmode=tk.SINGLE, height=10
+        )
+        self.profile_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.profile_listbox.bind('<<ListboxSelect>>', self._on_profile_select)
+        
+        self._refresh_profile_list()
+        
+        profile_btns = ttk.Frame(profiles_frame)
+        profile_btns.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(profile_btns, text="➕ New", command=self._new_profile).pack(side=tk.LEFT, padx=2)
+        ttk.Button(profile_btns, text="📥 Import", command=self._import_profile).pack(side=tk.LEFT, padx=2)
+        ttk.Button(profile_btns, text="📤 Export", command=self._export_profile).pack(side=tk.LEFT, padx=2)
+        ttk.Button(profile_btns, text="🗑️ Delete", command=self._delete_profile).pack(side=tk.LEFT, padx=2)
+        
+        right_panel = ttk.Frame(content)
+        right_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.profile_editor_frame = ttk.LabelFrame(right_panel, text="✏️ Profile Editor")
+        self.profile_editor_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self._create_profile_editor()
+    
+    def _create_profile_editor(self):
+        """Create the profile editor UI"""
+        editor = self.profile_editor_frame
+        
+        for widget in editor.winfo_children():
+            widget.destroy()
+        
+        basic_frame = ttk.Frame(editor)
+        basic_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(basic_frame, text="Profile Name:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.profile_name_var = tk.StringVar()
+        ttk.Entry(basic_frame, textvariable=self.profile_name_var, width=30).grid(row=0, column=1, pady=2, padx=5)
+        
+        ttk.Label(basic_frame, text="Description:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.profile_desc_var = tk.StringVar()
+        ttk.Entry(basic_frame, textvariable=self.profile_desc_var, width=30).grid(row=1, column=1, pady=2, padx=5)
+        
+        gpu_assign_frame = ttk.LabelFrame(editor, text="GPU Assignment")
+        gpu_assign_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        gpu_options = [""] + [f"{gpu.id} - {gpu.name}" for gpu in self.launcher.detected_gpus]
+        
+        ttk.Label(gpu_assign_frame, text="Center GPU:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.center_gpu_var = tk.StringVar()
+        self.center_gpu_combo = ttk.Combobox(gpu_assign_frame, textvariable=self.center_gpu_var, 
+                                              values=gpu_options, width=40, state='readonly')
+        self.center_gpu_combo.grid(row=0, column=1, padx=5, pady=2)
+        
+        ttk.Label(gpu_assign_frame, text="Rim GPU:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+        self.rim_gpu_var = tk.StringVar()
+        self.rim_gpu_combo = ttk.Combobox(gpu_assign_frame, textvariable=self.rim_gpu_var,
+                                           values=gpu_options, width=40, state='readonly')
+        self.rim_gpu_combo.grid(row=1, column=1, padx=5, pady=2)
+        
+        region_frame = ttk.LabelFrame(editor, text="Region Settings")
+        region_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(region_frame, text="Center Radius (%):").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.center_radius_var = tk.DoubleVar(value=60.0)
+        self.center_radius_scale = ttk.Scale(region_frame, from_=20, to=80, variable=self.center_radius_var,
+                                             orient=tk.HORIZONTAL, length=200)
+        self.center_radius_scale.grid(row=0, column=1, padx=5, pady=2)
+        self.center_radius_label = ttk.Label(region_frame, text="60%")
+        self.center_radius_label.grid(row=0, column=2, padx=5)
+        self.center_radius_var.trace('w', lambda *a: self.center_radius_label.config(
+            text=f"{self.center_radius_var.get():.0f}%"))
+        
+        ttk.Label(region_frame, text="Region Blend (px):").grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+        self.blend_var = tk.IntVar(value=32)
+        self.blend_scale = ttk.Scale(region_frame, from_=0, to=64, variable=self.blend_var,
+                                     orient=tk.HORIZONTAL, length=200)
+        self.blend_scale.grid(row=1, column=1, padx=5, pady=2)
+        self.blend_label = ttk.Label(region_frame, text="32px")
+        self.blend_label.grid(row=1, column=2, padx=5)
+        self.blend_var.trace('w', lambda *a: self.blend_label.config(text=f"{self.blend_var.get()}px"))
+        
+        regions_notebook = ttk.Notebook(editor)
+        regions_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        center_frame = ttk.Frame(regions_notebook)
+        regions_notebook.add(center_frame, text="Center Region")
+        self._create_region_config(center_frame, "center")
+        
+        rim_frame = ttk.Frame(regions_notebook)
+        regions_notebook.add(rim_frame, text="Rim Region")
+        self._create_region_config(rim_frame, "rim")
+        
+        sync_frame = ttk.LabelFrame(editor, text="Sync Settings")
+        sync_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(sync_frame, text="Sync Mode:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.sync_mode_var = tk.StringVar(value="freesync")
+        sync_options = ["vsync", "freesync", "gsync", "adaptive", "unlocked"]
+        ttk.Combobox(sync_frame, textvariable=self.sync_mode_var, values=sync_options,
+                     width=15, state='readonly').grid(row=0, column=1, padx=5, pady=2)
+        
+        ttk.Label(sync_frame, text="Master FPS:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        self.master_fps_var = tk.IntVar(value=144)
+        ttk.Spinbox(sync_frame, from_=30, to=360, textvariable=self.master_fps_var,
+                    width=8).grid(row=0, column=3, padx=5, pady=2)
+        
+        buttons_frame = ttk.Frame(editor)
+        buttons_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        ttk.Button(buttons_frame, text="💾 Save Profile", command=self._save_profile).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="🔄 Reset", command=self._reset_profile_editor).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons_frame, text="✅ Sync to Orchestrator", command=self._sync_profile).pack(side=tk.LEFT, padx=5)
+    
+    def _create_region_config(self, parent, region: str):
+        """Create configuration UI for a render region"""
+        prefix = f"{region}_"
+        
+        frame = ttk.Frame(parent)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        ttk.Label(frame, text="Upscaler Backend:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        upscaler_var = tk.StringVar(value="fsr2" if region == "center" else "fsr1")
+        setattr(self, f"{prefix}upscaler_var", upscaler_var)
+        ttk.Combobox(frame, textvariable=upscaler_var, values=self.launcher.UPSCALER_BACKENDS,
+                     width=20, state='readonly').grid(row=0, column=1, padx=5, pady=2)
+        
+        ttk.Label(frame, text="Quality Preset:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        quality_var = tk.StringVar(value="balanced" if region == "center" else "performance")
+        setattr(self, f"{prefix}quality_var", quality_var)
+        ttk.Combobox(frame, textvariable=quality_var, values=self.launcher.QUALITY_PRESETS,
+                     width=20, state='readonly').grid(row=1, column=1, padx=5, pady=2)
+        
+        ttk.Label(frame, text="Render Resolution:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        render_res_var = tk.StringVar(value="1920x1080" if region == "center" else "1280x720")
+        setattr(self, f"{prefix}render_res_var", render_res_var)
+        ttk.Combobox(frame, textvariable=render_res_var, values=self.launcher.RESOLUTION_PRESETS,
+                     width=20, state='readonly').grid(row=2, column=1, padx=5, pady=2)
+        
+        ttk.Label(frame, text="Output Resolution:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        output_res_var = tk.StringVar(value="2560x1440")
+        setattr(self, f"{prefix}output_res_var", output_res_var)
+        ttk.Combobox(frame, textvariable=output_res_var, values=self.launcher.RESOLUTION_PRESETS,
+                     width=20, state='readonly').grid(row=3, column=1, padx=5, pady=2)
+        
+        ttk.Label(frame, text="Target FPS:").grid(row=4, column=0, sticky=tk.W, pady=2)
+        target_fps_var = tk.IntVar(value=144)
+        setattr(self, f"{prefix}target_fps_var", target_fps_var)
+        ttk.Spinbox(frame, from_=30, to=360, textvariable=target_fps_var,
+                    width=8).grid(row=4, column=1, padx=5, pady=2, sticky=tk.W)
+    
+    def _create_metrics_tab(self):
+        """Create the real-time metrics tab"""
+        content = ttk.Frame(self.metrics_tab)
+        content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        status_frame = ttk.LabelFrame(content, text="Session Status")
+        status_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.session_status_var = tk.StringVar(value="No active session")
+        ttk.Label(status_frame, textvariable=self.session_status_var, 
+                  style='Title.TLabel').pack(padx=10, pady=10)
+        
+        session_btns = ttk.Frame(status_frame)
+        session_btns.pack(pady=5)
+        ttk.Button(session_btns, text="⏹️ Stop Session", command=self._stop_session).pack(side=tk.LEFT, padx=5)
+        ttk.Button(session_btns, text="🔄 Refresh", command=self._refresh_metrics).pack(side=tk.LEFT, padx=5)
+        
+        metrics_frame = ttk.Frame(content)
+        metrics_frame.pack(fill=tk.BOTH, expand=True)
+        
+        center_metrics = ttk.LabelFrame(metrics_frame, text="🎯 Center Region")
+        center_metrics.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        self.center_fps_var = tk.StringVar(value="-- FPS")
+        self.center_frametime_var = tk.StringVar(value="-- ms")
+        self.center_gpu_usage_var = tk.StringVar(value="GPU: --%")
+        self.center_latency_var = tk.StringVar(value="Latency: -- ms")
+        
+        ttk.Label(center_metrics, textvariable=self.center_fps_var, 
+                  font=('Helvetica', 24, 'bold')).pack(pady=10)
+        ttk.Label(center_metrics, textvariable=self.center_frametime_var).pack()
+        ttk.Label(center_metrics, textvariable=self.center_gpu_usage_var).pack()
+        ttk.Label(center_metrics, textvariable=self.center_latency_var).pack()
+        
+        rim_metrics = ttk.LabelFrame(metrics_frame, text="🔲 Rim Region")
+        rim_metrics.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        self.rim_fps_var = tk.StringVar(value="-- FPS")
+        self.rim_frametime_var = tk.StringVar(value="-- ms")
+        self.rim_gpu_usage_var = tk.StringVar(value="GPU: --%")
+        self.rim_latency_var = tk.StringVar(value="Latency: -- ms")
+        
+        ttk.Label(rim_metrics, textvariable=self.rim_fps_var,
+                  font=('Helvetica', 24, 'bold')).pack(pady=10)
+        ttk.Label(rim_metrics, textvariable=self.rim_frametime_var).pack()
+        ttk.Label(rim_metrics, textvariable=self.rim_gpu_usage_var).pack()
+        ttk.Label(rim_metrics, textvariable=self.rim_latency_var).pack()
+        
+        output_frame = ttk.LabelFrame(content, text="📺 Composite Output")
+        output_frame.pack(fill=tk.X, pady=10)
+        
+        self.output_fps_var = tk.StringVar(value="Output: -- FPS")
+        self.sync_status_var = tk.StringVar(value="Sync: --")
+        
+        ttk.Label(output_frame, textvariable=self.output_fps_var, 
+                  font=('Helvetica', 16, 'bold')).pack(side=tk.LEFT, padx=20, pady=10)
+        ttk.Label(output_frame, textvariable=self.sync_status_var).pack(side=tk.LEFT, padx=20, pady=10)
+    
+    def _create_settings_tab(self):
+        """Create the settings tab"""
+        content = ttk.Frame(self.settings_tab)
+        content.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        general_frame = ttk.LabelFrame(content, text="General Settings")
+        general_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.auto_scan_var = tk.BooleanVar(value=self.launcher.config.get("auto_scan_on_start", True))
+        ttk.Checkbutton(general_frame, text="Auto-scan games on startup",
+                        variable=self.auto_scan_var).pack(anchor=tk.W, padx=10, pady=2)
+        
+        self.auto_mount_var = tk.BooleanVar(value=self.launcher.config.get("auto_mount_external", True))
+        ttk.Checkbutton(general_frame, text="Auto-mount external devices",
+                        variable=self.auto_mount_var).pack(anchor=tk.W, padx=10, pady=2)
+        
+        self.low_latency_var = tk.BooleanVar(value=self.launcher.config.get("low_latency_mode", True))
+        ttk.Checkbutton(general_frame, text="Low latency mode",
+                        variable=self.low_latency_var).pack(anchor=tk.W, padx=10, pady=2)
+        
+        split_frame = ttk.LabelFrame(content, text="Split Render Settings")
+        split_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.auto_orchestrator_var = tk.BooleanVar(value=self.launcher.config.get("auto_start_orchestrator", True))
+        ttk.Checkbutton(split_frame, text="Auto-connect to orchestrator daemon",
+                        variable=self.auto_orchestrator_var).pack(anchor=tk.W, padx=10, pady=2)
+        
+        self.show_metrics_var = tk.BooleanVar(value=self.launcher.config.get("show_gpu_metrics", True))
+        ttk.Checkbutton(split_frame, text="Show GPU metrics in game tiles",
+                        variable=self.show_metrics_var).pack(anchor=tk.W, padx=10, pady=2)
+        
+        default_profile_frame = ttk.Frame(split_frame)
+        default_profile_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(default_profile_frame, text="Default GPU Profile:").pack(side=tk.LEFT)
+        self.default_profile_var = tk.StringVar(value=self.launcher.config.get("default_split_profile", "default"))
+        profile_names = list(self.launcher.gpu_profiles.keys())
+        ttk.Combobox(default_profile_frame, textvariable=self.default_profile_var,
+                     values=profile_names, width=20, state='readonly').pack(side=tk.LEFT, padx=10)
+        
+        save_btn = ttk.Button(content, text="💾 Save Settings", command=self._save_settings)
+        save_btn.pack(pady=20)
     
     def _bind_events(self):
         """Bind keyboard and mouse events"""
@@ -1726,6 +2456,251 @@ class AegisGameLauncherGUI:
             lambda e: self.games_canvas.yview_scroll(-1, "units"))
         self.games_canvas.bind('<Button-5>', 
             lambda e: self.games_canvas.yview_scroll(1, "units"))
+    
+    def _refresh_gpu_list_display(self):
+        """Refresh the GPU list display"""
+        for widget in self.gpu_list_frame.winfo_children():
+            widget.destroy()
+        
+        if not self.launcher.detected_gpus:
+            ttk.Label(self.gpu_list_frame, text="No GPUs detected\n(Orchestrator may not be running)").pack()
+            return
+        
+        for gpu in self.launcher.detected_gpus:
+            gpu_frame = ttk.Frame(self.gpu_list_frame)
+            gpu_frame.pack(fill=tk.X, pady=2)
+            
+            primary_tag = " [Primary]" if gpu.is_primary else ""
+            ttk.Label(gpu_frame, text=f"🖥️ {gpu.name}{primary_tag}",
+                      font=('Helvetica', 10, 'bold')).pack(anchor=tk.W)
+            ttk.Label(gpu_frame, text=f"   ID: {gpu.id}").pack(anchor=tk.W)
+            ttk.Label(gpu_frame, text=f"   VRAM: {gpu.vram_mb}MB | Driver: {gpu.driver}").pack(anchor=tk.W)
+    
+    def _refresh_profile_list(self):
+        """Refresh the profile listbox"""
+        self.profile_listbox.delete(0, tk.END)
+        for name in self.launcher.gpu_profiles.keys():
+            self.profile_listbox.insert(tk.END, name)
+    
+    def _on_profile_select(self, event):
+        """Handle profile selection"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            return
+        
+        name = self.profile_listbox.get(selection[0])
+        profile = self.launcher.gpu_profiles.get(name)
+        if not profile:
+            return
+        
+        self.profile_name_var.set(profile.name)
+        self.profile_desc_var.set(profile.description)
+        
+        gpu_options = [""] + [f"{gpu.id} - {gpu.name}" for gpu in self.launcher.detected_gpus]
+        center_match = [opt for opt in gpu_options if opt.startswith(profile.center_gpu)]
+        rim_match = [opt for opt in gpu_options if opt.startswith(profile.rim_gpu)]
+        
+        if center_match:
+            self.center_gpu_var.set(center_match[0])
+        if rim_match:
+            self.rim_gpu_var.set(rim_match[0])
+        
+        self.center_radius_var.set(profile.center_radius_pct)
+        self.blend_var.set(profile.region_blend_px)
+        self.sync_mode_var.set(profile.sync_mode)
+        self.master_fps_var.set(profile.master_fps)
+        
+        self.center_upscaler_var.set(profile.center_upscaler)
+        self.center_quality_var.set(profile.center_quality)
+        self.center_render_res_var.set(profile.center_render_res)
+        self.center_output_res_var.set(profile.center_output_res)
+        self.center_target_fps_var.set(profile.center_target_fps)
+        
+        self.rim_upscaler_var.set(profile.rim_upscaler)
+        self.rim_quality_var.set(profile.rim_quality)
+        self.rim_render_res_var.set(profile.rim_render_res)
+        self.rim_output_res_var.set(profile.rim_output_res)
+        self.rim_target_fps_var.set(profile.rim_target_fps)
+    
+    def _new_profile(self):
+        """Create a new profile"""
+        name = f"profile_{len(self.launcher.gpu_profiles) + 1}"
+        self.launcher.create_gpu_profile(name, "New GPU profile")
+        self._refresh_profile_list()
+        
+        for i in range(self.profile_listbox.size()):
+            if self.profile_listbox.get(i) == name:
+                self.profile_listbox.selection_clear(0, tk.END)
+                self.profile_listbox.selection_set(i)
+                self._on_profile_select(None)
+                break
+    
+    def _save_profile(self):
+        """Save the current profile"""
+        name = self.profile_name_var.get()
+        if not name:
+            messagebox.showerror("Error", "Profile name is required")
+            return
+        
+        center_gpu = self.center_gpu_var.get().split(" - ")[0] if self.center_gpu_var.get() else ""
+        rim_gpu = self.rim_gpu_var.get().split(" - ")[0] if self.rim_gpu_var.get() else ""
+        
+        profile = SplitRenderProfile(
+            name=name,
+            description=self.profile_desc_var.get(),
+            center_gpu=center_gpu,
+            rim_gpu=rim_gpu,
+            center_radius_pct=self.center_radius_var.get(),
+            region_blend_px=self.blend_var.get(),
+            sync_mode=self.sync_mode_var.get(),
+            master_fps=self.master_fps_var.get(),
+            center_upscaler=self.center_upscaler_var.get(),
+            center_quality=self.center_quality_var.get(),
+            center_render_res=self.center_render_res_var.get(),
+            center_output_res=self.center_output_res_var.get(),
+            center_target_fps=self.center_target_fps_var.get(),
+            rim_upscaler=self.rim_upscaler_var.get(),
+            rim_quality=self.rim_quality_var.get(),
+            rim_render_res=self.rim_render_res_var.get(),
+            rim_output_res=self.rim_output_res_var.get(),
+            rim_target_fps=self.rim_target_fps_var.get()
+        )
+        
+        self.launcher.gpu_profiles[name] = profile
+        self.launcher.save_gpu_profiles()
+        self._refresh_profile_list()
+        self.status_var.set(f"Profile '{name}' saved")
+    
+    def _delete_profile(self):
+        """Delete the selected profile"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            return
+        
+        name = self.profile_listbox.get(selection[0])
+        if name == "default":
+            messagebox.showerror("Error", "Cannot delete the default profile")
+            return
+        
+        if messagebox.askyesno("Confirm", f"Delete profile '{name}'?"):
+            self.launcher.delete_gpu_profile(name)
+            self._refresh_profile_list()
+            self._reset_profile_editor()
+    
+    def _import_profile(self):
+        """Import a profile from file"""
+        filepath = filedialog.askopenfilename(
+            title="Import GPU Profile",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if filepath:
+            name = self.launcher.import_gpu_profile(Path(filepath))
+            if name:
+                self._refresh_profile_list()
+                self.status_var.set(f"Imported profile: {name}")
+            else:
+                messagebox.showerror("Error", "Failed to import profile")
+    
+    def _export_profile(self):
+        """Export the selected profile to file"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            messagebox.showerror("Error", "Select a profile to export")
+            return
+        
+        name = self.profile_listbox.get(selection[0])
+        filepath = filedialog.asksaveasfilename(
+            title="Export GPU Profile",
+            defaultextension=".json",
+            initialfile=f"{name}.json",
+            filetypes=[("JSON files", "*.json")]
+        )
+        if filepath:
+            if self.launcher.export_gpu_profile(name, Path(filepath)):
+                self.status_var.set(f"Exported profile to: {filepath}")
+            else:
+                messagebox.showerror("Error", "Failed to export profile")
+    
+    def _reset_profile_editor(self):
+        """Reset the profile editor to defaults"""
+        self.profile_name_var.set("")
+        self.profile_desc_var.set("")
+        self.center_gpu_var.set("")
+        self.rim_gpu_var.set("")
+        self.center_radius_var.set(60.0)
+        self.blend_var.set(32)
+        self.sync_mode_var.set("freesync")
+        self.master_fps_var.set(144)
+    
+    def _sync_profile(self):
+        """Sync selected profile to orchestrator"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            messagebox.showerror("Error", "Select a profile to sync")
+            return
+        
+        name = self.profile_listbox.get(selection[0])
+        if self.launcher.sync_profile_to_orchestrator(name):
+            self.status_var.set(f"Profile '{name}' synced to orchestrator")
+        else:
+            messagebox.showerror("Error", "Failed to sync profile")
+    
+    def _refresh_gpus(self):
+        """Refresh GPU list"""
+        self.launcher.refresh_gpu_list()
+        self._refresh_gpu_list_display()
+        
+        gpu_options = [""] + [f"{gpu.id} - {gpu.name}" for gpu in self.launcher.detected_gpus]
+        self.center_gpu_combo['values'] = gpu_options
+        self.rim_gpu_combo['values'] = gpu_options
+        
+        self.status_var.set(f"Found {len(self.launcher.detected_gpus)} GPUs")
+    
+    def _stop_session(self):
+        """Stop the current split-render session"""
+        success, msg = self.launcher.stop_split_render_session()
+        if success:
+            self.session_status_var.set("Session stopped")
+            self.status_var.set("Split-render session stopped")
+        else:
+            self.status_var.set(f"Error: {msg}")
+    
+    def _refresh_metrics(self):
+        """Refresh metrics display"""
+        status = self.launcher.get_orchestrator_status()
+        
+        if status.get("success") and status.get("data", {}).get("active_session"):
+            session = status["data"]["active_session"]
+            self.session_status_var.set(f"Active: {session.get('profile', 'Unknown')}")
+            
+            metrics = status["data"].get("metrics", {})
+            
+            if "center" in metrics:
+                cm = metrics["center"]
+                self.center_fps_var.set(f"{cm.get('current_fps', 0):.1f} FPS")
+                self.center_frametime_var.set(f"{cm.get('frame_time_ms', 0):.2f} ms")
+                self.center_gpu_usage_var.set(f"GPU: {cm.get('gpu_usage_pct', 0)}%")
+                self.center_latency_var.set(f"Latency: {cm.get('latency_ms', 0):.1f} ms")
+            
+            if "rim" in metrics:
+                rm = metrics["rim"]
+                self.rim_fps_var.set(f"{rm.get('current_fps', 0):.1f} FPS")
+                self.rim_frametime_var.set(f"{rm.get('frame_time_ms', 0):.2f} ms")
+                self.rim_gpu_usage_var.set(f"GPU: {rm.get('gpu_usage_pct', 0)}%")
+                self.rim_latency_var.set(f"Latency: {rm.get('latency_ms', 0):.1f} ms")
+        else:
+            self.session_status_var.set("No active session")
+    
+    def _save_settings(self):
+        """Save settings"""
+        self.launcher.config["auto_scan_on_start"] = self.auto_scan_var.get()
+        self.launcher.config["auto_mount_external"] = self.auto_mount_var.get()
+        self.launcher.config["low_latency_mode"] = self.low_latency_var.get()
+        self.launcher.config["auto_start_orchestrator"] = self.auto_orchestrator_var.get()
+        self.launcher.config["show_gpu_metrics"] = self.show_metrics_var.get()
+        self.launcher.config["default_split_profile"] = self.default_profile_var.get()
+        self.launcher.save_config()
+        self.status_var.set("Settings saved")
     
     def _initial_scan(self):
         """Perform initial scan on startup"""
@@ -1765,6 +2740,9 @@ class AegisGameLauncherGUI:
             favorites_only=self.favorites_only_var.get(),
             external_only=self.platform_var.get() == "external"
         )
+        
+        if self.split_render_only_var.get():
+            games = [g for g in games if g.split_render_enabled]
         
         row = 0
         col = 0
@@ -1826,6 +2804,14 @@ class AegisGameLauncherGUI:
         )
         info_label.pack()
         
+        if game.split_render_enabled:
+            split_label = tk.Label(
+                frame, text=f"🖥️ {game.split_render_profile or 'default'}",
+                font=('Helvetica', 8),
+                bg=self.secondary_color, fg='#88ff88'
+            )
+            split_label.pack()
+        
         buttons_frame = tk.Frame(frame, bg=self.secondary_color)
         buttons_frame.pack(pady=5)
         
@@ -1844,9 +2830,92 @@ class AegisGameLauncherGUI:
         )
         fav_btn.pack(side=tk.LEFT, padx=2)
         
+        gpu_btn = tk.Button(
+            buttons_frame, text="🖥️",
+            bg=self.secondary_color, fg=self.fg_color,
+            command=lambda g=game: self._show_game_gpu_menu(g)
+        )
+        gpu_btn.pack(side=tk.LEFT, padx=2)
+        
         frame.bind('<Double-Button-1>', lambda e, g=game: self._launch_game(g))
+        frame.bind('<Button-3>', lambda e, g=game: self._show_game_context_menu(e, g))
         
         return frame
+    
+    def _show_game_context_menu(self, event, game: Game):
+        """Show context menu for a game"""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="▶ Play", command=lambda: self._launch_game(game))
+        menu.add_separator()
+        
+        fav_label = "Remove from favorites" if game.id in self.launcher.favorites else "Add to favorites"
+        menu.add_command(label=f"⭐ {fav_label}", command=lambda: self._toggle_favorite(game))
+        
+        upscaler_label = "Disable upscaler" if game.upscaler_enabled else "Enable upscaler"
+        menu.add_command(label=f"🎨 {upscaler_label}", 
+                        command=lambda: self._toggle_game_upscaler(game))
+        
+        split_label = "Disable split-render" if game.split_render_enabled else "Enable split-render"
+        menu.add_command(label=f"🖥️ {split_label}",
+                        command=lambda: self._toggle_game_split_render(game))
+        
+        profile_menu = tk.Menu(menu, tearoff=0)
+        for profile_name in self.launcher.gpu_profiles.keys():
+            check = "✓ " if game.split_render_profile == profile_name else "  "
+            profile_menu.add_command(
+                label=f"{check}{profile_name}",
+                command=lambda p=profile_name: self._set_game_profile(game, p)
+            )
+        menu.add_cascade(label="🖥️ GPU Profile", menu=profile_menu)
+        
+        menu.add_separator()
+        menu.add_command(label="📂 Open install folder", 
+                        command=lambda: self._open_game_folder(game))
+        
+        menu.tk_popup(event.x_root, event.y_root)
+    
+    def _show_game_gpu_menu(self, game: Game):
+        """Show GPU profile selection for a game"""
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        split_label = "✓ Split-render enabled" if game.split_render_enabled else "  Split-render disabled"
+        menu.add_command(label=split_label, 
+                        command=lambda: self._toggle_game_split_render(game))
+        menu.add_separator()
+        
+        for profile_name in self.launcher.gpu_profiles.keys():
+            check = "✓ " if game.split_render_profile == profile_name else "  "
+            menu.add_command(
+                label=f"{check}{profile_name}",
+                command=lambda p=profile_name: self._set_game_profile(game, p)
+            )
+        
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+    
+    def _set_game_profile(self, game: Game, profile_name: str):
+        """Set GPU profile for a game"""
+        self.launcher.set_game_gpu_profile(game.id, profile_name, True)
+        self._refresh_game_list()
+        self.status_var.set(f"Set '{profile_name}' profile for {game.name}")
+    
+    def _toggle_game_upscaler(self, game: Game):
+        """Toggle upscaler for a game"""
+        enabled = self.launcher.toggle_game_upscaler(game.id)
+        status = "enabled" if enabled else "disabled"
+        self.status_var.set(f"Upscaler {status} for {game.name}")
+        self._refresh_game_list()
+    
+    def _toggle_game_split_render(self, game: Game):
+        """Toggle split-render for a game"""
+        enabled = self.launcher.toggle_game_split_render(game.id)
+        status = "enabled" if enabled else "disabled"
+        self.status_var.set(f"Split-render {status} for {game.name}")
+        self._refresh_game_list()
+    
+    def _open_game_folder(self, game: Game):
+        """Open game install folder"""
+        if game.install_path and Path(game.install_path).exists():
+            subprocess.Popen(['xdg-open', game.install_path])
     
     def _update_favorites_bar(self):
         """Update the favorites quick launch bar"""
@@ -1881,7 +2950,12 @@ class AegisGameLauncherGUI:
         result = self.launcher.launch_game(game.id)
         
         if result["success"]:
-            self.status_var.set(f"Launched {game.name}")
+            if result.get("split_render"):
+                self.status_var.set(f"Launched {game.name} with split-render")
+                self.notebook.select(self.metrics_tab)
+                self._refresh_metrics()
+            else:
+                self.status_var.set(f"Launched {game.name}")
         else:
             self.status_var.set(f"Failed: {result.get('error', 'Unknown error')}")
             if result.get("upgrade_required"):
@@ -1926,11 +3000,12 @@ class AegisGameLauncherCLI:
         subparsers = parser.add_subparsers(dest='command', help='Commands')
         
         subparsers.add_parser('list', help='List all games')
-        
-        scan_parser = subparsers.add_parser('scan', help='Scan for games')
+        subparsers.add_parser('scan', help='Scan for games')
         
         launch_parser = subparsers.add_parser('launch', help='Launch a game')
         launch_parser.add_argument('game_id', help='Game ID or name')
+        launch_parser.add_argument('--split-render', action='store_true', help='Force split-render mode')
+        launch_parser.add_argument('--profile', help='GPU profile to use')
         
         subparsers.add_parser('favorites', help='Show favorite games')
         
@@ -1938,27 +3013,28 @@ class AegisGameLauncherCLI:
         fav_parser.add_argument('game_id', help='Game ID')
         
         subparsers.add_parser('stats', help='Show statistics')
-        
         subparsers.add_parser('devices', help='List external devices')
         
-        mount_parser = subparsers.add_parser('mount', help='Mount external device')
-        mount_parser.add_argument('device', help='Device name (e.g., sdb1)')
+        subparsers.add_parser('gpus', help='List detected GPUs')
+        subparsers.add_parser('profiles', help='List GPU profiles')
         
-        unmount_parser = subparsers.add_parser('unmount', help='Unmount external device')
-        unmount_parser.add_argument('device', help='Device name')
+        profile_parser = subparsers.add_parser('create-profile', help='Create GPU profile')
+        profile_parser.add_argument('name', help='Profile name')
+        profile_parser.add_argument('--center-gpu', help='Center GPU ID')
+        profile_parser.add_argument('--rim-gpu', help='Rim GPU ID')
+        profile_parser.add_argument('--sync', default='freesync', help='Sync mode')
+        profile_parser.add_argument('--fps', type=int, default=144, help='Target FPS')
         
-        backup_parser = subparsers.add_parser('backup', help='Backup game saves')
-        backup_parser.add_argument('game_id', help='Game ID')
+        set_profile_parser = subparsers.add_parser('set-profile', help='Assign GPU profile to game')
+        set_profile_parser.add_argument('game_id', help='Game ID')
+        set_profile_parser.add_argument('profile', help='Profile name')
         
-        restore_parser = subparsers.add_parser('restore', help='Restore game saves')
-        restore_parser.add_argument('game_id', help='Game ID')
-        restore_parser.add_argument('--backup', help='Specific backup name')
+        subparsers.add_parser('orchestrator-status', help='Show orchestrator status')
+        subparsers.add_parser('stop-session', help='Stop split-render session')
         
         subparsers.add_parser('mangohud', help='Toggle MangoHud overlay')
         subparsers.add_parser('gamemode', help='Toggle GameMode')
-        
         subparsers.add_parser('gui', help='Launch GUI mode')
-        
         subparsers.add_parser('status', help='Show launcher status')
         
         parsed_args = parser.parse_args(args)
@@ -1972,7 +3048,7 @@ class AegisGameLauncherCLI:
         elif parsed_args.command == 'scan':
             self._scan_games()
         elif parsed_args.command == 'launch':
-            self._launch_game(parsed_args.game_id)
+            self._launch_game(parsed_args.game_id, parsed_args.split_render, parsed_args.profile)
         elif parsed_args.command == 'favorites':
             self._show_favorites()
         elif parsed_args.command == 'favorite':
@@ -1981,14 +3057,19 @@ class AegisGameLauncherCLI:
             self._show_stats()
         elif parsed_args.command == 'devices':
             self._list_devices()
-        elif parsed_args.command == 'mount':
-            self._mount_device(parsed_args.device)
-        elif parsed_args.command == 'unmount':
-            self._unmount_device(parsed_args.device)
-        elif parsed_args.command == 'backup':
-            self._backup_saves(parsed_args.game_id)
-        elif parsed_args.command == 'restore':
-            self._restore_saves(parsed_args.game_id, parsed_args.backup)
+        elif parsed_args.command == 'gpus':
+            self._list_gpus()
+        elif parsed_args.command == 'profiles':
+            self._list_profiles()
+        elif parsed_args.command == 'create-profile':
+            self._create_profile(parsed_args.name, parsed_args.center_gpu, 
+                                parsed_args.rim_gpu, parsed_args.sync, parsed_args.fps)
+        elif parsed_args.command == 'set-profile':
+            self._set_game_profile(parsed_args.game_id, parsed_args.profile)
+        elif parsed_args.command == 'orchestrator-status':
+            self._orchestrator_status()
+        elif parsed_args.command == 'stop-session':
+            self._stop_session()
         elif parsed_args.command == 'mangohud':
             self._toggle_mangohud()
         elif parsed_args.command == 'gamemode':
@@ -2003,13 +3084,6 @@ class AegisGameLauncherCLI:
         print(f"\n{'='*60}")
         print(f"🎮 {text}")
         print(f"{'='*60}")
-    
-    def _print_tier_warning(self):
-        """Print tier limitation warning if applicable"""
-        if not self.launcher.is_full_version():
-            print(f"\n⚠️  Running {self.launcher.license_tier.name} Edition")
-            print("   Some features require Gamer edition or higher")
-            print("   Upgrade at: https://aegis-os.com")
     
     def _list_games(self):
         """List all games"""
@@ -2035,8 +3109,9 @@ class AegisGameLauncherCLI:
             
             for game in platform_games[:20]:
                 fav = "⭐" if game.id in self.launcher.favorites else "  "
+                split = "🖥️" if game.split_render_enabled else "  "
                 playtime = self.launcher.format_playtime(game.total_playtime) if game.total_playtime else "-"
-                print(f"  {fav} {game.name[:30]:<30} [{playtime:>8}]")
+                print(f"  {fav}{split} {game.name[:28]:<28} [{playtime:>8}]")
             
             if len(platform_games) > 20:
                 print(f"  ... and {len(platform_games) - 20} more")
@@ -2058,13 +3133,8 @@ class AegisGameLauncherCLI:
         print(f"   Native:   {results['native']}")
         print(f"   External: {results['external']}")
         print(f"   Total:    {results['total']}")
-        
-        if results['errors']:
-            print(f"\n⚠️  Errors:")
-            for error in results['errors']:
-                print(f"   - {error}")
     
-    def _launch_game(self, game_id: str):
+    def _launch_game(self, game_id: str, force_split: bool = False, profile: str = None):
         """Launch a game"""
         games = self.launcher.get_games()
         game = None
@@ -2077,245 +3147,213 @@ class AegisGameLauncherCLI:
             print(f"❌ Game not found: {game_id}")
             return
         
+        if profile:
+            self.launcher.set_game_gpu_profile(game.id, profile, True)
+        elif force_split:
+            game.split_render_enabled = True
+        
         print(f"\n🚀 Launching: {game.name}")
         print(f"   Platform: {game.platform}")
         print(f"   Runner: {game.runner}")
         
-        if self.launcher.config.get("gamemode_enabled") and self.launcher.gamemode_available:
-            print(f"   ⚡ GameMode: Enabled")
-        if self.launcher.config.get("mangohud_enabled") and self.launcher.mangohud_available:
-            print(f"   📊 MangoHud: Enabled")
+        if game.split_render_enabled:
+            print(f"   🖥️ Split-Render: {game.split_render_profile or 'default'}")
         
         result = self.launcher.launch_game(game.id)
         
         if result["success"]:
-            print(f"\n✅ Game launched successfully (PID: {result.get('pid', 'N/A')})")
+            print(f"\n✅ Game launched successfully!")
+            if result.get("split_render"):
+                print("   Split-render session active")
         else:
-            print(f"\n❌ Failed to launch: {result.get('error', 'Unknown error')}")
-            if result.get("upgrade_required"):
-                self._print_tier_warning()
+            print(f"\n❌ Launch failed: {result.get('error', 'Unknown error')}")
+    
+    def _list_gpus(self):
+        """List detected GPUs"""
+        self._print_header("Detected GPUs")
+        
+        self.launcher.refresh_gpu_list()
+        
+        if not self.launcher.detected_gpus:
+            print("\nNo GPUs detected (orchestrator may not be running)")
+            return
+        
+        for gpu in self.launcher.detected_gpus:
+            primary = " [PRIMARY]" if gpu.is_primary else ""
+            print(f"\n  🖥️ {gpu.name}{primary}")
+            print(f"     ID:     {gpu.id}")
+            print(f"     Vendor: {gpu.vendor}")
+            print(f"     VRAM:   {gpu.vram_mb} MB")
+            print(f"     Driver: {gpu.driver}")
+    
+    def _list_profiles(self):
+        """List GPU profiles"""
+        self._print_header("GPU Profiles")
+        
+        if not self.launcher.gpu_profiles:
+            print("\nNo GPU profiles configured")
+            return
+        
+        for name, profile in self.launcher.gpu_profiles.items():
+            print(f"\n  📋 {name}")
+            print(f"     Center GPU: {profile.center_gpu or 'auto'}")
+            print(f"     Rim GPU:    {profile.rim_gpu or 'auto'}")
+            print(f"     Sync Mode:  {profile.sync_mode}")
+            print(f"     Target FPS: {profile.master_fps}")
+            print(f"     Center:     {profile.center_radius_pct}%")
+    
+    def _create_profile(self, name: str, center_gpu: str, rim_gpu: str, sync: str, fps: int):
+        """Create a GPU profile"""
+        profile = self.launcher.create_gpu_profile(name)
+        
+        if center_gpu:
+            profile.center_gpu = center_gpu
+        if rim_gpu:
+            profile.rim_gpu = rim_gpu
+        profile.sync_mode = sync
+        profile.master_fps = fps
+        
+        self.launcher.gpu_profiles[name] = profile
+        self.launcher.save_gpu_profiles()
+        
+        print(f"\n✅ Created GPU profile: {name}")
+    
+    def _set_game_profile(self, game_id: str, profile: str):
+        """Set GPU profile for a game"""
+        games = self.launcher.get_games()
+        game = None
+        for g in games:
+            if g.id == game_id or game_id.lower() in g.name.lower():
+                game = g
+                break
+        
+        if not game:
+            print(f"❌ Game not found: {game_id}")
+            return
+        
+        if self.launcher.set_game_gpu_profile(game.id, profile, True):
+            print(f"✅ Set profile '{profile}' for {game.name}")
+        else:
+            print(f"❌ Failed to set profile")
+    
+    def _orchestrator_status(self):
+        """Show orchestrator status"""
+        self._print_header("Orchestrator Status")
+        
+        status = self.launcher.get_orchestrator_status()
+        
+        if not status.get("success"):
+            print(f"\n❌ {status.get('error', 'Could not connect to orchestrator')}")
+            return
+        
+        data = status.get("data", {})
+        print(f"\n  Running: {data.get('running', False)}")
+        print(f"  GPUs: {len(data.get('gpus', []))}")
+        print(f"  Profiles: {', '.join(data.get('profiles', []))}")
+        
+        if data.get("active_session"):
+            session = data["active_session"]
+            print(f"\n  Active Session:")
+            print(f"    Profile: {session.get('profile')}")
+            print(f"    Started: {session.get('started')}")
+    
+    def _stop_session(self):
+        """Stop split-render session"""
+        success, msg = self.launcher.stop_split_render_session()
+        if success:
+            print("✅ Session stopped")
+        else:
+            print(f"❌ {msg}")
     
     def _show_favorites(self):
         """Show favorite games"""
-        self._print_header("Favorite Games")
-        
+        self._print_header("Favorites")
         favorites = self.launcher.get_favorites()
-        
         if not favorites:
-            print("\nNo favorites yet. Use 'favorite <game_id>' to add games.")
+            print("\nNo favorites yet")
             return
-        
-        for i, game in enumerate(favorites, 1):
-            playtime = self.launcher.format_playtime(game.total_playtime)
-            print(f"  {i}. ⭐ {game.name} [{game.platform}] - {playtime}")
+        for game in favorites:
+            print(f"  ⭐ {game.name}")
     
     def _toggle_favorite(self, game_id: str):
-        """Toggle favorite status"""
-        if game_id in self.launcher.games:
-            is_fav = self.launcher.toggle_favorite(game_id)
-            status = "added to" if is_fav else "removed from"
-            print(f"✅ Game {status} favorites")
-        else:
-            print(f"❌ Game not found: {game_id}")
+        """Toggle favorite"""
+        result = self.launcher.toggle_favorite(game_id)
+        status = "added to" if result else "removed from"
+        print(f"Game {status} favorites")
     
     def _show_stats(self):
         """Show statistics"""
         self._print_header("Statistics")
-        
         stats = self.launcher.get_stats()
-        
-        print(f"\n📊 Overview")
-        print(f"   Total Games:    {stats['total_games']}")
-        print(f"   Total Playtime: {stats['total_playtime_formatted']}")
-        print(f"   Favorites:      {stats['favorites_count']}")
-        print(f"   External Games: {stats['external_games']}")
-        
-        print(f"\n📁 By Platform")
-        for platform, count in stats['platform_counts'].items():
-            print(f"   {platform}: {count}")
-        
-        if stats['most_played']:
-            print(f"\n🏆 Most Played")
-            for game in stats['most_played']:
-                print(f"   - {game['name']}: {game['playtime']}")
-        
-        if stats['recently_played']:
-            print(f"\n🕐 Recently Played")
-            for game in stats['recently_played']:
-                print(f"   - {game['name']}")
-        
-        print(f"\n⚙️  Performance Tools")
-        print(f"   GameMode: {'✅ Available' if stats['gamemode_available'] else '❌ Not Available'}")
-        print(f"             {'(Enabled)' if stats['gamemode_enabled'] else '(Disabled)'}")
-        print(f"   MangoHud: {'✅ Available' if stats['mangohud_available'] else '❌ Not Available'}")
-        print(f"             {'(Enabled)' if stats['mangohud_enabled'] else '(Disabled)'}")
-        
-        print(f"\n📜 License: {stats['license_tier']}")
+        print(f"\n  Total Games: {stats['total_games']}")
+        print(f"  Total Playtime: {stats['total_playtime_formatted']}")
+        print(f"  Favorites: {stats['favorites_count']}")
+        print(f"  External Games: {stats['external_games']}")
+        print(f"  Split-Render Games: {stats.get('games_with_split_render', 0)}")
+        print(f"  GPUs Detected: {stats.get('gpu_count', 0)}")
+        print(f"  GPU Profiles: {stats.get('gpu_profiles_count', 0)}")
+        print(f"  License: {stats['license_tier']}")
     
     def _list_devices(self):
         """List external devices"""
         self._print_header("External Devices")
-        
         devices = self.launcher.detect_external_devices()
-        
         if not devices:
-            print("\nNo external devices detected.")
+            print("\nNo external devices detected")
             return
-        
-        print(f"\n{'Device':<10} {'Size':<10} {'Type':<10} {'Label':<20} {'Mount Point'}")
-        print("-" * 70)
-        
-        for device in devices:
-            name = device.get('name', '')
-            size = device.get('size', '')
-            dtype = device.get('type', '')
-            label = device.get('label', '')[:20]
-            mount = device.get('mountpoint', 'Not mounted')
-            print(f"{name:<10} {size:<10} {dtype:<10} {label:<20} {mount}")
-        
-        self._print_tier_warning()
-    
-    def _mount_device(self, device: str):
-        """Mount an external device"""
-        if not self.launcher.is_full_version():
-            print("❌ External device mounting requires Gamer edition or higher")
-            self._print_tier_warning()
-            return
-        
-        print(f"\n📀 Mounting device: {device}")
-        mount_point = self.launcher.mount_external_device(device)
-        
-        if mount_point:
-            print(f"✅ Mounted at: {mount_point}")
-            print("   Scanning for games...")
-            games = self.launcher.scan_external_games(mount_point)
-            print(f"   Found {len(games)} games")
-        else:
-            print("❌ Failed to mount device")
-    
-    def _unmount_device(self, device: str):
-        """Unmount an external device"""
-        print(f"\n📀 Unmounting device: {device}")
-        
-        if self.launcher.unmount_external_device(device):
-            print("✅ Device unmounted successfully")
-        else:
-            print("❌ Failed to unmount device")
-    
-    def _backup_saves(self, game_id: str):
-        """Backup game saves"""
-        if not self.launcher.is_full_version():
-            print("❌ Save backup requires Gamer edition or higher")
-            self._print_tier_warning()
-            return
-        
-        print(f"\n💾 Backing up saves for: {game_id}")
-        
-        if self.launcher.backup_game_saves(game_id):
-            print("✅ Saves backed up successfully")
-        else:
-            print("❌ Failed to backup saves")
-    
-    def _restore_saves(self, game_id: str, backup_name: str = None):
-        """Restore game saves"""
-        if not self.launcher.is_full_version():
-            print("❌ Save restore requires Gamer edition or higher")
-            self._print_tier_warning()
-            return
-        
-        print(f"\n💾 Restoring saves for: {game_id}")
-        
-        if self.launcher.restore_game_saves(game_id, backup_name):
-            print("✅ Saves restored successfully")
-        else:
-            print("❌ Failed to restore saves")
+        for dev in devices:
+            print(f"\n  💾 {dev['name']}")
+            print(f"     Size: {dev['size']}")
+            print(f"     Type: {dev['type']}")
+            print(f"     Mount: {dev.get('mountpoint', 'Not mounted')}")
     
     def _toggle_mangohud(self):
         """Toggle MangoHud"""
-        if not self.launcher.mangohud_available:
-            print("❌ MangoHud is not installed")
-            return
-        
-        enabled = self.launcher.toggle_mangohud()
-        status = "enabled" if enabled else "disabled"
-        print(f"✅ MangoHud {status}")
+        result = self.launcher.toggle_mangohud()
+        status = "enabled" if result else "disabled"
+        print(f"MangoHud {status}")
     
     def _toggle_gamemode(self):
         """Toggle GameMode"""
-        if not self.launcher.gamemode_available:
-            print("❌ GameMode is not installed")
-            return
-        
-        enabled = self.launcher.toggle_gamemode()
-        status = "enabled" if enabled else "disabled"
-        print(f"✅ GameMode {status}")
+        result = self.launcher.toggle_gamemode()
+        status = "enabled" if result else "disabled"
+        print(f"GameMode {status}")
     
     def _launch_gui(self):
-        """Launch GUI mode"""
-        if not TKINTER_AVAILABLE:
-            print("❌ GUI mode requires tkinter")
-            print("   Install with: sudo apt install python3-tk")
-            return
-        
-        print("🖥️  Launching GUI mode...")
+        """Launch GUI"""
         gui = AegisGameLauncherGUI(self.launcher)
         gui.run()
     
     def _show_status(self):
         """Show launcher status"""
-        self._print_header(f"{self.launcher.APP_NAME} Status")
-        
-        print(f"\n📋 Version: {self.launcher.VERSION}")
-        print(f"📜 License: {self.launcher.license_tier.name}")
-        print(f"🎮 Full Features: {'Yes' if self.launcher.is_full_version() else 'No'}")
-        
-        stats = self.launcher.get_stats()
-        print(f"\n📊 Library: {stats['total_games']} games")
-        print(f"⏱️  Playtime: {stats['total_playtime_formatted']}")
-        
-        print(f"\n⚡ GameMode: {'Available' if self.launcher.gamemode_available else 'Not Found'}")
-        print(f"📊 MangoHud: {'Available' if self.launcher.mangohud_available else 'Not Found'}")
-        
-        devices = self.launcher.detect_external_devices()
-        mounted = len([d for d in devices if d.get('mountpoint')])
-        print(f"\n💾 External Devices: {len(devices)} detected, {mounted} mounted")
-        
-        print(f"\n📁 Paths:")
-        print(f"   Config: {self.launcher.config_file}")
-        print(f"   Library: {self.launcher.library_file}")
-        print(f"   Logs: {self.launcher.log_dir / 'game-launcher.log'}")
-        print(f"   Backups: {self.launcher.backup_dir}")
+        self._print_header("Launcher Status")
+        print(f"\n  Version: {self.launcher.VERSION}")
+        print(f"  License: {self.launcher.license_tier.name}")
+        print(f"  GameMode: {'✅' if self.launcher.gamemode_available else '❌'}")
+        print(f"  MangoHud: {'✅' if self.launcher.mangohud_available else '❌'}")
+        print(f"  Upscaler: {'✅' if self.launcher.upscaler_available else '❌'}")
+        print(f"  GameScope: {'✅' if self.launcher.gamescope_available else '❌'}")
+        print(f"  Orchestrator: {'✅' if self.launcher.orchestrator_available else '❌'}")
+        print(f"  GPUs: {len(self.launcher.detected_gpus)}")
 
 
 def main():
     """Main entry point"""
-    if len(sys.argv) > 1 and sys.argv[1] == '--gui':
-        if not TKINTER_AVAILABLE:
-            print("Error: tkinter is not available")
-            print("Install with: sudo apt install python3-tk")
-            sys.exit(1)
-        
-        launcher = AegisGameLauncher(headless=False)
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode')
+    
+    args, remaining = parser.parse_known_args()
+    
+    launcher = AegisGameLauncher(headless=args.headless)
+    
+    if args.gui or (not remaining and not args.headless and TKINTER_AVAILABLE):
         gui = AegisGameLauncherGUI(launcher)
         gui.run()
-    
-    elif len(sys.argv) == 1 and TKINTER_AVAILABLE:
-        launcher = AegisGameLauncher(headless=False)
-        gui = AegisGameLauncherGUI(launcher)
-        gui.run()
-    
     else:
-        launcher = AegisGameLauncher(headless=True)
         cli = AegisGameLauncherCLI(launcher)
-        cli.run(sys.argv[1:])
+        cli.run(remaining)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nExiting...")
-        sys.exit(0)
-    except Exception as e:
-        logging.error(f"Fatal error: {e}")
-        sys.exit(1)
+    main()

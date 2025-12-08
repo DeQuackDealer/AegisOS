@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""
+Aegis Workspace Hub v1.0.0
+Main enterprise launcher for Workplace edition
+
+Features:
+  - Unified launcher for all workplace applications
+  - Quick access to office, collaboration, and productivity tools
+  - Enterprise app shortcuts (M365, Google Workspace)
+  - Recent documents and favorites
+  - Team collaboration quick launch
+  - Tier gating support
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+import webbrowser
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Workspace Hub"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "workspace-hub"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+FAVORITES_FILE = CONFIG_DIR / "favorites.json"
+TIER_CONFIG = Path("/etc/aegis/license.json")
+WORKPLACE_CONFIG = Path("/etc/aegis/workplace-config.json")
+
+
+class Tier(Enum):
+    FREEMIUM = 1
+    BASIC = 2
+    WORKPLACE = 3
+    GAMER = 4
+    GAMER_AI = 5
+    SERVER = 6
+
+
+@dataclass
+class AppLauncher:
+    id: str
+    name: str
+    category: str
+    command: str
+    icon: str
+    description: str
+    web_url: Optional[str] = None
+    tier_required: int = 1
+    installed: bool = False
+
+
+OFFICE_APPS = [
+    AppLauncher("libreoffice-writer", "LibreOffice Writer", "office", 
+                "libreoffice --writer", "libreoffice-writer", "Word Processing"),
+    AppLauncher("libreoffice-calc", "LibreOffice Calc", "office",
+                "libreoffice --calc", "libreoffice-calc", "Spreadsheets"),
+    AppLauncher("libreoffice-impress", "LibreOffice Impress", "office",
+                "libreoffice --impress", "libreoffice-impress", "Presentations"),
+    AppLauncher("onlyoffice", "OnlyOffice", "office",
+                "onlyoffice-desktopeditors", "onlyoffice", "Enterprise Office Suite", None, 3),
+]
+
+COLLABORATION_APPS = [
+    AppLauncher("mattermost", "Mattermost", "collaboration",
+                "mattermost-desktop", "mattermost", "Team Communication", None, 3),
+    AppLauncher("element", "Element", "collaboration",
+                "element-desktop", "element", "Matrix Client / Secure Chat", None, 3),
+    AppLauncher("signal", "Signal", "collaboration",
+                "signal-desktop", "signal", "Encrypted Messaging"),
+    AppLauncher("thunderbird", "Thunderbird", "collaboration",
+                "thunderbird", "thunderbird", "Email Client"),
+]
+
+PRODUCTIVITY_APPS = [
+    AppLauncher("hamster", "Hamster Time Tracker", "productivity",
+                "hamster", "hamster-time-tracker", "Time Tracking"),
+    AppLauncher("gtimelog", "GTimeLog", "productivity",
+                "gtimelog", "gtimelog", "Time Logging"),
+    AppLauncher("ganttproject", "GanttProject", "productivity",
+                "ganttproject", "ganttproject", "Project Management", None, 3),
+    AppLauncher("projectlibre", "ProjectLibre", "productivity",
+                "projectlibre", "projectlibre", "Project Planning", None, 3),
+    AppLauncher("planner", "GNOME Planner", "productivity",
+                "planner", "planner", "Project Planning"),
+]
+
+DOCUMENT_APPS = [
+    AppLauncher("calibre", "Calibre", "documents",
+                "calibre", "calibre", "E-Book Management"),
+    AppLauncher("xournalpp", "Xournal++", "documents",
+                "xournalpp", "xournalpp", "PDF Annotation"),
+    AppLauncher("evince", "Document Viewer", "documents",
+                "evince", "evince", "PDF Viewer"),
+    AppLauncher("simple-scan", "Simple Scan", "documents",
+                "simple-scan", "simple-scan", "Document Scanner"),
+]
+
+IT_TOOLS = [
+    AppLauncher("remmina", "Remmina", "it-tools",
+                "remmina", "remmina", "Remote Desktop Client", None, 3),
+    AppLauncher("keepassxc", "KeePassXC", "it-tools",
+                "keepassxc", "keepassxc", "Password Manager"),
+    AppLauncher("seahorse", "Seahorse", "it-tools",
+                "seahorse", "seahorse", "Key & Password Manager"),
+    AppLauncher("system-config-printer", "Printer Config", "it-tools",
+                "system-config-printer", "printer", "Printer Setup"),
+]
+
+ENTERPRISE_LINKS = [
+    AppLauncher("m365-outlook", "Microsoft Outlook", "enterprise",
+                "", "mail-client", "Email & Calendar",
+                "https://outlook.office365.com", 3),
+    AppLauncher("m365-teams", "Microsoft Teams", "enterprise",
+                "", "user-available", "Team Collaboration",
+                "https://teams.microsoft.com", 3),
+    AppLauncher("google-gmail", "Gmail", "enterprise",
+                "", "mail-client", "Google Email",
+                "https://mail.google.com", 3),
+    AppLauncher("google-drive", "Google Drive", "enterprise",
+                "", "folder-cloud", "Cloud Storage",
+                "https://drive.google.com", 3),
+]
+
+ALL_APPS = OFFICE_APPS + COLLABORATION_APPS + PRODUCTIVITY_APPS + DOCUMENT_APPS + IT_TOOLS + ENTERPRISE_LINKS
+
+
+class TierManager:
+    def __init__(self):
+        self.current_tier = self._load_tier()
+    
+    def _load_tier(self) -> Tier:
+        if TIER_CONFIG.exists():
+            try:
+                with open(TIER_CONFIG, 'r') as f:
+                    data = json.load(f)
+                    edition = data.get('edition', 'freemium').lower()
+                    tier_map = {
+                        'freemium': Tier.FREEMIUM,
+                        'basic': Tier.BASIC,
+                        'workplace': Tier.WORKPLACE,
+                        'gamer': Tier.GAMER,
+                        'gamer-ai': Tier.GAMER_AI,
+                        'server': Tier.SERVER
+                    }
+                    return tier_map.get(edition, Tier.FREEMIUM)
+            except Exception:
+                pass
+        
+        if Path("/etc/aegis-workplace-marker").exists():
+            return Tier.WORKPLACE
+        return Tier.FREEMIUM
+    
+    def has_access(self, required_tier: int) -> bool:
+        return self.current_tier.value >= required_tier
+    
+    def get_tier_name(self) -> str:
+        return self.current_tier.name.title()
+
+
+class WorkspaceHubService:
+    def __init__(self):
+        self.tier_manager = TierManager()
+        self.apps = {app.id: app for app in ALL_APPS}
+        self.favorites: List[str] = []
+        self._init_config()
+        self._check_installed_apps()
+        self._load_favorites()
+    
+    def _init_config(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def _check_installed_apps(self):
+        for app_id, app in self.apps.items():
+            if app.web_url:
+                app.installed = True
+            else:
+                cmd = app.command.split()[0] if app.command else ""
+                app.installed = shutil.which(cmd) is not None
+    
+    def _load_favorites(self):
+        if FAVORITES_FILE.exists():
+            try:
+                with open(FAVORITES_FILE, 'r') as f:
+                    self.favorites = json.load(f)
+            except Exception:
+                pass
+    
+    def _save_favorites(self):
+        with open(FAVORITES_FILE, 'w') as f:
+            json.dump(self.favorites, f, indent=2)
+    
+    def toggle_favorite(self, app_id: str):
+        if app_id in self.favorites:
+            self.favorites.remove(app_id)
+        else:
+            self.favorites.append(app_id)
+        self._save_favorites()
+    
+    def is_favorite(self, app_id: str) -> bool:
+        return app_id in self.favorites
+    
+    def get_apps_by_category(self, category: str) -> List[AppLauncher]:
+        return [app for app in self.apps.values() if app.category == category]
+    
+    def get_categories(self) -> List[str]:
+        return list(set(app.category for app in self.apps.values()))
+    
+    def get_favorites(self) -> List[AppLauncher]:
+        return [self.apps[app_id] for app_id in self.favorites if app_id in self.apps]
+    
+    def can_launch(self, app_id: str) -> bool:
+        if app_id not in self.apps:
+            return False
+        app = self.apps[app_id]
+        if not self.tier_manager.has_access(app.tier_required):
+            return False
+        return app.installed or app.web_url is not None
+    
+    def launch_app(self, app_id: str) -> bool:
+        if not self.can_launch(app_id):
+            return False
+        
+        app = self.apps[app_id]
+        try:
+            if app.web_url:
+                webbrowser.open(app.web_url)
+            else:
+                subprocess.Popen(
+                    app.command.split(),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            return True
+        except Exception:
+            return False
+    
+    def get_status(self) -> Dict:
+        installed = [app for app in self.apps.values() if app.installed]
+        accessible = [app for app in self.apps.values() 
+                     if self.tier_manager.has_access(app.tier_required)]
+        
+        categories = {}
+        for cat in self.get_categories():
+            apps = self.get_apps_by_category(cat)
+            categories[cat] = {
+                "total": len(apps),
+                "installed": len([a for a in apps if a.installed]),
+                "accessible": len([a for a in apps if self.tier_manager.has_access(a.tier_required)])
+            }
+        
+        return {
+            "version": VERSION,
+            "status": "healthy",
+            "tier": self.tier_manager.get_tier_name(),
+            "apps": {
+                "total": len(self.apps),
+                "installed": len(installed),
+                "accessible": len(accessible)
+            },
+            "categories": categories,
+            "favorites": len(self.favorites)
+        }
+
+
+class WorkspaceHubGUI:
+    def __init__(self, service: WorkspaceHubService):
+        self.service = service
+        self.root = None
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available for GUI mode")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1100x750")
+        self.root.configure(bg='#1e1e2e')
+        
+        self._setup_styles()
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('Header.TLabel', font=('Segoe UI', 22, 'bold'), 
+                       foreground='#89b4fa', background='#1e1e2e')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 14, 'bold'),
+                       foreground='#a6adc8', background='#1e1e2e')
+        style.configure('Category.TLabel', font=('Segoe UI', 12, 'bold'),
+                       foreground='#f5c2e7', background='#1e1e2e')
+        style.configure('TButton', padding=10, font=('Segoe UI', 10))
+        style.configure('App.TButton', padding=15, font=('Segoe UI', 11))
+        style.configure('Locked.TButton', padding=15, font=('Segoe UI', 11))
+        style.configure('TNotebook', background='#1e1e2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Segoe UI', 10))
+    
+    def _create_widgets(self):
+        main = ttk.Frame(self.root, padding=20)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(header, text="Aegis Workspace Hub", 
+                 style='Header.TLabel').pack(side=tk.LEFT)
+        
+        tier_frame = ttk.Frame(header)
+        tier_frame.pack(side=tk.RIGHT)
+        tier_text = f"Edition: {self.service.tier_manager.get_tier_name()}"
+        tier_color = '#a6e3a1' if self.service.tier_manager.current_tier.value >= 3 else '#fab387'
+        ttk.Label(tier_frame, text=tier_text, foreground=tier_color,
+                 font=('Segoe UI', 11, 'bold')).pack()
+        
+        notebook = ttk.Notebook(main)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        notebook.add(self._create_favorites_tab(), text="Favorites")
+        notebook.add(self._create_category_tab("office", "Office Suite"), text="Office")
+        notebook.add(self._create_category_tab("collaboration", "Team Collaboration"), text="Collaboration")
+        notebook.add(self._create_category_tab("productivity", "Productivity Tools"), text="Productivity")
+        notebook.add(self._create_category_tab("documents", "Document Management"), text="Documents")
+        notebook.add(self._create_category_tab("it-tools", "IT Tools"), text="IT Tools")
+        notebook.add(self._create_category_tab("enterprise", "Enterprise Services"), text="Enterprise")
+    
+    def _create_favorites_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Favorite Applications",
+                 style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        favorites = self.service.get_favorites()
+        if not favorites:
+            ttk.Label(frame, text="No favorites yet. Click the star icon on any app to add it.",
+                     foreground='#6c7086').pack(pady=20)
+        else:
+            self._create_app_grid(frame, favorites)
+        
+        return frame
+    
+    def _create_category_tab(self, category: str, title: str) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text=title, style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        apps = self.service.get_apps_by_category(category)
+        self._create_app_grid(frame, apps)
+        
+        return frame
+    
+    def _create_app_grid(self, parent: ttk.Frame, apps: List[AppLauncher]):
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        row, col = 0, 0
+        max_cols = 4
+        
+        for app in apps:
+            app_frame = ttk.Frame(container)
+            app_frame.grid(row=row, column=col, padx=8, pady=8, sticky='nsew')
+            
+            can_use = self.service.can_launch(app.id)
+            has_tier = self.service.tier_manager.has_access(app.tier_required)
+            
+            status_text = ""
+            if not has_tier:
+                status_text = "🔒 Requires Workplace"
+                status_color = '#f38ba8'
+            elif not app.installed and not app.web_url:
+                status_text = "⚠ Not Installed"
+                status_color = '#fab387'
+            elif app.web_url:
+                status_text = "🌐 Web App"
+                status_color = '#89b4fa'
+            else:
+                status_text = "✓ Ready"
+                status_color = '#a6e3a1'
+            
+            btn_text = f"{app.name}\n{app.description}"
+            btn = ttk.Button(
+                app_frame,
+                text=btn_text,
+                style='App.TButton',
+                command=lambda a=app: self._on_app_click(a)
+            )
+            if not can_use:
+                btn.state(['disabled'])
+            btn.pack(fill=tk.X, pady=(0, 5))
+            
+            bottom_frame = ttk.Frame(app_frame)
+            bottom_frame.pack(fill=tk.X)
+            
+            ttk.Label(bottom_frame, text=status_text, foreground=status_color,
+                     font=('Segoe UI', 9)).pack(side=tk.LEFT)
+            
+            fav_text = "★" if self.service.is_favorite(app.id) else "☆"
+            fav_btn = ttk.Button(bottom_frame, text=fav_text, width=3,
+                                command=lambda a=app: self._toggle_favorite(a))
+            fav_btn.pack(side=tk.RIGHT)
+            
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        
+        for i in range(max_cols):
+            container.columnconfigure(i, weight=1)
+    
+    def _on_app_click(self, app: AppLauncher):
+        if self.service.launch_app(app.id):
+            pass
+        else:
+            messagebox.showerror("Launch Error", f"Failed to launch {app.name}")
+    
+    def _toggle_favorite(self, app: AppLauncher):
+        self.service.toggle_favorite(app.id)
+        self.root.destroy()
+        self.run()
+
+
+def print_status(service: WorkspaceHubService):
+    print(json.dumps(service.get_status(), indent=2))
+
+
+def print_cli_info(service: WorkspaceHubService):
+    status = service.get_status()
+    print(f"\n{'='*60}")
+    print(f"  {APP_NAME} v{VERSION}")
+    print(f"  Edition: {status['tier']}")
+    print(f"{'='*60}\n")
+    
+    print(f"Applications: {status['apps']['installed']}/{status['apps']['total']} installed")
+    print(f"Accessible: {status['apps']['accessible']} (based on tier)\n")
+    
+    print("Categories:")
+    for cat, info in status['categories'].items():
+        print(f"  {cat}: {info['installed']}/{info['total']} installed")
+    
+    if service.tier_manager.current_tier.value < 3:
+        print("\n⚠ Upgrade to Workplace edition for full enterprise features")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Enterprise Application Launcher")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode (default)")
+    parser.add_argument("--cli", action="store_true", help="Show CLI info")
+    parser.add_argument("--status", action="store_true", help="Show status as JSON")
+    parser.add_argument("--launch", metavar="APP_ID", help="Launch app by ID")
+    parser.add_argument("--list", action="store_true", help="List all apps")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    service = WorkspaceHubService()
+    
+    if args.status:
+        print_status(service)
+    elif args.launch:
+        if service.launch_app(args.launch):
+            print(f"Launched: {args.launch}")
+        else:
+            print(f"Failed to launch: {args.launch}")
+            sys.exit(1)
+    elif args.list:
+        for app in ALL_APPS:
+            status = "✓" if app.installed else "✗"
+            tier = f"[Tier {app.tier_required}]" if app.tier_required > 1 else ""
+            print(f"{status} {app.id}: {app.name} - {app.description} {tier}")
+    elif args.cli or not TKINTER_AVAILABLE:
+        print_cli_info(service)
+    else:
+        gui = WorkspaceHubGUI(service)
+        gui.run()
+
+
+if __name__ == "__main__":
+    main()

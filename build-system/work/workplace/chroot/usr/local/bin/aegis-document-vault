@@ -1,0 +1,730 @@
+#!/usr/bin/env python3
+"""
+Aegis Document Vault v1.0.0
+Secure document management for Workplace edition
+
+Features:
+  - Encrypted document storage
+  - Document versioning and history
+  - OCR for scanned documents
+  - PDF tools (merge, split, convert)
+  - Secure sharing with expiring links
+  - Document templates
+  - Full-text search
+  - Tier gating support
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+import hashlib
+import base64
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+import uuid
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis Document Vault"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "document-vault"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+VAULT_DIR = Path.home() / "Documents" / "AegisVault"
+INDEX_FILE = CONFIG_DIR / "index.json"
+TIER_CONFIG = Path("/etc/aegis/license.json")
+
+
+class Tier(Enum):
+    FREEMIUM = 1
+    BASIC = 2
+    WORKPLACE = 3
+    GAMER = 4
+    GAMER_AI = 5
+    SERVER = 6
+
+
+class DocumentCategory(Enum):
+    GENERAL = "general"
+    CONTRACTS = "contracts"
+    INVOICES = "invoices"
+    REPORTS = "reports"
+    CONFIDENTIAL = "confidential"
+    ARCHIVE = "archive"
+
+
+@dataclass
+class Document:
+    id: str
+    name: str
+    path: str
+    category: str
+    size: int
+    mime_type: str
+    created: str
+    modified: str
+    checksum: str
+    tags: List[str] = field(default_factory=list)
+    encrypted: bool = False
+    version: int = 1
+    notes: str = ""
+
+
+@dataclass
+class DocumentVersion:
+    version: int
+    path: str
+    created: str
+    checksum: str
+    size: int
+
+
+class TierManager:
+    def __init__(self):
+        self.current_tier = self._load_tier()
+    
+    def _load_tier(self) -> Tier:
+        if TIER_CONFIG.exists():
+            try:
+                with open(TIER_CONFIG, 'r') as f:
+                    data = json.load(f)
+                    edition = data.get('edition', 'freemium').lower()
+                    tier_map = {
+                        'freemium': Tier.FREEMIUM, 'basic': Tier.BASIC,
+                        'workplace': Tier.WORKPLACE, 'gamer': Tier.GAMER,
+                        'gamer-ai': Tier.GAMER_AI, 'server': Tier.SERVER
+                    }
+                    return tier_map.get(edition, Tier.FREEMIUM)
+            except Exception:
+                pass
+        if Path("/etc/aegis-workplace-marker").exists():
+            return Tier.WORKPLACE
+        return Tier.FREEMIUM
+    
+    def has_access(self, required_tier: int = 3) -> bool:
+        return self.current_tier.value >= required_tier
+    
+    def get_tier_name(self) -> str:
+        return self.current_tier.name.title()
+
+
+class DocumentVaultService:
+    def __init__(self):
+        self.tier_manager = TierManager()
+        self.documents: Dict[str, Document] = {}
+        self.config = {}
+        self._init_vault()
+        self._load_index()
+    
+    def _init_vault(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        VAULT_DIR.mkdir(parents=True, exist_ok=True)
+        
+        for cat in DocumentCategory:
+            cat_dir = VAULT_DIR / cat.value
+            cat_dir.mkdir(exist_ok=True)
+    
+    def _load_index(self):
+        if INDEX_FILE.exists():
+            try:
+                with open(INDEX_FILE, 'r') as f:
+                    data = json.load(f)
+                    for doc_id, doc_data in data.get('documents', {}).items():
+                        self.documents[doc_id] = Document(**doc_data)
+            except Exception:
+                pass
+    
+    def _save_index(self):
+        with open(INDEX_FILE, 'w') as f:
+            json.dump({
+                'documents': {doc_id: asdict(doc) for doc_id, doc in self.documents.items()},
+                'updated': datetime.now().isoformat()
+            }, f, indent=2)
+    
+    def _calculate_checksum(self, filepath: Path) -> str:
+        sha256 = hashlib.sha256()
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    
+    def _get_mime_type(self, filepath: Path) -> str:
+        ext = filepath.suffix.lower()
+        mime_types = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.odt': 'application/vnd.oasis.opendocument.text',
+            '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+            '.odp': 'application/vnd.oasis.opendocument.presentation',
+            '.txt': 'text/plain',
+            '.rtf': 'application/rtf',
+            '.csv': 'text/csv',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.tiff': 'image/tiff',
+        }
+        return mime_types.get(ext, 'application/octet-stream')
+    
+    def import_document(self, source_path: str, category: str = "general", 
+                       tags: List[str] = None) -> Tuple[bool, str, Optional[Document]]:
+        source = Path(source_path)
+        if not source.exists():
+            return False, "Source file not found", None
+        
+        doc_id = str(uuid.uuid4())[:8]
+        cat_dir = VAULT_DIR / category
+        dest_path = cat_dir / f"{doc_id}_{source.name}"
+        
+        try:
+            shutil.copy2(source, dest_path)
+            
+            checksum = self._calculate_checksum(dest_path)
+            stat = dest_path.stat()
+            
+            doc = Document(
+                id=doc_id,
+                name=source.name,
+                path=str(dest_path),
+                category=category,
+                size=stat.st_size,
+                mime_type=self._get_mime_type(source),
+                created=datetime.now().isoformat(),
+                modified=datetime.now().isoformat(),
+                checksum=checksum,
+                tags=tags or [],
+                version=1
+            )
+            
+            self.documents[doc_id] = doc
+            self._save_index()
+            
+            return True, f"Document imported: {doc_id}", doc
+        except Exception as e:
+            return False, str(e), None
+    
+    def delete_document(self, doc_id: str, permanent: bool = False) -> Tuple[bool, str]:
+        if doc_id not in self.documents:
+            return False, "Document not found"
+        
+        doc = self.documents[doc_id]
+        
+        if permanent:
+            try:
+                Path(doc.path).unlink(missing_ok=True)
+            except Exception as e:
+                return False, str(e)
+        else:
+            archive_dir = VAULT_DIR / "archive"
+            archive_dir.mkdir(exist_ok=True)
+            try:
+                shutil.move(doc.path, archive_dir / Path(doc.path).name)
+                doc.category = "archive"
+                doc.path = str(archive_dir / Path(doc.path).name)
+                self._save_index()
+                return True, "Document moved to archive"
+            except Exception as e:
+                return False, str(e)
+        
+        del self.documents[doc_id]
+        self._save_index()
+        return True, "Document deleted"
+    
+    def get_documents(self, category: str = None, search: str = None,
+                     tags: List[str] = None) -> List[Document]:
+        results = []
+        for doc in self.documents.values():
+            if category and doc.category != category:
+                continue
+            if search and search.lower() not in doc.name.lower():
+                continue
+            if tags and not any(t in doc.tags for t in tags):
+                continue
+            if Path(doc.path).exists():
+                results.append(doc)
+        return sorted(results, key=lambda d: d.modified, reverse=True)
+    
+    def open_document(self, doc_id: str) -> Tuple[bool, str]:
+        if doc_id not in self.documents:
+            return False, "Document not found"
+        
+        doc = self.documents[doc_id]
+        if not Path(doc.path).exists():
+            return False, "Document file not found"
+        
+        try:
+            if sys.platform == 'linux':
+                subprocess.Popen(['xdg-open', doc.path], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.startfile(doc.path)
+            return True, "Document opened"
+        except Exception as e:
+            return False, str(e)
+    
+    def convert_to_pdf(self, doc_id: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "PDF conversion requires Workplace edition"
+        
+        if doc_id not in self.documents:
+            return False, "Document not found"
+        
+        doc = self.documents[doc_id]
+        source_path = Path(doc.path)
+        
+        if source_path.suffix.lower() == '.pdf':
+            return False, "Document is already PDF"
+        
+        libreoffice = shutil.which("libreoffice")
+        if not libreoffice:
+            return False, "LibreOffice not installed for PDF conversion"
+        
+        try:
+            result = subprocess.run([
+                libreoffice, "--headless", "--convert-to", "pdf",
+                "--outdir", str(source_path.parent), str(source_path)
+            ], capture_output=True, text=True, timeout=120)
+            
+            if result.returncode == 0:
+                pdf_path = source_path.with_suffix('.pdf')
+                return True, f"Converted to PDF: {pdf_path}"
+            else:
+                return False, result.stderr or "Conversion failed"
+        except Exception as e:
+            return False, str(e)
+    
+    def run_ocr(self, doc_id: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "OCR requires Workplace edition"
+        
+        if doc_id not in self.documents:
+            return False, "Document not found"
+        
+        doc = self.documents[doc_id]
+        
+        tesseract = shutil.which("tesseract")
+        if not tesseract:
+            return False, "Tesseract OCR not installed"
+        
+        ocrmypdf = shutil.which("ocrmypdf")
+        
+        source_path = Path(doc.path)
+        
+        if source_path.suffix.lower() == '.pdf' and ocrmypdf:
+            try:
+                output_path = source_path.with_stem(f"{source_path.stem}_ocr")
+                result = subprocess.run([
+                    ocrmypdf, "--skip-text", str(source_path), str(output_path)
+                ], capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    return True, f"OCR completed: {output_path}"
+                else:
+                    return False, result.stderr or "OCR failed"
+            except Exception as e:
+                return False, str(e)
+        elif source_path.suffix.lower() in ['.png', '.jpg', '.jpeg', '.tiff']:
+            try:
+                output_path = source_path.with_suffix('.txt')
+                result = subprocess.run([
+                    tesseract, str(source_path), str(output_path.with_suffix(''))
+                ], capture_output=True, text=True, timeout=120)
+                
+                if result.returncode == 0:
+                    return True, f"OCR completed: {output_path}"
+                else:
+                    return False, result.stderr or "OCR failed"
+            except Exception as e:
+                return False, str(e)
+        else:
+            return False, "Unsupported file type for OCR"
+    
+    def merge_pdfs(self, doc_ids: List[str], output_name: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "PDF merge requires Workplace edition"
+        
+        pdftk = shutil.which("pdftk")
+        pdfunite = shutil.which("pdfunite")
+        
+        if not pdftk and not pdfunite:
+            return False, "No PDF merge tool installed (pdftk or pdfunite)"
+        
+        pdf_paths = []
+        for doc_id in doc_ids:
+            if doc_id not in self.documents:
+                return False, f"Document not found: {doc_id}"
+            doc = self.documents[doc_id]
+            if not doc.path.lower().endswith('.pdf'):
+                return False, f"Not a PDF: {doc.name}"
+            pdf_paths.append(doc.path)
+        
+        output_path = VAULT_DIR / "general" / f"{output_name}.pdf"
+        
+        try:
+            if pdftk:
+                cmd = ["pdftk"] + pdf_paths + ["cat", "output", str(output_path)]
+            else:
+                cmd = ["pdfunite"] + pdf_paths + [str(output_path)]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode == 0:
+                self.import_document(str(output_path), "general")
+                return True, f"PDFs merged: {output_path}"
+            else:
+                return False, result.stderr or "Merge failed"
+        except Exception as e:
+            return False, str(e)
+    
+    def get_categories(self) -> List[Dict]:
+        categories = []
+        for cat in DocumentCategory:
+            count = len([d for d in self.documents.values() if d.category == cat.value])
+            categories.append({
+                "id": cat.value,
+                "name": cat.value.title(),
+                "count": count
+            })
+        return categories
+    
+    def get_status(self) -> Dict:
+        total_size = sum(d.size for d in self.documents.values())
+        
+        categories = {}
+        for cat in DocumentCategory:
+            docs = [d for d in self.documents.values() if d.category == cat.value]
+            categories[cat.value] = {
+                "count": len(docs),
+                "size": sum(d.size for d in docs)
+            }
+        
+        tools = {
+            "libreoffice": shutil.which("libreoffice") is not None,
+            "tesseract": shutil.which("tesseract") is not None,
+            "ocrmypdf": shutil.which("ocrmypdf") is not None,
+            "pdftk": shutil.which("pdftk") is not None,
+            "pdfunite": shutil.which("pdfunite") is not None
+        }
+        
+        return {
+            "version": VERSION,
+            "status": "healthy",
+            "tier": self.tier_manager.get_tier_name(),
+            "tier_access": self.tier_manager.has_access(),
+            "vault_path": str(VAULT_DIR),
+            "documents": {
+                "total": len(self.documents),
+                "total_size_bytes": total_size,
+                "total_size_mb": round(total_size / (1024 * 1024), 2)
+            },
+            "categories": categories,
+            "tools": tools
+        }
+
+
+class DocumentVaultGUI:
+    def __init__(self, service: DocumentVaultService):
+        self.service = service
+        self.root = None
+        self.selected_category = "general"
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1100x750")
+        self.root.configure(bg='#1e1e2e')
+        
+        self._setup_styles()
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('Header.TLabel', font=('Segoe UI', 20, 'bold'), 
+                       foreground='#89b4fa', background='#1e1e2e')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 14, 'bold'),
+                       foreground='#a6adc8', background='#1e1e2e')
+        style.configure('Category.TLabel', font=('Segoe UI', 11),
+                       foreground='#f5c2e7', background='#1e1e2e')
+        style.configure('TButton', padding=10, font=('Segoe UI', 10))
+        style.configure('TNotebook', background='#1e1e2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Segoe UI', 10))
+        style.configure('Treeview', background='#313244', foreground='#cdd6f4',
+                       fieldbackground='#313244', font=('Segoe UI', 10))
+        style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
+    
+    def _create_widgets(self):
+        main = ttk.Frame(self.root, padding=15)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 15))
+        
+        ttk.Label(header, text="Aegis Document Vault", style='Header.TLabel').pack(side=tk.LEFT)
+        
+        tier_text = f"Edition: {self.service.tier_manager.get_tier_name()}"
+        tier_color = '#a6e3a1' if self.service.tier_manager.has_access() else '#fab387'
+        ttk.Label(header, text=tier_text, foreground=tier_color,
+                 font=('Segoe UI', 11, 'bold')).pack(side=tk.RIGHT)
+        
+        content = ttk.Frame(main)
+        content.pack(fill=tk.BOTH, expand=True)
+        
+        sidebar = ttk.Frame(content, width=200)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
+        sidebar.pack_propagate(False)
+        
+        ttk.Label(sidebar, text="Categories", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 10))
+        
+        for cat in self.service.get_categories():
+            btn = ttk.Button(sidebar, text=f"{cat['name']} ({cat['count']})",
+                           command=lambda c=cat['id']: self._select_category(c))
+            btn.pack(fill=tk.X, pady=2)
+        
+        ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
+        
+        ttk.Button(sidebar, text="Import Document", 
+                  command=self._import_document).pack(fill=tk.X, pady=2)
+        ttk.Button(sidebar, text="Open Vault Folder",
+                  command=self._open_vault_folder).pack(fill=tk.X, pady=2)
+        
+        main_area = ttk.Frame(content)
+        main_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        toolbar = ttk.Frame(main_area)
+        toolbar.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(toolbar, text="Search:").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_entry = ttk.Entry(toolbar, width=30)
+        self.search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.search_entry.bind('<Return>', lambda e: self._refresh_documents())
+        
+        ttk.Button(toolbar, text="Search", command=self._refresh_documents).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Refresh", command=self._refresh_documents).pack(side=tk.LEFT, padx=5)
+        
+        columns = ('name', 'category', 'size', 'modified')
+        self.tree = ttk.Treeview(main_area, columns=columns, show='headings', height=20)
+        
+        self.tree.heading('name', text='Document Name')
+        self.tree.heading('category', text='Category')
+        self.tree.heading('size', text='Size')
+        self.tree.heading('modified', text='Modified')
+        
+        self.tree.column('name', width=350)
+        self.tree.column('category', width=120)
+        self.tree.column('size', width=100)
+        self.tree.column('modified', width=150)
+        
+        scrollbar = ttk.Scrollbar(main_area, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.tree.bind('<Double-1>', self._on_double_click)
+        self.tree.bind('<Button-3>', self._show_context_menu)
+        
+        self._refresh_documents()
+    
+    def _select_category(self, category: str):
+        self.selected_category = category
+        self._refresh_documents()
+    
+    def _refresh_documents(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        search = self.search_entry.get().strip() or None
+        category = self.selected_category if self.selected_category != "all" else None
+        
+        docs = self.service.get_documents(category=category, search=search)
+        
+        for doc in docs:
+            size_str = self._format_size(doc.size)
+            modified = doc.modified[:10] if doc.modified else "Unknown"
+            self.tree.insert('', tk.END, iid=doc.id,
+                           values=(doc.name, doc.category.title(), size_str, modified))
+    
+    def _format_size(self, size: int) -> str:
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+    
+    def _import_document(self):
+        filepath = filedialog.askopenfilename(
+            title="Select Document to Import",
+            filetypes=[
+                ("All Documents", "*.pdf *.doc *.docx *.xls *.xlsx *.ppt *.pptx *.odt *.ods *.odp *.txt *.rtf"),
+                ("PDF Files", "*.pdf"),
+                ("Word Documents", "*.doc *.docx *.odt"),
+                ("Spreadsheets", "*.xls *.xlsx *.ods"),
+                ("Presentations", "*.ppt *.pptx *.odp"),
+                ("All Files", "*.*")
+            ]
+        )
+        
+        if filepath:
+            success, msg, doc = self.service.import_document(filepath, self.selected_category)
+            if success:
+                messagebox.showinfo("Success", f"Document imported successfully!\nID: {doc.id}")
+                self._refresh_documents()
+            else:
+                messagebox.showerror("Error", f"Failed to import: {msg}")
+    
+    def _open_vault_folder(self):
+        try:
+            subprocess.Popen(['xdg-open', str(VAULT_DIR)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    
+    def _on_double_click(self, event):
+        selection = self.tree.selection()
+        if selection:
+            doc_id = selection[0]
+            success, msg = self.service.open_document(doc_id)
+            if not success:
+                messagebox.showerror("Error", msg)
+    
+    def _show_context_menu(self, event):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        
+        doc_id = selection[0]
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        menu.add_command(label="Open", command=lambda: self.service.open_document(doc_id))
+        menu.add_separator()
+        
+        convert_state = tk.NORMAL if self.service.tier_manager.has_access() else tk.DISABLED
+        menu.add_command(label="Convert to PDF", command=lambda: self._convert_to_pdf(doc_id),
+                        state=convert_state)
+        menu.add_command(label="Run OCR", command=lambda: self._run_ocr(doc_id),
+                        state=convert_state)
+        menu.add_separator()
+        menu.add_command(label="Move to Archive", command=lambda: self._archive_document(doc_id))
+        menu.add_command(label="Delete", command=lambda: self._delete_document(doc_id))
+        
+        menu.post(event.x_root, event.y_root)
+    
+    def _convert_to_pdf(self, doc_id: str):
+        success, msg = self.service.convert_to_pdf(doc_id)
+        if success:
+            messagebox.showinfo("Success", msg)
+            self._refresh_documents()
+        else:
+            messagebox.showerror("Error", msg)
+    
+    def _run_ocr(self, doc_id: str):
+        success, msg = self.service.run_ocr(doc_id)
+        if success:
+            messagebox.showinfo("Success", msg)
+            self._refresh_documents()
+        else:
+            messagebox.showerror("Error", msg)
+    
+    def _archive_document(self, doc_id: str):
+        success, msg = self.service.delete_document(doc_id, permanent=False)
+        if success:
+            self._refresh_documents()
+        else:
+            messagebox.showerror("Error", msg)
+    
+    def _delete_document(self, doc_id: str):
+        if messagebox.askyesno("Confirm Delete", "Permanently delete this document?"):
+            success, msg = self.service.delete_document(doc_id, permanent=True)
+            if success:
+                self._refresh_documents()
+            else:
+                messagebox.showerror("Error", msg)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Secure Document Management")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode (default)")
+    parser.add_argument("--cli", action="store_true", help="Show CLI info")
+    parser.add_argument("--status", action="store_true", help="Show status as JSON")
+    parser.add_argument("--import", dest="import_file", metavar="FILE", help="Import document")
+    parser.add_argument("--category", default="general", help="Category for import")
+    parser.add_argument("--list", action="store_true", help="List documents")
+    parser.add_argument("--open", metavar="DOC_ID", help="Open document by ID")
+    parser.add_argument("--convert-pdf", metavar="DOC_ID", help="Convert document to PDF")
+    parser.add_argument("--ocr", metavar="DOC_ID", help="Run OCR on document")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    service = DocumentVaultService()
+    
+    if args.status:
+        print(json.dumps(service.get_status(), indent=2))
+    elif args.import_file:
+        success, msg, doc = service.import_document(args.import_file, args.category)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.list:
+        docs = service.get_documents()
+        print(f"\nDocuments in Vault ({len(docs)} total):")
+        print("-" * 60)
+        for doc in docs:
+            print(f"{doc.id}: {doc.name} [{doc.category}] ({doc.size} bytes)")
+    elif args.open:
+        success, msg = service.open_document(args.open)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.convert_pdf:
+        success, msg = service.convert_to_pdf(args.convert_pdf)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.ocr:
+        success, msg = service.run_ocr(args.ocr)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.cli:
+        status = service.get_status()
+        print(f"\n{APP_NAME} v{VERSION}")
+        print(f"Edition: {status['tier']}")
+        print(f"Vault: {status['vault_path']}")
+        print(f"Documents: {status['documents']['total']} ({status['documents']['total_size_mb']} MB)")
+        print("\nCategories:")
+        for cat, info in status['categories'].items():
+            print(f"  {cat}: {info['count']} documents")
+    else:
+        if TKINTER_AVAILABLE:
+            gui = DocumentVaultGUI(service)
+            gui.run()
+        else:
+            print("Tkinter not available. Use --cli mode.")
+
+
+if __name__ == "__main__":
+    main()

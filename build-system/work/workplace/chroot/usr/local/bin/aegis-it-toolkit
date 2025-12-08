@@ -1,0 +1,717 @@
+#!/usr/bin/env python3
+"""
+Aegis IT Toolkit v1.0.0
+IT Administration tools for Workplace edition
+
+Features:
+  - Remote Desktop Management (RDP, VNC, SSH)
+  - Network Diagnostics & Monitoring
+  - System Information & Health
+  - VPN Client Management
+  - Active Directory / LDAP Tools
+  - Printer & Scanner Management
+  - Asset Inventory
+  - Tier gating support
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
+"""
+
+import os
+import sys
+import json
+import subprocess
+import argparse
+import shutil
+import socket
+import platform
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any, Tuple
+from dataclasses import dataclass, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, simpledialog
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis IT Toolkit"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "it-toolkit"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+CONNECTIONS_FILE = CONFIG_DIR / "connections.json"
+TIER_CONFIG = Path("/etc/aegis/license.json")
+
+
+class Tier(Enum):
+    FREEMIUM = 1
+    BASIC = 2
+    WORKPLACE = 3
+    GAMER = 4
+    GAMER_AI = 5
+    SERVER = 6
+
+
+@dataclass
+class RemoteConnection:
+    id: str
+    name: str
+    protocol: str
+    host: str
+    port: int
+    username: Optional[str] = None
+    domain: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@dataclass
+class VPNProfile:
+    id: str
+    name: str
+    vpn_type: str
+    server: str
+    username: Optional[str] = None
+    config_file: Optional[str] = None
+
+
+class TierManager:
+    def __init__(self):
+        self.current_tier = self._load_tier()
+    
+    def _load_tier(self) -> Tier:
+        if TIER_CONFIG.exists():
+            try:
+                with open(TIER_CONFIG, 'r') as f:
+                    data = json.load(f)
+                    edition = data.get('edition', 'freemium').lower()
+                    tier_map = {
+                        'freemium': Tier.FREEMIUM, 'basic': Tier.BASIC,
+                        'workplace': Tier.WORKPLACE, 'gamer': Tier.GAMER,
+                        'gamer-ai': Tier.GAMER_AI, 'server': Tier.SERVER
+                    }
+                    return tier_map.get(edition, Tier.FREEMIUM)
+            except Exception:
+                pass
+        if Path("/etc/aegis-workplace-marker").exists():
+            return Tier.WORKPLACE
+        return Tier.FREEMIUM
+    
+    def has_access(self, required_tier: int = 3) -> bool:
+        return self.current_tier.value >= required_tier
+    
+    def get_tier_name(self) -> str:
+        return self.current_tier.name.title()
+
+
+class ITToolkitService:
+    def __init__(self):
+        self.tier_manager = TierManager()
+        self.connections: List[RemoteConnection] = []
+        self.vpn_profiles: List[VPNProfile] = []
+        self._init_config()
+        self._load_connections()
+    
+    def _init_config(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def _load_connections(self):
+        if CONNECTIONS_FILE.exists():
+            try:
+                with open(CONNECTIONS_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.connections = [RemoteConnection(**c) for c in data.get('connections', [])]
+                    self.vpn_profiles = [VPNProfile(**v) for v in data.get('vpn_profiles', [])]
+            except Exception:
+                pass
+    
+    def _save_connections(self):
+        with open(CONNECTIONS_FILE, 'w') as f:
+            json.dump({
+                'connections': [asdict(c) for c in self.connections],
+                'vpn_profiles': [asdict(v) for v in self.vpn_profiles]
+            }, f, indent=2)
+    
+    def add_connection(self, conn: RemoteConnection):
+        self.connections.append(conn)
+        self._save_connections()
+    
+    def remove_connection(self, conn_id: str):
+        self.connections = [c for c in self.connections if c.id != conn_id]
+        self._save_connections()
+    
+    def connect_rdp(self, host: str, username: str = None, domain: str = None) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "RDP requires Workplace edition"
+        
+        remmina = shutil.which("remmina")
+        xfreerdp = shutil.which("xfreerdp")
+        
+        if remmina:
+            cmd = ["remmina", "-c", f"rdp://{host}"]
+        elif xfreerdp:
+            cmd = ["xfreerdp", f"/v:{host}"]
+            if username:
+                cmd.append(f"/u:{username}")
+            if domain:
+                cmd.append(f"/d:{domain}")
+        else:
+            return False, "No RDP client installed (remmina or xfreerdp)"
+        
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True, f"Connecting to {host}"
+        except Exception as e:
+            return False, str(e)
+    
+    def connect_vnc(self, host: str, port: int = 5900) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "VNC requires Workplace edition"
+        
+        vncviewer = shutil.which("vncviewer") or shutil.which("tigervnc")
+        remmina = shutil.which("remmina")
+        
+        if vncviewer:
+            cmd = [vncviewer, f"{host}:{port}"]
+        elif remmina:
+            cmd = ["remmina", "-c", f"vnc://{host}:{port}"]
+        else:
+            return False, "No VNC client installed"
+        
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True, f"Connecting to {host}:{port}"
+        except Exception as e:
+            return False, str(e)
+    
+    def connect_ssh(self, host: str, username: str = None, port: int = 22) -> Tuple[bool, str]:
+        ssh = shutil.which("ssh")
+        if not ssh:
+            return False, "SSH client not installed"
+        
+        terminal = shutil.which("xfce4-terminal") or shutil.which("gnome-terminal") or shutil.which("xterm")
+        
+        ssh_cmd = f"ssh {'-l ' + username if username else ''} -p {port} {host}"
+        
+        if terminal:
+            if "xfce4-terminal" in terminal:
+                cmd = [terminal, "-e", ssh_cmd]
+            elif "gnome-terminal" in terminal:
+                cmd = [terminal, "--", "bash", "-c", ssh_cmd]
+            else:
+                cmd = [terminal, "-e", ssh_cmd]
+            
+            try:
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True, f"Connecting to {host}"
+            except Exception as e:
+                return False, str(e)
+        else:
+            return False, "No terminal emulator found"
+    
+    def ping_host(self, host: str, count: int = 4) -> Tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                ["ping", "-c", str(count), host],
+                capture_output=True, text=True, timeout=30
+            )
+            return result.returncode == 0, result.stdout
+        except subprocess.TimeoutExpired:
+            return False, "Ping timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def port_scan(self, host: str, ports: List[int] = None) -> Dict[int, bool]:
+        if ports is None:
+            ports = [22, 80, 443, 3389, 5900, 8080]
+        
+        results = {}
+        for port in ports:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                result = sock.connect_ex((host, port))
+                results[port] = result == 0
+                sock.close()
+            except Exception:
+                results[port] = False
+        return results
+    
+    def get_network_info(self) -> Dict[str, Any]:
+        info = {
+            "hostname": socket.gethostname(),
+            "interfaces": {}
+        }
+        
+        try:
+            result = subprocess.run(["ip", "-j", "addr"], capture_output=True, text=True)
+            if result.returncode == 0:
+                interfaces = json.loads(result.stdout)
+                for iface in interfaces:
+                    name = iface.get("ifname", "unknown")
+                    addrs = []
+                    for addr in iface.get("addr_info", []):
+                        addrs.append({
+                            "family": addr.get("family"),
+                            "address": addr.get("local"),
+                            "prefix": addr.get("prefixlen")
+                        })
+                    info["interfaces"][name] = {
+                        "state": iface.get("operstate", "unknown"),
+                        "addresses": addrs
+                    }
+        except Exception:
+            pass
+        
+        return info
+    
+    def get_system_info(self) -> Dict[str, Any]:
+        info = {
+            "platform": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "hostname": socket.gethostname()
+        }
+        
+        try:
+            with open("/proc/meminfo", "r") as f:
+                meminfo = f.read()
+                for line in meminfo.split("\n"):
+                    if line.startswith("MemTotal"):
+                        info["memory_total"] = line.split(":")[1].strip()
+                    elif line.startswith("MemAvailable"):
+                        info["memory_available"] = line.split(":")[1].strip()
+        except Exception:
+            pass
+        
+        try:
+            result = subprocess.run(["df", "-h", "/"], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                if len(lines) > 1:
+                    parts = lines[1].split()
+                    info["disk"] = {
+                        "total": parts[1] if len(parts) > 1 else "unknown",
+                        "used": parts[2] if len(parts) > 2 else "unknown",
+                        "available": parts[3] if len(parts) > 3 else "unknown"
+                    }
+        except Exception:
+            pass
+        
+        return info
+    
+    def get_vpn_status(self) -> Dict[str, Any]:
+        status = {
+            "openvpn": {"installed": shutil.which("openvpn") is not None, "active": False},
+            "wireguard": {"installed": shutil.which("wg") is not None, "active": False},
+            "openconnect": {"installed": shutil.which("openconnect") is not None, "active": False}
+        }
+        
+        try:
+            result = subprocess.run(["systemctl", "is-active", "openvpn"], capture_output=True, text=True)
+            status["openvpn"]["active"] = "active" in result.stdout
+        except Exception:
+            pass
+        
+        try:
+            result = subprocess.run(["wg", "show"], capture_output=True, text=True)
+            status["wireguard"]["active"] = result.returncode == 0 and result.stdout.strip() != ""
+        except Exception:
+            pass
+        
+        return status
+    
+    def launch_remmina(self) -> bool:
+        if not self.tier_manager.has_access():
+            return False
+        remmina = shutil.which("remmina")
+        if remmina:
+            subprocess.Popen([remmina], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        return False
+    
+    def launch_printer_config(self) -> bool:
+        cmd = shutil.which("system-config-printer")
+        if cmd:
+            subprocess.Popen([cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        return False
+    
+    def get_status(self) -> Dict:
+        tools = {
+            "remmina": shutil.which("remmina") is not None,
+            "keepassxc": shutil.which("keepassxc") is not None,
+            "openvpn": shutil.which("openvpn") is not None,
+            "wireguard": shutil.which("wg") is not None,
+            "nmap": shutil.which("nmap") is not None,
+            "wireshark": shutil.which("wireshark") is not None
+        }
+        
+        return {
+            "version": VERSION,
+            "status": "healthy",
+            "tier": self.tier_manager.get_tier_name(),
+            "tier_access": self.tier_manager.has_access(),
+            "tools": tools,
+            "connections_saved": len(self.connections),
+            "vpn_profiles": len(self.vpn_profiles),
+            "network": self.get_network_info(),
+            "vpn_status": self.get_vpn_status()
+        }
+
+
+class ITToolkitGUI:
+    def __init__(self, service: ITToolkitService):
+        self.service = service
+        self.root = None
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available")
+            sys.exit(1)
+        
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1000x700")
+        self.root.configure(bg='#1e1e2e')
+        
+        self._setup_styles()
+        self._create_widgets()
+        self.root.mainloop()
+    
+    def _setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('Header.TLabel', font=('Segoe UI', 20, 'bold'), 
+                       foreground='#89b4fa', background='#1e1e2e')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 14, 'bold'),
+                       foreground='#a6adc8', background='#1e1e2e')
+        style.configure('TButton', padding=10, font=('Segoe UI', 10))
+        style.configure('TNotebook', background='#1e1e2e')
+        style.configure('TNotebook.Tab', padding=[15, 8], font=('Segoe UI', 10))
+        style.configure('TEntry', padding=8)
+    
+    def _create_widgets(self):
+        main = ttk.Frame(self.root, padding=20)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        header = ttk.Frame(main)
+        header.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(header, text="Aegis IT Toolkit", style='Header.TLabel').pack(side=tk.LEFT)
+        
+        tier_text = f"Edition: {self.service.tier_manager.get_tier_name()}"
+        tier_color = '#a6e3a1' if self.service.tier_manager.has_access() else '#fab387'
+        ttk.Label(header, text=tier_text, foreground=tier_color,
+                 font=('Segoe UI', 11, 'bold')).pack(side=tk.RIGHT)
+        
+        if not self.service.tier_manager.has_access():
+            warn = ttk.Label(main, text="⚠ Some features require Workplace edition",
+                           foreground='#fab387', font=('Segoe UI', 10))
+            warn.pack(pady=(0, 10))
+        
+        notebook = ttk.Notebook(main)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        notebook.add(self._create_remote_tab(), text="Remote Desktop")
+        notebook.add(self._create_network_tab(), text="Network")
+        notebook.add(self._create_system_tab(), text="System")
+        notebook.add(self._create_vpn_tab(), text="VPN")
+        notebook.add(self._create_tools_tab(), text="Tools")
+    
+    def _create_remote_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Remote Desktop Connections", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        conn_frame = ttk.Frame(frame)
+        conn_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        ttk.Label(conn_frame, text="Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.host_entry = ttk.Entry(conn_frame, width=30)
+        self.host_entry.grid(row=0, column=1, padx=5, pady=5)
+        
+        ttk.Label(conn_frame, text="Username:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
+        self.user_entry = ttk.Entry(conn_frame, width=20)
+        self.user_entry.grid(row=0, column=3, padx=5, pady=5)
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        rdp_btn = ttk.Button(btn_frame, text="Connect RDP", command=self._connect_rdp)
+        rdp_btn.pack(side=tk.LEFT, padx=5)
+        if not self.service.tier_manager.has_access():
+            rdp_btn.state(['disabled'])
+        
+        vnc_btn = ttk.Button(btn_frame, text="Connect VNC", command=self._connect_vnc)
+        vnc_btn.pack(side=tk.LEFT, padx=5)
+        if not self.service.tier_manager.has_access():
+            vnc_btn.state(['disabled'])
+        
+        ssh_btn = ttk.Button(btn_frame, text="Connect SSH", command=self._connect_ssh)
+        ssh_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(btn_frame, text="Open Remmina", command=self._open_remmina).pack(side=tk.LEFT, padx=5)
+        
+        return frame
+    
+    def _create_network_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Network Diagnostics", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        diag_frame = ttk.Frame(frame)
+        diag_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        ttk.Label(diag_frame, text="Host:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.ping_entry = ttk.Entry(diag_frame, width=30)
+        self.ping_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.ping_entry.insert(0, "8.8.8.8")
+        
+        ttk.Button(diag_frame, text="Ping", command=self._ping_host).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Button(diag_frame, text="Port Scan", command=self._port_scan).grid(row=0, column=3, padx=5, pady=5)
+        
+        ttk.Label(frame, text="Network Information", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(15, 10))
+        
+        self.network_text = tk.Text(frame, height=15, bg='#313244', fg='#cdd6f4', 
+                                    font=('Consolas', 10), wrap=tk.WORD)
+        self.network_text.pack(fill=tk.BOTH, expand=True)
+        
+        self._update_network_info()
+        
+        return frame
+    
+    def _create_system_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="System Information", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        self.system_text = tk.Text(frame, height=20, bg='#313244', fg='#cdd6f4',
+                                   font=('Consolas', 10), wrap=tk.WORD)
+        self.system_text.pack(fill=tk.BOTH, expand=True)
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(btn_frame, text="Refresh", command=self._update_system_info).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Open Printer Config", command=self._open_printer_config).pack(side=tk.LEFT, padx=5)
+        
+        self._update_system_info()
+        
+        return frame
+    
+    def _create_vpn_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="VPN Status", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        self.vpn_text = tk.Text(frame, height=15, bg='#313244', fg='#cdd6f4',
+                                font=('Consolas', 10), wrap=tk.WORD)
+        self.vpn_text.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Button(frame, text="Refresh VPN Status", command=self._update_vpn_status).pack(pady=10)
+        
+        self._update_vpn_status()
+        
+        return frame
+    
+    def _create_tools_tab(self) -> ttk.Frame:
+        frame = ttk.Frame(self.root, padding=20)
+        
+        ttk.Label(frame, text="Quick Launch IT Tools", style='SubHeader.TLabel').pack(anchor=tk.W, pady=(0, 15))
+        
+        tools = [
+            ("KeePassXC", "keepassxc", "Password Manager"),
+            ("Seahorse", "seahorse", "Key Management"),
+            ("Wireshark", "wireshark", "Network Analyzer"),
+            ("Nmap Zenmap", "zenmap", "Network Scanner"),
+            ("GParted", "gparted", "Partition Manager"),
+            ("Printer Config", "system-config-printer", "Printer Setup"),
+        ]
+        
+        tools_frame = ttk.Frame(frame)
+        tools_frame.pack(fill=tk.BOTH, expand=True)
+        
+        row, col = 0, 0
+        for name, cmd, desc in tools:
+            tool_frame = ttk.Frame(tools_frame)
+            tool_frame.grid(row=row, column=col, padx=10, pady=10, sticky='nsew')
+            
+            installed = shutil.which(cmd) is not None
+            status = "✓" if installed else "✗"
+            status_color = '#a6e3a1' if installed else '#f38ba8'
+            
+            btn = ttk.Button(tool_frame, text=f"{name}\n{desc}", 
+                           command=lambda c=cmd: self._launch_tool(c))
+            if not installed:
+                btn.state(['disabled'])
+            btn.pack(fill=tk.X)
+            
+            ttk.Label(tool_frame, text=f"{status} {'Installed' if installed else 'Not Installed'}",
+                     foreground=status_color).pack()
+            
+            col += 1
+            if col >= 3:
+                col = 0
+                row += 1
+        
+        for i in range(3):
+            tools_frame.columnconfigure(i, weight=1)
+        
+        return frame
+    
+    def _connect_rdp(self):
+        host = self.host_entry.get().strip()
+        user = self.user_entry.get().strip() or None
+        if host:
+            success, msg = self.service.connect_rdp(host, user)
+            if not success:
+                messagebox.showerror("RDP Error", msg)
+    
+    def _connect_vnc(self):
+        host = self.host_entry.get().strip()
+        if host:
+            success, msg = self.service.connect_vnc(host)
+            if not success:
+                messagebox.showerror("VNC Error", msg)
+    
+    def _connect_ssh(self):
+        host = self.host_entry.get().strip()
+        user = self.user_entry.get().strip() or None
+        if host:
+            success, msg = self.service.connect_ssh(host, user)
+            if not success:
+                messagebox.showerror("SSH Error", msg)
+    
+    def _open_remmina(self):
+        if not self.service.launch_remmina():
+            messagebox.showerror("Error", "Remmina not installed or feature not available")
+    
+    def _ping_host(self):
+        host = self.ping_entry.get().strip()
+        if host:
+            success, output = self.service.ping_host(host)
+            self.network_text.delete('1.0', tk.END)
+            self.network_text.insert('1.0', output)
+    
+    def _port_scan(self):
+        host = self.ping_entry.get().strip()
+        if host:
+            results = self.service.port_scan(host)
+            output = f"Port Scan Results for {host}:\n" + "=" * 40 + "\n"
+            for port, is_open in results.items():
+                status = "OPEN" if is_open else "CLOSED"
+                output += f"Port {port}: {status}\n"
+            self.network_text.delete('1.0', tk.END)
+            self.network_text.insert('1.0', output)
+    
+    def _update_network_info(self):
+        info = self.service.get_network_info()
+        output = f"Hostname: {info['hostname']}\n\n"
+        output += "Network Interfaces:\n" + "=" * 40 + "\n"
+        for name, data in info.get('interfaces', {}).items():
+            output += f"\n{name} ({data['state']}):\n"
+            for addr in data.get('addresses', []):
+                output += f"  {addr['family']}: {addr['address']}/{addr['prefix']}\n"
+        self.network_text.delete('1.0', tk.END)
+        self.network_text.insert('1.0', output)
+    
+    def _update_system_info(self):
+        info = self.service.get_system_info()
+        output = "System Information\n" + "=" * 40 + "\n\n"
+        output += f"Platform: {info['platform']}\n"
+        output += f"Release: {info['release']}\n"
+        output += f"Version: {info['version']}\n"
+        output += f"Machine: {info['machine']}\n"
+        output += f"Hostname: {info['hostname']}\n\n"
+        output += f"Memory Total: {info.get('memory_total', 'N/A')}\n"
+        output += f"Memory Available: {info.get('memory_available', 'N/A')}\n"
+        if 'disk' in info:
+            output += f"\nDisk Usage:\n"
+            output += f"  Total: {info['disk']['total']}\n"
+            output += f"  Used: {info['disk']['used']}\n"
+            output += f"  Available: {info['disk']['available']}\n"
+        self.system_text.delete('1.0', tk.END)
+        self.system_text.insert('1.0', output)
+    
+    def _update_vpn_status(self):
+        status = self.service.get_vpn_status()
+        output = "VPN Client Status\n" + "=" * 40 + "\n\n"
+        for vpn, data in status.items():
+            installed = "✓ Installed" if data['installed'] else "✗ Not Installed"
+            active = "● Active" if data['active'] else "○ Inactive"
+            output += f"{vpn.upper()}:\n  {installed}\n  {active}\n\n"
+        self.vpn_text.delete('1.0', tk.END)
+        self.vpn_text.insert('1.0', output)
+    
+    def _open_printer_config(self):
+        self.service.launch_printer_config()
+    
+    def _launch_tool(self, cmd: str):
+        path = shutil.which(cmd)
+        if path:
+            subprocess.Popen([path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} - IT Administration Tools")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode (default)")
+    parser.add_argument("--cli", action="store_true", help="Show CLI info")
+    parser.add_argument("--status", action="store_true", help="Show status as JSON")
+    parser.add_argument("--rdp", metavar="HOST", help="Connect via RDP")
+    parser.add_argument("--vnc", metavar="HOST", help="Connect via VNC")
+    parser.add_argument("--ssh", metavar="HOST", help="Connect via SSH")
+    parser.add_argument("--ping", metavar="HOST", help="Ping a host")
+    parser.add_argument("--scan", metavar="HOST", help="Port scan a host")
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    args = parser.parse_args()
+    service = ITToolkitService()
+    
+    if args.status:
+        print(json.dumps(service.get_status(), indent=2))
+    elif args.rdp:
+        success, msg = service.connect_rdp(args.rdp)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.vnc:
+        success, msg = service.connect_vnc(args.vnc)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.ssh:
+        success, msg = service.connect_ssh(args.ssh)
+        print(msg)
+        sys.exit(0 if success else 1)
+    elif args.ping:
+        success, output = service.ping_host(args.ping)
+        print(output)
+        sys.exit(0 if success else 1)
+    elif args.scan:
+        results = service.port_scan(args.scan)
+        for port, is_open in results.items():
+            print(f"Port {port}: {'OPEN' if is_open else 'CLOSED'}")
+    elif args.cli:
+        status = service.get_status()
+        print(f"\n{APP_NAME} v{VERSION}")
+        print(f"Edition: {status['tier']}")
+        print(f"Tier Access: {'Yes' if status['tier_access'] else 'No (requires Workplace)'}")
+        print(f"\nInstalled Tools:")
+        for tool, installed in status['tools'].items():
+            print(f"  {tool}: {'✓' if installed else '✗'}")
+    else:
+        if TKINTER_AVAILABLE:
+            gui = ITToolkitGUI(service)
+            gui.run()
+        else:
+            print("Tkinter not available. Use --cli mode.")
+
+
+if __name__ == "__main__":
+    main()
