@@ -1,0 +1,516 @@
+name: Build Aegis OS ISOs
+
+on:
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: 'Edition to build'
+        required: true
+        default: 'freemium'
+        type: choice
+        options:
+          - freemium
+          - basic
+          - gamer
+          - workplace
+          - ai_developer
+          - gamer_ai
+          - server
+          - all
+      include_desktop:
+        description: 'Include XFCE desktop'
+        required: true
+        default: true
+        type: boolean
+
+env:
+  AEGIS_VERSION: "1.0.0"
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    
+    strategy:
+      matrix:
+        edition: ${{ github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "ai_developer", "gamer_ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition)) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            debootstrap \
+            squashfs-tools \
+            xorriso \
+            grub-pc-bin \
+            grub-efi-amd64-bin \
+            grub-common \
+            mtools \
+            isolinux \
+            syslinux-utils \
+            syslinux-common \
+            dosfstools \
+            rsync
+
+      - name: Create build directories
+        run: |
+          sudo mkdir -p /build/{chroot,image,scratch,output}
+          sudo chown -R $USER:$USER /build
+
+      - name: Bootstrap Ubuntu base system
+        run: |
+          echo "=== Bootstrapping Ubuntu 24.04 base system ==="
+          sudo debootstrap \
+            --arch=amd64 \
+            --variant=minbase \
+            noble \
+            /build/chroot \
+            http://archive.ubuntu.com/ubuntu/
+
+      - name: Configure chroot environment
+        run: |
+          echo "=== Configuring chroot ==="
+          
+          # Copy DNS config
+          sudo cp /etc/resolv.conf /build/chroot/etc/
+          
+          # Mount filesystems
+          sudo mount --bind /dev /build/chroot/dev
+          sudo mount --bind /run /build/chroot/run
+          sudo mount -t proc none /build/chroot/proc
+          sudo mount -t sysfs none /build/chroot/sys
+          sudo mount -t devpts none /build/chroot/dev/pts
+
+      - name: Install base packages
+        run: |
+          echo "=== Installing base packages ==="
+          
+          sudo chroot /build/chroot /bin/bash << 'CHROOT_SCRIPT'
+          export HOME=/root
+          export LC_ALL=C
+          export DEBIAN_FRONTEND=noninteractive
+          
+          # Enable universe and multiverse repositories
+          cat > /etc/apt/sources.list << 'EOF'
+          deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+          EOF
+          
+          # Update package lists
+          apt-get update
+          
+          # Install essential tools first (needed for later steps)
+          apt-get install -y --no-install-recommends \
+            gnupg \
+            software-properties-common \
+            apt-transport-https
+          
+          # Install kernel and live-boot essentials
+          apt-get install -y --no-install-recommends \
+            linux-image-generic \
+            casper \
+            lupin-casper \
+            systemd-sysv \
+            dbus \
+            sudo \
+            locales \
+            console-setup \
+            keyboard-configuration \
+            network-manager \
+            wpasupplicant \
+            wireless-tools \
+            pciutils \
+            usbutils \
+            nano \
+            curl \
+            wget \
+            ca-certificates
+          
+          # Generate locales
+          locale-gen en_US.UTF-8
+          
+          # Create live user
+          useradd -m -s /bin/bash -G sudo aegis
+          echo "aegis:aegis" | chpasswd
+          echo "aegis ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/aegis
+          
+          CHROOT_SCRIPT
+
+      - name: Install desktop environment
+        if: ${{ github.event.inputs.include_desktop == 'true' }}
+        run: |
+          echo "=== Installing XFCE Desktop ==="
+          
+          sudo chroot /build/chroot /bin/bash << 'CHROOT_SCRIPT'
+          export DEBIAN_FRONTEND=noninteractive
+          
+          apt-get install -y --no-install-recommends \
+            xfce4 \
+            xfce4-goodies \
+            lightdm \
+            lightdm-gtk-greeter \
+            xorg \
+            dbus-x11 \
+            at-spi2-core \
+            pulseaudio \
+            pavucontrol \
+            firefox \
+            file-roller \
+            thunar-archive-plugin \
+            network-manager-gnome \
+            gnome-icon-theme \
+            adwaita-icon-theme \
+            fonts-liberation \
+            fonts-dejavu
+          
+          # Enable auto-login for live session
+          mkdir -p /etc/lightdm/lightdm.conf.d
+          cat > /etc/lightdm/lightdm.conf.d/50-autologin.conf << 'EOF'
+          [Seat:*]
+          autologin-user=aegis
+          autologin-user-timeout=0
+          EOF
+          
+          CHROOT_SCRIPT
+
+      - name: Install edition-specific packages
+        run: |
+          echo "=== Installing ${{ matrix.edition }} edition packages ==="
+          
+          sudo chroot /build/chroot /bin/bash << 'CHROOT_SCRIPT'
+          export DEBIAN_FRONTEND=noninteractive
+          
+          EDITION="${{ matrix.edition }}"
+          
+          case $EDITION in
+            basic)
+              apt-get install -y --no-install-recommends \
+                libreoffice \
+                vlc \
+                gimp \
+                simple-scan \
+                gnome-disk-utility \
+                gparted \
+                timeshift \
+                gufw \
+                clamav \
+                clamtk
+              ;;
+            gamer)
+              # Add 32-bit architecture for Steam
+              dpkg --add-architecture i386
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                steam-installer \
+                lutris \
+                gamemode \
+                mangohud \
+                wine64 \
+                wine32 \
+                winetricks \
+                mesa-vulkan-drivers \
+                libvulkan1
+              ;;
+            workplace)
+              apt-get install -y --no-install-recommends \
+                libreoffice \
+                thunderbird \
+                remmina \
+                remmina-plugin-rdp \
+                remmina-plugin-vnc \
+                keepassxc \
+                filezilla \
+                simple-scan
+              ;;
+            ai_developer)
+              apt-get install -y --no-install-recommends \
+                python3 \
+                python3-pip \
+                python3-venv \
+                git \
+                build-essential \
+                nodejs \
+                npm
+              # Install VS Code
+              wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
+              install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+              echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list
+              apt-get update
+              apt-get install -y code
+              ;;
+            gamer_ai)
+              dpkg --add-architecture i386
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                steam-installer \
+                lutris \
+                gamemode \
+                mangohud \
+                python3 \
+                python3-pip \
+                git
+              ;;
+            server)
+              apt-get install -y --no-install-recommends \
+                openssh-server \
+                nginx \
+                docker.io \
+                docker-compose \
+                fail2ban \
+                ufw \
+                htop \
+                iotop \
+                ncdu \
+                tmux \
+                git
+              ;;
+          esac
+          
+          CHROOT_SCRIPT
+
+      - name: Install Aegis tools
+        run: |
+          echo "=== Installing Aegis tools ==="
+          
+          # Copy Aegis tools to chroot
+          if [ -d "build-system/aegis-tools" ]; then
+            sudo mkdir -p /build/chroot/usr/local/bin
+            sudo cp -r build-system/aegis-tools/* /build/chroot/usr/local/bin/ 2>/dev/null || true
+            sudo chmod +x /build/chroot/usr/local/bin/* 2>/dev/null || true
+          fi
+          
+          # Create Aegis branding
+          sudo chroot /build/chroot /bin/bash << 'CHROOT_SCRIPT'
+          
+          EDITION="${{ matrix.edition }}"
+          VERSION="${{ env.AEGIS_VERSION }}"
+          
+          # Set OS release info
+          cat > /etc/os-release << EOF
+          NAME="Aegis OS"
+          VERSION="$VERSION"
+          ID=aegis
+          ID_LIKE=ubuntu
+          VERSION_ID="$VERSION"
+          PRETTY_NAME="Aegis OS $EDITION Edition $VERSION"
+          HOME_URL="https://aegis-os.com"
+          SUPPORT_URL="https://aegis-os.com/support"
+          BUG_REPORT_URL="https://aegis-os.com/bugs"
+          EOF
+          
+          # Set hostname
+          echo "aegis-$EDITION" > /etc/hostname
+          
+          # Create welcome message
+          cat > /etc/motd << EOF
+          
+          Welcome to Aegis OS $EDITION Edition $VERSION
+          
+          Documentation: https://aegis-os.com/docs
+          Support: https://aegis-os.com/support
+          
+          EOF
+          
+          CHROOT_SCRIPT
+
+      - name: Clean up chroot
+        run: |
+          echo "=== Cleaning up chroot ==="
+          
+          sudo chroot /build/chroot /bin/bash << 'CHROOT_SCRIPT'
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
+          rm -rf /tmp/*
+          rm -rf /var/tmp/*
+          rm -f /etc/resolv.conf
+          CHROOT_SCRIPT
+
+      - name: Unmount chroot filesystems
+        run: |
+          sudo umount -lf /build/chroot/dev/pts || true
+          sudo umount -lf /build/chroot/dev || true
+          sudo umount -lf /build/chroot/run || true
+          sudo umount -lf /build/chroot/sys || true
+          sudo umount -lf /build/chroot/proc || true
+
+      - name: Create image structure
+        run: |
+          echo "=== Creating image structure ==="
+          
+          mkdir -p /build/image/{casper,isolinux,boot/grub,.disk}
+          
+          # Copy kernel and initrd
+          sudo cp /build/chroot/boot/vmlinuz-* /build/image/casper/vmlinuz
+          sudo cp /build/chroot/boot/initrd.img-* /build/image/casper/initrd
+          
+          # Create filesystem manifest (list of installed packages)
+          sudo chroot /build/chroot dpkg-query -W --showformat='${Package} ${Version}\n' > /build/image/casper/filesystem.manifest
+          
+          # Create squashfs
+          echo "Creating squashfs (this takes a while)..."
+          sudo mksquashfs /build/chroot /build/image/casper/filesystem.squashfs \
+            -comp xz \
+            -b 1M \
+            -Xdict-size 100% \
+            -noappend
+          
+          # Calculate filesystem size
+          printf $(sudo du -sx --block-size=1 /build/chroot | cut -f1) > /build/image/casper/filesystem.size
+          
+          # Create disk info files
+          EDITION="${{ matrix.edition }}"
+          VERSION="${{ env.AEGIS_VERSION }}"
+          echo "Aegis OS ${EDITION^} Edition ${VERSION}" > /build/image/.disk/info
+          echo "https://aegis-os.com" > /build/image/.disk/release_notes_url
+          touch /build/image/.disk/base_installable
+
+      - name: Setup BIOS bootloader (ISOLINUX)
+        run: |
+          echo "=== Setting up ISOLINUX ==="
+          
+          cp /usr/lib/ISOLINUX/isolinux.bin /build/image/isolinux/
+          cp /usr/lib/syslinux/modules/bios/ldlinux.c32 /build/image/isolinux/
+          cp /usr/lib/syslinux/modules/bios/menu.c32 /build/image/isolinux/
+          cp /usr/lib/syslinux/modules/bios/libutil.c32 /build/image/isolinux/
+          cp /usr/lib/syslinux/modules/bios/libcom32.c32 /build/image/isolinux/
+          
+          EDITION="${{ matrix.edition }}"
+          VERSION="${{ env.AEGIS_VERSION }}"
+          
+          cat > /build/image/isolinux/isolinux.cfg << EOF
+          UI menu.c32
+          PROMPT 0
+          MENU TITLE Aegis OS ${EDITION^} Edition $VERSION
+          TIMEOUT 100
+          
+          LABEL live
+              MENU LABEL ^Start Aegis OS
+              MENU DEFAULT
+              KERNEL /casper/vmlinuz
+              APPEND initrd=/casper/initrd boot=casper quiet splash ---
+          
+          LABEL live-safe
+              MENU LABEL Start Aegis OS (Safe Mode)
+              KERNEL /casper/vmlinuz
+              APPEND initrd=/casper/initrd boot=casper noapic noapm nodma nomce nolapic nomodeset ---
+          
+          LABEL memtest
+              MENU LABEL Memory Test
+              KERNEL /casper/vmlinuz
+              APPEND initrd=/casper/initrd boot=casper memtest ---
+          EOF
+
+      - name: Setup UEFI bootloader (GRUB)
+        run: |
+          echo "=== Setting up GRUB for UEFI ==="
+          
+          EDITION="${{ matrix.edition }}"
+          VERSION="${{ env.AEGIS_VERSION }}"
+          
+          # Create GRUB config
+          cat > /build/scratch/grub.cfg << EOF
+          search --set=root --file /casper/vmlinuz
+          
+          insmod all_video
+          set default="0"
+          set timeout=10
+          
+          menuentry "Aegis OS ${EDITION^} Edition" {
+              linux /casper/vmlinuz boot=casper quiet splash ---
+              initrd /casper/initrd
+          }
+          
+          menuentry "Aegis OS (Safe Mode)" {
+              linux /casper/vmlinuz boot=casper noapic noapm nodma nomce nolapic nomodeset ---
+              initrd /casper/initrd
+          }
+          EOF
+          
+          # Create GRUB EFI image
+          grub-mkstandalone \
+            --format=x86_64-efi \
+            --output=/build/scratch/bootx64.efi \
+            --locales="" \
+            --fonts="" \
+            "boot/grub/grub.cfg=/build/scratch/grub.cfg"
+          
+          # Create EFI boot image
+          dd if=/dev/zero of=/build/scratch/efiboot.img bs=1M count=10
+          mkfs.vfat /build/scratch/efiboot.img
+          mmd -i /build/scratch/efiboot.img efi efi/boot
+          mcopy -i /build/scratch/efiboot.img /build/scratch/bootx64.efi ::efi/boot/
+          
+          # Copy to image
+          mkdir -p /build/image/EFI/boot
+          cp /build/scratch/bootx64.efi /build/image/EFI/boot/
+
+      - name: Create ISO image
+        run: |
+          echo "=== Creating hybrid ISO ==="
+          
+          EDITION="${{ matrix.edition }}"
+          VERSION="${{ env.AEGIS_VERSION }}"
+          ISO_NAME="aegis-${EDITION}-${VERSION}.iso"
+          
+          xorriso \
+            -as mkisofs \
+            -iso-level 3 \
+            -full-iso9660-filenames \
+            -volid "AEGIS_${EDITION^^}" \
+            -output "/build/output/${ISO_NAME}" \
+            -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
+            -eltorito-boot isolinux/isolinux.bin \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            --eltorito-catalog isolinux/boot.cat \
+            -eltorito-alt-boot \
+            -e --interval:appended_partition_2:all:: \
+            -no-emul-boot \
+            -isohybrid-gpt-basdat \
+            -append_partition 2 0xef /build/scratch/efiboot.img \
+            /build/image
+          
+          # Show ISO info
+          ls -lh /build/output/
+          echo "ISO created: ${ISO_NAME}"
+
+      - name: Generate checksums
+        run: |
+          cd /build/output
+          sha256sum *.iso > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-${{ matrix.edition }}-${{ env.AEGIS_VERSION }}
+          path: /build/output/
+          retention-days: 7
+
+  create-release:
+    needs: build-iso
+    runs-on: ubuntu-latest
+    if: github.event.inputs.edition == 'all'
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ env.AEGIS_VERSION }}
+          name: Aegis OS v${{ env.AEGIS_VERSION }}
+          draft: true
+          files: ./artifacts/**/*.iso
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
