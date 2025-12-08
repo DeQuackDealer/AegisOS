@@ -1,10 +1,57 @@
 # Aegis OS Installer Build Instructions
 
-Complete guide for building Windows .exe installers using PyInstaller.
+Complete guide for running and building Aegis OS installers on all platforms.
+
+---
+
+## Platform Quick Start
+
+### Windows Users
+**Option A: Just run it (easiest)**
+```cmd
+Double-click: AegisInstaller.bat
+```
+This auto-installs Python if needed and runs the installer.
+
+**Option B: Build standalone .exe (for distribution)**
+```cmd
+python build-windows.py
+```
+Creates: `dist/AegisInstallerFreemium.exe` and `dist/AegisInstallerLicensed.exe`
+
+### Linux Users
+```bash
+chmod +x aegis-installer-linux.sh
+./aegis-installer-linux.sh
+# For licensed: ./aegis-installer-linux.sh licensed
+```
+
+### macOS Users
+```bash
+Double-click: aegis-installer-macos.command
+# Or from Terminal:
+chmod +x aegis-installer-macos.command
+./aegis-installer-macos.command
+```
+
+---
+
+## IMPORTANT: Building Windows .exe Files
+
+**You MUST run PyInstaller on Windows to create Windows .exe files.**
+
+Cross-compilation is not supported. To build .exe files:
+1. Copy this folder to a Windows PC
+2. Install Python 3.11+ from python.org
+3. Run: `python build-windows.py`
+
+The build script handles everything automatically.
+
+---
 
 ## Quick Start - Running the Installer Directly
 
-### Using the Batch Launcher (Recommended for End Users)
+### Using the Batch Launcher (Recommended for Windows End Users)
 
 The easiest way to run the installer on Windows is to use the included batch launcher:
 
