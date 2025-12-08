@@ -193,9 +193,14 @@ class AegisFreemiumBuilder(tk.Tk):
         self.build_thread = None
         self.is_building = False
         self.output_path = get_output_path(self.edition)
+        self.auto_start_countdown = 5  # Seconds before auto-start
+        self.countdown_id = None
         
         self._create_widgets()
         self._center_window()
+        
+        # Auto-start build after countdown (as per requirements)
+        self.after(500, self._start_auto_countdown)
     
     def _center_window(self):
         self.update_idletasks()
@@ -339,6 +344,12 @@ class AegisFreemiumBuilder(tk.Tk):
                 fg=TEXT_SECONDARY).pack(expand=True)
     
     def _browse_path(self):
+        # Cancel auto-start if user interacts
+        if self.countdown_id:
+            self.after_cancel(self.countdown_id)
+            self.countdown_id = None
+            self.build_btn.set_text("Build ISO")
+        
         filename = filedialog.asksaveasfilename(
             title="Save ISO As",
             defaultextension=".iso",
@@ -349,6 +360,27 @@ class AegisFreemiumBuilder(tk.Tk):
         if filename:
             self.path_var.set(filename)
             self.output_path = Path(filename)
+    
+    def _start_auto_countdown(self):
+        """Auto-start countdown - builds automatically after countdown."""
+        if self.auto_start_countdown > 0:
+            self.status_label.config(text=f"Building automatically in {self.auto_start_countdown} seconds...")
+            self.build_btn.set_text(f"Build Now ({self.auto_start_countdown})")
+            self._log(f"Auto-start in {self.auto_start_countdown}...", "info")
+            self.auto_start_countdown -= 1
+            self.countdown_id = self.after(1000, self._start_auto_countdown)
+        else:
+            self.countdown_id = None
+            self._log("Auto-starting build process...", "success")
+            self._start_build()
+    
+    def _cancel_countdown(self):
+        """Cancel the auto-start countdown."""
+        if self.countdown_id:
+            self.after_cancel(self.countdown_id)
+            self.countdown_id = None
+            self.build_btn.set_text("Build ISO")
+            self.status_label.config(text="Ready to build Aegis OS Freemium")
     
     def _update_progress(self, percent):
         self.progress_bar.delete("all")
@@ -399,6 +431,11 @@ class AegisFreemiumBuilder(tk.Tk):
     def _start_build(self):
         if self.is_building:
             return
+        
+        # Cancel any countdown
+        if self.countdown_id:
+            self.after_cancel(self.countdown_id)
+            self.countdown_id = None
         
         self.output_path = Path(self.path_var.get())
         
