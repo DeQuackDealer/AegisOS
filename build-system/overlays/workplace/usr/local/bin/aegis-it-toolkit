@@ -325,6 +325,107 @@ class ITToolkitService:
         
         return status
     
+    def connect_openvpn(self, config_file: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "VPN requires Workplace edition"
+        
+        openvpn = shutil.which("openvpn")
+        if not openvpn:
+            return False, "OpenVPN not installed. Install with: sudo apt install openvpn"
+        
+        config_path = Path(config_file).expanduser()
+        if not config_path.exists():
+            return False, f"Config file not found: {config_file}"
+        
+        try:
+            result = subprocess.run(
+                ["pkexec", "openvpn", "--config", str(config_path), "--daemon", f"aegis-vpn-{config_path.stem}"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return True, f"VPN connected using: {config_path.name}"
+            else:
+                if "cancelled" in result.stderr.lower() or result.returncode == 126:
+                    return False, "Authentication cancelled by user"
+                return False, result.stderr or "Failed to connect"
+        except subprocess.TimeoutExpired:
+            return False, "Connection timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def disconnect_openvpn(self, config_name: str = None) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "VPN requires Workplace edition"
+        
+        try:
+            if config_name:
+                result = subprocess.run(
+                    ["pkexec", "pkill", "-f", f"openvpn.*aegis-vpn-{config_name}"],
+                    capture_output=True, text=True
+                )
+            else:
+                result = subprocess.run(
+                    ["pkexec", "pkill", "openvpn"],
+                    capture_output=True, text=True
+                )
+            
+            if result.returncode == 0:
+                return True, "VPN disconnected"
+            else:
+                return False, "No active VPN connection found"
+        except Exception as e:
+            return False, str(e)
+    
+    def connect_wireguard(self, interface: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "VPN requires Workplace edition"
+        
+        wg_quick = shutil.which("wg-quick")
+        if not wg_quick:
+            return False, "WireGuard not installed. Install with: sudo apt install wireguard"
+        
+        config_path = Path(f"/etc/wireguard/{interface}.conf")
+        if not config_path.exists():
+            return False, f"WireGuard config not found: {config_path}"
+        
+        try:
+            result = subprocess.run(
+                ["pkexec", "wg-quick", "up", interface],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return True, f"Connected to WireGuard interface: {interface}"
+            else:
+                return False, result.stderr or "Failed to connect"
+        except subprocess.TimeoutExpired:
+            return False, "Connection timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def disconnect_wireguard(self, interface: str) -> Tuple[bool, str]:
+        if not self.tier_manager.has_access():
+            return False, "VPN requires Workplace edition"
+        
+        try:
+            result = subprocess.run(
+                ["pkexec", "wg-quick", "down", interface],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return True, f"Disconnected from WireGuard interface: {interface}"
+            else:
+                return False, result.stderr or "Failed to disconnect"
+        except Exception as e:
+            return False, str(e)
+    
+    def list_wireguard_configs(self) -> List[str]:
+        configs = []
+        wg_dir = Path("/etc/wireguard")
+        if wg_dir.exists():
+            for conf in wg_dir.glob("*.conf"):
+                configs.append(conf.stem)
+        return configs
+    
     def launch_remmina(self) -> bool:
         if not self.tier_manager.has_access():
             return False

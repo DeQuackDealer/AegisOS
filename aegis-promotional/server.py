@@ -46,7 +46,8 @@ CSRF_TOKENS = {}
 # In production (deployed): uses live keys (sk_live_..., pk_live_...)
 
 def get_stripe_keys():
-    """Get appropriate Stripe keys based on environment"""
+    """Get appropriate Stripe keys based on
+     environment"""
     is_production = os.getenv('REPLIT_DEPLOYMENT') == '1'
 
     if is_production:

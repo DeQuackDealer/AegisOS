@@ -18,6 +18,12 @@ from typing import List, Dict, Optional
 import threading
 import hashlib
 
+try:
+    import sqlite3
+    HAS_SQLITE = True
+except ImportError:
+    HAS_SQLITE = False
+
 class Game:
     def __init__(self, name: str, launch_cmd: str, source: str, 
                  cover_path: str = "", installed: bool = True):
@@ -88,11 +94,13 @@ class GameScanner:
         return None
     
     def scan_lutris(self):
+        if not HAS_SQLITE:
+            return
+        
         lutris_db = Path.home() / ".local" / "share" / "lutris" / "pga.db"
         if not lutris_db.exists():
             return
         try:
-            import sqlite3
             conn = sqlite3.connect(str(lutris_db))
             cursor = conn.cursor()
             cursor.execute("SELECT name, slug, runner FROM games WHERE installed = 1")
@@ -727,7 +735,87 @@ class AegisGameHub(Gtk.Window):
         dialog.destroy()
     
     def _setup_controller(self):
-        pass
+        try:
+            import struct
+            import fcntl
+            import array
+            
+            js_devices = []
+            for i in range(4):
+                js_path = f"/dev/input/js{i}"
+                if os.path.exists(js_path):
+                    js_devices.append(js_path)
+            
+            if not js_devices:
+                return
+            
+            def read_controller():
+                try:
+                    js_fd = os.open(js_devices[0], os.O_RDONLY | os.O_NONBLOCK)
+                    
+                    while True:
+                        try:
+                            event = os.read(js_fd, 8)
+                            if len(event) == 8:
+                                time, value, type_, number = struct.unpack('IhBB', event)
+                                
+                                if type_ == 1:
+                                    if number == 0 and value == 1:
+                                        GLib.idle_add(self._controller_action, 'A')
+                                    elif number == 1 and value == 1:
+                                        GLib.idle_add(self._controller_action, 'B')
+                                    elif number == 6 and value == 1:
+                                        GLib.idle_add(self._controller_action, 'start')
+                                    elif number == 7 and value == 1:
+                                        GLib.idle_add(self._controller_action, 'select')
+                                
+                                elif type_ == 2:
+                                    if number == 0:
+                                        if value < -16384:
+                                            GLib.idle_add(self._controller_action, 'left')
+                                        elif value > 16384:
+                                            GLib.idle_add(self._controller_action, 'right')
+                                    elif number == 1:
+                                        if value < -16384:
+                                            GLib.idle_add(self._controller_action, 'up')
+                                        elif value > 16384:
+                                            GLib.idle_add(self._controller_action, 'down')
+                        except BlockingIOError:
+                            pass
+                        except Exception:
+                            break
+                        
+                        import time as time_mod
+                        time_mod.sleep(0.05)
+                    
+                    os.close(js_fd)
+                except Exception:
+                    pass
+            
+            controller_thread = threading.Thread(target=read_controller, daemon=True)
+            controller_thread.start()
+            
+        except Exception:
+            pass
+    
+    def _controller_action(self, action):
+        if action == 'A' and self.selected_card:
+            self._launch_game(self.selected_card.game)
+        elif action == 'B':
+            self._confirm_exit()
+        elif action == 'start':
+            self._show_settings(None)
+        elif action == 'select':
+            self._scan_games()
+        elif action == 'left':
+            self._navigate(Gdk.KEY_Left)
+        elif action == 'right':
+            self._navigate(Gdk.KEY_Right)
+        elif action == 'up':
+            self._navigate(Gdk.KEY_Up)
+        elif action == 'down':
+            self._navigate(Gdk.KEY_Down)
+        return False
 
 def main():
     app = AegisGameHub()
