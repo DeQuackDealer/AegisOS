@@ -214,27 +214,50 @@ def print_summary(results):
 
 
 def main():
-    print_header()
+    try:
+        print_header()
+        
+        if not check_requirements():
+            print("Build aborted: Missing requirements")
+            print()
+            print("To install PyInstaller, open Command Prompt and run:")
+            print("  pip install pyinstaller")
+            print()
+            return 1
+        
+        if not create_icon_if_missing():
+            print("Build aborted: Icon creation failed")
+            return 1
+        
+        if not clean_build_dirs():
+            print("Build aborted: Failed to clean directories")
+            return 1
+        
+        results = build_installers()
+        
+        if print_summary(results):
+            return 0
+        else:
+            return 1
     
-    if not check_requirements():
-        print("Build aborted: Missing requirements")
-        return 1
-    
-    if not create_icon_if_missing():
-        print("Build aborted: Icon creation failed")
-        return 1
-    
-    if not clean_build_dirs():
-        print("Build aborted: Failed to clean directories")
-        return 1
-    
-    results = build_installers()
-    
-    if print_summary(results):
-        return 0
-    else:
+    except Exception as e:
+        print()
+        print("=" * 60)
+        print("  BUILD ERROR")
+        print("=" * 60)
+        print(f"  {type(e).__name__}: {e}")
+        print("=" * 60)
         return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = 0
+    try:
+        exit_code = main()
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+        exit_code = 1
+    finally:
+        print()
+        input("Press Enter to close this window...")
+    sys.exit(exit_code)
