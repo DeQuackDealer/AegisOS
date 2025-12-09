@@ -1279,18 +1279,20 @@ class AegisLicensedInstaller:
     
     def _activate_and_install_worker(self, license_key):
         """Activate license then proceed with installation"""
+        edition_id = self.validated_edition_id or ""
+        
         try:
             from activation_client import ActivationClient, HardwareFingerprint
             
             self._update_progress(2, "Checking license activation...", "")
             
             client = ActivationClient()
-            success, message, activation_data = client.activate(license_key, self.validated_edition_id)
+            success, message, activation_data = client.activate(license_key, edition_id)
             
             if not success:
                 if "Connection" in message or "timed out" in message.lower():
                     self._update_progress(3, "Server unavailable, checking local activation...", "")
-                    offline_success, offline_message = client.check_offline(license_key, self.validated_edition_id)
+                    offline_success, offline_message = client.check_offline(license_key, edition_id)
                     
                     if offline_success:
                         self._update_progress(5, "License verified (offline mode)", "")

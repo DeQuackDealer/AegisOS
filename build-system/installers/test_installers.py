@@ -183,6 +183,77 @@ def test_iso_checksum():
         return False
 
 
+def test_placeholder_checksum():
+    """Test placeholder checksum detection"""
+    print("Testing placeholder checksum detection...")
+    
+    def is_placeholder_checksum(checksum):
+        if not checksum:
+            return True
+        checksum = checksum.upper().strip()
+        if checksum.startswith("0" * 60):
+            return True
+        if all(c == '0' for c in checksum[:-1]) and checksum[-1].isdigit():
+            return True
+        return False
+    
+    test_cases = [
+        ("0000000000000000000000000000000000000000000000000000000000000001", True, "placeholder 01"),
+        ("0000000000000000000000000000000000000000000000000000000000000007", True, "placeholder 07"),
+        ("209AAB96227DAE94D0C8C2ED4A7E8BA68BC2F42D1C0D6E8E3F4A5B6C7D8E9F0A", False, "real hash"),
+        ("A1B2C3D4E5F6789012345678901234567890123456789012345678901234ABCD", False, "hex hash"),
+        ("", True, "empty string"),
+        (None, True, "None value"),
+    ]
+    
+    all_passed = True
+    for checksum, expected, desc in test_cases:
+        result = is_placeholder_checksum(checksum)
+        if result != expected:
+            print(f"  ✗ Failed: {desc} - expected {expected}, got {result}")
+            all_passed = False
+    
+    if all_passed:
+        print(f"  ✓ All {len(test_cases)} placeholder detection tests passed")
+    
+    return all_passed
+
+
+def test_activation_client():
+    """Test activation client module"""
+    print("Testing activation client...")
+    
+    try:
+        from activation_client import HardwareFingerprint, ActivationClient, ActivationCache
+        
+        machine_id = HardwareFingerprint.get_machine_id()
+        if not machine_id or len(machine_id) < 16:
+            print("  ✗ Invalid machine ID generated")
+            return False
+        print(f"  ✓ Machine ID: {machine_id[:16]}...")
+        
+        info = HardwareFingerprint.get_fingerprint_info()
+        if "machine_id" not in info or "hostname" not in info:
+            print("  ✗ Fingerprint info incomplete")
+            return False
+        print("  ✓ Fingerprint info generated")
+        
+        client = ActivationClient()
+        if not hasattr(client, 'activate') or not hasattr(client, 'check_offline'):
+            print("  ✗ ActivationClient missing required methods")
+            return False
+        print("  ✓ ActivationClient initialized")
+        
+        return True
+        
+    except ImportError as e:
+        print(f"  ✗ Import error: {e}")
+        return False
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+        return False
+
+
 def test_python_syntax():
     """Test that all installer files have valid Python syntax"""
     print("Testing Python syntax...")
@@ -191,6 +262,7 @@ def test_python_syntax():
         "aegis-installer-freemium.py",
         "aegis-installer-licensed.py",
         "build-all-installers.py",
+        "activation_client.py",
     ]
     
     all_valid = True
@@ -225,6 +297,8 @@ def main():
         ("Manifest Loading", test_manifest_loading),
         ("ISO Checksum", test_iso_checksum),
         ("License Validation", test_license_validation),
+        ("Placeholder Checksum", test_placeholder_checksum),
+        ("Activation Client", test_activation_client),
         ("Offline ISO Locator", test_offline_iso_locator),
     ]
     

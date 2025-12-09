@@ -309,6 +309,7 @@ def build_installers():
         ]
         
         if 'licensed' in installer["script"].lower():
+            activation_client_path = script_dir / "activation_client.py"
             cmd.extend([
                 '--hidden-import', 'cryptography',
                 '--hidden-import', 'cryptography.hazmat.primitives',
@@ -316,8 +317,15 @@ def build_installers():
                 '--hidden-import', 'cryptography.hazmat.primitives.serialization',
                 '--hidden-import', 'cryptography.hazmat.primitives.asymmetric.padding',
                 '--hidden-import', 'cryptography.hazmat.backends',
+                '--hidden-import', 'cryptography.hazmat.primitives.asymmetric.rsa',
+                '--hidden-import', 'cryptography.exceptions',
                 '--collect-all', 'cryptography',
             ])
+            if activation_client_path.exists():
+                cmd.extend([
+                    '--add-data', f'{activation_client_path}{os.pathsep}.',
+                    '--hidden-import', 'activation_client',
+                ])
         
         cmd.append(str(script_path))
         

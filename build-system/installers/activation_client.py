@@ -378,7 +378,7 @@ def check_single_activation(license_key: str, edition: str, offline_allowed: boo
     if success:
         return True, message
     
-    if offline_allowed and "Connection" in message or "timed out" in message.lower():
+    if offline_allowed and ("Connection" in message or "timed out" in message.lower()):
         offline_success, offline_message = client.check_offline(license_key, edition)
         if offline_success:
             return True, f"{offline_message} (server unreachable)"
