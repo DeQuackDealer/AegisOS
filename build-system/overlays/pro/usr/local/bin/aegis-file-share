@@ -73,7 +73,11 @@ class TransferStatus(Enum):
 
 @dataclass
 class Transfer:
-    """Represents a file transfer"""
+    """Represents a file transfer
+    
+    Note: Encryption keys are ephemeral and not stored persistently
+    to prevent key leakage on disk.
+    """
     id: str
     filename: str
     filepath: str
@@ -89,8 +93,6 @@ class Transfer:
     encrypted: bool = True
     bytes_transferred: int = 0
     file_hash: str = ""
-    encryption_key: str = ""
-    encryption_iv: str = ""
 
 
 @dataclass
@@ -234,7 +236,11 @@ class FileShareService:
         return RESUME_DIR / f"{transfer_id}.resume"
     
     def _save_resume_state(self, transfer: Transfer):
-        """Save transfer state for resume capability"""
+        """Save transfer state for resume capability
+        
+        Security: Encryption keys are NOT stored to prevent key leakage.
+        Resumed transfers will renegotiate encryption with new keys.
+        """
         resume_file = self._get_resume_file(transfer.id)
         state = {
             'id': transfer.id,
@@ -243,13 +249,14 @@ class FileShareService:
             'size': transfer.size,
             'bytes_transferred': transfer.bytes_transferred,
             'file_hash': transfer.file_hash,
-            'encryption_key': transfer.encryption_key,
-            'encryption_iv': transfer.encryption_iv,
             'peer_ip': transfer.peer_ip,
-            'direction': transfer.direction
+            'direction': transfer.direction,
+            'encrypted': transfer.encrypted
         }
+        os.chmod(resume_file.parent, 0o700) if resume_file.parent.exists() else None
         with open(resume_file, 'w') as f:
             json.dump(state, f)
+        os.chmod(resume_file, 0o600)
     
     def _load_resume_state(self, transfer_id: str) -> Optional[Dict]:
         """Load transfer state for resume"""
@@ -367,9 +374,11 @@ class FileShareService:
             file_hash=file_hash
         )
         
+        enc_key_b64 = ""
+        enc_iv_b64 = ""
         if encrypted and CRYPTO_AVAILABLE:
-            transfer.encryption_key = header.get('encryption_key', '')
-            transfer.encryption_iv = header.get('encryption_iv', '')
+            enc_key_b64 = header.get('encryption_key', '')
+            enc_iv_b64 = header.get('encryption_iv', '')
         
         self.transfers[transfer_id] = transfer
         
@@ -397,8 +406,8 @@ class FileShareService:
             start_time = time.time()
             
             cipher = None
-            if encrypted and CRYPTO_AVAILABLE and transfer.encryption_key:
-                cipher = AESCipher.from_base64(transfer.encryption_key, transfer.encryption_iv)
+            if encrypted and CRYPTO_AVAILABLE and enc_key_b64:
+                cipher = AESCipher.from_base64(enc_key_b64, enc_iv_b64)
             
             mode = 'ab' if resume_offset > 0 else 'wb'
             with open(download_path, mode) as f:
@@ -596,14 +605,13 @@ class FileShareService:
             file_hash=file_hash
         )
         
-        if cipher:
-            transfer.encryption_key = cipher.get_key_b64()
-            transfer.encryption_iv = cipher.get_iv_b64()
+        enc_key_b64 = cipher.get_key_b64() if cipher else ""
+        enc_iv_b64 = cipher.get_iv_b64() if cipher else ""
         
         self.transfers[transfer_id] = transfer
         
         def send_thread():
-            nonlocal cipher
+            nonlocal cipher, enc_key_b64, enc_iv_b64
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect((peer_ip, peer_port))
@@ -625,8 +633,8 @@ class FileShareService:
                     "hash": file_hash,
                     "resume_offset": resume_offset,
                     "peer_name": self.config.device_name,
-                    "encryption_key": transfer.encryption_key if cipher else "",
-                    "encryption_iv": transfer.encryption_iv if cipher else ""
+                    "encryption_key": enc_key_b64,
+                    "encryption_iv": enc_iv_b64
                 })
                 sock.sendall(f"{len(header):08d}".encode() + header.encode())
                 

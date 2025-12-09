@@ -190,3 +190,38 @@ Custom AI upscaling technology for gaming editions:
 - aegis_ai_streaming (AI overlays, sentiment analysis, auto-clips)
 - aegis_game_modding (AI texture upscaling, mod manager, Steam Workshop)
 - aegis_performance_ai (ML performance prediction, smart VRAM management)
+
+### Tool Enhancements (December 2025 - Real Functionality)
+
+All tools now use real subprocess integration with CLI tools instead of demo code:
+
+**Gamer Tools:**
+- **aegis-wine-optimizer**: Real winetricks execution for DXVK/VKD3D installation, launch script generation
+- **aegis-gpu-manager**: nvidia-smi/rocm-smi for real GPU detection, power limits, fan curves, overclocking
+- **aegis-stream**: FFmpeg-based UDP/TCP streaming with PulseAudio/PipeWire audio capture
+- **aegis-audio-router**: pactl/pw-cli for real sink enumeration, stream routing, virtual sink creation
+
+**Pro/Workplace Tools:**
+- **aegis-home-nas**: Real Samba smb.conf generation, NFS exports, smbpasswd user management
+- **aegis-desktop-link**: Barrier/Input Leap server/client, mDNS discovery with avahi-browse
+- **aegis-mobile-link**: kdeconnect-cli for device pairing, file sharing, ring phone, D-Bus notifications
+- **aegis-cloud-sync**: rclone for remote listing, sync/bisync operations
+- **aegis-file-share**: AES-256 encrypted P2P transfers, resume support, secure key handling
+- **aegis-collaboration**: XDG portal screen sharing, webcam detection via v4l2
+- **aegis-document-management**: LibreOffice/unoconv conversion, pdftk/ghostscript PDF operations
+- **aegis-creative-suite**: Desktop file scanning for app detection, recent projects, media import
+
+**AI Developer/Server Tools:**
+- **aegis-inference-engine**: Ollama, llama.cpp, vLLM, ONNX Runtime backends with fallback
+- **aegis-compute-stack**: CUDA/ROCm detection, GPU memory reporting, CUDA_VISIBLE_DEVICES config
+- **aegis-data-science**: Jupyter Lab startup, conda/mamba environment management
+- **aegis-container-tools**: Docker/Podman detection, container/image management
+- **aegis-server-security**: ufw/iptables, fail2ban, rkhunter, SSH config auditing
+- **aegis-monitoring**: /proc filesystem metrics, smartctl disk health, threshold alerting
+- **aegis-backup-enterprise**: rsync incremental backups, tar archives, systemd timer scheduling
+
+**Security Principles:**
+- All privileged operations use pkexec (not sudo) for proper desktop privilege escalation
+- subprocess calls use list arguments (no shell=True) to prevent injection
+- Encryption keys are ephemeral and not stored to disk
+- Timeouts on all subprocess calls (30-600 seconds depending on operation)
