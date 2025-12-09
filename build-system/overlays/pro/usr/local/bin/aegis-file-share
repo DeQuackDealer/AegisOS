@@ -28,11 +28,20 @@ import time
 import hashlib
 import secrets
 import base64
+import struct
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, field, asdict
 from enum import Enum
+
+try:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.backends import default_backend
+    CRYPTO_AVAILABLE = True
+except ImportError:
+    CRYPTO_AVAILABLE = False
 
 try:
     import tkinter as tk
@@ -46,8 +55,11 @@ APP_NAME = "Aegis File Share"
 CONFIG_DIR = Path.home() / ".config" / "aegis" / "file-share"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 HISTORY_FILE = CONFIG_DIR / "history.json"
+RESUME_DIR = CONFIG_DIR / "partial"
 DEFAULT_PORT = 27183
+DISCOVERY_PORT = 27184
 CHUNK_SIZE = 1024 * 1024
+AES_BLOCK_SIZE = 16
 
 
 class TransferStatus(Enum):
@@ -56,6 +68,7 @@ class TransferStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    PAUSED = "paused"
 
 
 @dataclass
@@ -74,6 +87,10 @@ class Transfer:
     completed: str = ""
     speed_mbps: float = 0.0
     encrypted: bool = True
+    bytes_transferred: int = 0
+    file_hash: str = ""
+    encryption_key: str = ""
+    encryption_iv: str = ""
 
 
 @dataclass
@@ -98,6 +115,58 @@ class FileShareConfig:
     max_connections: int = 5
 
 
+class AESCipher:
+    """AES-256 encryption/decryption handler"""
+    
+    def __init__(self, key: bytes = None, iv: bytes = None):
+        if not CRYPTO_AVAILABLE:
+            raise RuntimeError("cryptography library not available")
+        self.key = key if key else secrets.token_bytes(32)
+        self.iv = iv if iv else secrets.token_bytes(16)
+        self.backend = default_backend()
+    
+    @classmethod
+    def from_base64(cls, key_b64: str, iv_b64: str) -> 'AESCipher':
+        """Create cipher from base64 encoded key and IV"""
+        key = base64.b64decode(key_b64)
+        iv = base64.b64decode(iv_b64)
+        return cls(key, iv)
+    
+    def get_key_b64(self) -> str:
+        return base64.b64encode(self.key).decode()
+    
+    def get_iv_b64(self) -> str:
+        return base64.b64encode(self.iv).decode()
+    
+    def encrypt_chunk(self, data: bytes) -> bytes:
+        """Encrypt a chunk of data"""
+        padder = padding.PKCS7(128).padder()
+        padded_data = padder.update(data) + padder.finalize()
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(self.iv), backend=self.backend)
+        encryptor = cipher.encryptor()
+        return encryptor.update(padded_data) + encryptor.finalize()
+    
+    def decrypt_chunk(self, data: bytes) -> bytes:
+        """Decrypt a chunk of data"""
+        cipher = Cipher(algorithms.AES(self.key), modes.CBC(self.iv), backend=self.backend)
+        decryptor = cipher.decryptor()
+        decrypted_padded = decryptor.update(data) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return unpadder.update(decrypted_padded) + unpadder.finalize()
+    
+    def encrypt_stream(self, data: bytes) -> bytes:
+        """Encrypt data using CTR mode for streaming (no padding needed)"""
+        cipher = Cipher(algorithms.AES(self.key), modes.CTR(self.iv), backend=self.backend)
+        encryptor = cipher.encryptor()
+        return encryptor.update(data) + encryptor.finalize()
+    
+    def decrypt_stream(self, data: bytes) -> bytes:
+        """Decrypt data using CTR mode for streaming"""
+        cipher = Cipher(algorithms.AES(self.key), modes.CTR(self.iv), backend=self.backend)
+        decryptor = cipher.decryptor()
+        return decryptor.update(data) + decryptor.finalize()
+
+
 class FileShareService:
     """Core file sharing service"""
     
@@ -107,7 +176,12 @@ class FileShareService:
         self.peers: Dict[str, Peer] = {}
         self.history: List[Dict] = []
         self.running = False
+        self.server_socket = None
+        self.discovery_socket = None
+        self.accept_callback: Optional[Callable[[Dict], bool]] = None
+        self.progress_callback: Optional[Callable[[str, float, float], None]] = None
         self._load_history()
+        RESUME_DIR.mkdir(parents=True, exist_ok=True)
     
     def _load_config(self) -> FileShareConfig:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,6 +221,311 @@ class FileShareService:
     def _generate_transfer_id(self) -> str:
         return secrets.token_hex(8)
     
+    def _compute_file_hash(self, filepath: str) -> str:
+        """Compute SHA-256 hash of file"""
+        sha256 = hashlib.sha256()
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(CHUNK_SIZE), b''):
+                sha256.update(chunk)
+        return sha256.hexdigest()
+    
+    def _get_resume_file(self, transfer_id: str) -> Path:
+        """Get path for resume metadata file"""
+        return RESUME_DIR / f"{transfer_id}.resume"
+    
+    def _save_resume_state(self, transfer: Transfer):
+        """Save transfer state for resume capability"""
+        resume_file = self._get_resume_file(transfer.id)
+        state = {
+            'id': transfer.id,
+            'filename': transfer.filename,
+            'filepath': transfer.filepath,
+            'size': transfer.size,
+            'bytes_transferred': transfer.bytes_transferred,
+            'file_hash': transfer.file_hash,
+            'encryption_key': transfer.encryption_key,
+            'encryption_iv': transfer.encryption_iv,
+            'peer_ip': transfer.peer_ip,
+            'direction': transfer.direction
+        }
+        with open(resume_file, 'w') as f:
+            json.dump(state, f)
+    
+    def _load_resume_state(self, transfer_id: str) -> Optional[Dict]:
+        """Load transfer state for resume"""
+        resume_file = self._get_resume_file(transfer_id)
+        if resume_file.exists():
+            try:
+                with open(resume_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return None
+    
+    def _clear_resume_state(self, transfer_id: str):
+        """Clear resume state after successful transfer"""
+        resume_file = self._get_resume_file(transfer_id)
+        if resume_file.exists():
+            resume_file.unlink()
+    
+    def start_server(self, callback: Optional[Callable[[Dict], bool]] = None):
+        """Start the file receive server"""
+        self.accept_callback = callback
+        self.running = True
+        
+        server_thread = threading.Thread(target=self._run_server, daemon=True)
+        server_thread.start()
+        
+        discovery_thread = threading.Thread(target=self._run_discovery_responder, daemon=True)
+        discovery_thread.start()
+        
+        return True
+    
+    def _run_server(self):
+        """Main server loop for accepting file transfers"""
+        try:
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind(('0.0.0.0', self.config.listen_port))
+            self.server_socket.listen(self.config.max_connections)
+            self.server_socket.settimeout(1.0)
+            
+            print(f"File share server listening on port {self.config.listen_port}")
+            
+            while self.running:
+                try:
+                    client_socket, addr = self.server_socket.accept()
+                    handler = threading.Thread(
+                        target=self._handle_incoming_connection,
+                        args=(client_socket, addr),
+                        daemon=True
+                    )
+                    handler.start()
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.running:
+                        print(f"Server error: {e}")
+                        
+        except Exception as e:
+            print(f"Failed to start server: {e}")
+        finally:
+            if self.server_socket:
+                self.server_socket.close()
+    
+    def _handle_incoming_connection(self, client_socket: socket.socket, addr: Tuple[str, int]):
+        """Handle an incoming file transfer connection"""
+        try:
+            header_len_data = client_socket.recv(8)
+            if not header_len_data:
+                return
+            
+            header_len = int(header_len_data.decode())
+            header_data = client_socket.recv(header_len)
+            header = json.loads(header_data.decode())
+            
+            if header.get('type') == 'file_transfer':
+                self._receive_file(client_socket, addr, header)
+            elif header.get('type') == 'resume_request':
+                self._handle_resume_request(client_socket, addr, header)
+                
+        except Exception as e:
+            print(f"Connection handler error: {e}")
+        finally:
+            client_socket.close()
+    
+    def _receive_file(self, sock: socket.socket, addr: Tuple[str, int], header: Dict):
+        """Receive a file from a peer"""
+        filename = header.get('filename', 'unknown')
+        filesize = header.get('size', 0)
+        encrypted = header.get('encrypted', False)
+        file_hash = header.get('hash', '')
+        resume_offset = header.get('resume_offset', 0)
+        
+        transfer_id = self._generate_transfer_id()
+        download_path = Path(self.config.download_dir) / filename
+        
+        if download_path.exists() and resume_offset == 0:
+            base = download_path.stem
+            ext = download_path.suffix
+            counter = 1
+            while download_path.exists():
+                download_path = Path(self.config.download_dir) / f"{base}_{counter}{ext}"
+                counter += 1
+        
+        transfer = Transfer(
+            id=transfer_id,
+            filename=filename,
+            filepath=str(download_path),
+            size=filesize,
+            direction="receive",
+            peer_name=header.get('peer_name', 'Unknown'),
+            peer_ip=addr[0],
+            started=datetime.now().isoformat(),
+            encrypted=encrypted,
+            bytes_transferred=resume_offset,
+            file_hash=file_hash
+        )
+        
+        if encrypted and CRYPTO_AVAILABLE:
+            transfer.encryption_key = header.get('encryption_key', '')
+            transfer.encryption_iv = header.get('encryption_iv', '')
+        
+        self.transfers[transfer_id] = transfer
+        
+        should_accept = True
+        if self.accept_callback and not self.config.auto_accept:
+            should_accept = self.accept_callback({
+                'filename': filename,
+                'size': filesize,
+                'peer_ip': addr[0],
+                'encrypted': encrypted
+            })
+        elif not self.config.auto_accept:
+            should_accept = True
+        
+        if should_accept:
+            sock.sendall(b"ACCEPT")
+        else:
+            sock.sendall(b"REJECT")
+            transfer.status = "cancelled"
+            return
+        
+        try:
+            transfer.status = "in_progress"
+            received = resume_offset
+            start_time = time.time()
+            
+            cipher = None
+            if encrypted and CRYPTO_AVAILABLE and transfer.encryption_key:
+                cipher = AESCipher.from_base64(transfer.encryption_key, transfer.encryption_iv)
+            
+            mode = 'ab' if resume_offset > 0 else 'wb'
+            with open(download_path, mode) as f:
+                while received < filesize:
+                    remaining = filesize - received
+                    chunk_size = min(CHUNK_SIZE, remaining)
+                    
+                    chunk_len_data = sock.recv(8)
+                    if not chunk_len_data:
+                        break
+                    chunk_len = struct.unpack('!Q', chunk_len_data)[0]
+                    
+                    chunk = b''
+                    while len(chunk) < chunk_len:
+                        part = sock.recv(min(chunk_len - len(chunk), 65536))
+                        if not part:
+                            break
+                        chunk += part
+                    
+                    if cipher:
+                        chunk = cipher.decrypt_stream(chunk)
+                    
+                    f.write(chunk)
+                    received += len(chunk)
+                    transfer.bytes_transferred = received
+                    transfer.progress = (received / filesize) * 100
+                    
+                    elapsed = time.time() - start_time
+                    if elapsed > 0:
+                        transfer.speed_mbps = (received / elapsed) / (1024 * 1024)
+                    
+                    self._save_resume_state(transfer)
+                    
+                    if self.progress_callback:
+                        self.progress_callback(transfer_id, transfer.progress, transfer.speed_mbps)
+            
+            if file_hash and received == filesize:
+                computed_hash = self._compute_file_hash(str(download_path))
+                if computed_hash != file_hash:
+                    transfer.status = "failed"
+                    print(f"Hash mismatch for {filename}")
+                    return
+            
+            transfer.status = "completed"
+            transfer.completed = datetime.now().isoformat()
+            self._clear_resume_state(transfer_id)
+            self.history.append(asdict(transfer))
+            self._save_history()
+            print(f"Received: {filename} ({filesize} bytes)")
+            
+        except Exception as e:
+            transfer.status = "failed"
+            print(f"Receive error: {e}")
+    
+    def _handle_resume_request(self, sock: socket.socket, addr: Tuple[str, int], header: Dict):
+        """Handle a resume request from a peer"""
+        transfer_id = header.get('transfer_id')
+        resume_state = self._load_resume_state(transfer_id)
+        
+        if resume_state:
+            response = json.dumps({
+                'type': 'resume_response',
+                'found': True,
+                'bytes_transferred': resume_state.get('bytes_transferred', 0)
+            })
+        else:
+            response = json.dumps({
+                'type': 'resume_response',
+                'found': False,
+                'bytes_transferred': 0
+            })
+        
+        sock.sendall(f"{len(response):08d}".encode() + response.encode())
+    
+    def _run_discovery_responder(self):
+        """Listen for discovery broadcasts and respond"""
+        try:
+            self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.discovery_socket.bind(('0.0.0.0', DISCOVERY_PORT))
+            self.discovery_socket.settimeout(1.0)
+            
+            print(f"Discovery responder listening on port {DISCOVERY_PORT}")
+            
+            while self.running:
+                try:
+                    data, addr = self.discovery_socket.recvfrom(1024)
+                    message = json.loads(data.decode())
+                    
+                    if message.get('type') == 'discover':
+                        response = json.dumps({
+                            'type': 'announce',
+                            'name': self.config.device_name,
+                            'port': self.config.listen_port,
+                            'version': VERSION
+                        }).encode()
+                        self.discovery_socket.sendto(response, addr)
+                        
+                        peer = Peer(
+                            id=f"peer-{addr[0].replace('.', '-')}",
+                            name=message.get('name', 'Unknown'),
+                            ip_address=addr[0],
+                            port=message.get('port', DEFAULT_PORT),
+                            last_seen=datetime.now().isoformat()
+                        )
+                        self.peers[peer.id] = peer
+                        
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.running:
+                        pass
+                        
+        except Exception as e:
+            print(f"Discovery responder error: {e}")
+        finally:
+            if self.discovery_socket:
+                self.discovery_socket.close()
+    
+    def stop_server(self):
+        """Stop the file receive server"""
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        if self.discovery_socket:
+            self.discovery_socket.close()
+    
     def discover_peers(self) -> List[Peer]:
         """Discover peers on local network"""
         discovered = []
@@ -162,7 +541,7 @@ class FileShareService:
                 "port": self.config.listen_port
             }).encode()
             
-            sock.sendto(message, ('<broadcast>', DEFAULT_PORT + 1))
+            sock.sendto(message, ('<broadcast>', DISCOVERY_PORT))
             
             start = time.time()
             while time.time() - start < 2.0:
@@ -181,6 +560,8 @@ class FileShareService:
                         self.peers[peer.id] = peer
                 except socket.timeout:
                     break
+                except Exception:
+                    continue
         except Exception:
             pass
         finally:
@@ -188,13 +569,20 @@ class FileShareService:
         
         return discovered
     
-    def send_file(self, filepath: str, peer_ip: str, peer_port: int = DEFAULT_PORT) -> Optional[str]:
-        """Send a file to a peer"""
+    def send_file(self, filepath: str, peer_ip: str, peer_port: int = DEFAULT_PORT, 
+                  resume: bool = True) -> Optional[str]:
+        """Send a file to a peer with encryption and resume support"""
         filepath = Path(filepath)
         if not filepath.exists():
             return None
         
         transfer_id = self._generate_transfer_id()
+        file_hash = self._compute_file_hash(str(filepath))
+        
+        cipher = None
+        if self.config.encryption_enabled and CRYPTO_AVAILABLE:
+            cipher = AESCipher()
+        
         transfer = Transfer(
             id=transfer_id,
             filename=filepath.name,
@@ -203,20 +591,42 @@ class FileShareService:
             direction="send",
             peer_name="",
             peer_ip=peer_ip,
-            started=datetime.now().isoformat()
+            started=datetime.now().isoformat(),
+            encrypted=cipher is not None,
+            file_hash=file_hash
         )
+        
+        if cipher:
+            transfer.encryption_key = cipher.get_key_b64()
+            transfer.encryption_iv = cipher.get_iv_b64()
+        
         self.transfers[transfer_id] = transfer
         
         def send_thread():
+            nonlocal cipher
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.connect((peer_ip, peer_port))
+                
+                resume_offset = 0
+                if resume:
+                    resume_offset = self._check_resume_support(sock, peer_ip, transfer_id)
+                    if resume_offset > 0:
+                        transfer.bytes_transferred = resume_offset
+                        sock.close()
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.connect((peer_ip, peer_port))
                 
                 header = json.dumps({
                     "type": "file_transfer",
                     "filename": transfer.filename,
                     "size": transfer.size,
-                    "encrypted": self.config.encryption_enabled
+                    "encrypted": transfer.encrypted,
+                    "hash": file_hash,
+                    "resume_offset": resume_offset,
+                    "peer_name": self.config.device_name,
+                    "encryption_key": transfer.encryption_key if cipher else "",
+                    "encryption_iv": transfer.encryption_iv if cipher else ""
                 })
                 sock.sendall(f"{len(header):08d}".encode() + header.encode())
                 
@@ -226,33 +636,109 @@ class FileShareService:
                     return
                 
                 transfer.status = "in_progress"
-                sent = 0
+                sent = resume_offset
                 start_time = time.time()
                 
                 with open(filepath, 'rb') as f:
+                    if resume_offset > 0:
+                        f.seek(resume_offset)
+                    
                     while sent < transfer.size:
                         chunk = f.read(CHUNK_SIZE)
                         if not chunk:
                             break
-                        sock.sendall(chunk)
-                        sent += len(chunk)
-                        transfer.progress = (sent / transfer.size) * 100
+                        
+                        if cipher:
+                            chunk = cipher.encrypt_stream(chunk)
+                        
+                        chunk_len = struct.pack('!Q', len(chunk))
+                        sock.sendall(chunk_len + chunk)
+                        
+                        sent += len(chunk) if not cipher else (len(chunk) - (len(chunk) - CHUNK_SIZE) if len(chunk) > CHUNK_SIZE else len(chunk))
+                        original_sent = f.tell()
+                        transfer.bytes_transferred = original_sent
+                        transfer.progress = (original_sent / transfer.size) * 100
+                        
                         elapsed = time.time() - start_time
                         if elapsed > 0:
-                            transfer.speed_mbps = (sent / elapsed) / (1024 * 1024)
+                            transfer.speed_mbps = (original_sent / elapsed) / (1024 * 1024)
+                        
+                        self._save_resume_state(transfer)
+                        
+                        if self.progress_callback:
+                            self.progress_callback(transfer_id, transfer.progress, transfer.speed_mbps)
                 
                 transfer.status = "completed"
                 transfer.completed = datetime.now().isoformat()
+                transfer.progress = 100.0
+                self._clear_resume_state(transfer_id)
                 self.history.append(asdict(transfer))
                 self._save_history()
                 
             except Exception as e:
                 transfer.status = "failed"
+                print(f"Send error: {e}")
             finally:
                 sock.close()
         
         threading.Thread(target=send_thread, daemon=True).start()
         return transfer_id
+    
+    def _check_resume_support(self, sock: socket.socket, peer_ip: str, transfer_id: str) -> int:
+        """Check if the peer supports resume and get bytes already transferred"""
+        try:
+            resume_request = json.dumps({
+                "type": "resume_request",
+                "transfer_id": transfer_id
+            })
+            sock.sendall(f"{len(resume_request):08d}".encode() + resume_request.encode())
+            
+            response_len_data = sock.recv(8)
+            if response_len_data:
+                response_len = int(response_len_data.decode())
+                response_data = sock.recv(response_len)
+                response = json.loads(response_data.decode())
+                
+                if response.get('found'):
+                    return response.get('bytes_transferred', 0)
+        except Exception:
+            pass
+        return 0
+    
+    def resume_transfer(self, transfer_id: str) -> bool:
+        """Resume a paused or failed transfer"""
+        resume_state = self._load_resume_state(transfer_id)
+        if not resume_state:
+            return False
+        
+        if resume_state['direction'] == 'send':
+            new_transfer_id = self.send_file(
+                resume_state['filepath'],
+                resume_state['peer_ip'],
+                resume=True
+            )
+            return new_transfer_id is not None
+        
+        return False
+    
+    def get_resumable_transfers(self) -> List[Dict]:
+        """Get list of transfers that can be resumed"""
+        resumable = []
+        for resume_file in RESUME_DIR.glob('*.resume'):
+            try:
+                with open(resume_file, 'r') as f:
+                    state = json.load(f)
+                    state['resume_file'] = str(resume_file)
+                    resumable.append(state)
+            except Exception:
+                pass
+        return resumable
+    
+    def cancel_transfer(self, transfer_id: str):
+        """Cancel an ongoing transfer"""
+        if transfer_id in self.transfers:
+            self.transfers[transfer_id].status = "cancelled"
+            self._clear_resume_state(transfer_id)
     
     def get_transfer_progress(self, transfer_id: str) -> Optional[Dict]:
         """Get transfer progress"""
@@ -271,10 +757,12 @@ class FileShareService:
             "listen_port": self.config.listen_port,
             "download_dir": self.config.download_dir,
             "encryption": self.config.encryption_enabled,
+            "crypto_available": CRYPTO_AVAILABLE,
             "peers_count": len(self.peers),
             "active_transfers": len(active),
             "transfers": active,
-            "peers": [asdict(p) for p in self.peers.values()]
+            "peers": [asdict(p) for p in self.peers.values()],
+            "resumable_transfers": len(self.get_resumable_transfers())
         }
 
 
@@ -301,8 +789,27 @@ class FileShareGUI:
         style.configure('TLabel', background='#2b2b2b', foreground='#ffffff')
         style.configure('Header.TLabel', font=('Segoe UI', 16, 'bold'))
         
+        self.service.start_server(callback=self._accept_transfer)
+        self.service.progress_callback = self._on_progress
+        
         self._create_widgets()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
+    
+    def _accept_transfer(self, info: Dict) -> bool:
+        """Callback for accepting incoming transfers"""
+        size_mb = info['size'] / (1024 * 1024)
+        msg = f"Accept file '{info['filename']}' ({size_mb:.1f} MB) from {info['peer_ip']}?"
+        return messagebox.askyesno("Incoming Transfer", msg)
+    
+    def _on_progress(self, transfer_id: str, progress: float, speed: float):
+        """Callback for transfer progress updates"""
+        pass
+    
+    def _on_close(self):
+        """Handle window close"""
+        self.service.stop_server()
+        self.root.destroy()
     
     def _create_widgets(self):
         main = ttk.Frame(self.root, padding=20)
@@ -313,6 +820,10 @@ class FileShareGUI:
         
         ttk.Label(header, text="Aegis File Share", style='Header.TLabel').pack(side=tk.LEFT)
         
+        status_text = "Server running" if self.service.running else "Server stopped"
+        crypto_status = "🔒 Encryption ready" if CRYPTO_AVAILABLE else "⚠ No encryption"
+        ttk.Label(header, text=f"{status_text} | {crypto_status}").pack(side=tk.RIGHT)
+        
         control_frame = ttk.Frame(main)
         control_frame.pack(fill=tk.X, pady=10)
         
@@ -322,6 +833,8 @@ class FileShareGUI:
                   command=self._send_folder).pack(side=tk.LEFT, padx=5)
         ttk.Button(control_frame, text="Discover Peers", 
                   command=self._discover_peers).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Resume Transfer", 
+                  command=self._resume_transfer).pack(side=tk.LEFT, padx=5)
         
         notebook = ttk.Notebook(main)
         notebook.pack(fill=tk.BOTH, expand=True, pady=10)
@@ -349,8 +862,17 @@ class FileShareGUI:
         history_frame = ttk.Frame(notebook, padding=10)
         notebook.add(history_frame, text="History")
         
+        columns = ('filename', 'direction', 'size', 'date', 'status')
+        self.history_tree = ttk.Treeview(history_frame, columns=columns, show='headings', height=8)
+        for col, width in [('filename', 200), ('direction', 80), ('size', 80), 
+                          ('date', 120), ('status', 80)]:
+            self.history_tree.heading(col, text=col.title())
+            self.history_tree.column(col, width=width)
+        self.history_tree.pack(fill=tk.BOTH, expand=True)
+        
         self._refresh_peers()
         self._update_transfers()
+        self._refresh_history()
     
     def _refresh_peers(self):
         for item in self.peers_tree.get_children():
@@ -367,8 +889,9 @@ class FileShareGUI:
         
         for transfer in self.service.transfers.values():
             size_mb = transfer.size / (1024 * 1024)
+            encrypted_icon = "🔒" if transfer.encrypted else ""
             self.transfers_tree.insert('', tk.END, values=(
-                transfer.filename,
+                f"{encrypted_icon} {transfer.filename}",
                 f"{size_mb:.1f} MB",
                 transfer.direction,
                 f"{transfer.progress:.1f}%",
@@ -377,6 +900,21 @@ class FileShareGUI:
             ))
         
         self.root.after(1000, self._update_transfers)
+    
+    def _refresh_history(self):
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        for h in reversed(self.service.history[-20:]):
+            size_mb = h.get('size', 0) / (1024 * 1024)
+            date = h.get('completed', h.get('started', ''))[:10]
+            self.history_tree.insert('', tk.END, values=(
+                h.get('filename', ''),
+                h.get('direction', ''),
+                f"{size_mb:.1f} MB",
+                date,
+                h.get('status', '')
+            ))
     
     def _send_file(self):
         selection = self.peers_tree.selection()
@@ -406,65 +944,124 @@ class FileShareGUI:
         
         folder = filedialog.askdirectory(title="Select Folder to Send")
         if folder:
-            messagebox.showinfo("Info", "Folder transfer will be implemented")
+            peer_id = selection[0]
+            peer = self.service.peers[peer_id]
+            
+            for root, dirs, files in os.walk(folder):
+                for file in files:
+                    filepath = os.path.join(root, file)
+                    self.service.send_file(filepath, peer.ip_address, peer.port)
+            
+            messagebox.showinfo("Info", "Folder transfer started")
     
     def _discover_peers(self):
         discovered = self.service.discover_peers()
         self._refresh_peers()
         messagebox.showinfo("Discovery", f"Found {len(discovered)} peer(s)")
+    
+    def _resume_transfer(self):
+        resumable = self.service.get_resumable_transfers()
+        if not resumable:
+            messagebox.showinfo("Resume", "No transfers to resume")
+            return
+        
+        for state in resumable:
+            if self.service.resume_transfer(state['id']):
+                messagebox.showinfo("Resume", f"Resumed: {state['filename']}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=f"{APP_NAME} - P2P file sharing")
     parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--server', action='store_true', help='Start server mode')
     parser.add_argument('--status', action='store_true', help='Show status as JSON')
     parser.add_argument('--send', metavar='FILE', help='Send file to peer')
     parser.add_argument('--to', metavar='IP', help='Peer IP address')
+    parser.add_argument('--port', type=int, default=DEFAULT_PORT, help='Peer port')
     parser.add_argument('--discover', action='store_true', help='Discover peers')
     parser.add_argument('--list', action='store_true', help='List known peers')
     parser.add_argument('--history', action='store_true', help='Show transfer history')
+    parser.add_argument('--resume', metavar='ID', help='Resume a transfer by ID')
+    parser.add_argument('--resumable', action='store_true', help='List resumable transfers')
+    parser.add_argument('--no-encrypt', action='store_true', help='Disable encryption')
     parser.add_argument('--version', action='version', version=f'{APP_NAME} v{VERSION}')
     
     args = parser.parse_args()
     service = FileShareService()
     
+    if args.no_encrypt:
+        service.config.encryption_enabled = False
+    
     if args.status:
         print(json.dumps(service.get_status(), indent=2))
+    elif args.server:
+        print(f"Starting {APP_NAME} server...")
+        print(f"Encryption: {'enabled' if CRYPTO_AVAILABLE else 'not available'}")
+        service.start_server()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nShutting down...")
+            service.stop_server()
     elif args.discover:
         peers = service.discover_peers()
         print(f"Found {len(peers)} peer(s):")
         for p in peers:
-            print(f"  - {p.name} ({p.ip_address})")
+            print(f"  - {p.name} ({p.ip_address}:{p.port})")
     elif args.send and args.to:
-        transfer_id = service.send_file(args.send, args.to)
+        transfer_id = service.send_file(args.send, args.to, args.port)
         if transfer_id:
             print(f"Transfer started: {transfer_id}")
+            print(f"Encryption: {'enabled' if service.config.encryption_enabled and CRYPTO_AVAILABLE else 'disabled'}")
             while True:
                 progress = service.get_transfer_progress(transfer_id)
                 if progress:
-                    print(f"\rProgress: {progress['progress']:.1f}%", end='', flush=True)
-                    if progress['status'] in ['completed', 'failed']:
+                    bar_len = 40
+                    filled = int(bar_len * progress['progress'] / 100)
+                    bar = '█' * filled + '░' * (bar_len - filled)
+                    print(f"\r[{bar}] {progress['progress']:.1f}% @ {progress['speed_mbps']:.1f} MB/s", 
+                          end='', flush=True)
+                    if progress['status'] in ['completed', 'failed', 'cancelled']:
                         print(f"\nTransfer {progress['status']}")
                         break
-                time.sleep(0.5)
+                time.sleep(0.2)
         else:
             print("Failed to start transfer", file=sys.stderr)
             sys.exit(1)
+    elif args.resume:
+        if service.resume_transfer(args.resume):
+            print(f"Resumed transfer: {args.resume}")
+        else:
+            print(f"Could not resume transfer: {args.resume}", file=sys.stderr)
+            sys.exit(1)
+    elif args.resumable:
+        resumable = service.get_resumable_transfers()
+        if resumable:
+            print("Resumable transfers:")
+            for r in resumable:
+                progress = (r['bytes_transferred'] / r['size']) * 100 if r['size'] > 0 else 0
+                print(f"  - {r['id']}: {r['filename']} ({progress:.1f}% complete)")
+        else:
+            print("No resumable transfers")
     elif args.list:
         if service.peers:
             print("Known peers:")
             for p in service.peers.values():
-                print(f"  - {p.name} ({p.ip_address})")
+                print(f"  - {p.name} ({p.ip_address}:{p.port})")
         else:
             print("No peers found. Run --discover first.")
     elif args.history:
         if service.history:
             print("Transfer history:")
             for h in service.history[-10:]:
-                print(f"  - {h['filename']} ({h['direction']}) - {h['status']}")
+                size_mb = h.get('size', 0) / (1024 * 1024)
+                encrypted = "🔒" if h.get('encrypted') else ""
+                print(f"  - {encrypted}{h['filename']} ({size_mb:.1f} MB, {h['direction']}) - {h['status']}")
         else:
             print("No transfer history")
-    elif args.gui or not any([args.status, args.send, args.discover, args.list, args.history]):
+    elif args.gui or not any([args.status, args.send, args.discover, args.list, 
+                              args.history, args.server, args.resume, args.resumable]):
         if TKINTER_AVAILABLE:
             gui = FileShareGUI(service)
             gui.run()

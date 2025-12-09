@@ -151,6 +151,406 @@ class AegisServerSecurity:
             pass
         return connections
     
+    def _check_firewall_status(self) -> Dict[str, Any]:
+        result = {
+            "status": "unknown",
+            "tool": None,
+            "rules": [],
+            "active": False,
+            "error": None
+        }
+        
+        try:
+            if self.check_tool_installed("ufw"):
+                proc = subprocess.run(
+                    ["ufw", "status", "verbose"],
+                    capture_output=True, text=True, timeout=10
+                )
+                result["tool"] = "ufw"
+                if proc.returncode == 0:
+                    output = proc.stdout.strip()
+                    result["status"] = "active" if "Status: active" in output else "inactive"
+                    result["active"] = "Status: active" in output
+                    lines = output.split('\n')
+                    for line in lines:
+                        if line and not line.startswith('Status:') and not line.startswith('Logging:') and not line.startswith('Default:'):
+                            result["rules"].append(line.strip())
+                else:
+                    result["error"] = proc.stderr.strip()
+            elif self.check_tool_installed("iptables"):
+                proc = subprocess.run(
+                    ["iptables", "-L", "-n", "-v"],
+                    capture_output=True, text=True, timeout=10
+                )
+                result["tool"] = "iptables"
+                if proc.returncode == 0:
+                    output = proc.stdout.strip()
+                    result["status"] = "active"
+                    result["active"] = True
+                    lines = output.split('\n')
+                    current_chain = None
+                    for line in lines:
+                        if line.startswith('Chain'):
+                            current_chain = line
+                        elif line and not line.startswith('pkts') and current_chain:
+                            result["rules"].append(f"{current_chain}: {line.strip()}")
+                else:
+                    result["error"] = proc.stderr.strip()
+            else:
+                result["error"] = "No firewall tool (ufw or iptables) found"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Command timed out"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def _check_fail2ban_status(self) -> Dict[str, Any]:
+        result = {
+            "installed": False,
+            "running": False,
+            "jails": [],
+            "banned_ips": {},
+            "error": None
+        }
+        
+        try:
+            if not self.check_tool_installed("fail2ban-client"):
+                result["error"] = "fail2ban-client not installed"
+                return result
+            
+            result["installed"] = True
+            
+            proc = subprocess.run(
+                ["fail2ban-client", "status"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if proc.returncode == 0:
+                result["running"] = True
+                output = proc.stdout
+                for line in output.split('\n'):
+                    if 'Jail list:' in line:
+                        jails_part = line.split('Jail list:')[1].strip()
+                        result["jails"] = [j.strip() for j in jails_part.split(',') if j.strip()]
+                
+                for jail in result["jails"]:
+                    try:
+                        jail_proc = subprocess.run(
+                            ["fail2ban-client", "status", jail],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        if jail_proc.returncode == 0:
+                            jail_output = jail_proc.stdout
+                            banned_count = 0
+                            banned_list = []
+                            for line in jail_output.split('\n'):
+                                if 'Currently banned:' in line:
+                                    try:
+                                        banned_count = int(line.split(':')[1].strip())
+                                    except ValueError:
+                                        pass
+                                elif 'Banned IP list:' in line:
+                                    ips = line.split(':')[1].strip()
+                                    banned_list = [ip.strip() for ip in ips.split() if ip.strip()]
+                            result["banned_ips"][jail] = {
+                                "count": banned_count,
+                                "ips": banned_list
+                            }
+                    except Exception:
+                        pass
+            else:
+                result["error"] = proc.stderr.strip() or "fail2ban service not running"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Command timed out"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def _list_open_ports(self) -> Dict[str, Any]:
+        result = {
+            "ports": [],
+            "count": 0,
+            "error": None
+        }
+        
+        try:
+            proc = subprocess.run(
+                ["ss", "-tlnp"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if proc.returncode == 0:
+                lines = proc.stdout.strip().split('\n')
+                for line in lines[1:]:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        local_addr = parts[3]
+                        if ':' in local_addr:
+                            addr_parts = local_addr.rsplit(':', 1)
+                            address = addr_parts[0]
+                            port = addr_parts[1]
+                        else:
+                            address = "*"
+                            port = local_addr
+                        
+                        process_info = ""
+                        if len(parts) >= 6:
+                            for part in parts[5:]:
+                                if 'users:' in part:
+                                    process_info = part
+                                    break
+                        
+                        result["ports"].append({
+                            "state": parts[0],
+                            "recv_q": parts[1],
+                            "send_q": parts[2],
+                            "local_address": address,
+                            "port": port,
+                            "process": process_info
+                        })
+                result["count"] = len(result["ports"])
+            else:
+                result["error"] = proc.stderr.strip()
+        except subprocess.TimeoutExpired:
+            result["error"] = "Command timed out"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def _check_ssh_config(self) -> Dict[str, Any]:
+        result = {
+            "file_exists": False,
+            "readable": False,
+            "settings": {},
+            "security_recommendations": [],
+            "error": None
+        }
+        
+        ssh_config_path = Path("/etc/ssh/sshd_config")
+        
+        try:
+            if not ssh_config_path.exists():
+                result["error"] = "sshd_config not found"
+                return result
+            
+            result["file_exists"] = True
+            
+            security_settings = [
+                "PermitRootLogin",
+                "PasswordAuthentication",
+                "PubkeyAuthentication",
+                "PermitEmptyPasswords",
+                "X11Forwarding",
+                "MaxAuthTries",
+                "Protocol",
+                "Port",
+                "AllowUsers",
+                "AllowGroups",
+                "DenyUsers",
+                "DenyGroups",
+                "LoginGraceTime",
+                "ClientAliveInterval",
+                "ClientAliveCountMax",
+                "UsePAM",
+                "ChallengeResponseAuthentication"
+            ]
+            
+            with open(ssh_config_path, 'r') as f:
+                result["readable"] = True
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        parts = line.split(None, 1)
+                        if len(parts) >= 2:
+                            key = parts[0]
+                            value = parts[1]
+                            if key in security_settings:
+                                result["settings"][key] = value
+            
+            if result["settings"].get("PermitRootLogin", "").lower() not in ["no", "prohibit-password"]:
+                result["security_recommendations"].append("Consider disabling root login (PermitRootLogin no)")
+            
+            if result["settings"].get("PasswordAuthentication", "").lower() == "yes":
+                result["security_recommendations"].append("Consider disabling password authentication in favor of key-based auth")
+            
+            if result["settings"].get("PermitEmptyPasswords", "").lower() == "yes":
+                result["security_recommendations"].append("CRITICAL: Empty passwords are permitted - disable immediately")
+            
+            if result["settings"].get("X11Forwarding", "").lower() == "yes":
+                result["security_recommendations"].append("X11 forwarding is enabled - disable if not needed")
+            
+            max_tries = result["settings"].get("MaxAuthTries", "6")
+            try:
+                if int(max_tries) > 4:
+                    result["security_recommendations"].append(f"MaxAuthTries is {max_tries} - consider lowering to 3-4")
+            except ValueError:
+                pass
+                
+        except PermissionError:
+            result["error"] = "Permission denied reading sshd_config"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def _run_rootkit_scan(self) -> Dict[str, Any]:
+        result = {
+            "tool_used": None,
+            "scan_completed": False,
+            "warnings": [],
+            "infected": [],
+            "suspects": [],
+            "error": None
+        }
+        
+        try:
+            if self.check_tool_installed("rkhunter"):
+                result["tool_used"] = "rkhunter"
+                proc = subprocess.run(
+                    ["rkhunter", "--check", "--skip-keypress", "--report-warnings-only"],
+                    capture_output=True, text=True, timeout=600
+                )
+                result["scan_completed"] = True
+                output = proc.stdout + proc.stderr
+                
+                for line in output.split('\n'):
+                    line = line.strip()
+                    if 'Warning:' in line:
+                        result["warnings"].append(line)
+                    elif 'INFECTED' in line or 'infected' in line:
+                        result["infected"].append(line)
+                    elif 'SUSPECT' in line or 'suspect' in line:
+                        result["suspects"].append(line)
+                        
+            elif self.check_tool_installed("chkrootkit"):
+                result["tool_used"] = "chkrootkit"
+                proc = subprocess.run(
+                    ["chkrootkit"],
+                    capture_output=True, text=True, timeout=600
+                )
+                result["scan_completed"] = True
+                output = proc.stdout + proc.stderr
+                
+                for line in output.split('\n'):
+                    line = line.strip()
+                    if 'INFECTED' in line:
+                        result["infected"].append(line)
+                    elif 'Warning:' in line or 'warning:' in line:
+                        result["warnings"].append(line)
+                    elif 'Searching' not in line and 'nothing found' not in line.lower() and line:
+                        if any(kw in line.lower() for kw in ['suspect', 'found', 'possible']):
+                            result["suspects"].append(line)
+            else:
+                result["error"] = "No rootkit scanner (rkhunter or chkrootkit) installed"
+                
+        except subprocess.TimeoutExpired:
+            result["error"] = "Rootkit scan timed out (10 minute limit)"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
+    def _audit_sudo_logs(self, max_entries: int = 100) -> Dict[str, Any]:
+        result = {
+            "log_file": None,
+            "readable": False,
+            "sudo_events": [],
+            "failed_attempts": [],
+            "users": {},
+            "error": None
+        }
+        
+        log_paths = [
+            Path("/var/log/auth.log"),
+            Path("/var/log/secure"),
+            Path("/var/log/auth.log.1")
+        ]
+        
+        log_file = None
+        for path in log_paths:
+            if path.exists():
+                log_file = path
+                break
+        
+        if not log_file:
+            result["error"] = "No auth log file found (checked /var/log/auth.log, /var/log/secure)"
+            return result
+        
+        result["log_file"] = str(log_file)
+        
+        try:
+            with open(log_file, 'r') as f:
+                result["readable"] = True
+                lines = f.readlines()
+                
+                sudo_lines = [line for line in lines if 'sudo' in line.lower()]
+                
+                recent_lines = sudo_lines[-max_entries:] if len(sudo_lines) > max_entries else sudo_lines
+                
+                for line in recent_lines:
+                    line = line.strip()
+                    
+                    event = {
+                        "raw": line,
+                        "timestamp": "",
+                        "user": "",
+                        "command": "",
+                        "success": True
+                    }
+                    
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        event["timestamp"] = ' '.join(parts[:3])
+                    
+                    if 'authentication failure' in line.lower() or 'auth could not identify' in line.lower():
+                        event["success"] = False
+                        result["failed_attempts"].append(event)
+                    
+                    if 'COMMAND=' in line:
+                        try:
+                            cmd_start = line.index('COMMAND=')
+                            event["command"] = line[cmd_start + 8:].strip()
+                        except ValueError:
+                            pass
+                    
+                    if 'USER=' in line:
+                        try:
+                            user_start = line.index('USER=')
+                            user_end = line.find(' ', user_start)
+                            if user_end == -1:
+                                user_end = len(line)
+                            event["user"] = line[user_start + 5:user_end].strip()
+                        except ValueError:
+                            pass
+                    
+                    for part in parts:
+                        if 'sudo:' in part or 'sudo[' in part:
+                            idx = parts.index(part)
+                            if idx + 1 < len(parts):
+                                potential_user = parts[idx + 1].rstrip(':')
+                                if potential_user and not potential_user.startswith('('):
+                                    if not event["user"]:
+                                        event["user"] = potential_user
+                    
+                    result["sudo_events"].append(event)
+                    
+                    if event["user"]:
+                        if event["user"] not in result["users"]:
+                            result["users"][event["user"]] = {"total": 0, "failed": 0}
+                        result["users"][event["user"]]["total"] += 1
+                        if not event["success"]:
+                            result["users"][event["user"]]["failed"] += 1
+                            
+        except PermissionError:
+            result["error"] = f"Permission denied reading {log_file}"
+        except Exception as e:
+            result["error"] = str(e)
+        
+        return result
+    
     def get_status(self) -> Dict[str, Any]:
         return {
             "tools": self.get_security_tools_status(),

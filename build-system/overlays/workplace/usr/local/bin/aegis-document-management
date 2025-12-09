@@ -251,6 +251,340 @@ class AegisDocumentManagement:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def _convert_document(self, input_file: str, output_format: str, output_file: Optional[str] = None) -> Dict[str, Any]:
+        if not self.is_feature_available("pdf_editing"):
+            return {"success": False, "error": "Document conversion requires Workplace edition"}
+        
+        if not Path(input_file).exists():
+            return {"success": False, "error": "Input file not found"}
+        
+        input_path = Path(input_file)
+        if not output_file:
+            output_file = str(input_path.parent / f"{input_path.stem}.{output_format}")
+        
+        output_dir = str(Path(output_file).parent)
+        
+        if self.check_tool_installed("libreoffice"):
+            try:
+                result = subprocess.run(
+                    ["libreoffice", "--headless", "--convert-to", output_format, 
+                     "--outdir", output_dir, input_file],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0:
+                    self.logger.info(f"Converted {input_file} to {output_format}")
+                    return {"success": True, "output_file": output_file, "tool": "libreoffice"}
+                else:
+                    self.logger.warning(f"LibreOffice conversion failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Conversion timed out"}
+            except Exception as e:
+                self.logger.warning(f"LibreOffice error: {e}")
+        
+        if self.check_tool_installed("unoconv"):
+            try:
+                result = subprocess.run(
+                    ["unoconv", "-f", output_format, "-o", output_file, input_file],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0:
+                    self.logger.info(f"Converted {input_file} to {output_format} using unoconv")
+                    return {"success": True, "output_file": output_file, "tool": "unoconv"}
+                else:
+                    return {"success": False, "error": result.stderr}
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Conversion timed out"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No conversion tool available (libreoffice or unoconv required)"}
+    
+    def _merge_pdfs(self, input_files: List[str], output_file: str) -> Dict[str, Any]:
+        if not self.is_feature_available("pdf_editing"):
+            return {"success": False, "error": "PDF merging requires Workplace edition"}
+        
+        for f in input_files:
+            if not Path(f).exists():
+                return {"success": False, "error": f"Input file not found: {f}"}
+        
+        if len(input_files) < 2:
+            return {"success": False, "error": "At least 2 input files required"}
+        
+        if self.check_tool_installed("pdftk"):
+            try:
+                cmd = ["pdftk"] + input_files + ["cat", "output", output_file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    self.logger.info(f"Merged {len(input_files)} PDFs to {output_file}")
+                    return {"success": True, "output_file": output_file, "tool": "pdftk", 
+                            "merged_count": len(input_files)}
+                else:
+                    self.logger.warning(f"pdftk merge failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Merge timed out"}
+            except Exception as e:
+                self.logger.warning(f"pdftk error: {e}")
+        
+        if self.check_tool_installed("qpdf"):
+            try:
+                cmd = ["qpdf", "--empty", "--pages"] + input_files + ["--", output_file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    self.logger.info(f"Merged {len(input_files)} PDFs using qpdf")
+                    return {"success": True, "output_file": output_file, "tool": "qpdf",
+                            "merged_count": len(input_files)}
+                else:
+                    return {"success": False, "error": result.stderr}
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Merge timed out"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        if self.check_tool_installed("pdfunite"):
+            try:
+                cmd = ["pdfunite"] + input_files + [output_file]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    self.logger.info(f"Merged {len(input_files)} PDFs using pdfunite")
+                    return {"success": True, "output_file": output_file, "tool": "pdfunite",
+                            "merged_count": len(input_files)}
+                else:
+                    return {"success": False, "error": result.stderr}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No PDF merge tool available (pdftk, qpdf, or pdfunite required)"}
+    
+    def _extract_text(self, input_file: str, output_file: Optional[str] = None) -> Dict[str, Any]:
+        if not self.is_feature_available("pdf_editing"):
+            return {"success": False, "error": "Text extraction requires Workplace edition"}
+        
+        if not Path(input_file).exists():
+            return {"success": False, "error": "Input file not found"}
+        
+        input_path = Path(input_file)
+        if not output_file:
+            output_file = str(input_path.parent / f"{input_path.stem}.txt")
+        
+        if self.check_tool_installed("pdftotext"):
+            try:
+                result = subprocess.run(
+                    ["pdftotext", "-layout", input_file, output_file],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    with open(output_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        text_content = f.read()
+                    self.logger.info(f"Extracted text from {input_file}")
+                    return {"success": True, "output_file": output_file, "tool": "pdftotext",
+                            "char_count": len(text_content)}
+                else:
+                    self.logger.warning(f"pdftotext failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Text extraction timed out"}
+            except Exception as e:
+                self.logger.warning(f"pdftotext error: {e}")
+        
+        if self.check_tool_installed("tesseract"):
+            try:
+                result = subprocess.run(
+                    ["tesseract", input_file, output_file.rsplit('.', 1)[0], "-l", "eng"],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0:
+                    actual_output = output_file.rsplit('.', 1)[0] + ".txt"
+                    if Path(actual_output).exists():
+                        with open(actual_output, 'r', encoding='utf-8', errors='ignore') as f:
+                            text_content = f.read()
+                        self.logger.info(f"Extracted text using OCR from {input_file}")
+                        return {"success": True, "output_file": actual_output, "tool": "tesseract",
+                                "char_count": len(text_content), "method": "ocr"}
+                else:
+                    self.logger.warning(f"tesseract OCR failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "OCR text extraction timed out"}
+            except Exception as e:
+                self.logger.warning(f"tesseract error: {e}")
+        
+        if self.check_tool_installed("pdfgrep"):
+            try:
+                result = subprocess.run(
+                    ["pdfgrep", "-P", ".", input_file],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        f.write(result.stdout)
+                    self.logger.info(f"Extracted text using pdfgrep from {input_file}")
+                    return {"success": True, "output_file": output_file, "tool": "pdfgrep",
+                            "char_count": len(result.stdout)}
+            except Exception as e:
+                self.logger.warning(f"pdfgrep error: {e}")
+        
+        return {"success": False, "error": "No text extraction tool available (pdftotext, tesseract, or pdfgrep required)"}
+    
+    def _compress_pdf(self, input_file: str, output_file: Optional[str] = None, 
+                      quality: str = "ebook") -> Dict[str, Any]:
+        if not self.is_feature_available("pdf_editing"):
+            return {"success": False, "error": "PDF compression requires Workplace edition"}
+        
+        if not Path(input_file).exists():
+            return {"success": False, "error": "Input file not found"}
+        
+        input_path = Path(input_file)
+        if not output_file:
+            output_file = str(input_path.parent / f"{input_path.stem}_compressed.pdf")
+        
+        quality_settings = {
+            "screen": "/screen",
+            "ebook": "/ebook",
+            "printer": "/printer",
+            "prepress": "/prepress",
+            "default": "/default"
+        }
+        gs_quality = quality_settings.get(quality, "/ebook")
+        
+        original_size = input_path.stat().st_size
+        
+        if self.check_tool_installed("gs"):
+            try:
+                result = subprocess.run([
+                    "gs", "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
+                    f"-dPDFSETTINGS={gs_quality}", "-dNOPAUSE", "-dQUIET", "-dBATCH",
+                    f"-sOutputFile={output_file}", input_file
+                ], capture_output=True, text=True, timeout=600)
+                
+                if result.returncode == 0 and Path(output_file).exists():
+                    compressed_size = Path(output_file).stat().st_size
+                    reduction = ((original_size - compressed_size) / original_size) * 100
+                    self.logger.info(f"Compressed PDF: {reduction:.1f}% reduction")
+                    return {
+                        "success": True, "output_file": output_file, "tool": "ghostscript",
+                        "original_size": original_size, "compressed_size": compressed_size,
+                        "reduction_percent": round(reduction, 2)
+                    }
+                else:
+                    self.logger.warning(f"Ghostscript compression failed: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                return {"success": False, "error": "Compression timed out"}
+            except Exception as e:
+                self.logger.warning(f"Ghostscript error: {e}")
+        
+        if self.check_tool_installed("qpdf"):
+            try:
+                result = subprocess.run([
+                    "qpdf", "--linearize", "--compress-streams=y",
+                    "--object-streams=generate", input_file, output_file
+                ], capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0 and Path(output_file).exists():
+                    compressed_size = Path(output_file).stat().st_size
+                    reduction = ((original_size - compressed_size) / original_size) * 100
+                    self.logger.info(f"Compressed PDF with qpdf: {reduction:.1f}% reduction")
+                    return {
+                        "success": True, "output_file": output_file, "tool": "qpdf",
+                        "original_size": original_size, "compressed_size": compressed_size,
+                        "reduction_percent": round(reduction, 2)
+                    }
+                else:
+                    return {"success": False, "error": result.stderr}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No compression tool available (ghostscript or qpdf required)"}
+    
+    def _sign_document(self, input_file: str, output_file: Optional[str] = None,
+                       cert_file: Optional[str] = None, key_file: Optional[str] = None,
+                       reason: str = "Document signed by Aegis", 
+                       location: str = "Aegis Workplace") -> Dict[str, Any]:
+        if not self.is_feature_available("pdf_editing"):
+            return {"success": False, "error": "Document signing requires Workplace edition"}
+        
+        if not Path(input_file).exists():
+            return {"success": False, "error": "Input file not found"}
+        
+        input_path = Path(input_file)
+        if not output_file:
+            output_file = str(input_path.parent / f"{input_path.stem}_signed.pdf")
+        
+        if self.check_tool_installed("pdfsig"):
+            if cert_file and key_file:
+                if not Path(cert_file).exists():
+                    return {"success": False, "error": "Certificate file not found"}
+                if not Path(key_file).exists():
+                    return {"success": False, "error": "Key file not found"}
+                
+                try:
+                    result = subprocess.run([
+                        "pdfsig", "-sign", input_file, output_file,
+                        "-cert", cert_file, "-key", key_file,
+                        "-reason", reason, "-location", location
+                    ], capture_output=True, text=True, timeout=120)
+                    
+                    if result.returncode == 0:
+                        self.logger.info(f"Signed PDF: {output_file}")
+                        return {"success": True, "output_file": output_file, "tool": "pdfsig",
+                                "reason": reason, "location": location}
+                except Exception as e:
+                    self.logger.warning(f"pdfsig error: {e}")
+        
+        if self.check_tool_installed("enscript") and self.check_tool_installed("ps2pdf"):
+            try:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                signature_text = f"Digitally signed on {timestamp}\nReason: {reason}\nLocation: {location}"
+                
+                temp_sig = f"/tmp/aegis_sig_{os.getpid()}.txt"
+                temp_ps = f"/tmp/aegis_sig_{os.getpid()}.ps"
+                temp_pdf = f"/tmp/aegis_sig_{os.getpid()}.pdf"
+                
+                with open(temp_sig, 'w') as f:
+                    f.write(signature_text)
+                
+                subprocess.run(["enscript", "-p", temp_ps, temp_sig], 
+                             capture_output=True, timeout=30)
+                subprocess.run(["ps2pdf", temp_ps, temp_pdf], 
+                             capture_output=True, timeout=30)
+                
+                if self.check_tool_installed("pdftk"):
+                    result = subprocess.run([
+                        "pdftk", input_file, "stamp", temp_pdf, "output", output_file
+                    ], capture_output=True, text=True, timeout=120)
+                    
+                    if result.returncode == 0:
+                        for f in [temp_sig, temp_ps, temp_pdf]:
+                            try:
+                                os.unlink(f)
+                            except:
+                                pass
+                        self.logger.info(f"Added signature stamp to PDF: {output_file}")
+                        return {"success": True, "output_file": output_file, 
+                                "tool": "enscript+pdftk", "method": "stamp",
+                                "timestamp": timestamp}
+                
+                for f in [temp_sig, temp_ps, temp_pdf]:
+                    try:
+                        os.unlink(f)
+                    except:
+                        pass
+            except Exception as e:
+                self.logger.warning(f"Signature stamp error: {e}")
+        
+        if self.check_tool_installed("qpdf"):
+            try:
+                shutil.copy(input_file, output_file)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                self.logger.info(f"Created copy with metadata (no cryptographic signature)")
+                return {
+                    "success": True, "output_file": output_file, "tool": "qpdf",
+                    "method": "metadata_only", "timestamp": timestamp,
+                    "warning": "No cryptographic signature applied - pdfsig with certificates required"
+                }
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No signing tool available (pdfsig recommended, or pdftk for stamps)"}
+    
     def get_available_tools(self) -> Dict[str, List[Dict[str, Any]]]:
         pdf_tools = []
         for tool_id, tool_info in PDF_TOOLS.items():

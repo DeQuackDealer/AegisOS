@@ -1,28 +1,59 @@
 #!/usr/bin/env python3
 """
-Aegis OS Mobile Link - Phone Integration Tool
-Connect your Android/iOS devices for file sharing, notifications, and more
+Aegis Mobile Link v2.0.0
+Enhanced Smartphone Integration - Connect Android & iOS devices to your desktop
+
+Features:
+  - QR code pairing (scan from phone app)
+  - Auto-discover phones on same WiFi via mDNS
+  - Android (KDE Connect) and iOS (limited features) support
+  - Connection status with battery level monitoring
+  - SMS/MMS viewing and replying from PC
+  - Phone calls - answer/reject from PC with audio routing
+  - Notification mirroring with quick replies
+  - Phone screen mirroring (scrcpy integration for Android)
+  - Remote camera access
+  - Drag-and-drop file transfer to/from phone
+  - Photo sync (auto-import new photos)
+  - Music sync between devices
+  - Clipboard sharing (text, links, images)
+  - Control phone media playback from PC
+  - Use phone as remote for PC media
+  - Share audio between devices
+  - Phone battery status in system tray
+  - Find my phone (ring remotely)
+  - Phone storage browser
+  - Contacts viewer
+  - Run phone commands remotely
+  - Aegis Home NAS integration for media sync
+  - Aegis Desktop Link multi-device integration
+  - Selective notification sync (choose which apps)
+  - Do Not Disturb sync
+  - Encryption for all transfers
+
+Copyright (c) 2024 Aegis OS Team
+License: GPL-3.0
 """
 
 import os
 import sys
 import json
 import subprocess
-import logging
 import argparse
-import threading
 import socket
-import http.server
-import socketserver
-import random
+import threading
 import time
 import hashlib
+import base64
+import shutil
+import random
 import secrets
-from datetime import datetime
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from http.server import SimpleHTTPRequestHandler
-import urllib.parse
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field, asdict
+from enum import Enum
 
 try:
     import tkinter as tk
@@ -37,78 +68,196 @@ try:
 except ImportError:
     ZEROCONF_AVAILABLE = False
 
+try:
+    import qrcode
+    QRCODE_AVAILABLE = True
+except ImportError:
+    QRCODE_AVAILABLE = False
 
-class AegisMobileLink:
-    def __init__(self):
-        self.version = "1.1.0"
-        self.using_user_dirs = False
-        
-        self.config_dir = Path("/etc/aegis")
-        self.data_dir = Path("/var/lib/aegis/mobile")
-        self.log_dir = Path("/var/log/aegis")
-        
-        if not self._can_write_to_system_dirs():
-            self.using_user_dirs = True
-            user_config_dir = Path.home() / ".config" / "aegis"
-            user_data_dir = Path.home() / ".local" / "share" / "aegis" / "mobile"
-            user_log_dir = Path.home() / ".local" / "share" / "aegis" / "logs"
-            self.config_dir = user_config_dir
-            self.data_dir = user_data_dir
-            self.log_dir = user_log_dir
-        
-        self.config_file = self.config_dir / "mobile-config.json"
-        self.devices_file = self.data_dir / "devices.json"
-        self.notifications_file = self.data_dir / "notifications.json"
-        self.transfer_dir = Path.home() / "AegisMobileTransfer"
-        
-        self.http_server = None
-        self.http_port = 8765
-        self.http_bind_address = "127.0.0.1"
-        self.auth_token = None
-        self.discovery_running = False
-        self.discovered_devices = {}
-        self.zeroconf = None
-        self.browser = None
-        self.kdeconnect_available = None
-        
-        self.ensure_directories()
-        self.setup_logging()
-        self.load_config()
-        self.load_devices()
+try:
+    import dbus
+    from dbus.mainloop.glib import DBusGMainLoop
+    DBUS_AVAILABLE = True
+except ImportError:
+    DBUS_AVAILABLE = False
+
+try:
+    from gi.repository import GLib
+    GLIB_AVAILABLE = True
+except ImportError:
+    GLIB_AVAILABLE = False
+
+VERSION = "2.0.0"
+APP_NAME = "Aegis Mobile Link"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "mobile-link"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+DEVICES_FILE = CONFIG_DIR / "devices.json"
+NOTIFICATIONS_FILE = CONFIG_DIR / "notifications.json"
+SMS_FILE = CONFIG_DIR / "sms_history.json"
+TRANSFER_DIR = Path.home() / "Mobile Link Transfers"
+PHOTO_SYNC_DIR = Path.home() / "Pictures" / "Phone Photos"
+MUSIC_SYNC_DIR = Path.home() / "Music" / "Phone Music"
+LOG_FILE = Path("/var/log/aegis/mobile-link.log")
+TIER_FILE = Path("/etc/aegis/tier")
+
+DEFAULT_HTTP_PORT = 8765
+KDECONNECT_PORT = 1716
+
+TIERS = {
+    "freemium": 0, "basic": 1, "pro": 2, "gamer": 2,
+    "workplace": 2, "aidev": 3, "server": 3
+}
+
+TIER_FEATURES = {
+    "freemium": ["basic_pairing", "file_transfer", "battery_status", "find_phone"],
+    "basic": ["basic_pairing", "file_transfer", "battery_status", "find_phone",
+              "notifications", "clipboard_sync"],
+    "pro": ["basic_pairing", "file_transfer", "battery_status", "find_phone",
+            "notifications", "clipboard_sync", "qr_pairing", "sms", "phone_calls",
+            "screen_mirror", "remote_camera", "photo_sync", "music_sync",
+            "media_control", "storage_browser", "contacts", "remote_commands",
+            "nas_integration", "dnd_sync", "quick_replies", "notification_filter"]
+}
+
+
+class DeviceType(Enum):
+    ANDROID = "android"
+    IOS = "ios"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class PhoneDevice:
+    """Represents a connected phone device"""
+    id: str
+    name: str
+    device_type: str = "android"
+    ip_address: str = ""
+    port: int = KDECONNECT_PORT
+    is_paired: bool = False
+    is_reachable: bool = False
+    battery_level: int = -1
+    battery_charging: bool = False
+    last_seen: str = ""
+    os_version: str = ""
+    model: str = ""
+    capabilities: List[str] = field(default_factory=list)
+    trusted: bool = False
+    notification_filter: List[str] = field(default_factory=list)
+    dnd_enabled: bool = False
+    storage_total_gb: float = 0
+    storage_free_gb: float = 0
+
+
+@dataclass
+class Notification:
+    """Phone notification"""
+    id: str
+    device_id: str
+    app_name: str
+    title: str
+    content: str
+    timestamp: str
+    priority: int = 1
+    is_read: bool = False
+    reply_id: str = ""
+
+
+@dataclass
+class SMSMessage:
+    """SMS/MMS message"""
+    id: str
+    device_id: str
+    phone_number: str
+    contact_name: str
+    content: str
+    timestamp: str
+    is_outgoing: bool = False
+
+
+@dataclass
+class MobileLinkConfig:
+    """Configuration settings"""
+    device_name: str = ""
+    device_id: str = ""
+    http_port: int = DEFAULT_HTTP_PORT
+    auth_token: str = ""
+    encryption_enabled: bool = True
+    auto_discovery: bool = True
+    kdeconnect_enabled: bool = True
+    notifications_enabled: bool = True
+    clipboard_sync: bool = True
+    media_control: bool = True
+    photo_auto_sync: bool = False
+    music_auto_sync: bool = False
+    photo_sync_path: str = ""
+    music_sync_path: str = ""
+    transfer_directory: str = ""
+    notification_retention_hours: int = 24
+    trusted_devices: List[str] = field(default_factory=list)
+    blocked_apps: List[str] = field(default_factory=list)
+    dnd_sync_enabled: bool = True
+    nas_integration: bool = True
+    desktop_link_integration: bool = True
+    scrcpy_bitrate: int = 8
+    scrcpy_max_fps: int = 60
+
+
+def get_current_tier() -> str:
+    """Get the current Aegis tier"""
+    try:
+        if TIER_FILE.exists():
+            return TIER_FILE.read_text().strip().lower()
+        if Path("/etc/aegis-freemium-marker").exists():
+            return "freemium"
+    except Exception:
+        pass
+    return "pro"
+
+
+def has_feature(feature: str) -> bool:
+    """Check if a feature is available in current tier"""
+    tier = get_current_tier()
+    return feature in TIER_FEATURES.get(tier, TIER_FEATURES["pro"])
+
+
+class MobileLinkService:
+    """Core Mobile Link service"""
     
-    def _can_write_to_system_dirs(self) -> bool:
-        """Check if we can write to system directories"""
-        test_dirs = [Path("/etc/aegis"), Path("/var/lib/aegis")]
-        for d in test_dirs:
-            try:
-                d.mkdir(parents=True, exist_ok=True)
-                test_file = d / ".write_test"
-                test_file.touch()
-                test_file.unlink()
-                return True
-            except (PermissionError, OSError):
-                continue
-        return False
+    def __init__(self):
+        self.config = self._load_config()
+        self.devices: Dict[str, PhoneDevice] = {}
+        self.notifications: List[Notification] = []
+        self.sms_history: List[SMSMessage] = []
+        self.kdeconnect_available = self._check_kdeconnect()
+        self.scrcpy_available = self._check_scrcpy()
+        self.adb_available = self._check_adb()
+        self.screen_mirror_process = None
+        self.tier = get_current_tier()
+        self._notification_listener_active = False
+        self._dbus_session_bus = None
         
-    def ensure_directories(self):
+        self._ensure_directories()
+        self._setup_logging()
+        self._load_devices()
+        self._load_notifications()
+    
+    def _ensure_directories(self):
         """Create required directories"""
-        for directory in [self.config_dir, self.data_dir, self.log_dir, self.transfer_dir]:
+        for directory in [CONFIG_DIR, TRANSFER_DIR, PHOTO_SYNC_DIR, MUSIC_SYNC_DIR]:
             try:
                 directory.mkdir(parents=True, exist_ok=True)
             except PermissionError:
                 pass
     
-    def setup_logging(self):
+    def _setup_logging(self):
         """Configure logging"""
-        log_file = self.log_dir / "aegis-mobile-link.log"
         try:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
             logging.basicConfig(
                 level=logging.INFO,
                 format='%(asctime)s - %(levelname)s - %(message)s',
-                handlers=[
-                    logging.FileHandler(log_file),
-                    logging.StreamHandler()
-                ]
+                handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()]
             )
         except PermissionError:
             logging.basicConfig(
@@ -118,71 +267,511 @@ class AegisMobileLink:
             )
         self.logger = logging.getLogger("AegisMobileLink")
     
-    def load_config(self):
-        """Load configuration"""
-        default_config = {
-            "auto_discover": True,
-            "discovery_interval": 30,
-            "http_port": 8765,
-            "http_bind_localhost_only": True,
-            "http_require_auth": True,
-            "enable_notifications": True,
-            "enable_file_transfer": True,
-            "enable_battery_monitor": True,
-            "auto_accept_files": False,
-            "max_file_size_mb": 500,
-            "kdeconnect_enabled": True,
-            "trusted_networks": [],
-            "transfer_directory": str(self.transfer_dir),
-            "notification_retention_hours": 24
+    def _check_kdeconnect(self) -> bool:
+        try:
+            result = subprocess.run(['kdeconnect-cli', '--version'],
+                                   capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+    def _check_scrcpy(self) -> bool:
+        try:
+            result = subprocess.run(['scrcpy', '--version'],
+                                   capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+    def _check_adb(self) -> bool:
+        try:
+            result = subprocess.run(['adb', 'version'],
+                                   capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+    def _check_kdeconnect_daemon(self) -> Dict:
+        """Check if kdeconnectd daemon is running and KDE Connect is installed"""
+        result = {
+            "installed": False,
+            "daemon_running": False,
+            "version": "",
+            "error": ""
         }
         
         try:
-            with open(self.config_file, 'r') as f:
-                self.config = {**default_config, **json.load(f)}
-        except (FileNotFoundError, json.JSONDecodeError, PermissionError):
-            self.config = default_config
-            self.save_config()
+            version_result = subprocess.run(
+                ['kdeconnect-cli', '--version'],
+                capture_output=True, text=True, timeout=5
+            )
+            if version_result.returncode == 0:
+                result["installed"] = True
+                result["version"] = version_result.stdout.strip()
+        except FileNotFoundError:
+            result["error"] = "KDE Connect is not installed. Install with: sudo apt install kdeconnect"
+            return result
+        except subprocess.TimeoutExpired:
+            result["error"] = "KDE Connect CLI timed out"
+            return result
         
-        self.transfer_dir = Path(self.config.get("transfer_directory", str(self.transfer_dir)))
-        self.http_port = self.config.get("http_port", 8765)
-        if self.config.get("http_bind_localhost_only", True):
-            self.http_bind_address = "127.0.0.1"
-        else:
-            self.http_bind_address = "0.0.0.0"
-    
-    def save_config(self):
-        """Save configuration"""
         try:
-            with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
+            daemon_check = subprocess.run(
+                ['pgrep', '-x', 'kdeconnectd'],
+                capture_output=True, text=True, timeout=5
+            )
+            if daemon_check.returncode == 0 and daemon_check.stdout.strip():
+                result["daemon_running"] = True
+            else:
+                indicator_check = subprocess.run(
+                    ['pgrep', '-f', 'kdeconnect-indicator'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if indicator_check.returncode == 0 and indicator_check.stdout.strip():
+                    result["daemon_running"] = True
+                else:
+                    result["error"] = "kdeconnectd daemon is not running. Start with: kdeconnect-indicator &"
+        except Exception as e:
+            result["error"] = f"Error checking daemon status: {e}"
+        
+        return result
+    
+    def _get_kdeconnect_devices(self) -> Dict:
+        """Get list of devices from KDE Connect using kdeconnect-cli -l"""
+        result = {
+            "success": False,
+            "devices": [],
+            "error": ""
+        }
+        
+        daemon_status = self._check_kdeconnect_daemon()
+        if not daemon_status["installed"]:
+            result["error"] = daemon_status["error"]
+            return result
+        
+        try:
+            proc = subprocess.run(
+                ['kdeconnect-cli', '-l'],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if proc.returncode != 0:
+                result["error"] = f"Failed to list devices: {proc.stderr.strip()}"
+                return result
+            
+            result["success"] = True
+            output = proc.stdout.strip()
+            
+            if not output or "0 devices found" in output.lower():
+                return result
+            
+            for line in output.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('0 device') or line.startswith('-'):
+                    continue
+                
+                device_info = {"id": "", "name": "", "reachable": False, "paired": False}
+                
+                if ':' in line:
+                    parts = line.split(':', 1)
+                    device_info["id"] = parts[0].strip().lstrip('- ')
+                    remainder = parts[1].strip() if len(parts) > 1 else ""
+                    
+                    if '(' in remainder and ')' in remainder:
+                        name_end = remainder.find('(')
+                        device_info["name"] = remainder[:name_end].strip()
+                        status_part = remainder[name_end:].lower()
+                        device_info["reachable"] = "reachable" in status_part
+                        device_info["paired"] = "paired" in status_part
+                    else:
+                        device_info["name"] = remainder
+                elif ' ' in line:
+                    parts = line.split(' ', 1)
+                    device_info["id"] = parts[0].strip().lstrip('- ')
+                    device_info["name"] = parts[1].strip() if len(parts) > 1 else parts[0]
+                
+                if device_info["id"]:
+                    result["devices"].append(device_info)
+        
+        except FileNotFoundError:
+            result["error"] = "KDE Connect is not installed. Install with: sudo apt install kdeconnect"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Command timed out while listing devices"
+        except Exception as e:
+            result["error"] = f"Error listing devices: {e}"
+        
+        return result
+    
+    def _pair_kdeconnect_device(self, device_id: str) -> Dict:
+        """Pair with a device using kdeconnect-cli -d DEVICE_ID --pair"""
+        result = {
+            "success": False,
+            "message": "",
+            "device_id": device_id
+        }
+        
+        daemon_status = self._check_kdeconnect_daemon()
+        if not daemon_status["installed"]:
+            result["message"] = daemon_status["error"]
+            return result
+        
+        if not daemon_status["daemon_running"]:
+            result["message"] = "KDE Connect daemon is not running. Please start it first."
+            return result
+        
+        if not device_id:
+            result["message"] = "Device ID is required for pairing"
+            return result
+        
+        try:
+            proc = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '--pair'],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            if proc.returncode == 0:
+                result["success"] = True
+                result["message"] = f"Pairing request sent to device {device_id}. Please accept on the phone."
+            else:
+                error_msg = proc.stderr.strip() or proc.stdout.strip()
+                if "already paired" in error_msg.lower():
+                    result["success"] = True
+                    result["message"] = "Device is already paired"
+                else:
+                    result["message"] = f"Pairing failed: {error_msg}"
+        
+        except FileNotFoundError:
+            result["message"] = "KDE Connect is not installed. Install with: sudo apt install kdeconnect"
+        except subprocess.TimeoutExpired:
+            result["message"] = "Pairing request timed out. The device may need to accept the request."
+        except Exception as e:
+            result["message"] = f"Pairing error: {e}"
+        
+        return result
+    
+    def _send_file_kdeconnect(self, device_id: str, file_path: str) -> Dict:
+        """Send a file to device using kdeconnect-cli -d DEVICE_ID --share FILE"""
+        result = {
+            "success": False,
+            "message": "",
+            "file": file_path,
+            "device_id": device_id
+        }
+        
+        daemon_status = self._check_kdeconnect_daemon()
+        if not daemon_status["installed"]:
+            result["message"] = daemon_status["error"]
+            return result
+        
+        if not daemon_status["daemon_running"]:
+            result["message"] = "KDE Connect daemon is not running. Please start it first."
+            return result
+        
+        if not device_id:
+            result["message"] = "Device ID is required"
+            return result
+        
+        file_path_obj = Path(file_path)
+        if not file_path_obj.exists():
+            result["message"] = f"File not found: {file_path}"
+            return result
+        
+        if not file_path_obj.is_file():
+            result["message"] = f"Path is not a file: {file_path}"
+            return result
+        
+        try:
+            abs_path = str(file_path_obj.absolute())
+            proc = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '--share', abs_path],
+                capture_output=True, text=True, timeout=120
+            )
+            
+            if proc.returncode == 0:
+                result["success"] = True
+                file_size = file_path_obj.stat().st_size
+                size_str = self._format_file_size(file_size)
+                result["message"] = f"File '{file_path_obj.name}' ({size_str}) sent successfully"
+            else:
+                error_msg = proc.stderr.strip() or proc.stdout.strip()
+                if "not reachable" in error_msg.lower():
+                    result["message"] = "Device is not reachable. Make sure it's on the same network."
+                elif "not paired" in error_msg.lower():
+                    result["message"] = "Device is not paired. Please pair first."
+                else:
+                    result["message"] = f"Failed to send file: {error_msg}"
+        
+        except FileNotFoundError:
+            result["message"] = "KDE Connect is not installed. Install with: sudo apt install kdeconnect"
+        except subprocess.TimeoutExpired:
+            result["message"] = "File transfer timed out. The file may be too large."
+        except Exception as e:
+            result["message"] = f"Error sending file: {e}"
+        
+        return result
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size to human readable string"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024
+        return f"{size_bytes:.1f} PB"
+    
+    def _ring_phone(self, device_id: str) -> Dict:
+        """Ring a phone using kdeconnect-cli -d DEVICE_ID --ring"""
+        result = {
+            "success": False,
+            "message": "",
+            "device_id": device_id
+        }
+        
+        daemon_status = self._check_kdeconnect_daemon()
+        if not daemon_status["installed"]:
+            result["message"] = daemon_status["error"]
+            return result
+        
+        if not daemon_status["daemon_running"]:
+            result["message"] = "KDE Connect daemon is not running. Please start it first."
+            return result
+        
+        if not device_id:
+            result["message"] = "Device ID is required"
+            return result
+        
+        try:
+            proc = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '--ring'],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if proc.returncode == 0:
+                result["success"] = True
+                result["message"] = "Phone is ringing! Check your device."
+            else:
+                error_msg = proc.stderr.strip() or proc.stdout.strip()
+                if "not reachable" in error_msg.lower():
+                    result["message"] = "Device is not reachable. Make sure it's on the same network."
+                elif "not paired" in error_msg.lower():
+                    result["message"] = "Device is not paired. Please pair first."
+                else:
+                    result["message"] = f"Failed to ring device: {error_msg}"
+        
+        except FileNotFoundError:
+            result["message"] = "KDE Connect is not installed. Install with: sudo apt install kdeconnect"
+        except subprocess.TimeoutExpired:
+            result["message"] = "Command timed out"
+        except Exception as e:
+            result["message"] = f"Error ringing device: {e}"
+        
+        return result
+    
+    def _start_dbus_notification_listener(self) -> Dict:
+        """Start listening for notifications via D-Bus signals from KDE Connect"""
+        result = {
+            "success": False,
+            "message": "",
+            "listener_active": False
+        }
+        
+        if not DBUS_AVAILABLE:
+            result["message"] = "D-Bus Python bindings not available. Install with: pip install dbus-python"
+            return result
+        
+        if not GLIB_AVAILABLE:
+            result["message"] = "GLib not available. Install with: sudo apt install python3-gi"
+            return result
+        
+        daemon_status = self._check_kdeconnect_daemon()
+        if not daemon_status["daemon_running"]:
+            result["message"] = "KDE Connect daemon is not running"
+            return result
+        
+        try:
+            DBusGMainLoop(set_as_default=True)
+            self._dbus_session_bus = dbus.SessionBus()
+            
+            self._dbus_session_bus.add_signal_receiver(
+                self._handle_kdeconnect_notification,
+                dbus_interface="org.kde.kdeconnect.device.notifications",
+                signal_name="notificationPosted",
+                path_keyword="path"
+            )
+            
+            self._dbus_session_bus.add_signal_receiver(
+                self._handle_kdeconnect_notification,
+                dbus_interface="org.kde.kdeconnect.device.notifications",
+                signal_name="allNotificationsRemoved",
+                path_keyword="path"
+            )
+            
+            self._notification_listener_active = True
+            result["success"] = True
+            result["listener_active"] = True
+            result["message"] = "D-Bus notification listener started successfully"
+            
+            self.logger.info("D-Bus notification listener started")
+            
+        except dbus.exceptions.DBusException as e:
+            result["message"] = f"D-Bus error: {e}"
+            self.logger.error(f"D-Bus notification listener error: {e}")
+        except Exception as e:
+            result["message"] = f"Error starting notification listener: {e}"
+            self.logger.error(f"Notification listener error: {e}")
+        
+        return result
+    
+    def _handle_kdeconnect_notification(self, *args, **kwargs):
+        """Handle incoming notification from KDE Connect via D-Bus"""
+        try:
+            path = kwargs.get("path", "")
+            device_id = ""
+            if "/devices/" in path:
+                parts = path.split("/devices/")
+                if len(parts) > 1:
+                    device_id = parts[1].split("/")[0]
+            
+            notif_data = args[0] if args else {}
+            
+            notification = Notification(
+                id=hashlib.sha256(f"{time.time()}{path}".encode()).hexdigest()[:16],
+                device_id=device_id,
+                app_name=str(notif_data.get("appName", "Unknown")),
+                title=str(notif_data.get("title", "")),
+                content=str(notif_data.get("text", notif_data.get("body", ""))),
+                timestamp=datetime.now().isoformat(),
+                priority=int(notif_data.get("priority", 1)),
+                is_read=False,
+                reply_id=str(notif_data.get("replyId", ""))
+            )
+            
+            self.notifications.append(notification)
+            self._save_notifications()
+            
+            self.logger.info(f"Notification received: {notification.app_name} - {notification.title}")
+            
+        except Exception as e:
+            self.logger.error(f"Error handling notification: {e}")
+    
+    def _stop_dbus_notification_listener(self) -> Dict:
+        """Stop the D-Bus notification listener"""
+        result = {
+            "success": False,
+            "message": ""
+        }
+        
+        try:
+            if hasattr(self, '_dbus_session_bus') and self._dbus_session_bus:
+                self._dbus_session_bus.close()
+                self._dbus_session_bus = None
+            
+            self._notification_listener_active = False
+            result["success"] = True
+            result["message"] = "D-Bus notification listener stopped"
+            self.logger.info("D-Bus notification listener stopped")
+            
+        except Exception as e:
+            result["message"] = f"Error stopping listener: {e}"
+        
+        return result
+    
+    def get_kdeconnect_status(self) -> Dict:
+        """Get comprehensive KDE Connect status"""
+        daemon_status = self._check_kdeconnect_daemon()
+        devices_result = self._get_kdeconnect_devices() if daemon_status["installed"] else {"devices": []}
+        
+        return {
+            "installed": daemon_status["installed"],
+            "daemon_running": daemon_status["daemon_running"],
+            "version": daemon_status["version"],
+            "error": daemon_status["error"],
+            "device_count": len(devices_result.get("devices", [])),
+            "devices": devices_result.get("devices", []),
+            "notification_listener_active": getattr(self, '_notification_listener_active', False),
+            "dbus_available": DBUS_AVAILABLE,
+            "glib_available": GLIB_AVAILABLE
+        }
+    
+    def _load_config(self) -> MobileLinkConfig:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        
+        config = MobileLinkConfig()
+        config.device_name = socket.gethostname()
+        config.device_id = hashlib.sha256(
+            f"{socket.gethostname()}-{time.time()}".encode()
+        ).hexdigest()[:16]
+        config.auth_token = secrets.token_urlsafe(32)
+        config.transfer_directory = str(TRANSFER_DIR)
+        config.photo_sync_path = str(PHOTO_SYNC_DIR)
+        config.music_sync_path = str(MUSIC_SYNC_DIR)
+        
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if hasattr(config, k):
+                            setattr(config, k, v)
+            except Exception:
+                pass
+        
+        self._save_config(config)
+        return config
+    
+    def _save_config(self, config: MobileLinkConfig = None):
+        if config is None:
+            config = self.config
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(asdict(config), f, indent=2)
         except PermissionError:
-            self.logger.warning("Cannot save config - permission denied")
+            pass
     
-    def load_devices(self):
-        """Load paired devices"""
-        try:
-            with open(self.devices_file, 'r') as f:
-                self.devices = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError, PermissionError):
-            self.devices = {
-                "paired": {},
-                "pending": {},
-                "last_updated": None
-            }
-            self.save_devices()
+    def _load_devices(self):
+        if DEVICES_FILE.exists():
+            try:
+                with open(DEVICES_FILE, 'r') as f:
+                    data = json.load(f)
+                    for device_id, device_data in data.items():
+                        self.devices[device_id] = PhoneDevice(**device_data)
+            except Exception:
+                pass
     
-    def save_devices(self):
-        """Save paired devices"""
-        self.devices["last_updated"] = datetime.now().isoformat()
+    def _save_devices(self):
         try:
-            with open(self.devices_file, 'w') as f:
-                json.dump(self.devices, f, indent=2)
+            data = {k: asdict(v) for k, v in self.devices.items()}
+            with open(DEVICES_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
         except PermissionError:
-            self.logger.warning("Cannot save devices - permission denied")
+            pass
+    
+    def _load_notifications(self):
+        if NOTIFICATIONS_FILE.exists():
+            try:
+                with open(NOTIFICATIONS_FILE, 'r') as f:
+                    data = json.load(f)
+                    cutoff = datetime.now() - timedelta(
+                        hours=self.config.notification_retention_hours
+                    )
+                    for notif_data in data:
+                        notif = Notification(**notif_data)
+                        try:
+                            if datetime.fromisoformat(notif.timestamp) > cutoff:
+                                self.notifications.append(notif)
+                        except:
+                            self.notifications.append(notif)
+            except Exception:
+                pass
+    
+    def _save_notifications(self):
+        try:
+            data = [asdict(n) for n in self.notifications[-500:]]
+            with open(NOTIFICATIONS_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+        except PermissionError:
+            pass
     
     def get_local_ip(self) -> str:
-        """Get local IP address"""
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -192,44 +781,72 @@ class AegisMobileLink:
         except:
             return "127.0.0.1"
     
-    def generate_device_id(self) -> str:
-        """Generate unique device ID"""
-        hostname = socket.gethostname()
-        mac = hex(random.getrandbits(48))[2:]
-        return hashlib.sha256(f"{hostname}-{mac}-{time.time()}".encode()).hexdigest()[:16]
+    def generate_pairing_qr(self) -> Optional[str]:
+        """Generate QR code data for pairing"""
+        if not has_feature("qr_pairing"):
+            return None
+        
+        return json.dumps({
+            "type": "aegis_mobile_link",
+            "version": VERSION,
+            "host": self.get_local_ip(),
+            "port": self.config.http_port,
+            "device_name": self.config.device_name,
+            "device_id": self.config.device_id,
+            "token": self.config.auth_token[:16],
+            "timestamp": datetime.now().isoformat()
+        })
     
-    def generate_pairing_pin(self) -> str:
-        """Generate a 6-digit pairing PIN"""
-        return str(random.randint(100000, 999999))
+    def generate_qr_image(self, output_path: str = None) -> Optional[str]:
+        """Generate QR code image file"""
+        if not QRCODE_AVAILABLE:
+            return None
+        
+        qr_data = self.generate_pairing_qr()
+        if not qr_data:
+            return None
+        
+        try:
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            
+            if output_path is None:
+                output_path = str(CONFIG_DIR / "pairing_qr.png")
+            
+            img.save(output_path)
+            return output_path
+        except Exception as e:
+            self.logger.error(f"QR generation error: {e}")
+            return None
     
-    def discover_devices(self, timeout: int = 10) -> List[Dict]:
-        """Discover devices on the local network"""
-        self.logger.info("Starting device discovery...")
+    def discover_devices(self, timeout: int = 10) -> List[PhoneDevice]:
+        """Discover devices on the network"""
         discovered = []
         
-        if ZEROCONF_AVAILABLE:
+        if ZEROCONF_AVAILABLE and self.config.auto_discovery:
             discovered.extend(self._discover_mdns(timeout))
         
-        discovered.extend(self._discover_kdeconnect())
+        if self.config.kdeconnect_enabled:
+            discovered.extend(self._discover_kdeconnect())
         
-        discovered.extend(self._scan_network())
+        if self.adb_available:
+            discovered.extend(self._discover_adb())
         
-        unique_devices = {}
+        unique = {}
         for device in discovered:
-            key = f"{device.get('ip', '')}:{device.get('name', '')}"
-            if key not in unique_devices:
-                unique_devices[key] = device
+            if device.id not in unique:
+                unique[device.id] = device
         
-        return list(unique_devices.values())
+        return list(unique.values())
     
-    def _discover_mdns(self, timeout: int = 10) -> List[Dict]:
-        """Discover devices using mDNS/Zeroconf"""
+    def _discover_mdns(self, timeout: int = 5) -> List[PhoneDevice]:
         devices = []
-        
         if not ZEROCONF_AVAILABLE:
             return devices
         
-        class MyListener:
+        class MobileListener:
             def __init__(self):
                 self.devices = []
             
@@ -237,815 +854,731 @@ class AegisMobileLink:
                 info = zeroconf.get_service_info(service_type, name)
                 if info:
                     addresses = [socket.inet_ntoa(addr) for addr in info.addresses]
-                    self.devices.append({
-                        "name": info.server.rstrip('.'),
-                        "ip": addresses[0] if addresses else "unknown",
-                        "port": info.port,
-                        "type": "mdns",
-                        "service": service_type
-                    })
+                    self.devices.append(PhoneDevice(
+                        id=hashlib.sha256(name.encode()).hexdigest()[:16],
+                        name=info.server.rstrip('.'),
+                        ip_address=addresses[0] if addresses else "",
+                        port=info.port,
+                        is_reachable=True,
+                        last_seen=datetime.now().isoformat()
+                    ))
             
-            def remove_service(self, zeroconf, service_type, name):
-                pass
-            
-            def update_service(self, zeroconf, service_type, name):
-                pass
+            def remove_service(self, zc, st, n): pass
+            def update_service(self, zc, st, n): pass
         
         try:
             zeroconf = Zeroconf()
-            listener = MyListener()
+            listener = MobileListener()
+            services = ["_kdeconnect._udp.local.", "_aegis-mobile._tcp.local."]
             
-            services = [
-                "_kdeconnect._udp.local.",
-                "_aegis-mobile._tcp.local.",
-                "_http._tcp.local.",
-            ]
-            
-            browsers = []
             for service in services:
                 try:
-                    browser = ServiceBrowser(zeroconf, service, listener)
-                    browsers.append(browser)
+                    ServiceBrowser(zeroconf, service, listener)
                 except:
                     pass
             
             time.sleep(min(timeout, 5))
-            
             devices = listener.devices
             zeroconf.close()
-            
         except Exception as e:
             self.logger.warning(f"mDNS discovery error: {e}")
         
         return devices
     
-    def _discover_kdeconnect(self) -> List[Dict]:
-        """Discover KDE Connect devices"""
+    def _discover_kdeconnect(self) -> List[PhoneDevice]:
         devices = []
-        
-        if not self.config.get("kdeconnect_enabled", True):
+        if not self.kdeconnect_available:
             return devices
         
         try:
             result = subprocess.run(
-                ["kdeconnect-cli", "-l", "--id-name-only"],
+                ['kdeconnect-cli', '-l', '--id-name-only'],
                 capture_output=True, text=True, timeout=10
             )
             
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):
-                    if line.strip():
+                    if line.strip() and ' ' in line:
                         parts = line.split(' ', 1)
                         if len(parts) >= 2:
-                            device_id, name = parts[0], parts[1]
+                            device_id = parts[0].strip()
+                            name = parts[1].strip().lstrip('- ')
                             
-                            detail = subprocess.run(
-                                ["kdeconnect-cli", "-d", device_id, "--ping"],
-                                capture_output=True, text=True, timeout=5
+                            device = PhoneDevice(
+                                id=device_id,
+                                name=name,
+                                device_type="android",
+                                is_paired=self._check_kdeconnect_paired(device_id),
+                                is_reachable=self._check_kdeconnect_reachable(device_id),
+                                last_seen=datetime.now().isoformat(),
+                                capabilities=["kdeconnect"]
                             )
                             
-                            devices.append({
-                                "id": device_id,
-                                "name": name,
-                                "type": "kdeconnect",
-                                "reachable": detail.returncode == 0
-                            })
-        except FileNotFoundError:
-            self.logger.debug("KDE Connect not installed")
-        except subprocess.TimeoutExpired:
-            self.logger.warning("KDE Connect discovery timed out")
+                            battery = self._get_kdeconnect_battery(device_id)
+                            if battery:
+                                device.battery_level = battery.get("level", -1)
+                                device.battery_charging = battery.get("charging", False)
+                            
+                            devices.append(device)
         except Exception as e:
             self.logger.warning(f"KDE Connect discovery error: {e}")
         
         return devices
     
-    def _scan_network(self) -> List[Dict]:
-        """Basic network scan for mobile devices"""
+    def _discover_adb(self) -> List[PhoneDevice]:
         devices = []
-        local_ip = self.get_local_ip()
-        
-        if local_ip == "127.0.0.1":
+        if not self.adb_available:
             return devices
         
-        network_prefix = '.'.join(local_ip.split('.')[:3])
-        
-        common_ports = [8765, 1714, 1716, 1739, 5000]
-        
-        def check_host(ip, port):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.5)
-                result = sock.connect_ex((ip, port))
-                sock.close()
-                return result == 0
-            except:
-                return False
-        
-        for i in range(1, 20):
-            ip = f"{network_prefix}.{i}"
-            if ip != local_ip:
-                for port in common_ports[:2]:
-                    if check_host(ip, port):
-                        devices.append({
-                            "ip": ip,
-                            "port": port,
-                            "type": "network",
-                            "name": f"Device at {ip}"
-                        })
-                        break
+        try:
+            result = subprocess.run(['adb', 'devices', '-l'],
+                                   capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n')[1:]:
+                    if '\tdevice' in line:
+                        parts = line.split()
+                        device_id = parts[0]
+                        
+                        model = "Unknown"
+                        for part in parts:
+                            if part.startswith('model:'):
+                                model = part.split(':')[1]
+                        
+                        devices.append(PhoneDevice(
+                            id=f"adb_{device_id}",
+                            name=model,
+                            device_type="android",
+                            is_paired=True,
+                            is_reachable=True,
+                            last_seen=datetime.now().isoformat(),
+                            capabilities=["adb", "scrcpy", "file_transfer"]
+                        ))
+        except Exception as e:
+            self.logger.warning(f"ADB discovery error: {e}")
         
         return devices
     
-    def pair_device(self, device_info: Dict, pin: str = None) -> Dict:
-        """Pair with a device"""
-        result = {
-            "success": False,
-            "device_id": None,
-            "message": ""
-        }
-        
-        device_id = device_info.get("id") or self.generate_device_id()
-        
-        if device_id in self.devices.get("paired", {}):
-            result["message"] = "Device already paired"
-            result["device_id"] = device_id
-            result["success"] = True
-            return result
-        
-        if device_info.get("type") == "kdeconnect":
-            return self._pair_kdeconnect(device_info)
-        
-        pairing_pin = pin or self.generate_pairing_pin()
-        
-        self.devices["pending"][device_id] = {
-            "name": device_info.get("name", "Unknown Device"),
-            "ip": device_info.get("ip", ""),
-            "type": device_info.get("type", "unknown"),
-            "pin": pairing_pin,
-            "timestamp": datetime.now().isoformat(),
-            "status": "pending"
-        }
-        self.save_devices()
-        
-        result["success"] = True
-        result["device_id"] = device_id
-        result["pin"] = pairing_pin
-        result["message"] = f"Pairing initiated. Enter PIN on device: {pairing_pin}"
-        
-        self.logger.info(f"Pairing initiated with {device_info.get('name', 'Unknown')} - PIN: {pairing_pin}")
-        
-        return result
-    
-    def _pair_kdeconnect(self, device_info: Dict) -> Dict:
-        """Pair using KDE Connect"""
-        result = {
-            "success": False,
-            "device_id": device_info.get("id"),
-            "message": ""
-        }
-        
+    def _check_kdeconnect_paired(self, device_id: str) -> bool:
         try:
-            proc = subprocess.run(
-                ["kdeconnect-cli", "-d", device_info["id"], "--pair"],
-                capture_output=True, text=True, timeout=30
+            result = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '--pair-status'],
+                capture_output=True, text=True, timeout=5
+            )
+            return "paired" in result.stdout.lower()
+        except:
+            return False
+    
+    def _check_kdeconnect_reachable(self, device_id: str) -> bool:
+        try:
+            result = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '--ping'],
+                capture_output=True, text=True, timeout=3
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def _get_kdeconnect_battery(self, device_id: str) -> Optional[Dict]:
+        try:
+            result = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, '-b'],
+                capture_output=True, text=True, timeout=5
             )
             
-            if proc.returncode == 0:
-                self.devices["paired"][device_info["id"]] = {
-                    "name": device_info.get("name", "KDE Connect Device"),
-                    "type": "kdeconnect",
-                    "paired_at": datetime.now().isoformat(),
-                    "last_seen": datetime.now().isoformat()
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                level = -1
+                if '%' in output:
+                    try:
+                        level = int(''.join(filter(str.isdigit, output.split('%')[0][-3:])))
+                    except:
+                        pass
+                
+                return {
+                    "level": min(level, 100) if level >= 0 else -1,
+                    "charging": "charging" in output.lower()
                 }
-                self.save_devices()
-                
-                result["success"] = True
-                result["message"] = "Successfully paired via KDE Connect"
-            else:
-                result["message"] = f"KDE Connect pairing failed: {proc.stderr}"
-                
-        except Exception as e:
-            result["message"] = f"Pairing error: {e}"
-        
-        return result
+        except:
+            pass
+        return None
     
-    def confirm_pairing(self, device_id: str, entered_pin: str) -> Dict:
-        """Confirm pairing with PIN verification"""
-        result = {
-            "success": False,
-            "message": ""
-        }
+    def pair_device(self, device: PhoneDevice) -> Dict:
+        """Pair with a device"""
+        result = {"success": False, "message": "", "device_id": device.id}
         
-        if device_id not in self.devices.get("pending", {}):
-            result["message"] = "No pending pairing for this device"
+        if device.id in self.devices and self.devices[device.id].is_paired:
+            result["success"] = True
+            result["message"] = "Device already paired"
             return result
         
-        pending = self.devices["pending"][device_id]
-        
-        if pending.get("pin") != entered_pin:
-            result["message"] = "Invalid PIN"
-            return result
-        
-        self.devices["paired"][device_id] = {
-            "name": pending.get("name", "Unknown Device"),
-            "ip": pending.get("ip", ""),
-            "type": pending.get("type", "unknown"),
-            "paired_at": datetime.now().isoformat(),
-            "last_seen": datetime.now().isoformat(),
-            "battery": None,
-            "notifications": []
-        }
-        
-        del self.devices["pending"][device_id]
-        self.save_devices()
-        
-        result["success"] = True
-        result["message"] = f"Successfully paired with {pending.get('name', 'Unknown Device')}"
-        self.logger.info(result["message"])
+        if "kdeconnect" in device.capabilities or device.device_type == "android":
+            try:
+                proc = subprocess.run(
+                    ['kdeconnect-cli', '-d', device.id, '--pair'],
+                    capture_output=True, text=True, timeout=30
+                )
+                
+                if proc.returncode == 0:
+                    device.is_paired = True
+                    device.trusted = True
+                    self.devices[device.id] = device
+                    self._save_devices()
+                    result["success"] = True
+                    result["message"] = "Paired successfully via KDE Connect"
+                else:
+                    result["message"] = f"Pairing failed: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"Pairing error: {e}"
+        else:
+            pairing_pin = str(random.randint(100000, 999999))
+            device.is_paired = False
+            self.devices[device.id] = device
+            self._save_devices()
+            result["success"] = True
+            result["pin"] = pairing_pin
+            result["message"] = f"Enter PIN on device: {pairing_pin}"
         
         return result
     
     def unpair_device(self, device_id: str) -> Dict:
-        """Unpair a device"""
-        result = {
-            "success": False,
-            "message": ""
-        }
+        result = {"success": False, "message": ""}
         
-        if device_id in self.devices.get("paired", {}):
-            device_info = self.devices["paired"][device_id]
-            
-            if device_info.get("type") == "kdeconnect":
-                try:
-                    subprocess.run(
-                        ["kdeconnect-cli", "-d", device_id, "--unpair"],
-                        capture_output=True, timeout=10
-                    )
-                except:
-                    pass
-            
-            del self.devices["paired"][device_id]
-            self.save_devices()
-            
-            result["success"] = True
-            result["message"] = f"Unpaired device: {device_info.get('name', device_id)}"
-            self.logger.info(result["message"])
-        else:
-            result["message"] = "Device not found in paired devices"
+        if device_id not in self.devices:
+            result["message"] = "Device not found"
+            return result
         
-        return result
-    
-    def get_paired_devices(self) -> List[Dict]:
-        """Get list of paired devices with current status"""
-        devices = []
+        device = self.devices[device_id]
         
-        for device_id, info in self.devices.get("paired", {}).items():
-            device = {
-                "id": device_id,
-                **info,
-                "online": False
-            }
-            
-            if info.get("type") == "kdeconnect":
-                try:
-                    result = subprocess.run(
-                        ["kdeconnect-cli", "-d", device_id, "--ping"],
-                        capture_output=True, timeout=5
-                    )
-                    device["online"] = result.returncode == 0
-                except:
-                    pass
-            elif info.get("ip"):
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(1)
-                    result = sock.connect_ex((info["ip"], self.http_port))
-                    sock.close()
-                    device["online"] = result == 0
-                except:
-                    pass
-            
-            devices.append(device)
-        
-        return devices
-    
-    def get_device_battery(self, device_id: str) -> Optional[Dict]:
-        """Get battery status of a paired device"""
-        if device_id not in self.devices.get("paired", {}):
-            return None
-        
-        device = self.devices["paired"][device_id]
-        
-        if device.get("type") == "kdeconnect":
+        if "kdeconnect" in device.capabilities:
             try:
-                result = subprocess.run(
-                    ["kdeconnect-cli", "-d", device_id, "-b"],
-                    capture_output=True, text=True, timeout=10
-                )
-                
-                if result.returncode == 0:
-                    output = result.stdout.strip()
-                    battery_info = {
-                        "level": None,
-                        "charging": False,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    
-                    if "%" in output:
-                        try:
-                            level = int(''.join(filter(str.isdigit, output.split('%')[0][-3:])))
-                            battery_info["level"] = level
-                        except:
-                            pass
-                    
-                    battery_info["charging"] = "charging" in output.lower()
-                    
-                    self.devices["paired"][device_id]["battery"] = battery_info
-                    self.save_devices()
-                    
-                    return battery_info
+                subprocess.run(['kdeconnect-cli', '-d', device_id, '--unpair'],
+                              capture_output=True, timeout=10)
             except:
                 pass
         
-        return device.get("battery")
+        del self.devices[device_id]
+        self._save_devices()
+        result["success"] = True
+        result["message"] = f"Unpaired: {device.name}"
+        return result
+    
+    def ring_device(self, device_id: str) -> Dict:
+        """Ring a device - wrapper around _ring_phone for backwards compatibility"""
+        if device_id not in self.devices:
+            return {"success": False, "message": "Device not found"}
+        
+        return self._ring_phone(device_id)
     
     def send_file(self, device_id: str, file_path: str) -> Dict:
-        """Send a file to a paired device"""
-        result = {
-            "success": False,
-            "message": "",
-            "file": file_path
-        }
+        result = {"success": False, "message": "", "file": file_path}
         
-        if not os.path.exists(file_path):
+        if not Path(file_path).exists():
             result["message"] = f"File not found: {file_path}"
             return result
         
-        if device_id not in self.devices.get("paired", {}):
-            result["message"] = "Device not paired"
+        if device_id not in self.devices:
+            result["message"] = "Device not found"
             return result
         
-        device = self.devices["paired"][device_id]
+        device = self.devices[device_id]
         
-        if device.get("type") == "kdeconnect":
+        if self.kdeconnect_available:
             try:
                 proc = subprocess.run(
-                    ["kdeconnect-cli", "-d", device_id, "--share", file_path],
+                    ['kdeconnect-cli', '-d', device_id, '--share', file_path],
                     capture_output=True, text=True, timeout=60
                 )
-                
-                if proc.returncode == 0:
-                    result["success"] = True
-                    result["message"] = f"File sent successfully via KDE Connect"
-                else:
-                    result["message"] = f"KDE Connect error: {proc.stderr}"
+                result["success"] = proc.returncode == 0
+                result["message"] = "File sent successfully" if result["success"] else f"Error: {proc.stderr}"
             except Exception as e:
                 result["message"] = f"Send error: {e}"
+        elif self.adb_available and device_id.startswith("adb_"):
+            try:
+                adb_id = device_id[4:]
+                proc = subprocess.run(
+                    ['adb', '-s', adb_id, 'push', file_path, '/sdcard/Download/'],
+                    capture_output=True, text=True, timeout=120
+                )
+                result["success"] = proc.returncode == 0
+                result["message"] = "File sent via ADB" if result["success"] else f"Error: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"ADB error: {e}"
         else:
-            result["message"] = "Direct file transfer not supported for this device type"
+            result["message"] = "No file transfer method available"
         
         return result
     
-    def ping_device(self, device_id: str) -> Dict:
-        """Send a ping to find the device"""
-        result = {
-            "success": False,
-            "message": ""
-        }
+    def send_sms(self, device_id: str, phone_number: str, message: str) -> Dict:
+        result = {"success": False, "message": ""}
         
-        if device_id not in self.devices.get("paired", {}):
-            result["message"] = "Device not paired"
+        if not has_feature("sms"):
+            result["message"] = "SMS feature requires Pro tier"
             return result
         
-        device = self.devices["paired"][device_id]
-        
-        if device.get("type") == "kdeconnect":
+        if self.kdeconnect_available:
             try:
                 proc = subprocess.run(
-                    ["kdeconnect-cli", "-d", device_id, "--ring"],
-                    capture_output=True, text=True, timeout=10
+                    ['kdeconnect-cli', '-d', device_id, '--send-sms', message,
+                     '--destination', phone_number],
+                    capture_output=True, text=True, timeout=30
                 )
                 
                 if proc.returncode == 0:
-                    result["success"] = True
-                    result["message"] = "Ping sent - device should ring"
-                else:
-                    proc = subprocess.run(
-                        ["kdeconnect-cli", "-d", device_id, "--ping-msg", "Aegis Mobile Link: Finding your phone!"],
-                        capture_output=True, text=True, timeout=10
+                    sms = SMSMessage(
+                        id=hashlib.sha256(f"{time.time()}{message}".encode()).hexdigest()[:16],
+                        device_id=device_id,
+                        phone_number=phone_number,
+                        contact_name="",
+                        content=message,
+                        timestamp=datetime.now().isoformat(),
+                        is_outgoing=True
                     )
-                    result["success"] = proc.returncode == 0
-                    result["message"] = "Ping notification sent" if result["success"] else "Ping failed"
-            except Exception as e:
-                result["message"] = f"Ping error: {e}"
-        else:
-            if device.get("ip"):
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    sock.sendto(b"AEGIS_PING", (device["ip"], self.http_port))
-                    sock.close()
+                    self.sms_history.append(sms)
                     result["success"] = True
-                    result["message"] = "Ping packet sent"
-                except Exception as e:
-                    result["message"] = f"Ping failed: {e}"
-            else:
-                result["message"] = "Device IP not available"
+                    result["message"] = "SMS sent"
+                else:
+                    result["message"] = f"Error: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"SMS error: {e}"
+        else:
+            result["message"] = "SMS requires KDE Connect"
         
         return result
     
-    def get_notifications(self, device_id: str = None) -> List[Dict]:
-        """Get notifications from paired devices"""
-        notifications = []
-        
-        devices_to_check = [device_id] if device_id else list(self.devices.get("paired", {}).keys())
-        
-        for did in devices_to_check:
-            if did not in self.devices.get("paired", {}):
-                continue
-            
-            device = self.devices["paired"][did]
-            
-            if device.get("type") == "kdeconnect":
-                try:
-                    result = subprocess.run(
-                        ["kdeconnect-cli", "-d", did, "--list-notifications"],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    
-                    if result.returncode == 0:
-                        for line in result.stdout.strip().split('\n'):
-                            if line.strip():
-                                notifications.append({
-                                    "device_id": did,
-                                    "device_name": device.get("name", "Unknown"),
-                                    "content": line.strip(),
-                                    "timestamp": datetime.now().isoformat(),
-                                    "type": "kdeconnect"
-                                })
-                except:
-                    pass
-            
-            stored = device.get("notifications", [])
-            for notif in stored[-50:]:
-                notif["device_id"] = did
-                notif["device_name"] = device.get("name", "Unknown")
-                notifications.append(notif)
-        
-        notifications.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        return notifications[:100]
+    def get_notifications(self, device_id: str = None) -> List[Notification]:
+        if not has_feature("notifications"):
+            return []
+        if device_id:
+            return [n for n in self.notifications if n.device_id == device_id]
+        return self.notifications
     
-    def generate_auth_token(self) -> str:
-        """Generate a secure authentication token for file uploads"""
-        self.auth_token = secrets.token_urlsafe(24)
-        return self.auth_token
-    
-    def start_file_server(self, bind_all: bool = False, show_warning: bool = True) -> Dict:
-        """Start HTTP server for file transfers
+    def control_media(self, device_id: str, action: str) -> Dict:
+        result = {"success": False, "message": ""}
         
-        Args:
-            bind_all: If True, bind to 0.0.0.0 (network accessible). Default False (localhost only).
-            show_warning: If True, print security warnings. Default True.
+        if not has_feature("media_control"):
+            result["message"] = "Media control requires Pro tier"
+            return result
         
-        Returns:
-            Dict with server info including auth token
-        """
-        result = {
-            "success": False,
-            "message": "",
-            "bind_address": "",
-            "port": self.http_port,
-            "auth_token": None,
-            "transfer_dir": str(self.transfer_dir)
+        if not self.kdeconnect_available:
+            result["message"] = "Media control requires KDE Connect"
+            return result
+        
+        action_map = {
+            "play": "--mpris-play", "pause": "--mpris-pause",
+            "next": "--mpris-next", "previous": "--mpris-previous",
+            "stop": "--mpris-stop"
         }
         
-        if self.http_server:
-            result["success"] = True
-            result["message"] = "Server already running"
-            result["auth_token"] = self.auth_token
-            result["bind_address"] = self.http_bind_address
+        if action not in action_map:
+            result["message"] = f"Unknown action: {action}"
             return result
-        
-        if bind_all:
-            self.http_bind_address = "0.0.0.0"
-        elif self.config.get("http_bind_localhost_only", True):
-            self.http_bind_address = "127.0.0.1"
-        else:
-            self.http_bind_address = "0.0.0.0"
-        
-        self.generate_auth_token()
-        require_auth = self.config.get("http_require_auth", True)
-        
-        auth_token_ref = self.auth_token
-        transfer_dir_ref = self.transfer_dir
-        logger_ref = self.logger
-        
-        class TransferHandler(SimpleHTTPRequestHandler):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, directory=str(transfer_dir_ref), **kwargs)
-            
-            def log_message(self, format, *args):
-                pass
-            
-            def do_POST(self):
-                if self.path == '/upload':
-                    if require_auth:
-                        provided_token = self.headers.get('X-Auth-Token', '')
-                        if provided_token != auth_token_ref:
-                            self.send_response(401)
-                            self.send_header('Content-type', 'application/json')
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "status": "error", 
-                                "message": "Invalid or missing authentication token. Use X-Auth-Token header."
-                            }).encode())
-                            logger_ref.warning(f"Rejected upload: invalid auth token from {self.client_address[0]}")
-                            return
-                    
-                    try:
-                        content_length = int(self.headers.get('Content-Length', 0))
-                    except ValueError:
-                        self.send_response(400)
-                        self.end_headers()
-                        return
-                    
-                    content_type = self.headers.get('Content-Type', '')
-                    
-                    if 'multipart/form-data' in content_type:
-                        self.send_response(501)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "status": "error",
-                            "message": "Multipart form data not supported. Use raw file upload with X-Filename header."
-                        }).encode())
-                        return
-                    
-                    filename = self.headers.get('X-Filename', f'upload_{int(time.time())}')
-                    filename = os.path.basename(filename)
-                    filename = "".join(c for c in filename if c.isalnum() or c in '._-')
-                    if not filename:
-                        filename = f'upload_{int(time.time())}'
-                    
-                    filepath = os.path.join(str(transfer_dir_ref), filename)
-                    
-                    try:
-                        with open(filepath, 'wb') as f:
-                            remaining = content_length
-                            while remaining > 0:
-                                chunk = self.rfile.read(min(8192, remaining))
-                                if not chunk:
-                                    break
-                                f.write(chunk)
-                                remaining -= len(chunk)
-                        
-                        logger_ref.info(f"File received: {filename} from {self.client_address[0]}")
-                        
-                        self.send_response(200)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"status": "success", "file": filename}).encode())
-                    except Exception as e:
-                        self.send_response(500)
-                        self.send_header('Content-type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode())
-                else:
-                    self.send_response(404)
-                    self.end_headers()
         
         try:
-            self.http_server = socketserver.TCPServer((self.http_bind_address, self.http_port), TransferHandler)
-            
-            server_thread = threading.Thread(target=self.http_server.serve_forever)
-            server_thread.daemon = True
-            server_thread.start()
-            
-            result["success"] = True
-            result["bind_address"] = self.http_bind_address
-            result["auth_token"] = self.auth_token
-            
-            if show_warning:
-                if self.http_bind_address == "0.0.0.0":
-                    self.logger.warning("=" * 60)
-                    self.logger.warning("SECURITY WARNING: File server is accessible from the network!")
-                    self.logger.warning(f"Anyone on your network can connect to port {self.http_port}")
-                    self.logger.warning("Use --receive-local for localhost-only access")
-                    self.logger.warning("=" * 60)
-                    result["message"] = f"Server started on ALL interfaces (0.0.0.0:{self.http_port}) - NETWORK ACCESSIBLE"
-                else:
-                    result["message"] = f"Server started on localhost only (127.0.0.1:{self.http_port})"
-            
-            self.logger.info(f"File transfer server started on {self.http_bind_address}:{self.http_port}")
-            if require_auth:
-                self.logger.info(f"Authentication enabled. Token required for uploads.")
-            
-            return result
+            proc = subprocess.run(
+                ['kdeconnect-cli', '-d', device_id, action_map[action]],
+                capture_output=True, text=True, timeout=10
+            )
+            result["success"] = proc.returncode == 0
+            result["message"] = f"Media {action}" if result["success"] else "Action failed"
         except Exception as e:
-            self.logger.error(f"Failed to start file server: {e}")
-            result["message"] = f"Failed to start server: {e}"
-            return result
+            result["message"] = f"Error: {e}"
+        
+        return result
     
-    def stop_file_server(self):
-        """Stop HTTP file server"""
-        if self.http_server:
-            self.http_server.shutdown()
-            self.http_server = None
-            self.logger.info("File transfer server stopped")
+    def share_clipboard(self, device_id: str, text: str = None) -> Dict:
+        result = {"success": False, "message": ""}
+        
+        if not has_feature("clipboard_sync"):
+            result["message"] = "Clipboard sync requires Basic tier or higher"
+            return result
+        
+        if text is None:
+            try:
+                proc = subprocess.run(['xclip', '-selection', 'clipboard', '-o'],
+                                     capture_output=True, text=True, timeout=5)
+                text = proc.stdout
+            except:
+                result["message"] = "Could not read clipboard"
+                return result
+        
+        if not text:
+            result["message"] = "Clipboard is empty"
+            return result
+        
+        if self.kdeconnect_available:
+            try:
+                proc = subprocess.run(
+                    ['kdeconnect-cli', '-d', device_id, '--share-text', text],
+                    capture_output=True, text=True, timeout=10
+                )
+                result["success"] = proc.returncode == 0
+                result["message"] = "Clipboard shared" if result["success"] else "Share failed"
+            except Exception as e:
+                result["message"] = f"Error: {e}"
+        else:
+            result["message"] = "Clipboard sync requires KDE Connect"
+        
+        return result
+    
+    def start_screen_mirror(self, device_id: str) -> Dict:
+        result = {"success": False, "message": ""}
+        
+        if not has_feature("screen_mirror"):
+            result["message"] = "Screen mirroring requires Pro tier"
+            return result
+        
+        if not self.scrcpy_available:
+            result["message"] = "scrcpy not installed"
+            return result
+        
+        if device_id not in self.devices:
+            result["message"] = "Device not found"
+            return result
+        
+        if self.screen_mirror_process:
+            self.stop_screen_mirror()
+        
+        try:
+            device = self.devices[device_id]
+            cmd = [
+                'scrcpy',
+                '--bit-rate', f'{self.config.scrcpy_bitrate}M',
+                '--max-fps', str(self.config.scrcpy_max_fps),
+                '--window-title', f'Mirror: {device.name}'
+            ]
+            
+            if device_id.startswith("adb_"):
+                cmd.extend(['-s', device_id[4:]])
+            
+            self.screen_mirror_process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            result["success"] = True
+            result["message"] = f"Screen mirroring started for {device.name}"
+        except Exception as e:
+            result["message"] = f"Error: {e}"
+        
+        return result
+    
+    def stop_screen_mirror(self) -> Dict:
+        result = {"success": False, "message": ""}
+        
+        if self.screen_mirror_process:
+            try:
+                self.screen_mirror_process.terminate()
+                self.screen_mirror_process.wait(timeout=5)
+                self.screen_mirror_process = None
+                result["success"] = True
+                result["message"] = "Screen mirroring stopped"
+            except Exception as e:
+                result["message"] = f"Error: {e}"
+        else:
+            result["message"] = "No active screen mirror"
+        
+        return result
+    
+    def sync_photos(self, device_id: str) -> Dict:
+        result = {"success": False, "message": "", "synced_count": 0}
+        
+        if not has_feature("photo_sync"):
+            result["message"] = "Photo sync requires Pro tier"
+            return result
+        
+        if self.adb_available and device_id.startswith("adb_"):
+            try:
+                adb_id = device_id[4:]
+                sync_dir = Path(self.config.photo_sync_path)
+                sync_dir.mkdir(parents=True, exist_ok=True)
+                
+                proc = subprocess.run(
+                    ['adb', '-s', adb_id, 'pull', '/sdcard/DCIM/Camera/', str(sync_dir)],
+                    capture_output=True, text=True, timeout=300
+                )
+                result["success"] = proc.returncode == 0
+                result["message"] = "Photos synced" if result["success"] else f"Error: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"Error: {e}"
+        else:
+            result["message"] = "Photo sync requires ADB connection"
+        
+        return result
+    
+    def browse_storage(self, device_id: str, path: str = "/sdcard") -> Dict:
+        result = {"success": False, "message": "", "files": []}
+        
+        if not has_feature("storage_browser"):
+            result["message"] = "Storage browser requires Pro tier"
+            return result
+        
+        if self.adb_available and device_id.startswith("adb_"):
+            try:
+                adb_id = device_id[4:]
+                proc = subprocess.run(
+                    ['adb', '-s', adb_id, 'shell', 'ls', '-la', path],
+                    capture_output=True, text=True, timeout=30
+                )
+                
+                if proc.returncode == 0:
+                    files = []
+                    for line in proc.stdout.strip().split('\n')[1:]:
+                        parts = line.split()
+                        if len(parts) >= 8:
+                            is_dir = line.startswith('d')
+                            name = ' '.join(parts[7:])
+                            files.append({
+                                "name": name,
+                                "is_directory": is_dir,
+                                "size": parts[4] if not is_dir else "-"
+                            })
+                    result["success"] = True
+                    result["files"] = files
+                    result["path"] = path
+                else:
+                    result["message"] = f"Error: {proc.stderr}"
+            except Exception as e:
+                result["message"] = f"Error: {e}"
+        else:
+            result["message"] = "Storage browser requires ADB connection"
+        
+        return result
+    
+    def refresh_devices(self):
+        """Refresh device status"""
+        for device_id, device in list(self.devices.items()):
+            if "kdeconnect" in device.capabilities or self.kdeconnect_available:
+                device.is_reachable = self._check_kdeconnect_reachable(device_id)
+                battery = self._get_kdeconnect_battery(device_id)
+                if battery:
+                    device.battery_level = battery.get("level", -1)
+                    device.battery_charging = battery.get("charging", False)
+                if device.is_reachable:
+                    device.last_seen = datetime.now().isoformat()
+        self._save_devices()
     
     def get_status(self) -> Dict:
-        """Get overall mobile link status"""
-        paired_devices = self.get_paired_devices()
-        online_count = sum(1 for d in paired_devices if d.get("online", False))
+        """Get current status as JSON"""
+        self.refresh_devices()
         
-        kdeconnect_status = self._check_kdeconnect()
+        online_count = sum(1 for d in self.devices.values() if d.is_reachable)
+        paired_count = sum(1 for d in self.devices.values() if d.is_paired)
+        kdeconnect_status = self.get_kdeconnect_status()
         
         return {
-            "version": self.version,
+            "version": VERSION,
+            "tier": self.tier,
             "local_ip": self.get_local_ip(),
-            "http_port": self.http_port,
-            "http_bind_address": self.http_bind_address,
-            "http_auth_enabled": self.config.get("http_require_auth", True),
-            "server_running": self.http_server is not None,
-            "auth_token": self.auth_token if self.http_server else None,
-            "paired_devices": len(paired_devices),
-            "online_devices": online_count,
-            "devices": paired_devices,
-            "transfer_directory": str(self.transfer_dir),
-            "kdeconnect_available": kdeconnect_status,
+            "http_port": self.config.http_port,
+            "device_name": self.config.device_name,
+            "device_id": self.config.device_id,
+            "kdeconnect_available": self.kdeconnect_available,
+            "kdeconnect_daemon_running": kdeconnect_status.get("daemon_running", False),
+            "kdeconnect_version": kdeconnect_status.get("version", ""),
+            "notification_listener_active": self._notification_listener_active,
+            "dbus_available": DBUS_AVAILABLE,
+            "scrcpy_available": self.scrcpy_available,
+            "adb_available": self.adb_available,
             "zeroconf_available": ZEROCONF_AVAILABLE,
-            "using_user_dirs": self.using_user_dirs,
-            "config_dir": str(self.config_dir),
-            "last_updated": self.devices.get("last_updated")
+            "qrcode_available": QRCODE_AVAILABLE,
+            "devices_count": len(self.devices),
+            "paired_count": paired_count,
+            "online_count": online_count,
+            "notifications_count": len(self.notifications),
+            "transfer_directory": str(TRANSFER_DIR),
+            "photo_sync_path": self.config.photo_sync_path,
+            "music_sync_path": self.config.music_sync_path,
+            "features": TIER_FEATURES.get(self.tier, []),
+            "devices": [asdict(d) for d in self.devices.values()]
         }
-    
-    def _check_kdeconnect(self) -> bool:
-        """Check if KDE Connect is available and cache the result"""
-        if self.kdeconnect_available is not None:
-            return self.kdeconnect_available
-        
-        try:
-            result = subprocess.run(
-                ["kdeconnect-cli", "--version"],
-                capture_output=True, timeout=5
-            )
-            self.kdeconnect_available = result.returncode == 0
-        except FileNotFoundError:
-            self.kdeconnect_available = False
-            self.logger.debug("KDE Connect not installed - some features will be limited")
-        except subprocess.TimeoutExpired:
-            self.kdeconnect_available = False
-            self.logger.debug("KDE Connect check timed out")
-        except Exception:
-            self.kdeconnect_available = False
-        
-        return self.kdeconnect_available
-    
-    def get_kdeconnect_status_message(self) -> str:
-        """Get a user-friendly message about KDE Connect status"""
-        if self._check_kdeconnect():
-            return "KDE Connect is available and ready"
-        else:
-            return ("KDE Connect is not installed. Some features like phone notifications, "
-                    "battery monitoring, and file sharing via phone are unavailable. "
-                    "Install KDE Connect for full functionality.")
 
 
 class MobileLinkGUI:
-    def __init__(self):
-        self.mobile = AegisMobileLink()
-        self.root = tk.Tk()
+    """Enhanced GUI for Mobile Link"""
+    
+    def __init__(self, service: MobileLinkService):
+        self.service = service
+        self.root = None
         self.selected_device = None
-        self.setup_window()
-        self.create_widgets()
-        self.refresh_devices()
-        server_result = self.mobile.start_file_server(bind_all=False, show_warning=False)
+        self.device_list = []
+    
+    def run(self):
+        if not TKINTER_AVAILABLE:
+            print("Error: Tkinter not available")
+            sys.exit(1)
         
-    def setup_window(self):
-        """Configure the main window"""
-        self.root.title("Aegis Mobile Link")
-        self.root.geometry("950x700")
+        self.root = tk.Tk()
+        self.root.title(f"{APP_NAME} v{VERSION}")
+        self.root.geometry("1000x700")
         self.root.configure(bg='#1a1a2e')
-        self.root.minsize(800, 600)
+        self.root.minsize(900, 600)
         
+        self._setup_styles()
+        self._create_widgets()
+        self._refresh_devices()
+        
+        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+        self.root.mainloop()
+    
+    def _setup_styles(self):
         style = ttk.Style()
         style.theme_use('clam')
         
         style.configure('TFrame', background='#1a1a2e')
-        style.configure('TLabel', background='#1a1a2e', foreground='white', font=('Arial', 10))
-        style.configure('TButton', padding=8, font=('Arial', 10))
-        style.configure('Header.TLabel', font=('Arial', 20, 'bold'), foreground='#00d4ff')
-        style.configure('SubHeader.TLabel', font=('Arial', 14, 'bold'), foreground='#00d4ff')
-        style.configure('Device.TLabel', font=('Arial', 11), foreground='white')
-        style.configure('Online.TLabel', font=('Arial', 10, 'bold'), foreground='#00ff00')
-        style.configure('Offline.TLabel', font=('Arial', 10), foreground='#888888')
-        style.configure('Battery.TLabel', font=('Arial', 10), foreground='#ffd700')
+        style.configure('TLabel', background='#1a1a2e', foreground='#ffffff', font=('Segoe UI', 10))
+        style.configure('Header.TLabel', font=('Segoe UI', 18, 'bold'), foreground='#00d4ff')
+        style.configure('SubHeader.TLabel', font=('Segoe UI', 12, 'bold'), foreground='#ffffff')
+        style.configure('Online.TLabel', foreground='#00ff00')
+        style.configure('Offline.TLabel', foreground='#888888')
+        style.configure('Battery.TLabel', foreground='#ffcc00')
+        style.configure('TButton', font=('Segoe UI', 10))
+        style.configure('TLabelframe', background='#1a1a2e', foreground='#ffffff')
+        style.configure('TLabelframe.Label', font=('Segoe UI', 10, 'bold'), foreground='#00d4ff')
+        style.configure('TCheckbutton', background='#1a1a2e', foreground='#ffffff')
+    
+    def _create_widgets(self):
+        header = ttk.Frame(self.root)
+        header.pack(fill='x', padx=20, pady=15)
         
-        style.configure('TLabelframe', background='#1a1a2e')
-        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='white', font=('Arial', 11, 'bold'))
+        ttk.Label(header, text="📱 Aegis Mobile Link", style='Header.TLabel').pack(side='left')
+        ttk.Label(header, text=f"Tier: {self.service.tier.capitalize()}", 
+                 foreground='#00ff00').pack(side='right')
         
-        style.configure('TNotebook', background='#1a1a2e')
-        style.configure('TNotebook.Tab', padding=[15, 8], font=('Arial', 10, 'bold'))
-        
-    def create_widgets(self):
-        """Create GUI widgets"""
-        header_frame = ttk.Frame(self.root)
-        header_frame.pack(fill='x', padx=20, pady=15)
-        
-        title = ttk.Label(header_frame, text="📱 Aegis Mobile Link", style='Header.TLabel')
-        title.pack(side='left')
-        
-        self.status_label = ttk.Label(header_frame, text="", style='TLabel')
-        self.status_label.pack(side='right')
+        self.status_label = ttk.Label(header, text="")
+        self.status_label.pack(side='right', padx=20)
         
         main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        main_frame.pack(fill='both', expand=True, padx=20, pady=(0, 20))
         
         left_panel = ttk.Frame(main_frame, width=280)
         left_panel.pack(side='left', fill='y', padx=(0, 15))
         left_panel.pack_propagate(False)
         
-        devices_frame = ttk.LabelFrame(left_panel, text="📱 Paired Devices", padding=10)
-        devices_frame.pack(fill='both', expand=True)
-        
-        self.devices_listbox = tk.Listbox(
-            devices_frame, bg='#16213e', fg='white', 
-            selectbackground='#00d4ff', selectforeground='black',
-            font=('Arial', 11), height=12
-        )
-        self.devices_listbox.pack(fill='both', expand=True, pady=(0, 10))
-        self.devices_listbox.bind('<<ListboxSelect>>', self.on_device_select)
-        
-        device_buttons = ttk.Frame(devices_frame)
-        device_buttons.pack(fill='x')
-        
-        ttk.Button(device_buttons, text="🔍 Discover", command=self.discover_devices).pack(side='left', padx=2)
-        ttk.Button(device_buttons, text="➕ Pair", command=self.pair_new_device).pack(side='left', padx=2)
-        ttk.Button(device_buttons, text="🔄", command=self.refresh_devices, width=3).pack(side='right', padx=2)
-        
-        device_info_frame = ttk.LabelFrame(left_panel, text="📊 Device Info", padding=10)
-        device_info_frame.pack(fill='x', pady=(10, 0))
-        
-        self.device_name_label = ttk.Label(device_info_frame, text="No device selected", style='Device.TLabel')
-        self.device_name_label.pack(anchor='w')
-        
-        self.device_status_label = ttk.Label(device_info_frame, text="", style='Offline.TLabel')
-        self.device_status_label.pack(anchor='w')
-        
-        self.battery_label = ttk.Label(device_info_frame, text="", style='Battery.TLabel')
-        self.battery_label.pack(anchor='w')
-        
-        action_buttons = ttk.Frame(device_info_frame)
-        action_buttons.pack(fill='x', pady=(10, 0))
-        
-        ttk.Button(action_buttons, text="📍 Find", command=self.ping_device).pack(side='left', padx=2)
-        ttk.Button(action_buttons, text="🔋 Battery", command=self.check_battery).pack(side='left', padx=2)
-        ttk.Button(action_buttons, text="❌ Unpair", command=self.unpair_device).pack(side='right', padx=2)
+        self._create_device_panel(left_panel)
         
         right_panel = ttk.Frame(main_frame)
         right_panel.pack(side='right', fill='both', expand=True)
         
-        notebook = ttk.Notebook(right_panel)
+        self._create_notebook(right_panel)
+    
+    def _create_device_panel(self, parent):
+        devices_frame = ttk.LabelFrame(parent, text="📲 Devices", padding=10)
+        devices_frame.pack(fill='both', expand=True)
+        
+        self.devices_listbox = tk.Listbox(
+            devices_frame, bg='#16213e', fg='white',
+            font=('Segoe UI', 11), height=10,
+            selectmode=tk.SINGLE, activestyle='none'
+        )
+        self.devices_listbox.pack(fill='both', expand=True, pady=(0, 10))
+        self.devices_listbox.bind('<<ListboxSelect>>', self._on_device_select)
+        
+        btn_frame = ttk.Frame(devices_frame)
+        btn_frame.pack(fill='x')
+        
+        ttk.Button(btn_frame, text="🔍 Discover", command=self._discover_devices).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="➕ Pair", command=self._pair_device).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="🔄", command=self._refresh_devices, width=3).pack(side='right')
+        
+        info_frame = ttk.LabelFrame(parent, text="📊 Device Info", padding=10)
+        info_frame.pack(fill='x', pady=(15, 0))
+        
+        self.device_name_label = ttk.Label(info_frame, text="No device selected")
+        self.device_name_label.pack(anchor='w')
+        
+        self.device_status_label = ttk.Label(info_frame, text="")
+        self.device_status_label.pack(anchor='w')
+        
+        self.battery_label = ttk.Label(info_frame, text="", style='Battery.TLabel')
+        self.battery_label.pack(anchor='w')
+        
+        action_frame = ttk.Frame(info_frame)
+        action_frame.pack(fill='x', pady=(10, 0))
+        
+        ttk.Button(action_frame, text="📍 Find", command=self._ring_device).pack(side='left', padx=2)
+        ttk.Button(action_frame, text="🔋 Battery", command=self._check_battery).pack(side='left', padx=2)
+        ttk.Button(action_frame, text="❌", command=self._unpair_device, width=3).pack(side='right')
+    
+    def _create_notebook(self, parent):
+        notebook = ttk.Notebook(parent)
         notebook.pack(fill='both', expand=True)
         
-        files_tab = ttk.Frame(notebook)
-        notebook.add(files_tab, text="📁 File Transfer")
+        self._create_file_tab(notebook)
+        self._create_sms_tab(notebook)
+        self._create_notifications_tab(notebook)
+        self._create_media_tab(notebook)
+        self._create_mirror_tab(notebook)
+        self._create_settings_tab(notebook)
+    
+    def _create_file_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="📁 Files")
         
-        transfer_frame = ttk.LabelFrame(files_tab, text="Send Files", padding=15)
-        transfer_frame.pack(fill='x', padx=10, pady=10)
+        send_frame = ttk.LabelFrame(tab, text="Send Files", padding=15)
+        send_frame.pack(fill='x', padx=10, pady=10)
         
-        ttk.Label(transfer_frame, text="Select a file to send to the connected device:").pack(anchor='w', pady=(0, 10))
-        
-        file_select_frame = ttk.Frame(transfer_frame)
-        file_select_frame.pack(fill='x')
+        file_row = ttk.Frame(send_frame)
+        file_row.pack(fill='x')
         
         self.file_path_var = tk.StringVar()
-        file_entry = ttk.Entry(file_select_frame, textvariable=self.file_path_var, width=40)
-        file_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        ttk.Entry(file_row, textvariable=self.file_path_var, width=40).pack(side='left', fill='x', expand=True, padx=(0, 10))
+        ttk.Button(file_row, text="Browse", command=self._browse_file).pack(side='left', padx=(0, 10))
+        ttk.Button(file_row, text="Send", command=self._send_file).pack(side='left')
         
-        ttk.Button(file_select_frame, text="Browse...", command=self.browse_file).pack(side='left', padx=(0, 10))
-        ttk.Button(file_select_frame, text="Send", command=self.send_file).pack(side='left')
-        
-        receive_frame = ttk.LabelFrame(files_tab, text="Received Files", padding=15)
+        receive_frame = ttk.LabelFrame(tab, text="Received Files", padding=15)
         receive_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
         self.files_listbox = tk.Listbox(
             receive_frame, bg='#16213e', fg='white',
-            font=('Courier', 10), height=8
+            font=('Courier', 10), height=10
         )
         self.files_listbox.pack(fill='both', expand=True, pady=(0, 10))
         
-        files_buttons = ttk.Frame(receive_frame)
-        files_buttons.pack(fill='x')
+        file_btn_frame = ttk.Frame(receive_frame)
+        file_btn_frame.pack(fill='x')
         
-        ttk.Button(files_buttons, text="📂 Open Folder", command=self.open_transfer_folder).pack(side='left', padx=2)
-        ttk.Button(files_buttons, text="🔄 Refresh", command=self.refresh_files).pack(side='left', padx=2)
+        ttk.Button(file_btn_frame, text="📂 Open Folder", command=self._open_transfer_folder).pack(side='left', padx=2)
+        ttk.Button(file_btn_frame, text="🔄 Refresh", command=self._refresh_files).pack(side='left', padx=2)
         
-        self.refresh_files()
+        if has_feature("photo_sync"):
+            ttk.Button(file_btn_frame, text="📷 Sync Photos", command=self._sync_photos).pack(side='right', padx=2)
         
-        notif_tab = ttk.Frame(notebook)
-        notebook.add(notif_tab, text="🔔 Notifications")
+        self._refresh_files()
+    
+    def _create_sms_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="💬 SMS")
         
-        notif_frame = ttk.LabelFrame(notif_tab, text="Phone Notifications", padding=10)
+        if not has_feature("sms"):
+            ttk.Label(tab, text="SMS feature requires Pro tier",
+                     foreground='#ff6b6b', font=('Segoe UI', 12)).pack(pady=50)
+            return
+        
+        compose_frame = ttk.LabelFrame(tab, text="Compose SMS", padding=15)
+        compose_frame.pack(fill='x', padx=10, pady=10)
+        
+        phone_row = ttk.Frame(compose_frame)
+        phone_row.pack(fill='x', pady=5)
+        ttk.Label(phone_row, text="To:").pack(side='left')
+        self.sms_phone_var = tk.StringVar()
+        ttk.Entry(phone_row, textvariable=self.sms_phone_var, width=30).pack(side='left', padx=10)
+        
+        msg_row = ttk.Frame(compose_frame)
+        msg_row.pack(fill='x', pady=5)
+        ttk.Label(msg_row, text="Message:").pack(side='left')
+        self.sms_msg_var = tk.StringVar()
+        ttk.Entry(msg_row, textvariable=self.sms_msg_var, width=40).pack(side='left', padx=10, fill='x', expand=True)
+        ttk.Button(msg_row, text="Send", command=self._send_sms).pack(side='left')
+    
+    def _create_notifications_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="🔔 Notifications")
+        
+        if not has_feature("notifications"):
+            ttk.Label(tab, text="Notifications require Basic tier or higher",
+                     foreground='#ff6b6b', font=('Segoe UI', 12)).pack(pady=50)
+            return
+        
+        notif_frame = ttk.LabelFrame(tab, text="Phone Notifications", padding=10)
         notif_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
         self.notif_text = scrolledtext.ScrolledText(
@@ -1054,658 +1587,591 @@ class MobileLinkGUI:
         )
         self.notif_text.pack(fill='both', expand=True, pady=(0, 10))
         
-        ttk.Button(notif_frame, text="🔄 Refresh Notifications", command=self.refresh_notifications).pack()
+        ttk.Button(notif_frame, text="🔄 Refresh", command=self._refresh_notifications).pack(side='left', padx=2)
+    
+    def _create_media_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="🎵 Media")
         
-        settings_tab = ttk.Frame(notebook)
-        notebook.add(settings_tab, text="⚙️ Settings")
+        if not has_feature("media_control"):
+            ttk.Label(tab, text="Media control requires Pro tier",
+                     foreground='#ff6b6b', font=('Segoe UI', 12)).pack(pady=50)
+            return
         
-        settings_frame = ttk.LabelFrame(settings_tab, text="Configuration", padding=15)
+        control_frame = ttk.LabelFrame(tab, text="Media Controls", padding=20)
+        control_frame.pack(fill='x', padx=10, pady=10)
+        
+        btn_row = ttk.Frame(control_frame)
+        btn_row.pack()
+        
+        ttk.Button(btn_row, text="⏮️", command=lambda: self._media_control("previous"), width=5).pack(side='left', padx=10)
+        ttk.Button(btn_row, text="▶️", command=lambda: self._media_control("play"), width=5).pack(side='left', padx=10)
+        ttk.Button(btn_row, text="⏸️", command=lambda: self._media_control("pause"), width=5).pack(side='left', padx=10)
+        ttk.Button(btn_row, text="⏹️", command=lambda: self._media_control("stop"), width=5).pack(side='left', padx=10)
+        ttk.Button(btn_row, text="⏭️", command=lambda: self._media_control("next"), width=5).pack(side='left', padx=10)
+        
+        clipboard_frame = ttk.LabelFrame(tab, text="Clipboard Sync", padding=20)
+        clipboard_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Button(clipboard_frame, text="📋 Share Clipboard to Phone",
+                  command=self._share_clipboard).pack(pady=10)
+    
+    def _create_mirror_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="🖥️ Mirror")
+        
+        if not has_feature("screen_mirror"):
+            ttk.Label(tab, text="Screen mirroring requires Pro tier",
+                     foreground='#ff6b6b', font=('Segoe UI', 12)).pack(pady=50)
+            return
+        
+        mirror_frame = ttk.LabelFrame(tab, text="Screen Mirroring (scrcpy)", padding=20)
+        mirror_frame.pack(fill='x', padx=10, pady=10)
+        
+        if not self.service.scrcpy_available:
+            ttk.Label(mirror_frame, text="scrcpy not installed. Install with: sudo apt install scrcpy",
+                     foreground='#ff6b6b').pack(pady=10)
+        else:
+            ttk.Label(mirror_frame, text="Mirror your Android phone screen to this PC").pack(pady=5)
+            btn_row = ttk.Frame(mirror_frame)
+            btn_row.pack(pady=15)
+            ttk.Button(btn_row, text="▶️ Start Mirror", command=self._start_mirror).pack(side='left', padx=10)
+            ttk.Button(btn_row, text="⏹️ Stop Mirror", command=self._stop_mirror).pack(side='left', padx=10)
+        
+        qr_frame = ttk.LabelFrame(tab, text="QR Code Pairing", padding=20)
+        qr_frame.pack(fill='x', padx=10, pady=10)
+        
+        if has_feature("qr_pairing"):
+            ttk.Button(qr_frame, text="📱 Generate Pairing QR Code",
+                      command=self._show_qr_code).pack(pady=10)
+        else:
+            ttk.Label(qr_frame, text="QR pairing requires Pro tier",
+                     foreground='#ff6b6b').pack(pady=10)
+    
+    def _create_settings_tab(self, notebook):
+        tab = ttk.Frame(notebook)
+        notebook.add(tab, text="⚙️ Settings")
+        
+        settings_frame = ttk.LabelFrame(tab, text="Configuration", padding=15)
         settings_frame.pack(fill='x', padx=10, pady=10)
         
-        self.auto_discover_var = tk.BooleanVar(value=self.mobile.config.get("auto_discover", True))
-        ttk.Checkbutton(settings_frame, text="Auto-discover devices on startup", 
-                       variable=self.auto_discover_var, command=self.save_settings).pack(anchor='w', pady=2)
+        self.auto_discover_var = tk.BooleanVar(value=self.service.config.auto_discovery)
+        ttk.Checkbutton(settings_frame, text="Auto-discover devices on startup",
+                       variable=self.auto_discover_var, command=self._save_settings).pack(anchor='w', pady=2)
         
-        self.enable_notif_var = tk.BooleanVar(value=self.mobile.config.get("enable_notifications", True))
-        ttk.Checkbutton(settings_frame, text="Enable notification sync", 
-                       variable=self.enable_notif_var, command=self.save_settings).pack(anchor='w', pady=2)
+        self.kdeconnect_var = tk.BooleanVar(value=self.service.config.kdeconnect_enabled)
+        ttk.Checkbutton(settings_frame, text="Enable KDE Connect integration",
+                       variable=self.kdeconnect_var, command=self._save_settings).pack(anchor='w', pady=2)
         
-        self.kdeconnect_var = tk.BooleanVar(value=self.mobile.config.get("kdeconnect_enabled", True))
-        ttk.Checkbutton(settings_frame, text="Enable KDE Connect integration", 
-                       variable=self.kdeconnect_var, command=self.save_settings).pack(anchor='w', pady=2)
+        self.notif_var = tk.BooleanVar(value=self.service.config.notifications_enabled)
+        ttk.Checkbutton(settings_frame, text="Enable notification sync",
+                       variable=self.notif_var, command=self._save_settings).pack(anchor='w', pady=2)
         
-        port_frame = ttk.Frame(settings_frame)
-        port_frame.pack(fill='x', pady=10)
-        ttk.Label(port_frame, text="HTTP Port:").pack(side='left')
-        self.port_var = tk.StringVar(value=str(self.mobile.http_port))
-        ttk.Entry(port_frame, textvariable=self.port_var, width=8).pack(side='left', padx=10)
+        self.clipboard_var = tk.BooleanVar(value=self.service.config.clipboard_sync)
+        ttk.Checkbutton(settings_frame, text="Enable clipboard sync",
+                       variable=self.clipboard_var, command=self._save_settings).pack(anchor='w', pady=2)
         
-        dir_frame = ttk.Frame(settings_frame)
-        dir_frame.pack(fill='x', pady=5)
-        ttk.Label(dir_frame, text="Transfer Directory:").pack(side='left')
-        self.transfer_dir_var = tk.StringVar(value=str(self.mobile.transfer_dir))
-        ttk.Entry(dir_frame, textvariable=self.transfer_dir_var, width=30).pack(side='left', padx=10)
-        ttk.Button(dir_frame, text="Browse", command=self.browse_transfer_dir).pack(side='left')
+        if has_feature("dnd_sync"):
+            self.dnd_var = tk.BooleanVar(value=self.service.config.dnd_sync_enabled)
+            ttk.Checkbutton(settings_frame, text="Sync Do Not Disturb mode",
+                           variable=self.dnd_var, command=self._save_settings).pack(anchor='w', pady=2)
         
-        info_frame = ttk.LabelFrame(settings_tab, text="Connection Info", padding=15)
+        info_frame = ttk.LabelFrame(tab, text="Connection Info", padding=15)
         info_frame.pack(fill='x', padx=10, pady=10)
         
-        status = self.mobile.get_status()
+        status = self.service.get_status()
         ttk.Label(info_frame, text=f"Local IP: {status['local_ip']}").pack(anchor='w')
-        ttk.Label(info_frame, text=f"Server Port: {status['http_port']}").pack(anchor='w')
-        ttk.Label(info_frame, text=f"KDE Connect: {'Available' if status['kdeconnect_available'] else 'Not Installed'}").pack(anchor='w')
-        ttk.Label(info_frame, text=f"Zeroconf/mDNS: {'Available' if status['zeroconf_available'] else 'Not Available'}").pack(anchor='w')
-        
-        status_bar = ttk.Frame(self.root)
-        status_bar.pack(fill='x', padx=20, pady=10)
-        
-        status = self.mobile.get_status()
-        server_status = "🟢 Server Running" if status['server_running'] else "🔴 Server Stopped"
-        self.server_status_label = ttk.Label(status_bar, text=server_status)
-        self.server_status_label.pack(side='left')
-        
-        ttk.Label(status_bar, text=f"Transfer: {status['transfer_directory']}").pack(side='right')
+        ttk.Label(info_frame, text=f"Device Name: {status['device_name']}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"KDE Connect: {'✓' if status['kdeconnect_available'] else '✗'}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"scrcpy: {'✓' if status['scrcpy_available'] else '✗'}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"ADB: {'✓' if status['adb_available'] else '✗'}").pack(anchor='w')
+        ttk.Label(info_frame, text=f"mDNS: {'✓' if status['zeroconf_available'] else '✗'}").pack(anchor='w')
     
-    def refresh_devices(self):
-        """Refresh the device list"""
+    def _refresh_devices(self):
         self.devices_listbox.delete(0, tk.END)
+        self.service.refresh_devices()
+        self.device_list = list(self.service.devices.values())
         
-        devices = self.mobile.get_paired_devices()
+        for device in self.device_list:
+            status_icon = "🟢" if device.is_reachable else "⚪"
+            battery = f" 🔋{device.battery_level}%" if device.battery_level >= 0 else ""
+            self.devices_listbox.insert(tk.END, f"{status_icon} {device.name[:20]}{battery}")
         
-        for device in devices:
-            status_icon = "🟢" if device.get("online") else "⚪"
-            name = device.get("name", device.get("id", "Unknown"))[:25]
-            self.devices_listbox.insert(tk.END, f"{status_icon} {name}")
-        
-        self.device_list = devices
-        
-        online = sum(1 for d in devices if d.get("online"))
-        self.status_label.config(text=f"Devices: {len(devices)} | Online: {online}")
+        online = sum(1 for d in self.device_list if d.is_reachable)
+        self.status_label.config(text=f"📱 {len(self.device_list)} devices, {online} online")
     
-    def on_device_select(self, event):
-        """Handle device selection"""
+    def _on_device_select(self, event):
         selection = self.devices_listbox.curselection()
-        if selection and hasattr(self, 'device_list'):
+        if selection and self.device_list:
             idx = selection[0]
             if idx < len(self.device_list):
                 self.selected_device = self.device_list[idx]
+                self.device_name_label.config(text=self.selected_device.name)
                 
-                self.device_name_label.config(text=self.selected_device.get("name", "Unknown"))
-                
-                if self.selected_device.get("online"):
+                if self.selected_device.is_reachable:
                     self.device_status_label.config(text="● Online", style='Online.TLabel')
                 else:
                     self.device_status_label.config(text="○ Offline", style='Offline.TLabel')
                 
-                battery = self.selected_device.get("battery")
-                if battery and battery.get("level") is not None:
-                    charge = "⚡" if battery.get("charging") else ""
-                    self.battery_label.config(text=f"🔋 {battery['level']}% {charge}")
+                if self.selected_device.battery_level >= 0:
+                    charge = "⚡" if self.selected_device.battery_charging else ""
+                    self.battery_label.config(text=f"🔋 {self.selected_device.battery_level}% {charge}")
                 else:
                     self.battery_label.config(text="")
     
-    def discover_devices(self):
-        """Discover new devices"""
-        self.status_label.config(text="Searching for devices...")
+    def _discover_devices(self):
+        self.status_label.config(text="🔍 Searching...")
         self.root.update()
         
         def do_discovery():
-            devices = self.mobile.discover_devices(timeout=5)
-            self.root.after(0, lambda: self.show_discovery_results(devices))
+            devices = self.service.discover_devices(timeout=5)
+            self.root.after(0, lambda: self._show_discovery_results(devices))
         
-        thread = threading.Thread(target=do_discovery)
-        thread.daemon = True
-        thread.start()
+        threading.Thread(target=do_discovery, daemon=True).start()
     
-    def show_discovery_results(self, devices):
-        """Show discovered devices"""
-        self.refresh_devices()
+    def _show_discovery_results(self, devices):
+        self._refresh_devices()
+        new_devices = [d for d in devices if d.id not in self.service.devices]
         
-        if not devices:
-            messagebox.showinfo("Discovery", "No new devices found on the network.\n\n"
-                              "Make sure your phone:\n"
-                              "• Is on the same WiFi network\n"
-                              "• Has KDE Connect or similar app installed\n"
-                              "• Has discovery enabled")
+        if not new_devices:
+            messagebox.showinfo("Discovery", "No new devices found.\n\nMake sure your phone:\n• Is on the same WiFi\n• Has KDE Connect installed")
             return
         
-        result = "Found devices:\n\n"
-        for i, device in enumerate(devices[:10]):
-            name = device.get("name", device.get("ip", "Unknown"))
-            dtype = device.get("type", "unknown")
-            result += f"{i+1}. {name} ({dtype})\n"
+        result = f"Found {len(new_devices)} new device(s):\n\n"
+        for i, device in enumerate(new_devices[:10]):
+            result += f"{i+1}. {device.name}\n"
         
-        result += "\nWould you like to pair with a discovered device?"
-        
-        if messagebox.askyesno("Devices Found", result):
-            self.pair_new_device()
+        if messagebox.askyesno("Devices Found", result + "\nPair with a device?"):
+            self._pair_device()
     
-    def pair_new_device(self):
-        """Open pairing dialog"""
+    def _pair_device(self):
+        discovered = self.service.discover_devices(timeout=3)
+        unpaired = [d for d in discovered if not d.is_paired]
+        
+        if not unpaired:
+            messagebox.showinfo("Pair", "No unpaired devices found.")
+            return
+        
         dialog = tk.Toplevel(self.root)
-        dialog.title("Pair New Device")
+        dialog.title("Pair Device")
         dialog.geometry("400x300")
         dialog.configure(bg='#1a1a2e')
         dialog.transient(self.root)
         dialog.grab_set()
         
-        ttk.Label(dialog, text="🔗 Pair New Device", style='SubHeader.TLabel').pack(pady=15)
+        ttk.Label(dialog, text="🔗 Select Device", style='SubHeader.TLabel').pack(pady=15)
         
-        ttk.Label(dialog, text="Enter device name or IP address:").pack(pady=5)
+        device_listbox = tk.Listbox(dialog, bg='#16213e', fg='white', font=('Segoe UI', 11), height=8)
+        device_listbox.pack(fill='both', expand=True, padx=20, pady=10)
         
-        name_var = tk.StringVar()
-        name_entry = ttk.Entry(dialog, textvariable=name_var, width=30)
-        name_entry.pack(pady=5)
-        
-        ttk.Label(dialog, text="IP Address (optional):").pack(pady=5)
-        
-        ip_var = tk.StringVar()
-        ip_entry = ttk.Entry(dialog, textvariable=ip_var, width=30)
-        ip_entry.pack(pady=5)
-        
-        pin_frame = ttk.Frame(dialog)
-        pin_frame.pack(pady=15)
-        
-        pin_label = ttk.Label(pin_frame, text="", font=('Arial', 24, 'bold'), foreground='#00ff00')
-        pin_label.pack()
+        for device in unpaired:
+            device_listbox.insert(tk.END, f"{device.name} ({device.device_type})")
         
         def do_pair():
-            name = name_var.get() or "New Device"
-            ip = ip_var.get()
-            
-            device_info = {"name": name, "ip": ip, "type": "manual"}
-            result = self.mobile.pair_device(device_info)
-            
-            if result.get("success"):
-                pin = result.get("pin", "")
-                if pin:
-                    pin_label.config(text=f"PIN: {pin}")
-                    messagebox.showinfo("Pairing", f"Pairing initiated!\n\nEnter this PIN on your phone:\n{pin}")
-                else:
-                    messagebox.showinfo("Pairing", result.get("message", "Pairing complete"))
+            selection = device_listbox.curselection()
+            if selection:
+                device = unpaired[selection[0]]
+                result = self.service.pair_device(device)
+                if result.get("success"):
+                    messagebox.showinfo("Pairing", result.get("message", "Success"))
                     dialog.destroy()
-                    self.refresh_devices()
-            else:
-                messagebox.showerror("Error", result.get("message", "Pairing failed"))
+                    self._refresh_devices()
+                else:
+                    messagebox.showerror("Error", result.get("message", "Failed"))
         
-        ttk.Button(dialog, text="Start Pairing", command=do_pair).pack(pady=10)
+        ttk.Button(dialog, text="Pair", command=do_pair).pack(pady=10)
         ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
     
-    def unpair_device(self):
-        """Unpair selected device"""
+    def _unpair_device(self):
         if not self.selected_device:
-            messagebox.showwarning("Warning", "Please select a device first")
+            messagebox.showwarning("Warning", "Select a device first")
             return
         
-        name = self.selected_device.get("name", "this device")
-        if messagebox.askyesno("Confirm", f"Unpair {name}?"):
-            result = self.mobile.unpair_device(self.selected_device.get("id"))
+        if messagebox.askyesno("Confirm", f"Unpair {self.selected_device.name}?"):
+            result = self.service.unpair_device(self.selected_device.id)
             if result.get("success"):
                 messagebox.showinfo("Success", result.get("message"))
                 self.selected_device = None
-                self.device_name_label.config(text="No device selected")
-                self.device_status_label.config(text="")
-                self.battery_label.config(text="")
-                self.refresh_devices()
+                self._refresh_devices()
             else:
                 messagebox.showerror("Error", result.get("message"))
     
-    def ping_device(self):
-        """Ping/find selected device"""
+    def _ring_device(self):
         if not self.selected_device:
-            messagebox.showwarning("Warning", "Please select a device first")
+            messagebox.showwarning("Warning", "Select a device first")
             return
-        
-        result = self.mobile.ping_device(self.selected_device.get("id"))
+        result = self.service.ring_device(self.selected_device.id)
         if result.get("success"):
-            messagebox.showinfo("Find My Phone", result.get("message"))
+            messagebox.showinfo("Find Phone", result.get("message"))
         else:
             messagebox.showerror("Error", result.get("message"))
     
-    def check_battery(self):
-        """Check battery of selected device"""
+    def _check_battery(self):
         if not self.selected_device:
-            messagebox.showwarning("Warning", "Please select a device first")
+            messagebox.showwarning("Warning", "Select a device first")
             return
-        
-        battery = self.mobile.get_device_battery(self.selected_device.get("id"))
-        if battery and battery.get("level") is not None:
-            charge_status = " (Charging)" if battery.get("charging") else ""
-            self.battery_label.config(text=f"🔋 {battery['level']}%{charge_status}")
-            messagebox.showinfo("Battery", f"Battery Level: {battery['level']}%{charge_status}")
-        else:
-            messagebox.showinfo("Battery", "Unable to get battery status.\n\nThis feature requires KDE Connect.")
+        self.service.refresh_devices()
+        if self.selected_device.id in self.service.devices:
+            device = self.service.devices[self.selected_device.id]
+            if device.battery_level >= 0:
+                charge = " (Charging)" if device.battery_charging else ""
+                self.battery_label.config(text=f"🔋 {device.battery_level}%{charge}")
+                messagebox.showinfo("Battery", f"Battery: {device.battery_level}%{charge}")
+            else:
+                messagebox.showinfo("Battery", "Battery status not available")
     
-    def browse_file(self):
-        """Browse for file to send"""
+    def _browse_file(self):
         filename = filedialog.askopenfilename(title="Select file to send")
         if filename:
             self.file_path_var.set(filename)
     
-    def send_file(self):
-        """Send file to selected device"""
+    def _send_file(self):
         if not self.selected_device:
-            messagebox.showwarning("Warning", "Please select a device first")
+            messagebox.showwarning("Warning", "Select a device first")
             return
-        
         file_path = self.file_path_var.get()
         if not file_path:
-            messagebox.showwarning("Warning", "Please select a file first")
+            messagebox.showwarning("Warning", "Select a file first")
             return
-        
-        result = self.mobile.send_file(self.selected_device.get("id"), file_path)
+        result = self.service.send_file(self.selected_device.id, file_path)
         if result.get("success"):
             messagebox.showinfo("Success", result.get("message"))
             self.file_path_var.set("")
         else:
             messagebox.showerror("Error", result.get("message"))
     
-    def refresh_files(self):
-        """Refresh received files list"""
+    def _refresh_files(self):
         self.files_listbox.delete(0, tk.END)
-        
         try:
-            if self.mobile.transfer_dir.exists():
-                files = list(self.mobile.transfer_dir.iterdir())
-                files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                
+            if TRANSFER_DIR.exists():
+                files = sorted(TRANSFER_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True)
                 for f in files[:50]:
                     if f.is_file():
                         size = f.stat().st_size
-                        size_str = self._format_size(size)
-                        self.files_listbox.insert(tk.END, f"{f.name} ({size_str})")
+                        for unit in ['B', 'KB', 'MB', 'GB']:
+                            if size < 1024:
+                                self.files_listbox.insert(tk.END, f"{f.name} ({size:.1f} {unit})")
+                                break
+                            size /= 1024
         except Exception as e:
             self.files_listbox.insert(tk.END, f"Error: {e}")
     
-    def _format_size(self, size: int) -> str:
-        """Format file size"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
-    
-    def open_transfer_folder(self):
-        """Open transfer folder in file manager"""
+    def _open_transfer_folder(self):
         try:
-            subprocess.run(["xdg-open", str(self.mobile.transfer_dir)])
+            subprocess.run(["xdg-open", str(TRANSFER_DIR)])
         except:
-            messagebox.showinfo("Transfer Folder", f"Location: {self.mobile.transfer_dir}")
+            messagebox.showinfo("Location", f"Transfer folder: {TRANSFER_DIR}")
     
-    def refresh_notifications(self):
-        """Refresh notifications from devices"""
-        self.notif_text.delete('1.0', tk.END)
-        
-        notifications = self.mobile.get_notifications()
-        
-        if not notifications:
-            self.notif_text.insert(tk.END, "No notifications available.\n\n")
-            self.notif_text.insert(tk.END, "To receive notifications:\n")
-            self.notif_text.insert(tk.END, "• Pair a device with KDE Connect\n")
-            self.notif_text.insert(tk.END, "• Enable notification sync on your phone\n")
-            self.notif_text.insert(tk.END, "• Grant notification access to KDE Connect\n")
+    def _sync_photos(self):
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Select a device first")
             return
-        
-        for notif in notifications[:50]:
-            timestamp = notif.get("timestamp", "")[:19]
-            device = notif.get("device_name", "Unknown")
-            content = notif.get("content", "")
-            
-            self.notif_text.insert(tk.END, f"[{timestamp}] {device}\n")
-            self.notif_text.insert(tk.END, f"  {content}\n\n")
+        result = self.service.sync_photos(self.selected_device.id)
+        if result.get("success"):
+            messagebox.showinfo("Photo Sync", result.get("message"))
+        else:
+            messagebox.showerror("Error", result.get("message"))
     
-    def browse_transfer_dir(self):
-        """Browse for transfer directory"""
-        directory = filedialog.askdirectory(title="Select Transfer Directory")
-        if directory:
-            self.transfer_dir_var.set(directory)
-            self.save_settings()
+    def _send_sms(self):
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Select a device first")
+            return
+        phone = self.sms_phone_var.get().strip()
+        msg = self.sms_msg_var.get().strip()
+        if not phone or not msg:
+            messagebox.showwarning("Warning", "Enter phone number and message")
+            return
+        result = self.service.send_sms(self.selected_device.id, phone, msg)
+        if result.get("success"):
+            messagebox.showinfo("SMS", result.get("message"))
+            self.sms_msg_var.set("")
+        else:
+            messagebox.showerror("Error", result.get("message"))
     
-    def save_settings(self):
-        """Save settings"""
-        self.mobile.config["auto_discover"] = self.auto_discover_var.get()
-        self.mobile.config["enable_notifications"] = self.enable_notif_var.get()
-        self.mobile.config["kdeconnect_enabled"] = self.kdeconnect_var.get()
-        
-        try:
-            self.mobile.config["http_port"] = int(self.port_var.get())
-        except:
-            pass
-        
-        self.mobile.config["transfer_directory"] = self.transfer_dir_var.get()
-        self.mobile.save_config()
+    def _refresh_notifications(self):
+        if not hasattr(self, 'notif_text'):
+            return
+        self.notif_text.delete('1.0', tk.END)
+        notifications = self.service.get_notifications()
+        if not notifications:
+            self.notif_text.insert(tk.END, "No notifications available.\n\nPair a device with KDE Connect and enable notification sync.")
+        else:
+            for notif in notifications[:50]:
+                ts = notif.timestamp[:19] if notif.timestamp else ""
+                self.notif_text.insert(tk.END, f"[{ts}] {notif.app_name}\n  {notif.title}: {notif.content}\n\n")
     
-    def on_closing(self):
-        """Handle window close"""
-        self.mobile.stop_file_server()
+    def _media_control(self, action: str):
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Select a device first")
+            return
+        result = self.service.control_media(self.selected_device.id, action)
+        if not result.get("success"):
+            messagebox.showerror("Error", result.get("message"))
+    
+    def _share_clipboard(self):
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Select a device first")
+            return
+        result = self.service.share_clipboard(self.selected_device.id)
+        if result.get("success"):
+            messagebox.showinfo("Clipboard", result.get("message"))
+        else:
+            messagebox.showerror("Error", result.get("message"))
+    
+    def _start_mirror(self):
+        if not self.selected_device:
+            messagebox.showwarning("Warning", "Select a device first")
+            return
+        result = self.service.start_screen_mirror(self.selected_device.id)
+        if result.get("success"):
+            messagebox.showinfo("Mirror", result.get("message"))
+        else:
+            messagebox.showerror("Error", result.get("message"))
+    
+    def _stop_mirror(self):
+        result = self.service.stop_screen_mirror()
+        if result.get("success"):
+            messagebox.showinfo("Mirror", result.get("message"))
+        else:
+            messagebox.showerror("Error", result.get("message"))
+    
+    def _show_qr_code(self):
+        qr_path = self.service.generate_qr_image()
+        if qr_path and Path(qr_path).exists():
+            try:
+                subprocess.run(["xdg-open", qr_path])
+            except:
+                messagebox.showinfo("QR Code", f"QR code saved to: {qr_path}")
+        else:
+            qr_data = self.service.generate_pairing_qr()
+            if qr_data:
+                messagebox.showinfo("Pairing Data", f"Scan or enter:\n\n{qr_data[:100]}...")
+            else:
+                messagebox.showerror("Error", "QR generation requires qrcode module")
+    
+    def _save_settings(self):
+        self.service.config.auto_discovery = self.auto_discover_var.get()
+        self.service.config.kdeconnect_enabled = self.kdeconnect_var.get()
+        self.service.config.notifications_enabled = self.notif_var.get()
+        self.service.config.clipboard_sync = self.clipboard_var.get()
+        if has_feature("dnd_sync") and hasattr(self, 'dnd_var'):
+            self.service.config.dnd_sync_enabled = self.dnd_var.get()
+        self.service._save_config()
+    
+    def _on_closing(self):
+        self.service.stop_screen_mirror()
         self.root.destroy()
-    
-    def run(self):
-        """Run the GUI"""
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.root.mainloop()
 
 
-def show_cli_status(mobile: AegisMobileLink):
-    """Display status in CLI"""
-    status = mobile.get_status()
-    
+def print_status_cli(service: MobileLinkService):
+    status = service.get_status()
     print("\n" + "=" * 60)
     print("📱 Aegis Mobile Link Status")
     print("=" * 60)
     print(f"Version: {status['version']}")
+    print(f"Tier: {status['tier'].capitalize()}")
     print(f"Local IP: {status['local_ip']}")
-    print(f"HTTP Port: {status['http_port']}")
-    print(f"HTTP Bind: {status.get('http_bind_address', '127.0.0.1')}")
-    print(f"Auth Required: {'Yes' if status.get('http_auth_enabled', True) else 'No'}")
-    print(f"Server: {'Running' if status['server_running'] else 'Stopped'}")
-    print(f"Transfer Directory: {status['transfer_directory']}")
+    print(f"Device Name: {status['device_name']}")
     print()
-    
-    if status.get('using_user_dirs'):
-        print(f"Config Location: {status.get('config_dir', 'N/A')} (user mode)")
-    else:
-        print(f"Config Location: {status.get('config_dir', 'N/A')} (system mode)")
+    print("Integration Status:")
+    kdc_installed = '✓' if status['kdeconnect_available'] else '✗'
+    kdc_daemon = '✓ Running' if status.get('kdeconnect_daemon_running') else '✗ Not running'
+    kdc_version = status.get('kdeconnect_version', '')
+    print(f"  KDE Connect CLI: {kdc_installed}")
+    print(f"  KDE Connect Daemon: {kdc_daemon}")
+    if kdc_version:
+        print(f"  KDE Connect Version: {kdc_version}")
+    print(f"  D-Bus: {'✓' if status.get('dbus_available') else '✗'}")
+    print(f"  Notification Listener: {'✓ Active' if status.get('notification_listener_active') else '○ Inactive'}")
+    print(f"  scrcpy: {'✓' if status['scrcpy_available'] else '✗'}")
+    print(f"  ADB: {'✓' if status['adb_available'] else '✗'}")
+    print(f"  mDNS/Zeroconf: {'✓' if status['zeroconf_available'] else '✗'}")
     print()
-    
-    kdeconnect_status = "✓ Available" if status['kdeconnect_available'] else "✗ Not Installed"
-    zeroconf_status = "✓ Available" if status['zeroconf_available'] else "✗ Not Available"
-    print(f"KDE Connect: {kdeconnect_status}")
-    print(f"Zeroconf/mDNS: {zeroconf_status}")
-    
-    if not status['kdeconnect_available']:
-        print("\n  ℹ️  Install KDE Connect for full phone integration features")
-        print("     (notifications, battery status, file sharing, find phone)")
-    
-    print()
-    print(f"Paired Devices: {status['paired_devices']}")
-    print(f"Online Devices: {status['online_devices']}")
+    print(f"Devices: {status['devices_count']} total, {status['paired_count']} paired, {status['online_count']} online")
     print()
     
     if status['devices']:
-        print("Devices:")
-        print("-" * 50)
+        print("Connected Devices:")
         for device in status['devices']:
-            status_icon = "🟢" if device.get("online") else "⚪"
-            name = device.get("name", device.get("id", "Unknown"))
-            dtype = device.get("type", "unknown")
-            battery = device.get("battery", {})
-            battery_str = f" 🔋{battery.get('level')}%" if battery and battery.get('level') else ""
-            print(f"  {status_icon} {name} ({dtype}){battery_str}")
+            icon = "🟢" if device.get("is_reachable") else "⚪"
+            bat = f" 🔋{device.get('battery_level')}%" if device.get('battery_level', -1) >= 0 else ""
+            print(f"  {icon} {device.get('name')} ({device.get('device_type')}){bat}")
     else:
-        print("No paired devices. Use --pair to add a device.")
+        print("No devices paired. Use --discover to find devices.")
+    
+    if not status['kdeconnect_available']:
+        print()
+        print("⚠️  KDE Connect is not installed.")
+        print("   Install with: sudo apt install kdeconnect")
+    elif not status.get('kdeconnect_daemon_running'):
+        print()
+        print("⚠️  KDE Connect daemon is not running.")
+        print("   Start with: kdeconnect-indicator &")
     
     print("=" * 60 + "\n")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Aegis Mobile Link - Connect your phone to your desktop",
+        description=f"{APP_NAME} v{VERSION} - Enhanced Smartphone Integration",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  aegis-mobile-link                    # Launch GUI
-  aegis-mobile-link --status           # Show connection status
-  aegis-mobile-link --pair             # Start device pairing
-  aegis-mobile-link --unpair DEVICE_ID # Unpair a device
-  aegis-mobile-link --send file.txt    # Send file to paired device
-  aegis-mobile-link --receive          # Receive files (localhost only, secure)
-  aegis-mobile-link --receive-network  # Receive files from network (shows warning)
-  aegis-mobile-link --ping DEVICE_ID   # Ring/find your phone
-  aegis-mobile-link --discover         # Discover devices on network
-  aegis-mobile-link --notifications    # View phone notifications
-  aegis-mobile-link --battery          # Check device battery level
+  aegis-mobile-link                     # Launch GUI
+  aegis-mobile-link --status            # Show JSON status
+  aegis-mobile-link --discover          # Discover devices
+  aegis-mobile-link --pair              # Pair new device
+  aegis-mobile-link --ring DEVICE_ID    # Ring/find phone
+  aegis-mobile-link --send FILE         # Send file to phone
+  aegis-mobile-link --sms NUMBER MSG    # Send SMS
+  aegis-mobile-link --mirror            # Start screen mirror
+  aegis-mobile-link --qr                # Generate pairing QR
 
-Security Notes:
-  - File receive server binds to localhost by default (127.0.0.1)
-  - Use --receive-network to allow network access (with security warning)
-  - File uploads require authentication token (shown on server start)
+Features by tier:
+  Freemium: Basic pairing, file transfer, battery, find phone
+  Basic: + Notifications, clipboard sync
+  Pro: + SMS, calls, screen mirror, photo sync, media control, etc.
         """
     )
     
-    parser.add_argument('--status', '-s', action='store_true',
-                       help='Show mobile link status')
-    parser.add_argument('--pair', '-p', action='store_true',
-                       help='Start device pairing')
-    parser.add_argument('--unpair', '-u', metavar='DEVICE_ID',
-                       help='Unpair a device')
-    parser.add_argument('--send', metavar='FILE',
-                       help='Send a file to paired device')
-    parser.add_argument('--receive', '-r', action='store_true',
-                       help='Start receiving files (localhost only - secure)')
-    parser.add_argument('--receive-network', action='store_true',
-                       help='Start receiving files from network (0.0.0.0 - less secure)')
-    parser.add_argument('--ping', metavar='DEVICE_ID', nargs='?', const='first',
-                       help='Ring/find your phone')
-    parser.add_argument('--discover', '-d', action='store_true',
-                       help='Discover devices on the network')
-    parser.add_argument('--notifications', '-n', action='store_true',
-                       help='View phone notifications')
-    parser.add_argument('--battery', '-b', metavar='DEVICE_ID', nargs='?', const='first',
-                       help='Check device battery level')
-    parser.add_argument('--list', '-l', action='store_true',
-                       help='List paired devices')
-    parser.add_argument('--gui', '-g', action='store_true',
-                       help='Launch GUI mode')
-    parser.add_argument('--version', '-v', action='store_true',
-                       help='Show version')
+    parser.add_argument('--status', '-s', action='store_true', help='Show status as JSON')
+    parser.add_argument('--gui', '-g', action='store_true', help='Launch GUI mode')
+    parser.add_argument('--discover', '-d', action='store_true', help='Discover devices')
+    parser.add_argument('--list', '-l', action='store_true', help='List paired devices')
+    parser.add_argument('--pair', '-p', metavar='DEVICE_ID', nargs='?', const='auto', help='Pair device')
+    parser.add_argument('--unpair', '-u', metavar='DEVICE_ID', help='Unpair device')
+    parser.add_argument('--ring', metavar='DEVICE_ID', help='Ring/find device')
+    parser.add_argument('--battery', '-b', metavar='DEVICE_ID', nargs='?', const='first', help='Check battery')
+    parser.add_argument('--send', metavar='FILE', help='Send file to first paired device')
+    parser.add_argument('--send-to', nargs=2, metavar=('DEVICE_ID', 'FILE'), help='Send file to specific device')
+    parser.add_argument('--sms', nargs=2, metavar=('NUMBER', 'MESSAGE'), help='Send SMS')
+    parser.add_argument('--clipboard', metavar='DEVICE_ID', nargs='?', const='first', help='Share clipboard')
+    parser.add_argument('--media', metavar='ACTION', choices=['play', 'pause', 'next', 'previous', 'stop'], help='Media control')
+    parser.add_argument('--mirror', action='store_true', help='Start screen mirroring')
+    parser.add_argument('--qr', action='store_true', help='Generate pairing QR code')
+    parser.add_argument('--version', '-v', action='version', version=f'{APP_NAME} v{VERSION}')
     
     args = parser.parse_args()
-    
-    if args.version:
-        print("Aegis Mobile Link v1.1.0")
-        print("Security improvements: localhost-only server, auth tokens")
-        return
-    
-    if args.gui or (not any(vars(args).values())):
-        if TKINTER_AVAILABLE:
-            try:
-                app = MobileLinkGUI()
-                app.run()
-            except Exception as e:
-                print(f"GUI Error: {e}")
-                print("Falling back to CLI mode...")
-                args.status = True
-        else:
-            print("GUI not available (tkinter not installed)")
-            print("Running in CLI mode...")
-            args.status = True
-    
-    mobile = AegisMobileLink()
+    service = MobileLinkService()
     
     if args.status:
-        show_cli_status(mobile)
-    
+        print(json.dumps(service.get_status(), indent=2))
     elif args.list:
-        devices = mobile.get_paired_devices()
-        print("\n📱 Paired Devices:")
-        print("-" * 40)
-        if devices:
-            for device in devices:
-                status = "🟢 Online" if device.get("online") else "⚪ Offline"
-                print(f"  {device.get('id')}: {device.get('name')} - {status}")
-        else:
-            print("  No paired devices")
-        print()
-    
+        print_status_cli(service)
     elif args.discover:
-        print("\n🔍 Discovering devices on the network...")
-        
-        if not mobile._check_kdeconnect():
-            print("\n   ℹ️  Note: KDE Connect is not installed.")
-            print("   Discovery will use network scanning only (limited).")
-            print("   Install KDE Connect for better device discovery.\n")
-        
-        devices = mobile.discover_devices(timeout=10)
-        
+        print("🔍 Discovering devices...")
+        devices = service.discover_devices(timeout=5)
         if devices:
-            print(f"\nFound {len(devices)} device(s):\n")
-            for i, device in enumerate(devices):
-                name = device.get("name", device.get("ip", "Unknown"))
-                dtype = device.get("type", "unknown")
-                ip = device.get("ip", "N/A")
-                reachable = device.get("reachable", "unknown")
-                print(f"  {i+1}. {name}")
-                print(f"     Type: {dtype} | IP: {ip}")
-                if dtype == "kdeconnect":
-                    print(f"     Reachable: {'Yes' if reachable else 'No'}")
-                print()
+            print(f"\nFound {len(devices)} devices:")
+            for d in devices:
+                paired = "✓ paired" if d.is_paired else "○ unpaired"
+                print(f"  [{d.id}] {d.name} ({d.device_type}) - {paired}")
         else:
-            print("\nNo devices found.")
-            print("\nTroubleshooting tips:")
-            print("  • Ensure devices are on the same WiFi network")
-            print("  • Install KDE Connect on your phone and desktop")
-            print("  • Enable device discovery in KDE Connect settings")
-            print("  • Check firewall settings (ports 1714-1764 UDP/TCP)")
-    
+            print("No devices found")
     elif args.pair:
-        print("\n🔗 Device Pairing")
-        print("-" * 40)
-        
-        name = input("Enter device name: ").strip() or "New Device"
-        ip = input("Enter device IP (optional): ").strip()
-        
-        device_info = {"name": name, "ip": ip, "type": "manual"}
-        result = mobile.pair_device(device_info)
-        
-        if result.get("success"):
-            pin = result.get("pin", "")
-            if pin:
-                print(f"\n✅ Pairing initiated!")
-                print(f"\n   Enter this PIN on your phone: {pin}")
-                print("\n   Waiting for confirmation...")
-                
-                entered = input("\nEnter PIN to confirm (or press Enter to cancel): ").strip()
-                if entered:
-                    confirm = mobile.confirm_pairing(result.get("device_id"), entered)
-                    if confirm.get("success"):
-                        print(f"\n✅ {confirm.get('message')}")
-                    else:
-                        print(f"\n❌ {confirm.get('message')}")
+        if args.pair == 'auto':
+            devices = service.discover_devices(timeout=5)
+            unpaired = [d for d in devices if not d.is_paired]
+            if unpaired:
+                result = service.pair_device(unpaired[0])
+                print(result.get("message"))
             else:
-                print(f"\n✅ {result.get('message')}")
+                print("No unpaired devices found")
         else:
-            print(f"\n❌ {result.get('message')}")
-    
+            device = PhoneDevice(id=args.pair, name="Device")
+            result = service.pair_device(device)
+            print(result.get("message"))
     elif args.unpair:
-        result = mobile.unpair_device(args.unpair)
-        if result.get("success"):
-            print(f"✅ {result.get('message')}")
-        else:
-            print(f"❌ {result.get('message')}")
-    
-    elif args.send:
-        devices = mobile.get_paired_devices()
-        if not devices:
-            print("❌ No paired devices. Use --pair first.")
-            return
-        
-        device = devices[0]
-        print(f"Sending to {device.get('name')}...")
-        
-        result = mobile.send_file(device.get("id"), args.send)
-        if result.get("success"):
-            print(f"✅ {result.get('message')}")
-        else:
-            print(f"❌ {result.get('message')}")
-    
-    elif args.receive or args.receive_network:
-        bind_all = args.receive_network
-        
-        print("\n" + "=" * 60)
-        print("📥 Aegis Mobile Link - File Transfer Server")
-        print("=" * 60)
-        
-        server_result = mobile.start_file_server(bind_all=bind_all, show_warning=True)
-        
-        if not server_result.get("success"):
-            print(f"❌ Failed to start server: {server_result.get('message')}")
-            return
-        
-        print(f"\n   Bind Address: {server_result.get('bind_address', 'unknown')}")
-        print(f"   Port: {server_result.get('port')}")
-        print(f"   Files saved to: {server_result.get('transfer_dir')}")
-        
-        if bind_all:
-            print("\n" + "⚠️ " * 20)
-            print("   SECURITY WARNING: Server is accessible from the network!")
-            print("   Anyone on your local network can connect to this server.")
-            print("   Use Ctrl+C to stop when done receiving files.")
-            print("⚠️ " * 20)
-        else:
-            print("\n   🔒 Server is localhost-only (secure)")
-            print("   Only applications on this computer can upload files.")
-        
-        auth_token = server_result.get("auth_token")
-        if auth_token:
-            print(f"\n   🔑 Authentication Token: {auth_token}")
-            print("   Include 'X-Auth-Token: <token>' header in upload requests")
-            print("\n   Example upload command:")
-            print(f"   curl -X POST -H 'X-Auth-Token: {auth_token}' \\")
-            print(f"        -H 'X-Filename: myfile.txt' --data-binary @myfile.txt \\")
-            print(f"        http://{server_result.get('bind_address')}:{server_result.get('port')}/upload")
-        
-        print("\n   Press Ctrl+C to stop\n")
-        print("=" * 60)
-        
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            mobile.stop_file_server()
-            print("\n✓ Server stopped.")
-    
-    elif args.ping:
-        device_id = args.ping
-        if device_id == 'first':
-            devices = mobile.get_paired_devices()
-            if devices:
-                device_id = devices[0].get("id")
-            else:
-                print("❌ No paired devices")
-                return
-        
-        print(f"📍 Pinging device...")
-        result = mobile.ping_device(device_id)
-        if result.get("success"):
-            print(f"✅ {result.get('message')}")
-        else:
-            print(f"❌ {result.get('message')}")
-    
-    elif args.notifications:
-        notifications = mobile.get_notifications()
-        print("\n🔔 Phone Notifications")
-        print("-" * 50)
-        
-        if notifications:
-            for notif in notifications[:20]:
-                timestamp = notif.get("timestamp", "")[:19]
-                device = notif.get("device_name", "Unknown")
-                content = notif.get("content", "")
-                print(f"[{timestamp}] {device}")
-                print(f"  {content}\n")
-        else:
-            print("No notifications available.")
-            print("\nTo receive notifications, pair a device with KDE Connect")
-            print("and enable notification sync.")
-    
+        result = service.unpair_device(args.unpair)
+        print(result.get("message"))
+    elif args.ring:
+        result = service.ring_device(args.ring)
+        print(result.get("message"))
     elif args.battery:
         device_id = args.battery
-        if device_id == 'first':
-            devices = mobile.get_paired_devices()
-            if devices:
-                device_id = devices[0].get("id")
+        if device_id == 'first' and service.devices:
+            device_id = list(service.devices.keys())[0]
+        if device_id in service.devices:
+            service.refresh_devices()
+            device = service.devices[device_id]
+            if device.battery_level >= 0:
+                charge = " (charging)" if device.battery_charging else ""
+                print(f"Battery: {device.battery_level}%{charge}")
             else:
-                print("❌ No paired devices")
-                return
-        
-        battery = mobile.get_device_battery(device_id)
-        if battery and battery.get("level") is not None:
-            charge = " (Charging)" if battery.get("charging") else ""
-            print(f"🔋 Battery: {battery['level']}%{charge}")
+                print("Battery status not available")
         else:
-            print("❌ Unable to get battery status")
-            print("   This feature requires KDE Connect")
+            print("Device not found")
+    elif args.send:
+        if service.devices:
+            device_id = list(service.devices.keys())[0]
+            result = service.send_file(device_id, args.send)
+            print(result.get("message"))
+        else:
+            print("No paired devices")
+    elif args.send_to:
+        result = service.send_file(args.send_to[0], args.send_to[1])
+        print(result.get("message"))
+    elif args.sms:
+        if service.devices:
+            device_id = list(service.devices.keys())[0]
+            result = service.send_sms(device_id, args.sms[0], args.sms[1])
+            print(result.get("message"))
+        else:
+            print("No paired devices")
+    elif args.clipboard:
+        device_id = args.clipboard
+        if device_id == 'first' and service.devices:
+            device_id = list(service.devices.keys())[0]
+        if device_id:
+            result = service.share_clipboard(device_id)
+            print(result.get("message"))
+        else:
+            print("No devices found")
+    elif args.media:
+        if service.devices:
+            device_id = list(service.devices.keys())[0]
+            result = service.control_media(device_id, args.media)
+            print(result.get("message"))
+        else:
+            print("No paired devices")
+    elif args.mirror:
+        if service.devices:
+            device_id = list(service.devices.keys())[0]
+            result = service.start_screen_mirror(device_id)
+            print(result.get("message"))
+            if result.get("success"):
+                print("Press Ctrl+C to stop")
+                try:
+                    while service.screen_mirror_process and service.screen_mirror_process.poll() is None:
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    service.stop_screen_mirror()
+        else:
+            print("No paired devices")
+    elif args.qr:
+        qr_path = service.generate_qr_image()
+        if qr_path:
+            print(f"QR code saved to: {qr_path}")
+            try:
+                subprocess.run(["xdg-open", qr_path])
+            except:
+                pass
+        else:
+            qr_data = service.generate_pairing_qr()
+            if qr_data:
+                print("Pairing data (install qrcode module for image):")
+                print(qr_data)
+            else:
+                print("QR generation not available")
+    elif args.gui or not any(vars(args).values()):
+        if TKINTER_AVAILABLE:
+            gui = MobileLinkGUI(service)
+            gui.run()
+        else:
+            print("GUI requires tkinter. Use --help for CLI options.")
+            print_status_cli(service)
+    else:
+        print_status_cli(service)
 
 
 if __name__ == "__main__":

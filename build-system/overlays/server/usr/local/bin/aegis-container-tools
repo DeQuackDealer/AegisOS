@@ -135,10 +135,191 @@ class AegisContainerTools:
             pass
         return []
     
+    def _detect_runtime(self) -> str:
+        """Detect available container runtime (docker or podman)."""
+        if self.check_tool_installed("docker"):
+            try:
+                result = subprocess.run(
+                    ["docker", "info"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    return "docker"
+            except Exception:
+                pass
+        
+        if self.check_tool_installed("podman"):
+            try:
+                result = subprocess.run(
+                    ["podman", "info"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    return "podman"
+            except Exception:
+                pass
+        
+        return ""
+    
+    def _list_containers(self, all_containers: bool = True) -> List[Dict[str, Any]]:
+        """List containers using detected runtime (docker ps -a or podman ps -a)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return []
+        
+        try:
+            cmd = [runtime, "ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}"]
+            if all_containers:
+                cmd.insert(2, "-a")
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                containers = []
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        parts = line.split('\t')
+                        if len(parts) >= 4:
+                            containers.append({
+                                "id": parts[0],
+                                "name": parts[1],
+                                "status": parts[2],
+                                "image": parts[3],
+                                "runtime": runtime
+                            })
+                return containers
+        except Exception as e:
+            self.logger.error(f"Error listing containers: {e}")
+        return []
+    
+    def _list_images(self) -> List[Dict[str, Any]]:
+        """List images using detected runtime (docker images or podman images)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return []
+        
+        try:
+            result = subprocess.run(
+                [runtime, "images", "--format", "{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}"],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                images = []
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        parts = line.split('\t')
+                        if len(parts) >= 4:
+                            images.append({
+                                "id": parts[0],
+                                "repository": parts[1],
+                                "tag": parts[2],
+                                "size": parts[3],
+                                "runtime": runtime
+                            })
+                return images
+        except Exception as e:
+            self.logger.error(f"Error listing images: {e}")
+        return []
+    
+    def _start_container(self, container: str) -> Dict[str, Any]:
+        """Start a container using detected runtime (docker start or podman start)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return {"success": False, "error": "No container runtime available"}
+        
+        try:
+            result = subprocess.run(
+                [runtime, "start", container],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0:
+                return {"success": True, "container": container, "runtime": runtime}
+            else:
+                return {"success": False, "error": result.stderr.strip(), "runtime": runtime}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _stop_container(self, container: str) -> Dict[str, Any]:
+        """Stop a container using detected runtime (docker stop or podman stop)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return {"success": False, "error": "No container runtime available"}
+        
+        try:
+            result = subprocess.run(
+                [runtime, "stop", container],
+                capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0:
+                return {"success": True, "container": container, "runtime": runtime}
+            else:
+                return {"success": False, "error": result.stderr.strip(), "runtime": runtime}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _pull_image(self, image: str) -> Dict[str, Any]:
+        """Pull an image using detected runtime (docker pull or podman pull)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return {"success": False, "error": "No container runtime available"}
+        
+        try:
+            result = subprocess.run(
+                [runtime, "pull", image],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode == 0:
+                return {"success": True, "image": image, "runtime": runtime, "output": result.stdout.strip()}
+            else:
+                return {"success": False, "error": result.stderr.strip(), "runtime": runtime}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Command timed out (5 minutes)"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _build_image(self, dockerfile_path: str, tag: str = None, context_path: str = None) -> Dict[str, Any]:
+        """Build an image using detected runtime (docker build or podman build)."""
+        runtime = self._detect_runtime()
+        if not runtime:
+            return {"success": False, "error": "No container runtime available"}
+        
+        dockerfile = Path(dockerfile_path)
+        if not dockerfile.exists():
+            return {"success": False, "error": f"Dockerfile not found: {dockerfile_path}"}
+        
+        if context_path is None:
+            context_path = str(dockerfile.parent)
+        
+        try:
+            cmd = [runtime, "build", "-f", str(dockerfile)]
+            if tag:
+                cmd.extend(["-t", tag])
+            cmd.append(context_path)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "tag": tag,
+                    "runtime": runtime,
+                    "output": result.stdout.strip()
+                }
+            else:
+                return {"success": False, "error": result.stderr.strip(), "runtime": runtime}
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Build timed out (10 minutes)"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     def get_status(self) -> Dict[str, Any]:
         return {
             "tools": self.get_tools_status(),
-            "docker_containers": len(self.list_docker_containers()),
+            "runtime": self._detect_runtime(),
+            "containers": len(self._list_containers()),
+            "images": len(self._list_images()),
             "k8s_pods": len(self.list_k8s_pods()),
             "tier": self.license_tier
         }

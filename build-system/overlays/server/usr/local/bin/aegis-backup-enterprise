@@ -14,9 +14,12 @@ import logging
 import argparse
 import shutil
 import time
+import hashlib
+import tempfile
+import threading
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Callable
 
 TIER_LIMIT = "server"
 VERSION = "1.5.0"
@@ -132,6 +135,722 @@ class AegisBackupEnterprise:
             "tier": self.license_tier
         }
     
+    def _run_rsync_backup(self, source: str, destination: str, 
+                          exclude_patterns: Optional[List[str]] = None,
+                          delete_removed: bool = False,
+                          dry_run: bool = False,
+                          progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        if not self.check_tool_installed("rsync"):
+            return {"success": False, "error": "rsync is not installed"}
+        
+        source_path = Path(source)
+        if not source_path.exists():
+            return {"success": False, "error": f"Source path does not exist: {source}"}
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest_path = Path(destination)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            
+            backup_dest = dest_path / f"rsync_backup_{timestamp}"
+            
+            latest_link = dest_path / "latest"
+            
+            cmd = [
+                "rsync",
+                "-avz",
+                "--info=progress2",
+                "--stats",
+                "--human-readable",
+            ]
+            
+            if latest_link.exists() and latest_link.is_symlink():
+                cmd.extend(["--link-dest", str(latest_link.resolve())])
+            
+            if exclude_patterns:
+                for pattern in exclude_patterns:
+                    cmd.extend(["--exclude", pattern])
+            
+            if delete_removed:
+                cmd.append("--delete")
+            
+            if dry_run:
+                cmd.append("--dry-run")
+            
+            source_str = str(source_path)
+            if source_path.is_dir() and not source_str.endswith("/"):
+                source_str += "/"
+            
+            cmd.extend([source_str, str(backup_dest) + "/"])
+            
+            self.logger.info(f"Running rsync command: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            output_lines = []
+            stats = {}
+            
+            def read_output():
+                for line in iter(process.stdout.readline, ''):
+                    line = line.strip()
+                    if line:
+                        output_lines.append(line)
+                        if progress_callback:
+                            progress_callback(line)
+                        if "%" in line or "to-check" in line.lower():
+                            self.logger.debug(f"Progress: {line}")
+            
+            reader_thread = threading.Thread(target=read_output)
+            reader_thread.start()
+            
+            stderr_output = process.stderr.read()
+            process.wait()
+            reader_thread.join(timeout=5)
+            
+            if process.returncode == 0 and not dry_run:
+                if latest_link.exists() or latest_link.is_symlink():
+                    latest_link.unlink()
+                latest_link.symlink_to(backup_dest)
+                
+                manifest = {
+                    "timestamp": timestamp,
+                    "source": source,
+                    "type": "rsync_incremental",
+                    "stats": "\n".join(output_lines[-20:]) if output_lines else ""
+                }
+                manifest_path = backup_dest / ".aegis_backup_manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2))
+            
+            return {
+                "success": process.returncode == 0,
+                "destination": str(backup_dest),
+                "dry_run": dry_run,
+                "returncode": process.returncode,
+                "stderr": stderr_output if stderr_output else None,
+                "files_transferred": len([l for l in output_lines if not l.startswith(" ")])
+            }
+            
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Backup operation timed out"}
+        except Exception as e:
+            self.logger.error(f"Rsync backup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _create_tar_backup(self, source: str, destination: str,
+                           compression: str = "gzip",
+                           exclude_patterns: Optional[List[str]] = None,
+                           progress_callback: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        if not self.check_tool_installed("tar"):
+            return {"success": False, "error": "tar is not installed"}
+        
+        source_path = Path(source)
+        if not source_path.exists():
+            return {"success": False, "error": f"Source path does not exist: {source}"}
+        
+        compression_opts = {
+            "gzip": {"ext": ".tar.gz", "flag": "-z"},
+            "bzip2": {"ext": ".tar.bz2", "flag": "-j"},
+            "xz": {"ext": ".tar.xz", "flag": "-J"},
+            "none": {"ext": ".tar", "flag": ""}
+        }
+        
+        if compression not in compression_opts:
+            return {"success": False, "error": f"Invalid compression: {compression}. Use: gzip, bzip2, xz, none"}
+        
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest_path = Path(destination)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            
+            archive_name = f"backup_{timestamp}{compression_opts[compression]['ext']}"
+            archive_path = dest_path / archive_name
+            
+            total_size = 0
+            total_files = 0
+            if source_path.is_dir():
+                for f in source_path.rglob('*'):
+                    if f.is_file():
+                        try:
+                            total_size += f.stat().st_size
+                            total_files += 1
+                        except (OSError, PermissionError):
+                            pass
+            else:
+                total_size = source_path.stat().st_size
+                total_files = 1
+            
+            cmd = ["tar"]
+            
+            comp_flag = compression_opts[compression]["flag"]
+            if comp_flag:
+                cmd.append(comp_flag)
+            
+            cmd.extend(["-cvf", str(archive_path)])
+            
+            if exclude_patterns:
+                for pattern in exclude_patterns:
+                    cmd.extend(["--exclude", pattern])
+            
+            cmd.extend(["--checkpoint=1000"])
+            cmd.extend(["--checkpoint-action=echo='%u files processed'"])
+            
+            cmd.extend(["-C", str(source_path.parent), source_path.name])
+            
+            self.logger.info(f"Running tar command: {' '.join(cmd)}")
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            files_processed = 0
+            stderr_lines = []
+            
+            def read_stderr():
+                nonlocal files_processed
+                for line in iter(process.stderr.readline, ''):
+                    line = line.strip()
+                    if line:
+                        stderr_lines.append(line)
+                        if "files processed" in line.lower():
+                            try:
+                                count = int(line.split()[0])
+                                files_processed = count
+                                if progress_callback and total_files > 0:
+                                    progress_callback(files_processed, total_files)
+                            except (ValueError, IndexError):
+                                pass
+            
+            stderr_thread = threading.Thread(target=read_stderr)
+            stderr_thread.start()
+            
+            stdout_output = process.stdout.read()
+            process.wait()
+            stderr_thread.join(timeout=5)
+            
+            if process.returncode == 0:
+                archive_stat = archive_path.stat()
+                
+                checksum = hashlib.sha256()
+                with open(archive_path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(8192), b''):
+                        checksum.update(chunk)
+                
+                checksum_file = archive_path.with_suffix(archive_path.suffix + ".sha256")
+                checksum_file.write_text(f"{checksum.hexdigest()}  {archive_name}\n")
+                
+                manifest = {
+                    "timestamp": timestamp,
+                    "source": source,
+                    "type": "tar_archive",
+                    "compression": compression,
+                    "archive_size": archive_stat.st_size,
+                    "original_size": total_size,
+                    "total_files": total_files,
+                    "checksum_sha256": checksum.hexdigest()
+                }
+                manifest_path = dest_path / f"{archive_name}.manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2))
+                
+                return {
+                    "success": True,
+                    "archive": str(archive_path),
+                    "size_bytes": archive_stat.st_size,
+                    "size_mb": round(archive_stat.st_size / (1024 * 1024), 2),
+                    "original_size_mb": round(total_size / (1024 * 1024), 2),
+                    "compression_ratio": round(total_size / archive_stat.st_size, 2) if archive_stat.st_size > 0 else 0,
+                    "files_archived": total_files,
+                    "checksum": checksum.hexdigest()
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "tar command failed",
+                    "returncode": process.returncode,
+                    "stderr": "\n".join(stderr_lines[-10:])
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Tar backup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _schedule_backup(self, source: str, destination: str,
+                         schedule: str = "daily",
+                         backup_type: str = "rsync",
+                         use_systemd: bool = True) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        valid_schedules = {
+            "hourly": {"systemd": "hourly", "cron": "0 * * * *"},
+            "daily": {"systemd": "daily", "cron": "0 2 * * *"},
+            "weekly": {"systemd": "weekly", "cron": "0 2 * * 0"},
+            "monthly": {"systemd": "monthly", "cron": "0 2 1 * *"}
+        }
+        
+        if schedule not in valid_schedules:
+            return {"success": False, "error": f"Invalid schedule: {schedule}. Use: hourly, daily, weekly, monthly"}
+        
+        if backup_type not in ["rsync", "tar"]:
+            return {"success": False, "error": f"Invalid backup type: {backup_type}. Use: rsync, tar"}
+        
+        try:
+            script_name = f"aegis-backup-{backup_type}-scheduled"
+            script_path = Path("/usr/local/bin") / script_name
+            
+            if backup_type == "rsync":
+                backup_cmd = f"aegis-backup-enterprise --rsync-backup '{source}' '{destination}'"
+            else:
+                backup_cmd = f"aegis-backup-enterprise --tar-backup '{source}' '{destination}'"
+            
+            script_content = f'''#!/bin/bash
+LOG_FILE="/var/log/aegis/scheduled-backup.log"
+mkdir -p "$(dirname "$LOG_FILE")"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting scheduled {backup_type} backup" >> "$LOG_FILE"
+{backup_cmd} >> "$LOG_FILE" 2>&1
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup completed successfully" >> "$LOG_FILE"
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup failed with exit code $EXIT_CODE" >> "$LOG_FILE"
+fi
+'''
+            
+            if use_systemd:
+                service_name = f"aegis-backup-{backup_type}"
+                service_path = Path("/etc/systemd/system") / f"{service_name}.service"
+                timer_path = Path("/etc/systemd/system") / f"{service_name}.timer"
+                
+                service_content = f'''[Unit]
+Description=Aegis Enterprise Scheduled {backup_type.title()} Backup
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart={script_path}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+'''
+                
+                timer_content = f'''[Unit]
+Description=Aegis Enterprise Backup Timer ({schedule})
+
+[Timer]
+OnCalendar={valid_schedules[schedule]["systemd"]}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
+'''
+                
+                try:
+                    script_path.write_text(script_content)
+                    script_path.chmod(0o755)
+                    
+                    service_path.write_text(service_content)
+                    timer_path.write_text(timer_content)
+                    
+                    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=30)
+                    subprocess.run(["systemctl", "enable", f"{service_name}.timer"], capture_output=True, timeout=30)
+                    subprocess.run(["systemctl", "start", f"{service_name}.timer"], capture_output=True, timeout=30)
+                    
+                    return {
+                        "success": True,
+                        "method": "systemd",
+                        "service": str(service_path),
+                        "timer": str(timer_path),
+                        "schedule": schedule,
+                        "backup_type": backup_type,
+                        "source": source,
+                        "destination": destination
+                    }
+                except PermissionError:
+                    self.logger.warning("No permission for systemd, falling back to cron")
+                    use_systemd = False
+            
+            if not use_systemd:
+                cron_schedule = valid_schedules[schedule]["cron"]
+                cron_entry = f"{cron_schedule} root {script_path}\n"
+                
+                cron_file = Path("/etc/cron.d/aegis-backup")
+                
+                try:
+                    script_path.write_text(script_content)
+                    script_path.chmod(0o755)
+                    
+                    existing_content = ""
+                    if cron_file.exists():
+                        existing_content = cron_file.read_text()
+                    
+                    if cron_entry not in existing_content:
+                        with open(cron_file, 'a') as f:
+                            f.write(cron_entry)
+                    
+                    return {
+                        "success": True,
+                        "method": "cron",
+                        "cron_file": str(cron_file),
+                        "cron_schedule": cron_schedule,
+                        "schedule": schedule,
+                        "backup_type": backup_type,
+                        "source": source,
+                        "destination": destination
+                    }
+                except PermissionError:
+                    user_cron_cmd = f'{cron_schedule} {script_path}'
+                    return {
+                        "success": False,
+                        "error": "Insufficient permissions. Add manually to crontab:",
+                        "cron_entry": user_cron_cmd
+                    }
+                    
+        except Exception as e:
+            self.logger.error(f"Schedule backup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _list_backup_history(self, backup_dir: Optional[str] = None,
+                             backup_type: Optional[str] = None,
+                             limit: int = 50) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        search_dir = Path(backup_dir) if backup_dir else Path(BACKUP_DIR)
+        
+        if not search_dir.exists():
+            return {
+                "success": True,
+                "backups": [],
+                "total_count": 0,
+                "message": f"Backup directory does not exist: {search_dir}"
+            }
+        
+        backups = []
+        
+        try:
+            for item in search_dir.iterdir():
+                if item.is_dir() and (item.name.startswith("backup_") or item.name.startswith("rsync_backup_")):
+                    if backup_type == "tar":
+                        continue
+                    
+                    manifest_path = item / ".aegis_backup_manifest.json"
+                    manifest = {}
+                    if manifest_path.exists():
+                        try:
+                            manifest = json.loads(manifest_path.read_text())
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    stat = item.stat()
+                    total_size = 0
+                    file_count = 0
+                    for f in item.rglob('*'):
+                        if f.is_file():
+                            try:
+                                total_size += f.stat().st_size
+                                file_count += 1
+                            except (OSError, PermissionError):
+                                pass
+                    
+                    backups.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "type": manifest.get("type", "rsync_incremental"),
+                        "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "size_bytes": total_size,
+                        "size_mb": round(total_size / (1024 * 1024), 2),
+                        "file_count": file_count,
+                        "source": manifest.get("source", "unknown"),
+                        "has_manifest": manifest_path.exists()
+                    })
+                
+                elif item.is_file() and item.suffix in [".tar", ".gz", ".bz2", ".xz"]:
+                    if backup_type == "rsync":
+                        continue
+                    
+                    if not (item.name.startswith("backup_") or "backup" in item.name.lower()):
+                        continue
+                    
+                    manifest_path = item.parent / f"{item.name}.manifest.json"
+                    manifest = {}
+                    if manifest_path.exists():
+                        try:
+                            manifest = json.loads(manifest_path.read_text())
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    stat = item.stat()
+                    
+                    checksum_file = item.parent / f"{item.name}.sha256"
+                    checksum = None
+                    if checksum_file.exists():
+                        try:
+                            checksum = checksum_file.read_text().split()[0]
+                        except (IndexError, IOError):
+                            pass
+                    
+                    backups.append({
+                        "name": item.name,
+                        "path": str(item),
+                        "type": "tar_archive",
+                        "compression": manifest.get("compression", self._detect_compression(item.name)),
+                        "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "size_bytes": stat.st_size,
+                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                        "original_size_mb": manifest.get("original_size", 0) / (1024 * 1024) if manifest.get("original_size") else None,
+                        "source": manifest.get("source", "unknown"),
+                        "checksum": checksum or manifest.get("checksum_sha256"),
+                        "has_manifest": manifest_path.exists()
+                    })
+            
+            backups = sorted(backups, key=lambda x: x["created"], reverse=True)
+            
+            total_size = sum(b["size_bytes"] for b in backups)
+            
+            return {
+                "success": True,
+                "backups": backups[:limit],
+                "total_count": len(backups),
+                "shown_count": min(len(backups), limit),
+                "total_size_bytes": total_size,
+                "total_size_gb": round(total_size / (1024 * 1024 * 1024), 2),
+                "backup_directory": str(search_dir)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"List backup history failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _detect_compression(self, filename: str) -> str:
+        if filename.endswith(".tar.gz") or filename.endswith(".tgz"):
+            return "gzip"
+        elif filename.endswith(".tar.bz2") or filename.endswith(".tbz2"):
+            return "bzip2"
+        elif filename.endswith(".tar.xz") or filename.endswith(".txz"):
+            return "xz"
+        elif filename.endswith(".tar"):
+            return "none"
+        return "unknown"
+    
+    def _restore_backup(self, backup_path: str, restore_destination: str,
+                        overwrite: bool = False,
+                        preserve_permissions: bool = True,
+                        dry_run: bool = False,
+                        progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        if not self.is_feature_available():
+            return {"success": False, "error": "Requires Server edition"}
+        
+        backup_source = Path(backup_path)
+        if not backup_source.exists():
+            return {"success": False, "error": f"Backup path does not exist: {backup_path}"}
+        
+        dest_path = Path(restore_destination)
+        
+        try:
+            if backup_source.is_file():
+                return self._restore_tar_backup(
+                    backup_source, dest_path, overwrite, preserve_permissions, 
+                    dry_run, progress_callback
+                )
+            elif backup_source.is_dir():
+                return self._restore_rsync_backup(
+                    backup_source, dest_path, overwrite, preserve_permissions,
+                    dry_run, progress_callback
+                )
+            else:
+                return {"success": False, "error": "Invalid backup path type"}
+                
+        except Exception as e:
+            self.logger.error(f"Restore backup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _restore_tar_backup(self, archive_path: Path, dest_path: Path,
+                            overwrite: bool, preserve_permissions: bool,
+                            dry_run: bool, progress_callback: Optional[Callable]) -> Dict[str, Any]:
+        if not self.check_tool_installed("tar"):
+            return {"success": False, "error": "tar is not installed"}
+        
+        checksum_file = archive_path.parent / f"{archive_path.name}.sha256"
+        if checksum_file.exists():
+            try:
+                expected_checksum = checksum_file.read_text().split()[0]
+                actual_checksum = hashlib.sha256()
+                with open(archive_path, 'rb') as f:
+                    for chunk in iter(lambda: f.read(8192), b''):
+                        actual_checksum.update(chunk)
+                
+                if actual_checksum.hexdigest() != expected_checksum:
+                    return {
+                        "success": False,
+                        "error": "Checksum verification failed - backup may be corrupted",
+                        "expected": expected_checksum,
+                        "actual": actual_checksum.hexdigest()
+                    }
+            except Exception as e:
+                self.logger.warning(f"Could not verify checksum: {e}")
+        
+        if not dry_run:
+            dest_path.mkdir(parents=True, exist_ok=True)
+        
+        if dest_path.exists() and any(dest_path.iterdir()) and not overwrite and not dry_run:
+            return {
+                "success": False,
+                "error": f"Destination is not empty: {dest_path}. Use overwrite=True to proceed."
+            }
+        
+        cmd = ["tar"]
+        
+        compression = self._detect_compression(archive_path.name)
+        comp_flags = {"gzip": "-z", "bzip2": "-j", "xz": "-J", "none": "", "unknown": "-a"}
+        if comp_flags.get(compression):
+            cmd.append(comp_flags[compression])
+        
+        cmd.extend(["-xvf", str(archive_path)])
+        cmd.extend(["-C", str(dest_path)])
+        
+        if preserve_permissions:
+            cmd.append("--preserve-permissions")
+        
+        if dry_run:
+            cmd = ["tar", "-tvf", str(archive_path)]
+            if comp_flags.get(compression):
+                cmd.insert(1, comp_flags[compression])
+        
+        self.logger.info(f"Running restore command: {' '.join(cmd)}")
+        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        files_restored = []
+        for line in iter(process.stdout.readline, ''):
+            line = line.strip()
+            if line:
+                files_restored.append(line)
+                if progress_callback:
+                    progress_callback(line)
+        
+        stderr_output = process.stderr.read()
+        process.wait()
+        
+        return {
+            "success": process.returncode == 0,
+            "backup_type": "tar_archive",
+            "archive": str(archive_path),
+            "destination": str(dest_path),
+            "dry_run": dry_run,
+            "files_restored": len(files_restored),
+            "returncode": process.returncode,
+            "stderr": stderr_output if stderr_output else None
+        }
+    
+    def _restore_rsync_backup(self, backup_dir: Path, dest_path: Path,
+                              overwrite: bool, preserve_permissions: bool,
+                              dry_run: bool, progress_callback: Optional[Callable]) -> Dict[str, Any]:
+        if not self.check_tool_installed("rsync"):
+            return {"success": False, "error": "rsync is not installed"}
+        
+        if not dry_run:
+            dest_path.mkdir(parents=True, exist_ok=True)
+        
+        if dest_path.exists() and any(dest_path.iterdir()) and not overwrite and not dry_run:
+            return {
+                "success": False,
+                "error": f"Destination is not empty: {dest_path}. Use overwrite=True to proceed."
+            }
+        
+        cmd = [
+            "rsync",
+            "-avz",
+            "--info=progress2",
+            "--stats",
+            "--human-readable"
+        ]
+        
+        if preserve_permissions:
+            cmd.append("--perms")
+            cmd.append("--owner")
+            cmd.append("--group")
+        
+        if dry_run:
+            cmd.append("--dry-run")
+        
+        source_str = str(backup_dir)
+        if not source_str.endswith("/"):
+            source_str += "/"
+        
+        cmd.extend([source_str, str(dest_path) + "/"])
+        
+        self.logger.info(f"Running restore command: {' '.join(cmd)}")
+        
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        
+        output_lines = []
+        
+        def read_output():
+            for line in iter(process.stdout.readline, ''):
+                line = line.strip()
+                if line:
+                    output_lines.append(line)
+                    if progress_callback:
+                        progress_callback(line)
+        
+        reader_thread = threading.Thread(target=read_output)
+        reader_thread.start()
+        
+        stderr_output = process.stderr.read()
+        process.wait()
+        reader_thread.join(timeout=5)
+        
+        manifest_path = backup_dir / ".aegis_backup_manifest.json"
+        original_source = "unknown"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text())
+                original_source = manifest.get("source", "unknown")
+            except json.JSONDecodeError:
+                pass
+        
+        return {
+            "success": process.returncode == 0,
+            "backup_type": "rsync_incremental",
+            "backup_source": str(backup_dir),
+            "original_source": original_source,
+            "destination": str(dest_path),
+            "dry_run": dry_run,
+            "files_restored": len([l for l in output_lines if not l.startswith(" ") and not l.startswith("sent")]),
+            "returncode": process.returncode,
+            "stderr": stderr_output if stderr_output else None
+        }
+    
     def run_cli(self):
         print(f"\n{'='*60}")
         print(f"  {APP_NAME} v{VERSION}")
@@ -169,24 +888,101 @@ class AegisBackupEnterprise:
 
 def main():
     parser = argparse.ArgumentParser(description=f"{APP_NAME}")
-    parser.add_argument("--gui", action="store_true")
-    parser.add_argument("--cli", action="store_true")
-    parser.add_argument("--backup", nargs=2, metavar=("SOURCE", "DEST"))
-    parser.add_argument("--list-backups", action="store_true")
-    parser.add_argument("--status", action="store_true")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
+    parser.add_argument("--cli", action="store_true", help="Launch CLI mode")
+    parser.add_argument("--backup", nargs=2, metavar=("SOURCE", "DEST"), help="Create backup (legacy)")
+    parser.add_argument("--list-backups", action="store_true", help="List basic backups")
+    parser.add_argument("--status", action="store_true", help="Show status")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
+    
+    parser.add_argument("--rsync-backup", nargs=2, metavar=("SOURCE", "DEST"),
+                        help="Create incremental rsync backup")
+    parser.add_argument("--tar-backup", nargs=2, metavar=("SOURCE", "DEST"),
+                        help="Create compressed tar archive backup")
+    parser.add_argument("--compression", default="gzip", choices=["gzip", "bzip2", "xz", "none"],
+                        help="Compression for tar backup (default: gzip)")
+    parser.add_argument("--exclude", action="append", metavar="PATTERN",
+                        help="Exclude pattern (can be specified multiple times)")
+    parser.add_argument("--delete-removed", action="store_true",
+                        help="Delete files in destination that don't exist in source (rsync)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Perform a dry run without making changes")
+    
+    parser.add_argument("--schedule-backup", nargs=2, metavar=("SOURCE", "DEST"),
+                        help="Schedule automated backup")
+    parser.add_argument("--schedule", default="daily", choices=["hourly", "daily", "weekly", "monthly"],
+                        help="Backup schedule (default: daily)")
+    parser.add_argument("--backup-type", default="rsync", choices=["rsync", "tar"],
+                        help="Type of scheduled backup (default: rsync)")
+    parser.add_argument("--use-cron", action="store_true",
+                        help="Use cron instead of systemd for scheduling")
+    
+    parser.add_argument("--backup-history", nargs="?", const=BACKUP_DIR, metavar="DIR",
+                        help="List backup history (optionally specify directory)")
+    parser.add_argument("--history-type", choices=["rsync", "tar"],
+                        help="Filter backup history by type")
+    parser.add_argument("--limit", type=int, default=50,
+                        help="Limit number of backups shown (default: 50)")
+    
+    parser.add_argument("--restore", nargs=2, metavar=("BACKUP", "DEST"),
+                        help="Restore backup to destination")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Overwrite existing files during restore")
+    parser.add_argument("--no-preserve-permissions", action="store_true",
+                        help="Don't preserve file permissions during restore")
     
     args = parser.parse_args()
     
-    if args.backup:
-        app = AegisBackupEnterprise(headless=True)
+    app = AegisBackupEnterprise(headless=True)
+    
+    if args.rsync_backup:
+        result = app._run_rsync_backup(
+            args.rsync_backup[0], 
+            args.rsync_backup[1],
+            exclude_patterns=args.exclude,
+            delete_removed=args.delete_removed,
+            dry_run=args.dry_run
+        )
+        print(json.dumps(result, indent=2))
+    elif args.tar_backup:
+        result = app._create_tar_backup(
+            args.tar_backup[0],
+            args.tar_backup[1],
+            compression=args.compression,
+            exclude_patterns=args.exclude
+        )
+        print(json.dumps(result, indent=2))
+    elif args.schedule_backup:
+        result = app._schedule_backup(
+            args.schedule_backup[0],
+            args.schedule_backup[1],
+            schedule=args.schedule,
+            backup_type=args.backup_type,
+            use_systemd=not args.use_cron
+        )
+        print(json.dumps(result, indent=2))
+    elif args.backup_history is not None:
+        result = app._list_backup_history(
+            backup_dir=args.backup_history if args.backup_history != BACKUP_DIR else None,
+            backup_type=args.history_type,
+            limit=args.limit
+        )
+        print(json.dumps(result, indent=2))
+    elif args.restore:
+        result = app._restore_backup(
+            args.restore[0],
+            args.restore[1],
+            overwrite=args.overwrite,
+            preserve_permissions=not args.no_preserve_permissions,
+            dry_run=args.dry_run
+        )
+        print(json.dumps(result, indent=2))
+    elif args.backup:
         result = app.create_backup(args.backup[0], args.backup[1])
         print(json.dumps(result, indent=2))
     elif args.list_backups:
-        app = AegisBackupEnterprise(headless=True)
         print(json.dumps(app.list_backups(), indent=2))
     elif args.status:
-        app = AegisBackupEnterprise(headless=True)
         print(json.dumps(app.get_status(), indent=2))
     elif args.cli or not GTK_AVAILABLE:
         app = AegisBackupEnterprise(headless=False)

@@ -74,6 +74,12 @@ HEARTBEAT_INTERVAL = 5
 RECONNECT_DELAY = 3
 MAX_RECONNECT_ATTEMPTS = 10
 
+BARRIER_CONFIG_DIR = Path.home() / ".local" / "share" / "barrier"
+BARRIER_CONFIG_FILE = BARRIER_CONFIG_DIR / "barrier.conf"
+BARRIER_SSL_DIR = BARRIER_CONFIG_DIR / "SSL"
+INPUT_LEAP_CONFIG_DIR = Path.home() / ".local" / "share" / "input-leap"
+INPUT_LEAP_CONFIG_FILE = INPUT_LEAP_CONFIG_DIR / "InputLeap.conf"
+
 
 class DeviceRole(Enum):
     SERVER = "server"
@@ -417,7 +423,7 @@ class AvahiDiscovery:
 
 
 class ClipboardManager:
-    """Cross-device clipboard synchronization"""
+    """Cross-device clipboard synchronization with X11 and Wayland support"""
     
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
@@ -425,10 +431,44 @@ class ClipboardManager:
         self.callbacks: List[Callable] = []
         self.running = False
         self.monitor_thread = None
+        self.display_server = self._detect_display_server()
+        self.clipboard_tools = self._detect_clipboard_tools()
+    
+    def _detect_display_server(self) -> str:
+        """Detect whether running on X11 or Wayland"""
+        wayland_display = os.environ.get('WAYLAND_DISPLAY', '')
+        xdg_session = os.environ.get('XDG_SESSION_TYPE', '')
+        
+        if wayland_display or xdg_session == 'wayland':
+            return 'wayland'
+        return 'x11'
+    
+    def _detect_clipboard_tools(self) -> Dict[str, str]:
+        """Detect available clipboard tools"""
+        tools = {'read': None, 'write': None}
+        
+        if self.display_server == 'wayland':
+            if shutil.which('wl-paste'):
+                tools['read'] = 'wl-paste'
+            if shutil.which('wl-copy'):
+                tools['write'] = 'wl-copy'
+        
+        if not tools['read']:
+            if shutil.which('xclip'):
+                tools['read'] = 'xclip'
+                tools['write'] = 'xclip'
+            elif shutil.which('xsel'):
+                tools['read'] = 'xsel'
+                tools['write'] = 'xsel'
+        
+        return tools
     
     def start(self):
         """Start clipboard monitoring"""
         if not self.enabled:
+            return
+        
+        if not self.clipboard_tools['read']:
             return
         
         self.running = True
@@ -458,34 +498,108 @@ class ClipboardManager:
             time.sleep(0.5)
     
     def _get_clipboard_content(self) -> Optional[ClipboardData]:
-        """Get current clipboard content"""
+        """Get current clipboard content with X11/Wayland support"""
         try:
-            result = subprocess.run(
-                ['xclip', '-selection', 'clipboard', '-o'],
-                capture_output=True, timeout=1
-            )
+            tool = self.clipboard_tools.get('read')
+            if not tool:
+                return None
+            
+            if tool == 'wl-paste':
+                cmd = ['wl-paste', '--no-newline']
+            elif tool == 'xclip':
+                cmd = ['xclip', '-selection', 'clipboard', '-o']
+            elif tool == 'xsel':
+                cmd = ['xsel', '--clipboard', '--output']
+            else:
+                return None
+            
+            result = subprocess.run(cmd, capture_output=True, timeout=2)
             if result.returncode == 0:
                 content = result.stdout
+                try:
+                    content.decode('utf-8')
+                    content_type = "text"
+                except UnicodeDecodeError:
+                    content_type = "binary"
+                
                 return ClipboardData(
-                    content_type="text" if content.decode('utf-8', errors='ignore') else "binary",
+                    content_type=content_type,
                     data=base64.b64encode(content).decode(),
                     timestamp=datetime.now().isoformat(),
                     size_bytes=len(content)
                 )
+        except subprocess.TimeoutExpired:
+            pass
         except Exception:
             pass
         return None
     
     def set_clipboard(self, data: ClipboardData) -> bool:
-        """Set clipboard content"""
+        """Set clipboard content with X11/Wayland support"""
         try:
+            tool = self.clipboard_tools.get('write')
+            if not tool:
+                return False
+            
             content = base64.b64decode(data.data)
-            process = subprocess.Popen(
-                ['xclip', '-selection', 'clipboard'],
-                stdin=subprocess.PIPE
-            )
-            process.communicate(input=content)
+            
+            if tool == 'wl-copy':
+                cmd = ['wl-copy']
+            elif tool == 'xclip':
+                cmd = ['xclip', '-selection', 'clipboard']
+            elif tool == 'xsel':
+                cmd = ['xsel', '--clipboard', '--input']
+            else:
+                return False
+            
+            process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+            process.communicate(input=content, timeout=2)
             self.last_content = data
+            return process.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return False
+    
+    def get_clipboard_image(self) -> Optional[bytes]:
+        """Get image from clipboard (PNG format)"""
+        try:
+            if self.display_server == 'wayland' and shutil.which('wl-paste'):
+                result = subprocess.run(
+                    ['wl-paste', '--type', 'image/png'],
+                    capture_output=True, timeout=2
+                )
+            elif shutil.which('xclip'):
+                result = subprocess.run(
+                    ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'],
+                    capture_output=True, timeout=2
+                )
+            else:
+                return None
+            
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except Exception:
+            pass
+        return None
+    
+    def set_clipboard_image(self, image_data: bytes) -> bool:
+        """Set image to clipboard"""
+        try:
+            if self.display_server == 'wayland' and shutil.which('wl-copy'):
+                process = subprocess.Popen(
+                    ['wl-copy', '--type', 'image/png'],
+                    stdin=subprocess.PIPE
+                )
+            elif shutil.which('xclip'):
+                process = subprocess.Popen(
+                    ['xclip', '-selection', 'clipboard', '-t', 'image/png'],
+                    stdin=subprocess.PIPE
+                )
+            else:
+                return False
+            
+            process.communicate(input=image_data, timeout=2)
             return process.returncode == 0
         except Exception:
             return False
@@ -493,6 +607,15 @@ class ClipboardManager:
     def on_change(self, callback: Callable):
         """Register clipboard change callback"""
         self.callbacks.append(callback)
+    
+    def get_available_tools(self) -> Dict[str, Any]:
+        """Get info about available clipboard tools"""
+        return {
+            "display_server": self.display_server,
+            "read_tool": self.clipboard_tools.get('read'),
+            "write_tool": self.clipboard_tools.get('write'),
+            "available": bool(self.clipboard_tools.get('read'))
+        }
 
 
 class FileTransferManager:
@@ -744,6 +867,10 @@ class DesktopLinkService:
         
         self.connection_threads: Dict[str, threading.Thread] = {}
         self.reconnect_counts: Dict[str, int] = {}
+        
+        self.barrier_server_process: Optional[subprocess.Popen] = None
+        self.barrier_client_process: Optional[subprocess.Popen] = None
+        self.barrier_backend: str = "none"
     
     def _get_tier(self) -> str:
         """Get current license tier"""
@@ -1034,6 +1161,13 @@ class DesktopLinkService:
         connected_count = sum(1 for p in self.peers.values() if p.status == "connected")
         trusted_count = len(self.trusted_devices)
         
+        barrier_server_running = (self.barrier_server_process is not None and 
+                                  self.barrier_server_process.poll() is None)
+        barrier_client_running = (self.barrier_client_process is not None and 
+                                  self.barrier_client_process.poll() is None)
+        
+        server_bin, client_bin, backend = self._detect_barrier_binary()
+        
         return {
             "version": VERSION,
             "tier": self.tier,
@@ -1053,6 +1187,14 @@ class DesktopLinkService:
             "monitors": self.config.monitors,
             "peers": [asdict(p) for p in self.peers.values()],
             "trusted_devices": list(self.trusted_devices.keys()),
+            "barrier": {
+                "backend": backend,
+                "available": backend != 'none',
+                "server_binary": server_bin,
+                "client_binary": client_bin,
+                "server_running": barrier_server_running,
+                "client_running": barrier_client_running,
+            },
             "features": {
                 "avahi_discovery": self.config.avahi_enabled,
                 "tls_encryption": self.config.encryption_enabled,
@@ -1062,7 +1204,8 @@ class DesktopLinkService:
                 "multi_monitor": True,
                 "auto_reconnect": self.config.auto_reconnect,
                 "nas_integration": self.config.nas_integration,
-                "mobile_integration": self.config.mobile_integration
+                "mobile_integration": self.config.mobile_integration,
+                "barrier_integration": backend != 'none'
             }
         }
     
@@ -1121,12 +1264,85 @@ class DesktopLinkService:
             if self.server_socket:
                 self.server_socket.close()
             
+            self.stop_barrier_server()
+            self.stop_barrier_client()
+            
             if self.config.auto_lock_on_disconnect:
                 self._lock_screen()
             
             return True
         except Exception:
             return False
+    
+    def start_barrier_server(self, port: int = 24800, enable_crypto: bool = True) -> Tuple[bool, str]:
+        """Start Barrier/Input Leap server mode.
+        Returns (success, message)
+        """
+        if self.barrier_server_process and self.barrier_server_process.poll() is None:
+            return (True, "Barrier server already running")
+        
+        self.stop_barrier_client()
+        
+        success, process, message = self._start_barrier_server(
+            port=port,
+            enable_crypto=enable_crypto
+        )
+        
+        if success and process:
+            self.barrier_server_process = process
+            _, _, self.barrier_backend = self._detect_barrier_binary()
+        
+        return (success, message)
+    
+    def stop_barrier_server(self) -> bool:
+        """Stop Barrier/Input Leap server."""
+        if self.barrier_server_process:
+            result = self._stop_barrier_process(self.barrier_server_process)
+            self.barrier_server_process = None
+            return result
+        return True
+    
+    def start_barrier_client(self, server_address: str, server_port: int = 24800, 
+                            enable_crypto: bool = True) -> Tuple[bool, str]:
+        """Start Barrier/Input Leap client mode.
+        Returns (success, message)
+        """
+        if self.barrier_client_process and self.barrier_client_process.poll() is None:
+            return (True, "Barrier client already running")
+        
+        self.stop_barrier_server()
+        
+        success, process, message = self._start_barrier_client(
+            server_address=server_address,
+            server_port=server_port,
+            enable_crypto=enable_crypto
+        )
+        
+        if success and process:
+            self.barrier_client_process = process
+            _, _, self.barrier_backend = self._detect_barrier_binary()
+        
+        return (success, message)
+    
+    def stop_barrier_client(self) -> bool:
+        """Stop Barrier/Input Leap client."""
+        if self.barrier_client_process:
+            result = self._stop_barrier_process(self.barrier_client_process)
+            self.barrier_client_process = None
+            return result
+        return True
+    
+    def discover_all_peers(self) -> List[Dict]:
+        """Discover all peers including Barrier/Input Leap devices."""
+        aegis_peers = self.discover_peers()
+        barrier_peers = self._discover_barrier_peers()
+        
+        all_peers = aegis_peers.copy()
+        for bp in barrier_peers:
+            if not any(p.get("ip_address") == bp.get("ip_address") for p in all_peers):
+                all_peers.append(bp)
+        
+        return all_peers
     
     def _server_loop(self):
         """Main server loop"""
@@ -1450,6 +1666,355 @@ class DesktopLinkService:
         self.config.gaming_mode = mode.value
         self._save_config()
         return mode.value
+    
+    def _detect_barrier_binary(self) -> Tuple[Optional[str], Optional[str], str]:
+        """Detect available Barrier/Input Leap binaries.
+        Returns (server_binary, client_binary, backend_name)
+        """
+        for server_bin, client_bin, name in [
+            ('input-leaps', 'input-leapc', 'Input Leap'),
+            ('barriers', 'barrierc', 'Barrier'),
+            ('synergys', 'synergyc', 'Synergy'),
+        ]:
+            if shutil.which(server_bin) and shutil.which(client_bin):
+                return (server_bin, client_bin, name)
+        
+        for server_bin, client_bin, name in [
+            ('input-leaps', 'input-leapc', 'Input Leap'),
+            ('barriers', 'barrierc', 'Barrier'),
+        ]:
+            if shutil.which(server_bin):
+                return (server_bin, None, name)
+            if shutil.which(client_bin):
+                return (None, client_bin, name)
+        
+        return (None, None, 'none')
+    
+    def _generate_barrier_config(self, server_hostname: Optional[str] = None) -> str:
+        """Generate Barrier/Input Leap configuration file.
+        Returns path to generated config file.
+        """
+        server_binary, client_binary, backend = self._detect_barrier_binary()
+        
+        if backend == 'Input Leap':
+            config_dir = INPUT_LEAP_CONFIG_DIR
+            config_file = INPUT_LEAP_CONFIG_FILE
+        else:
+            config_dir = BARRIER_CONFIG_DIR
+            config_file = BARRIER_CONFIG_FILE
+        
+        config_dir.mkdir(parents=True, exist_ok=True)
+        ssl_dir = config_dir / "SSL"
+        ssl_dir.mkdir(parents=True, exist_ok=True)
+        
+        hostname = server_hostname or self.config.device_name or socket.gethostname()
+        
+        screens_section = [f"\t{hostname}:"]
+        links_section = [f"\t{hostname}:"]
+        
+        for peer in self.peers.values():
+            if peer.enabled and peer.trusted:
+                peer_name = peer.name.replace(' ', '-').replace('.', '-')
+                screens_section.append(f"\t{peer_name}:")
+                
+                edge = peer.edge_position.lower()
+                if edge == "right":
+                    links_section.append(f"\t\tright = {peer_name}")
+                elif edge == "left":
+                    links_section.append(f"\t\tleft = {peer_name}")
+                elif edge == "top":
+                    links_section.append(f"\t\tup = {peer_name}")
+                elif edge == "bottom":
+                    links_section.append(f"\t\tdown = {peer_name}")
+        
+        for peer in self.peers.values():
+            if peer.enabled and peer.trusted:
+                peer_name = peer.name.replace(' ', '-').replace('.', '-')
+                links_section.append(f"\t{peer_name}:")
+                
+                edge = peer.edge_position.lower()
+                if edge == "right":
+                    links_section.append(f"\t\tleft = {hostname}")
+                elif edge == "left":
+                    links_section.append(f"\t\tright = {hostname}")
+                elif edge == "top":
+                    links_section.append(f"\t\tdown = {hostname}")
+                elif edge == "bottom":
+                    links_section.append(f"\t\tup = {hostname}")
+        
+        config_content = f"""# Barrier/Input Leap configuration
+# Generated by Aegis Desktop Link v{VERSION}
+# {datetime.now().isoformat()}
+
+section: screens
+{chr(10).join(screens_section)}
+end
+
+section: aliases
+end
+
+section: links
+{chr(10).join(links_section)}
+end
+
+section: options
+    relativeMouseMoves = false
+    screenSaverSync = true
+    win32KeepForeground = false
+    clipboardSharing = {'true' if self.config.clipboard_sharing else 'false'}
+    switchCorners = {'all' if self.config.corner_switch else 'none'}
+    switchCornerSize = {self.config.corner_size}
+    switchDelay = {self.config.switch_delay_ms}
+end
+"""
+        
+        with open(config_file, 'w') as f:
+            f.write(config_content)
+        
+        os.chmod(config_file, 0o600)
+        
+        return str(config_file)
+    
+    def _start_barrier_server(self, 
+                               config_path: Optional[str] = None,
+                               address: str = "0.0.0.0",
+                               port: int = 24800,
+                               enable_crypto: bool = True) -> Tuple[bool, Optional[subprocess.Popen], str]:
+        """Start Barrier/Input Leap server.
+        Returns (success, process, message)
+        """
+        server_binary, _, backend = self._detect_barrier_binary()
+        
+        if not server_binary:
+            return (False, None, "No Barrier/Input Leap server binary found. "
+                   "Please install 'barrier' or 'input-leap' package.")
+        
+        if not config_path:
+            config_path = self._generate_barrier_config()
+        
+        if not Path(config_path).exists():
+            return (False, None, f"Configuration file not found: {config_path}")
+        
+        cmd = [server_binary]
+        
+        cmd.extend(['--config', config_path])
+        cmd.extend(['--address', f"{address}:{port}"])
+        
+        if not enable_crypto:
+            cmd.append('--disable-crypto')
+        
+        cmd.extend(['--no-daemon'])
+        
+        if self.config.encryption_enabled and enable_crypto:
+            ssl_dir = BARRIER_CONFIG_DIR / "SSL" if backend == 'Barrier' else INPUT_LEAP_CONFIG_DIR / "SSL"
+            ssl_dir.mkdir(parents=True, exist_ok=True)
+            
+            fingerprints_file = ssl_dir / "Fingerprints" / "TrustedServers.txt"
+            fingerprints_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            for peer in self.peers.values():
+                if peer.trusted and peer.public_key:
+                    with open(fingerprints_file, 'a') as f:
+                        f.write(f"{peer.public_key}\n")
+        
+        try:
+            env = os.environ.copy()
+            if 'DISPLAY' not in env:
+                env['DISPLAY'] = ':0'
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                start_new_session=True
+            )
+            
+            time.sleep(0.5)
+            if process.poll() is not None:
+                _, stderr = process.communicate(timeout=1)
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                return (False, None, f"Server failed to start: {error_msg}")
+            
+            return (True, process, f"{backend} server started on {address}:{port}")
+            
+        except FileNotFoundError:
+            return (False, None, f"Binary not found: {server_binary}")
+        except Exception as e:
+            return (False, None, f"Failed to start server: {str(e)}")
+    
+    def _start_barrier_client(self,
+                               server_address: str,
+                               server_port: int = 24800,
+                               client_name: Optional[str] = None,
+                               enable_crypto: bool = True) -> Tuple[bool, Optional[subprocess.Popen], str]:
+        """Start Barrier/Input Leap client.
+        Returns (success, process, message)
+        """
+        _, client_binary, backend = self._detect_barrier_binary()
+        
+        if not client_binary:
+            return (False, None, "No Barrier/Input Leap client binary found. "
+                   "Please install 'barrier' or 'input-leap' package.")
+        
+        if not server_address:
+            return (False, None, "Server address is required")
+        
+        cmd = [client_binary]
+        
+        if client_name:
+            cmd.extend(['--name', client_name])
+        else:
+            cmd.extend(['--name', self.config.device_name or socket.gethostname()])
+        
+        if not enable_crypto:
+            cmd.append('--disable-crypto')
+        
+        cmd.append('--no-daemon')
+        
+        cmd.append(f"{server_address}:{server_port}")
+        
+        try:
+            env = os.environ.copy()
+            if 'DISPLAY' not in env:
+                env['DISPLAY'] = ':0'
+            
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                start_new_session=True
+            )
+            
+            time.sleep(0.5)
+            if process.poll() is not None:
+                _, stderr = process.communicate(timeout=1)
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                return (False, None, f"Client failed to start: {error_msg}")
+            
+            return (True, process, f"{backend} client connected to {server_address}:{server_port}")
+            
+        except FileNotFoundError:
+            return (False, None, f"Binary not found: {client_binary}")
+        except Exception as e:
+            return (False, None, f"Failed to start client: {str(e)}")
+    
+    def _stop_barrier_process(self, process: subprocess.Popen) -> bool:
+        """Stop a running Barrier/Input Leap process."""
+        if not process:
+            return True
+        
+        try:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+            return True
+        except Exception:
+            return False
+    
+    def _discover_barrier_peers(self, timeout: float = 5.0) -> List[Dict]:
+        """Discover Barrier/Input Leap peers using mDNS/Avahi.
+        Returns list of discovered devices.
+        """
+        discovered = []
+        
+        if not shutil.which('avahi-browse'):
+            return discovered
+        
+        service_types = [
+            '_barrier._tcp',
+            '_input-leap._tcp',
+            '_synergy._tcp',
+            '_aegis-desklink._tcp',
+        ]
+        
+        for service_type in service_types:
+            try:
+                result = subprocess.run(
+                    ['avahi-browse', '-ptr', service_type],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if not line or line.startswith('+'):
+                            continue
+                        
+                        parts = line.split(';')
+                        if len(parts) >= 8:
+                            try:
+                                ip_addr = parts[7]
+                                port_str = parts[8] if len(parts) > 8 else "24800"
+                                
+                                if not ip_addr or ip_addr.startswith('127.'):
+                                    continue
+                                
+                                device_info = {
+                                    "name": parts[3],
+                                    "hostname": parts[6].rstrip('.'),
+                                    "ip_address": ip_addr,
+                                    "port": int(port_str) if port_str.isdigit() else 24800,
+                                    "service_type": service_type,
+                                    "domain": parts[5],
+                                    "last_seen": datetime.now().isoformat()
+                                }
+                                
+                                if not any(d.get("ip_address") == ip_addr for d in discovered):
+                                    device_info["latency_ms"] = self._measure_latency(ip_addr)
+                                    discovered.append(device_info)
+                            except (ValueError, IndexError):
+                                continue
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception:
+                continue
+        
+        return discovered
+    
+    def get_barrier_status(self) -> Dict:
+        """Get status of Barrier/Input Leap integration."""
+        server_bin, client_bin, backend = self._detect_barrier_binary()
+        
+        server_running = False
+        client_running = False
+        
+        try:
+            result = subprocess.run(['pgrep', '-f', 'barriers|input-leaps'],
+                                   capture_output=True, timeout=2)
+            server_running = result.returncode == 0
+        except Exception:
+            pass
+        
+        try:
+            result = subprocess.run(['pgrep', '-f', 'barrierc|input-leapc'],
+                                   capture_output=True, timeout=2)
+            client_running = result.returncode == 0
+        except Exception:
+            pass
+        
+        config_exists = False
+        if backend == 'Input Leap':
+            config_exists = INPUT_LEAP_CONFIG_FILE.exists()
+        else:
+            config_exists = BARRIER_CONFIG_FILE.exists()
+        
+        return {
+            "backend": backend,
+            "available": backend != 'none',
+            "server_binary": server_bin,
+            "client_binary": client_bin,
+            "server_running": server_running,
+            "client_running": client_running,
+            "config_exists": config_exists,
+            "avahi_available": shutil.which('avahi-browse') is not None,
+            "clipboard_tools": self.clipboard.get_available_tools() if self.clipboard else {}
+        }
 
 
 class DesktopLinkGUI:

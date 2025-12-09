@@ -47,11 +47,15 @@ DS_PACKAGES = {
 }
 
 
+COMMON_DS_PACKAGES = ["numpy", "pandas", "scikit-learn", "scipy", "matplotlib", "seaborn", "jupyter", "jupyterlab"]
+
+
 class AegisDataScience:
     def __init__(self, headless: bool = False):
         self.headless = headless
         self.version = VERSION
         self.license_tier = LicenseTier.FREEMIUM
+        self.jupyter_process = None
         
         self.setup_logging()
         self.load_license_tier()
@@ -75,6 +79,359 @@ class AegisDataScience:
     
     def check_conda(self) -> bool:
         return shutil.which("conda") is not None
+    
+    def check_mamba(self) -> bool:
+        return shutil.which("mamba") is not None
+    
+    def _check_jupyter(self) -> Dict[str, Any]:
+        """Verifies Jupyter is installed and can start"""
+        result = {
+            "installed": False,
+            "jupyter_version": None,
+            "jupyterlab_version": None,
+            "can_start": False,
+            "jupyter_path": None,
+            "jupyterlab_path": None
+        }
+        
+        try:
+            jupyter_path = shutil.which("jupyter")
+            if jupyter_path:
+                result["jupyter_path"] = jupyter_path
+                result["installed"] = True
+                
+                version_result = subprocess.run(
+                    ["jupyter", "--version"],
+                    capture_output=True, text=True, timeout=30
+                )
+                if version_result.returncode == 0:
+                    for line in version_result.stdout.strip().split('\n'):
+                        if 'jupyter_core' in line.lower() or 'jupyter-core' in line.lower():
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                result["jupyter_version"] = parts[1].strip()
+                        elif 'jupyterlab' in line.lower():
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                result["jupyterlab_version"] = parts[1].strip()
+                
+                check_result = subprocess.run(
+                    ["jupyter", "notebook", "--version"],
+                    capture_output=True, text=True, timeout=30
+                )
+                result["can_start"] = check_result.returncode == 0
+            
+            jupyterlab_path = shutil.which("jupyter-lab")
+            if jupyterlab_path:
+                result["jupyterlab_path"] = jupyterlab_path
+                if not result["jupyterlab_version"]:
+                    lab_result = subprocess.run(
+                        ["jupyter-lab", "--version"],
+                        capture_output=True, text=True, timeout=30
+                    )
+                    if lab_result.returncode == 0:
+                        result["jupyterlab_version"] = lab_result.stdout.strip()
+            
+            self.logger.info(f"Jupyter check: installed={result['installed']}, can_start={result['can_start']}")
+            
+        except subprocess.TimeoutExpired:
+            self.logger.warning("Jupyter check timed out")
+            result["error"] = "Timeout checking Jupyter installation"
+        except Exception as e:
+            self.logger.error(f"Error checking Jupyter: {e}")
+            result["error"] = str(e)
+        
+        return result
+    
+    def _start_jupyter_lab(self, port: int = 8888, notebook_dir: str = None, 
+                           no_browser: bool = True, allow_root: bool = False) -> Dict[str, Any]:
+        """Launches JupyterLab with proper configuration"""
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        jupyter_check = self._check_jupyter()
+        if not jupyter_check.get("jupyterlab_path"):
+            return {"success": False, "error": "JupyterLab is not installed"}
+        
+        try:
+            cmd = ["jupyter-lab", f"--port={port}"]
+            
+            if notebook_dir:
+                notebook_path = Path(notebook_dir)
+                if notebook_path.exists():
+                    cmd.append(f"--notebook-dir={notebook_dir}")
+                else:
+                    return {"success": False, "error": f"Notebook directory does not exist: {notebook_dir}"}
+            
+            if no_browser:
+                cmd.append("--no-browser")
+            
+            if allow_root:
+                cmd.append("--allow-root")
+            
+            cmd.extend([
+                "--ip=0.0.0.0",
+                "--NotebookApp.token=''",
+                "--NotebookApp.password=''"
+            ])
+            
+            self.logger.info(f"Starting JupyterLab with command: {' '.join(cmd)}")
+            
+            self.jupyter_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
+            
+            import time
+            time.sleep(2)
+            
+            if self.jupyter_process.poll() is None:
+                return {
+                    "success": True,
+                    "pid": self.jupyter_process.pid,
+                    "port": port,
+                    "url": f"http://localhost:{port}/lab"
+                }
+            else:
+                stderr = self.jupyter_process.stderr.read().decode() if self.jupyter_process.stderr else ""
+                return {"success": False, "error": f"JupyterLab failed to start: {stderr}"}
+                
+        except Exception as e:
+            self.logger.error(f"Error starting JupyterLab: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _list_environments(self) -> Dict[str, Any]:
+        """Lists conda/mamba environments"""
+        result = {
+            "success": False,
+            "environments": [],
+            "manager": None
+        }
+        
+        try:
+            if self.check_mamba():
+                manager = "mamba"
+                cmd = ["mamba", "env", "list", "--json"]
+            elif self.check_conda():
+                manager = "conda"
+                cmd = ["conda", "env", "list", "--json"]
+            else:
+                return {"success": False, "error": "Neither conda nor mamba is installed"}
+            
+            result["manager"] = manager
+            
+            env_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if env_result.returncode == 0:
+                env_data = json.loads(env_result.stdout)
+                envs = []
+                
+                for env_path in env_data.get("envs", []):
+                    env_name = os.path.basename(env_path) if env_path else "base"
+                    if not env_name or env_path.endswith("anaconda3") or env_path.endswith("miniconda3"):
+                        env_name = "base"
+                    
+                    envs.append({
+                        "name": env_name,
+                        "path": env_path,
+                        "is_active": os.environ.get("CONDA_PREFIX") == env_path
+                    })
+                
+                result["environments"] = envs
+                result["success"] = True
+                self.logger.info(f"Found {len(envs)} {manager} environments")
+            else:
+                result["error"] = env_result.stderr
+                
+        except json.JSONDecodeError as e:
+            result["error"] = f"Failed to parse environment list: {e}"
+        except subprocess.TimeoutExpired:
+            result["error"] = "Timeout listing environments"
+        except Exception as e:
+            self.logger.error(f"Error listing environments: {e}")
+            result["error"] = str(e)
+        
+        return result
+    
+    def _create_environment(self, env_name: str, python_version: str = "3.11",
+                            packages: List[str] = None) -> Dict[str, Any]:
+        """Creates new conda environment with data science packages"""
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        if not env_name or not env_name.replace("_", "").replace("-", "").isalnum():
+            return {"success": False, "error": "Invalid environment name"}
+        
+        try:
+            if self.check_mamba():
+                manager = "mamba"
+            elif self.check_conda():
+                manager = "conda"
+            else:
+                return {"success": False, "error": "Neither conda nor mamba is installed"}
+            
+            cmd = [manager, "create", "-n", env_name, f"python={python_version}", "-y"]
+            
+            if packages:
+                cmd.extend(packages)
+            
+            self.logger.info(f"Creating environment '{env_name}' with {manager}")
+            
+            create_result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600
+            )
+            
+            if create_result.returncode == 0:
+                result = {
+                    "success": True,
+                    "environment": env_name,
+                    "python_version": python_version,
+                    "manager": manager,
+                    "packages_installed": packages or []
+                }
+                
+                if packages:
+                    install_result = subprocess.run(
+                        [manager, "install", "-n", env_name, "-y"] + packages,
+                        capture_output=True, text=True, timeout=600
+                    )
+                    result["packages_success"] = install_result.returncode == 0
+                
+                self.logger.info(f"Environment '{env_name}' created successfully")
+                return result
+            else:
+                return {
+                    "success": False,
+                    "error": create_result.stderr,
+                    "output": create_result.stdout
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Timeout creating environment"}
+        except Exception as e:
+            self.logger.error(f"Error creating environment: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _install_packages(self, packages: List[str], use_conda: bool = False,
+                          env_name: str = None) -> Dict[str, Any]:
+        """Installs Python packages via pip/conda"""
+        if self.license_tier < LicenseTier.AIDEV:
+            return {"success": False, "error": "Requires AI Developer edition"}
+        
+        if not packages:
+            return {"success": False, "error": "No packages specified"}
+        
+        try:
+            if use_conda:
+                if self.check_mamba():
+                    manager = "mamba"
+                elif self.check_conda():
+                    manager = "conda"
+                else:
+                    return {"success": False, "error": "Conda/mamba not available, falling back to pip"}
+                
+                cmd = [manager, "install", "-y"]
+                if env_name:
+                    cmd.extend(["-n", env_name])
+                cmd.extend(packages)
+            else:
+                pip_cmd = shutil.which("pip3") or shutil.which("pip")
+                if not pip_cmd:
+                    return {"success": False, "error": "pip is not available"}
+                
+                cmd = [pip_cmd, "install", "--upgrade"]
+                cmd.extend(packages)
+            
+            self.logger.info(f"Installing packages: {', '.join(packages)}")
+            
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600
+            )
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "packages": packages,
+                    "method": "conda" if use_conda else "pip",
+                    "output": result.stdout
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.stderr,
+                    "packages": packages
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Timeout installing packages"}
+        except Exception as e:
+            self.logger.error(f"Error installing packages: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _detect_python_packages(self, packages: List[str] = None) -> Dict[str, Any]:
+        """Checks for common DS packages (pandas, numpy, sklearn, etc.)"""
+        if packages is None:
+            packages = COMMON_DS_PACKAGES
+        
+        result = {
+            "detected": {},
+            "missing": [],
+            "available": []
+        }
+        
+        try:
+            pip_cmd = shutil.which("pip3") or shutil.which("pip")
+            if not pip_cmd:
+                return {"success": False, "error": "pip is not available"}
+            
+            list_result = subprocess.run(
+                [pip_cmd, "list", "--format=json"],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            installed_packages = {}
+            if list_result.returncode == 0:
+                try:
+                    pkg_list = json.loads(list_result.stdout)
+                    installed_packages = {pkg["name"].lower(): pkg["version"] for pkg in pkg_list}
+                except json.JSONDecodeError:
+                    pass
+            
+            for pkg in packages:
+                pkg_lower = pkg.lower()
+                pkg_normalized = pkg_lower.replace("-", "_").replace("_", "-")
+                
+                version = None
+                for installed_name, installed_version in installed_packages.items():
+                    if (installed_name == pkg_lower or 
+                        installed_name.replace("-", "_") == pkg_lower.replace("-", "_")):
+                        version = installed_version
+                        break
+                
+                if version:
+                    result["detected"][pkg] = version
+                    result["available"].append(pkg)
+                else:
+                    result["missing"].append(pkg)
+            
+            result["success"] = True
+            result["total_checked"] = len(packages)
+            result["total_available"] = len(result["available"])
+            result["total_missing"] = len(result["missing"])
+            
+            self.logger.info(f"Package detection: {result['total_available']}/{result['total_checked']} available")
+            
+        except subprocess.TimeoutExpired:
+            result["success"] = False
+            result["error"] = "Timeout detecting packages"
+        except Exception as e:
+            self.logger.error(f"Error detecting packages: {e}")
+            result["success"] = False
+            result["error"] = str(e)
+        
+        return result
     
     def install_packages(self, packages: List[str], use_conda: bool = False) -> Dict[str, Any]:
         if self.license_tier < LicenseTier.AIDEV:

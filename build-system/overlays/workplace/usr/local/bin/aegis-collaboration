@@ -56,6 +56,26 @@ SCREEN_SHARE_TOOLS = {
     "rustdesk": {"name": "RustDesk", "command": "rustdesk", "description": "Open source remote desktop"}
 }
 
+PORTAL_SCREEN_SHARE_TOOLS = {
+    "xdg-desktop-portal": {"name": "XDG Desktop Portal", "service": "org.freedesktop.portal.Desktop", "check_cmd": ["busctl", "--user", "status", "org.freedesktop.portal.Desktop"]},
+    "xdg-desktop-portal-gtk": {"name": "GTK Portal Backend", "command": "xdg-desktop-portal-gtk"},
+    "xdg-desktop-portal-gnome": {"name": "GNOME Portal Backend", "command": "xdg-desktop-portal-gnome"},
+    "xdg-desktop-portal-kde": {"name": "KDE Portal Backend", "command": "xdg-desktop-portal-kde"},
+    "xdg-desktop-portal-wlr": {"name": "wlroots Portal Backend", "command": "xdg-desktop-portal-wlr"},
+    "pipewire": {"name": "PipeWire", "command": "pipewire", "service_check": "pipewire.service"},
+    "pipewire-screen-audio-capture": {"name": "PipeWire Screen Capture", "command": "pw-cli"}
+}
+
+TEAM_CHAT_APPS = {
+    "slack": {"name": "Slack", "command": "slack", "web_url": "https://slack.com", "icon": "slack"},
+    "element": {"name": "Element", "command": "element-desktop", "web_url": "https://app.element.io", "icon": "element"},
+    "mattermost": {"name": "Mattermost", "command": "mattermost-desktop", "web_url": None, "icon": "mattermost"},
+    "rocket-chat": {"name": "Rocket.Chat", "command": "rocketchat-desktop", "web_url": None, "icon": "rocketchat"},
+    "zulip": {"name": "Zulip", "command": "zulip", "web_url": None, "icon": "zulip"},
+    "telegram": {"name": "Telegram", "command": "telegram-desktop", "web_url": "https://web.telegram.org", "icon": "telegram"},
+    "signal": {"name": "Signal", "command": "signal-desktop", "web_url": None, "icon": "signal"}
+}
+
 
 class AegisCollaboration:
     def __init__(self, headless: bool = False):
@@ -234,6 +254,293 @@ class AegisCollaboration:
         
         return {"conferencing": conferencing, "screen_share": list(SCREEN_SHARE_TOOLS.keys())}
     
+    def _check_screen_share_tools(self) -> Dict[str, Any]:
+        """Detect available screen sharing tools including xdg-desktop-portal and pipewire"""
+        available_tools = {
+            "portal_tools": [],
+            "vnc_tools": [],
+            "has_portal_support": False,
+            "has_pipewire": False,
+            "recommended_method": None
+        }
+        
+        for tool_id, tool_info in PORTAL_SCREEN_SHARE_TOOLS.items():
+            tool_status = {"id": tool_id, "name": tool_info["name"], "available": False}
+            
+            if "check_cmd" in tool_info:
+                try:
+                    result = subprocess.run(tool_info["check_cmd"], capture_output=True, timeout=5)
+                    tool_status["available"] = result.returncode == 0
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    pass
+            elif "command" in tool_info:
+                tool_status["available"] = self.check_app_installed(tool_info["command"])
+            elif "service_check" in tool_info:
+                try:
+                    result = subprocess.run(
+                        ["systemctl", "--user", "is-active", tool_info["service_check"]],
+                        capture_output=True, timeout=5
+                    )
+                    tool_status["available"] = result.returncode == 0
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    pass
+            
+            available_tools["portal_tools"].append(tool_status)
+            
+            if tool_status["available"]:
+                if "xdg-desktop-portal" in tool_id:
+                    available_tools["has_portal_support"] = True
+                if "pipewire" in tool_id:
+                    available_tools["has_pipewire"] = True
+        
+        for tool_id, tool_info in SCREEN_SHARE_TOOLS.items():
+            installed = self.check_app_installed(tool_info["command"])
+            available_tools["vnc_tools"].append({
+                "id": tool_id,
+                "name": tool_info["name"],
+                "available": installed
+            })
+        
+        if available_tools["has_portal_support"] and available_tools["has_pipewire"]:
+            available_tools["recommended_method"] = "portal"
+        elif any(t["available"] for t in available_tools["vnc_tools"]):
+            for t in available_tools["vnc_tools"]:
+                if t["available"]:
+                    available_tools["recommended_method"] = t["id"]
+                    break
+        
+        self.logger.info(f"Screen share tools detected: portal={available_tools['has_portal_support']}, pipewire={available_tools['has_pipewire']}")
+        return available_tools
+    
+    def _start_screen_share(self, method: str = "auto", port: int = 5900) -> Dict[str, Any]:
+        """Initiate screen sharing using portal APIs or fallback to X11/VNC"""
+        if not self.is_feature_available("screen_sharing"):
+            return {"success": False, "error": "Screen sharing requires Workplace edition"}
+        
+        if self.screen_sharing_active:
+            return {"success": False, "error": "Screen sharing already active"}
+        
+        tools = self._check_screen_share_tools()
+        
+        if method == "auto":
+            method = tools["recommended_method"] or "x11vnc"
+        
+        if method == "portal":
+            try:
+                portal_script = '''
+import dbus
+bus = dbus.SessionBus()
+portal = bus.get_object('org.freedesktop.portal.Desktop', '/org/freedesktop/portal/desktop')
+screencast = dbus.Interface(portal, 'org.freedesktop.portal.ScreenCast')
+session_handle = screencast.CreateSession({})
+print(f"Portal session created: {session_handle}")
+'''
+                result = subprocess.run(
+                    ["python3", "-c", portal_script],
+                    capture_output=True, timeout=10, text=True
+                )
+                
+                if result.returncode == 0:
+                    self.screen_sharing_active = True
+                    self.logger.info("Screen sharing started via XDG Portal")
+                    return {"success": True, "method": "portal", "info": result.stdout.strip()}
+                else:
+                    self.logger.warning(f"Portal method failed: {result.stderr}, falling back to X11")
+                    method = "x11vnc"
+            except Exception as e:
+                self.logger.warning(f"Portal method failed: {e}, falling back to X11")
+                method = "x11vnc"
+        
+        if method in SCREEN_SHARE_TOOLS:
+            return self.start_screen_sharing(tool=method, port=port)
+        
+        display = os.environ.get("DISPLAY", ":0")
+        wayland_display = os.environ.get("WAYLAND_DISPLAY")
+        
+        if wayland_display and self.check_app_installed("wayvnc"):
+            try:
+                self.share_process = subprocess.Popen(
+                    ["wayvnc", "0.0.0.0", str(port)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                self.screen_sharing_active = True
+                self.logger.info(f"Screen sharing started via WayVNC on port {port}")
+                return {"success": True, "method": "wayvnc", "port": port}
+            except Exception as e:
+                self.logger.error(f"WayVNC failed: {e}")
+        
+        if self.check_app_installed("x11vnc"):
+            try:
+                self.share_process = subprocess.Popen(
+                    ["x11vnc", "-display", display, "-rfbport", str(port), "-forever", "-shared", "-nopw"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                self.screen_sharing_active = True
+                self.logger.info(f"Screen sharing started via X11VNC on port {port}")
+                return {"success": True, "method": "x11vnc", "port": port, "display": display}
+            except Exception as e:
+                self.logger.error(f"X11VNC failed: {e}")
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": "No screen sharing tools available"}
+    
+    def _start_video_conference(self, app_id: str = None, meeting_url: str = None) -> Dict[str, Any]:
+        """Launch video conferencing apps (Zoom, Teams, Meet) with optional meeting URL"""
+        if not self.is_feature_available("video_conferencing"):
+            return {"success": False, "error": "Video conferencing requires Workplace edition"}
+        
+        if app_id is None:
+            app_id = self.config.get("default_conferencing_app", "teams")
+        
+        if app_id not in CONFERENCING_APPS:
+            return {"success": False, "error": f"Unknown app: {app_id}", "available_apps": list(CONFERENCING_APPS.keys())}
+        
+        app = CONFERENCING_APPS[app_id]
+        
+        if app["command"] and self.check_app_installed(app["command"]):
+            try:
+                cmd = [app["command"]]
+                if meeting_url:
+                    if app_id == "zoom" and "zoom.us" in meeting_url:
+                        cmd.append(f"--url={meeting_url}")
+                    elif app_id == "teams":
+                        cmd.append(meeting_url)
+                
+                process = subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.logger.info(f"Launched {app['name']} (native) with PID {process.pid}")
+                return {"success": True, "app": app_id, "method": "native", "pid": process.pid}
+            except Exception as e:
+                self.logger.warning(f"Native app launch failed: {e}, falling back to web")
+        
+        try:
+            url = meeting_url if meeting_url else app["web_url"]
+            webbrowser.open(url)
+            self.logger.info(f"Launched {app['name']} (web)")
+            return {"success": True, "app": app_id, "method": "web", "url": url}
+        except Exception as e:
+            self.logger.error(f"Failed to launch web app: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _check_webcam(self) -> Dict[str, Any]:
+        """Detect available webcams using v4l2"""
+        webcams = {
+            "devices": [],
+            "count": 0,
+            "v4l2_available": False,
+            "default_device": None
+        }
+        
+        webcams["v4l2_available"] = self.check_app_installed("v4l2-ctl")
+        
+        video_devices = []
+        dev_path = Path("/dev")
+        try:
+            for device in dev_path.iterdir():
+                if device.name.startswith("video"):
+                    video_devices.append(str(device))
+        except PermissionError:
+            pass
+        
+        video_devices.sort()
+        
+        for device in video_devices:
+            device_info = {
+                "path": device,
+                "name": None,
+                "capabilities": [],
+                "formats": [],
+                "is_capture_device": False
+            }
+            
+            if webcams["v4l2_available"]:
+                try:
+                    result = subprocess.run(
+                        ["v4l2-ctl", "--device", device, "--info"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if "Card type" in line:
+                                device_info["name"] = line.split(':', 1)[1].strip()
+                            if "Video Capture" in line:
+                                device_info["is_capture_device"] = True
+                                device_info["capabilities"].append("capture")
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    pass
+                
+                try:
+                    result = subprocess.run(
+                        ["v4l2-ctl", "--device", device, "--list-formats"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if "'" in line:
+                                fmt = line.split("'")[1] if "'" in line else None
+                                if fmt:
+                                    device_info["formats"].append(fmt)
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    pass
+            else:
+                try:
+                    with open(f"/sys/class/video4linux/{Path(device).name}/name", 'r') as f:
+                        device_info["name"] = f.read().strip()
+                    device_info["is_capture_device"] = True
+                except (FileNotFoundError, PermissionError):
+                    device_info["name"] = Path(device).name
+            
+            if device_info["is_capture_device"] or device_info["name"]:
+                webcams["devices"].append(device_info)
+        
+        webcams["count"] = len(webcams["devices"])
+        if webcams["devices"]:
+            webcams["default_device"] = webcams["devices"][0]["path"]
+        
+        self.logger.info(f"Detected {webcams['count']} webcam(s)")
+        return webcams
+    
+    def _start_team_chat(self, app_id: str = None, use_web: bool = False) -> Dict[str, Any]:
+        """Open team chat applications (Slack, Element, etc.)"""
+        if not self.is_feature_available("team_chat"):
+            return {"success": False, "error": "Team chat requires Workplace edition"}
+        
+        if app_id is None:
+            for chat_id, chat_info in TEAM_CHAT_APPS.items():
+                if chat_info["command"] and self.check_app_installed(chat_info["command"]):
+                    app_id = chat_id
+                    break
+            if app_id is None:
+                app_id = "slack"
+        
+        if app_id not in TEAM_CHAT_APPS:
+            return {"success": False, "error": f"Unknown app: {app_id}", "available_apps": list(TEAM_CHAT_APPS.keys())}
+        
+        app = TEAM_CHAT_APPS[app_id]
+        
+        if not use_web and app["command"] and self.check_app_installed(app["command"]):
+            try:
+                process = subprocess.Popen(
+                    [app["command"]],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                self.logger.info(f"Launched {app['name']} (native) with PID {process.pid}")
+                return {"success": True, "app": app_id, "method": "native", "pid": process.pid}
+            except Exception as e:
+                self.logger.warning(f"Native app launch failed: {e}")
+        
+        if app["web_url"]:
+            try:
+                webbrowser.open(app["web_url"])
+                self.logger.info(f"Launched {app['name']} (web)")
+                return {"success": True, "app": app_id, "method": "web", "url": app["web_url"]}
+            except Exception as e:
+                self.logger.error(f"Failed to launch web app: {e}")
+                return {"success": False, "error": str(e)}
+        
+        return {"success": False, "error": f"No way to launch {app['name']}: not installed and no web version"}
+    
     def run_gui(self):
         if not GTK_AVAILABLE:
             print("GTK not available. Use --cli mode.")
@@ -259,6 +566,24 @@ class AegisCollaboration:
         for tool_id, tool_info in SCREEN_SHARE_TOOLS.items():
             installed = "✓" if self.check_app_installed(tool_info["command"]) else "✗"
             print(f"  {tool_info['name']}: {installed}")
+        
+        print("\nPortal/PipeWire Screen Sharing:")
+        tools = self._check_screen_share_tools()
+        print(f"  XDG Portal Support: {'✓' if tools['has_portal_support'] else '✗'}")
+        print(f"  PipeWire Available: {'✓' if tools['has_pipewire'] else '✗'}")
+        print(f"  Recommended Method: {tools['recommended_method'] or 'None available'}")
+        
+        print("\nTeam Chat Apps:")
+        for app_id, app_info in TEAM_CHAT_APPS.items():
+            installed = "✓" if app_info["command"] and self.check_app_installed(app_info["command"]) else ("Web" if app_info["web_url"] else "✗")
+            print(f"  {app_info['name']}: {installed}")
+        
+        print("\nWebcam Detection:")
+        webcams = self._check_webcam()
+        print(f"  v4l2-ctl Available: {'✓' if webcams['v4l2_available'] else '✗'}")
+        print(f"  Webcams Found: {webcams['count']}")
+        for cam in webcams["devices"]:
+            print(f"    - {cam['path']}: {cam['name'] or 'Unknown'}")
         
         if self.license_tier < LicenseTier.WORKPLACE:
             print("\n⚠ Upgrade to Workplace edition for collaboration features")
@@ -346,7 +671,14 @@ def main():
     parser.add_argument("--launch", metavar="APP", help="Launch conferencing app")
     parser.add_argument("--start-share", action="store_true", help="Start screen sharing")
     parser.add_argument("--stop-share", action="store_true", help="Stop screen sharing")
+    parser.add_argument("--share-method", metavar="METHOD", help="Screen share method (auto/portal/x11vnc/wayvnc)")
     parser.add_argument("--list-apps", action="store_true", help="List available apps")
+    parser.add_argument("--check-tools", action="store_true", help="Check available screen share tools")
+    parser.add_argument("--check-webcam", action="store_true", help="Detect available webcams")
+    parser.add_argument("--start-conference", metavar="APP", help="Start video conference (zoom/teams/meet)")
+    parser.add_argument("--meeting-url", metavar="URL", help="Meeting URL for video conference")
+    parser.add_argument("--start-chat", metavar="APP", nargs="?", const="auto", help="Start team chat app (slack/element/etc)")
+    parser.add_argument("--web", action="store_true", help="Use web version of apps")
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     
     args = parser.parse_args()
@@ -356,15 +688,35 @@ def main():
         app.launch_conferencing_app(args.launch)
     elif args.start_share:
         app = AegisCollaboration(headless=True)
-        result = app.start_screen_sharing()
+        method = args.share_method if args.share_method else "auto"
+        result = app._start_screen_share(method=method)
         print(json.dumps(result, indent=2))
     elif args.stop_share:
         app = AegisCollaboration(headless=True)
         result = app.stop_screen_sharing()
         print("Stopped" if result else "Failed")
+    elif args.check_tools:
+        app = AegisCollaboration(headless=True)
+        result = app._check_screen_share_tools()
+        print(json.dumps(result, indent=2))
+    elif args.check_webcam:
+        app = AegisCollaboration(headless=True)
+        result = app._check_webcam()
+        print(json.dumps(result, indent=2))
+    elif args.start_conference:
+        app = AegisCollaboration(headless=True)
+        result = app._start_video_conference(app_id=args.start_conference, meeting_url=args.meeting_url)
+        print(json.dumps(result, indent=2))
+    elif args.start_chat is not None:
+        app = AegisCollaboration(headless=True)
+        app_id = None if args.start_chat == "auto" else args.start_chat
+        result = app._start_team_chat(app_id=app_id, use_web=args.web)
+        print(json.dumps(result, indent=2))
     elif args.list_apps:
         app = AegisCollaboration(headless=True)
-        print(json.dumps(app.get_available_apps(), indent=2))
+        result = app.get_available_apps()
+        result["team_chat"] = list(TEAM_CHAT_APPS.keys())
+        print(json.dumps(result, indent=2))
     elif args.cli or not GTK_AVAILABLE:
         app = AegisCollaboration(headless=False)
         app.run_cli()

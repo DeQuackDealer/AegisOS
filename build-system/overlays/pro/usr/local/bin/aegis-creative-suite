@@ -32,9 +32,12 @@ import json
 import subprocess
 import argparse
 import shutil
+import glob as globlib
+import configparser
+import re
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 
@@ -176,6 +179,614 @@ class CreativeSuiteService:
         for app_id, app in self.apps.items():
             app.installed = shutil.which(app.command) is not None
     
+    def _detect_creative_apps(self) -> Dict[str, Dict[str, Any]]:
+        """Scan for installed creative applications via desktop files and binaries"""
+        detected_apps = {}
+        
+        desktop_dirs = [
+            Path("/usr/share/applications"),
+            Path("/usr/local/share/applications"),
+            Path.home() / ".local/share/applications",
+            Path("/var/lib/flatpak/exports/share/applications"),
+            Path.home() / ".local/share/flatpak/exports/share/applications",
+            Path("/var/lib/snapd/desktop/applications"),
+        ]
+        
+        app_desktop_patterns = {
+            "gimp": ["gimp*.desktop", "org.gimp.GIMP.desktop"],
+            "blender": ["blender*.desktop", "org.blender.Blender.desktop"],
+            "inkscape": ["inkscape*.desktop", "org.inkscape.Inkscape.desktop"],
+            "kdenlive": ["kdenlive*.desktop", "org.kde.kdenlive.desktop"],
+            "krita": ["krita*.desktop", "org.kde.krita.desktop"],
+            "audacity": ["audacity*.desktop", "org.audacityteam.Audacity.desktop"],
+            "ardour": ["ardour*.desktop"],
+            "lmms": ["lmms*.desktop", "io.lmms.LMMS.desktop"],
+            "openshot": ["openshot*.desktop", "org.openshot.OpenShot.desktop"],
+            "shotcut": ["shotcut*.desktop", "org.shotcut.Shotcut.desktop"],
+            "synfig": ["synfig*.desktop", "synfigstudio*.desktop"],
+            "rawtherapee": ["rawtherapee*.desktop", "com.rawtherapee.RawTherapee.desktop"],
+            "darktable": ["darktable*.desktop", "org.darktable.darktable.desktop"],
+            "scribus": ["scribus*.desktop", "net.scribus.Scribus.desktop"],
+            "xournalpp": ["xournalpp*.desktop", "com.github.xournalpp.xournalpp.desktop"],
+            "obs": ["obs*.desktop", "com.obsproject.Studio.desktop"],
+        }
+        
+        for app_id, patterns in app_desktop_patterns.items():
+            app_info = {
+                "id": app_id,
+                "installed": False,
+                "desktop_file": None,
+                "exec_command": None,
+                "icon": None,
+                "name": None,
+                "binary_path": None,
+            }
+            
+            if app_id in self.apps:
+                cmd = self.apps[app_id].command
+                binary = shutil.which(cmd)
+                if binary:
+                    app_info["installed"] = True
+                    app_info["binary_path"] = binary
+                    app_info["exec_command"] = cmd
+            
+            for desktop_dir in desktop_dirs:
+                if not desktop_dir.exists():
+                    continue
+                for pattern in patterns:
+                    matches = list(desktop_dir.glob(pattern))
+                    if matches:
+                        desktop_file = matches[0]
+                        app_info["desktop_file"] = str(desktop_file)
+                        try:
+                            parsed = self._parse_desktop_file(desktop_file)
+                            if parsed:
+                                app_info["name"] = parsed.get("Name", app_id.title())
+                                app_info["icon"] = parsed.get("Icon", "")
+                                exec_cmd = parsed.get("Exec", "")
+                                exec_cmd = re.sub(r'%[fFuUdDnNickvm]', '', exec_cmd).strip()
+                                app_info["exec_command"] = exec_cmd
+                                app_info["installed"] = True
+                        except Exception:
+                            pass
+                        break
+                if app_info["desktop_file"]:
+                    break
+            
+            detected_apps[app_id] = app_info
+        
+        for app_id, info in detected_apps.items():
+            if app_id in self.apps:
+                self.apps[app_id].installed = info["installed"]
+                if info.get("icon"):
+                    self.apps[app_id].icon = info["icon"]
+        
+        return detected_apps
+    
+    def _parse_desktop_file(self, filepath: Path) -> Optional[Dict[str, str]]:
+        """Parse a .desktop file and return its main section entries"""
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(str(filepath))
+            if "Desktop Entry" in config:
+                return dict(config["Desktop Entry"])
+        except Exception:
+            pass
+        return None
+    
+    def _launch_app(self, app_id: str, filepath: Optional[str] = None, 
+                    args: Optional[List[str]] = None) -> Tuple[bool, str]:
+        """Launch a creative application with proper arguments based on app type"""
+        if app_id not in self.apps:
+            return False, f"Unknown application: {app_id}"
+        
+        app = self.apps[app_id]
+        if not app.installed:
+            return False, f"{app.name} is not installed"
+        
+        app_launch_args = {
+            "gimp": {
+                "new_image": ["-n"],
+                "batch": ["-b"],
+            },
+            "blender": {
+                "background": ["--background"],
+                "render": ["-a"],
+                "python": ["--python"],
+            },
+            "inkscape": {
+                "export_png": ["--export-type=png"],
+                "export_pdf": ["--export-type=pdf"],
+                "export_svg": ["--export-type=svg"],
+            },
+            "kdenlive": {
+                "config": ["--config"],
+            },
+            "krita": {
+                "new_image": ["--new-image"],
+                "export": ["--export"],
+            },
+            "audacity": {},
+            "ardour": {
+                "session": [],
+            },
+            "obs": {
+                "startstreaming": ["--startstreaming"],
+                "startrecording": ["--startrecording"],
+                "minimize": ["--minimize-to-tray"],
+            },
+            "darktable": {
+                "library": ["--library"],
+            },
+            "rawtherapee": {},
+            "scribus": {
+                "python": ["-py"],
+            },
+            "shotcut": {},
+            "openshot": {},
+        }
+        
+        try:
+            cmd = [app.command]
+            
+            if args:
+                cmd.extend(args)
+            
+            if filepath:
+                file_path = Path(filepath)
+                if file_path.exists():
+                    ext = file_path.suffix.lower()
+                    
+                    if app_id == "blender" and ext in [".blend", ".obj", ".fbx", ".stl", ".gltf", ".glb"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "gimp" and ext in [".xcf", ".psd", ".png", ".jpg", ".jpeg", ".gif", ".tiff", ".bmp"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "inkscape" and ext in [".svg", ".svgz", ".pdf", ".eps", ".ai"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "kdenlive" and ext in [".kdenlive"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "krita" and ext in [".kra", ".ora", ".psd", ".png", ".jpg"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "audacity" and ext in [".aup", ".aup3", ".wav", ".mp3", ".ogg", ".flac"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "ardour" and file_path.is_dir():
+                        cmd.append(str(file_path))
+                    elif app_id == "darktable" and ext in [".xmp", ".cr2", ".nef", ".arw", ".dng", ".raw"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "rawtherapee" and ext in [".pp3", ".cr2", ".nef", ".arw", ".dng", ".raw"]:
+                        cmd.append(str(file_path))
+                    elif app_id == "scribus" and ext in [".sla", ".sla.gz"]:
+                        cmd.append(str(file_path))
+                    else:
+                        cmd.append(str(file_path))
+                    
+                    self.recent.insert(0, RecentProject(
+                        filepath=str(file_path),
+                        app_id=app_id,
+                        app_name=app.name,
+                        opened=datetime.now().isoformat()
+                    ))
+                    seen = set()
+                    self.recent = [r for r in self.recent if not (r.filepath in seen or seen.add(r.filepath))]
+                    self._save_recent()
+                else:
+                    return False, f"File not found: {filepath}"
+            
+            env = os.environ.copy()
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                           env=env, start_new_session=True)
+            return True, f"Launched {app.name}" + (f" with {filepath}" if filepath else "")
+        
+        except FileNotFoundError:
+            return False, f"Command not found: {app.command}"
+        except Exception as e:
+            return False, f"Failed to launch {app.name}: {str(e)}"
+    
+    def _get_recent_projects(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Scan for recent projects from application config files"""
+        recent_projects = {}
+        home = Path.home()
+        
+        app_config_locations = {
+            "gimp": {
+                "paths": [
+                    home / ".config/GIMP/2.10/recentrc",
+                    home / ".config/GIMP/2.10/gimprc",
+                ],
+                "parser": self._parse_gimp_recent,
+            },
+            "blender": {
+                "paths": [
+                    home / ".config/blender",
+                ],
+                "parser": self._parse_blender_recent,
+            },
+            "inkscape": {
+                "paths": [
+                    home / ".config/inkscape/preferences.xml",
+                ],
+                "parser": self._parse_inkscape_recent,
+            },
+            "kdenlive": {
+                "paths": [
+                    home / ".config/kdenliverc",
+                    home / ".local/share/kdenlive",
+                ],
+                "parser": self._parse_kdenlive_recent,
+            },
+            "krita": {
+                "paths": [
+                    home / ".config/kritarc",
+                    home / ".local/share/krita",
+                ],
+                "parser": self._parse_krita_recent,
+            },
+            "audacity": {
+                "paths": [
+                    home / ".audacity-data/audacity.cfg",
+                    home / ".config/audacity/audacity.cfg",
+                ],
+                "parser": self._parse_audacity_recent,
+            },
+            "darktable": {
+                "paths": [
+                    home / ".config/darktable/library.db",
+                ],
+                "parser": self._parse_darktable_recent,
+            },
+            "obs": {
+                "paths": [
+                    home / ".config/obs-studio/global.ini",
+                ],
+                "parser": self._parse_obs_recent,
+            },
+        }
+        
+        for app_id, config in app_config_locations.items():
+            projects = []
+            for config_path in config["paths"]:
+                if config_path.exists():
+                    try:
+                        found = config["parser"](config_path)
+                        if found:
+                            projects.extend(found)
+                    except Exception:
+                        pass
+            if projects:
+                recent_projects[app_id] = projects
+        
+        return recent_projects
+    
+    def _parse_gimp_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse GIMP recent files"""
+        projects = []
+        try:
+            content = config_path.read_text()
+            matches = re.findall(r'file://([^\s<>"]+)', content)
+            for match in matches[:10]:
+                filepath = match.replace('%20', ' ')
+                if Path(filepath).exists():
+                    projects.append({
+                        "filepath": filepath,
+                        "name": Path(filepath).name,
+                        "app": "gimp",
+                    })
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_blender_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Blender recent files from config directory"""
+        projects = []
+        try:
+            for version_dir in sorted(config_path.iterdir(), reverse=True):
+                recent_file = version_dir / "config/recent-files.txt"
+                if recent_file.exists():
+                    lines = recent_file.read_text().strip().split('\n')
+                    for line in lines[:10]:
+                        if Path(line).exists():
+                            projects.append({
+                                "filepath": line,
+                                "name": Path(line).name,
+                                "app": "blender",
+                            })
+                    break
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_inkscape_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Inkscape recent files from preferences"""
+        projects = []
+        try:
+            content = config_path.read_text()
+            matches = re.findall(r'recent[^"]*"([^"]+\.svg[z]?)"', content, re.IGNORECASE)
+            for match in matches[:10]:
+                if Path(match).exists():
+                    projects.append({
+                        "filepath": match,
+                        "name": Path(match).name,
+                        "app": "inkscape",
+                    })
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_kdenlive_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Kdenlive recent files"""
+        projects = []
+        try:
+            if config_path.is_file():
+                content = config_path.read_text()
+                matches = re.findall(r'File\d*=([^\n]+\.kdenlive)', content)
+                for match in matches[:10]:
+                    if Path(match).exists():
+                        projects.append({
+                            "filepath": match,
+                            "name": Path(match).name,
+                            "app": "kdenlive",
+                        })
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_krita_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Krita recent files"""
+        projects = []
+        try:
+            if config_path.is_file():
+                content = config_path.read_text()
+                matches = re.findall(r'File\d*=([^\n]+\.(?:kra|ora))', content)
+                for match in matches[:10]:
+                    if Path(match).exists():
+                        projects.append({
+                            "filepath": match,
+                            "name": Path(match).name,
+                            "app": "krita",
+                        })
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_audacity_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Audacity recent files"""
+        projects = []
+        try:
+            content = config_path.read_text()
+            matches = re.findall(r'file\d*=([^\n]+\.(?:aup|aup3))', content, re.IGNORECASE)
+            for match in matches[:10]:
+                if Path(match).exists():
+                    projects.append({
+                        "filepath": match,
+                        "name": Path(match).name,
+                        "app": "audacity",
+                    })
+        except Exception:
+            pass
+        return projects
+    
+    def _parse_darktable_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse Darktable - returns empty as it uses SQLite database"""
+        return []
+    
+    def _parse_obs_recent(self, config_path: Path) -> List[Dict[str, Any]]:
+        """Parse OBS recent scene collections"""
+        projects = []
+        try:
+            scenes_dir = config_path.parent / "basic/scenes"
+            if scenes_dir.exists():
+                for scene_file in sorted(scenes_dir.glob("*.json"), 
+                                         key=lambda x: x.stat().st_mtime, reverse=True)[:10]:
+                    projects.append({
+                        "filepath": str(scene_file),
+                        "name": scene_file.stem,
+                        "app": "obs",
+                    })
+        except Exception:
+            pass
+        return projects
+    
+    def _import_media(self, source_path: str, destination_dir: Optional[str] = None) -> Dict[str, Any]:
+        """Organize imported media files by type into structured directories"""
+        source = Path(source_path)
+        if not source.exists():
+            return {"success": False, "error": f"Source not found: {source_path}"}
+        
+        if destination_dir:
+            dest_base = Path(destination_dir)
+        else:
+            dest_base = Path.home() / "Creative Projects" / "Media Library"
+        
+        media_categories = {
+            "images": {
+                "extensions": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", 
+                              ".webp", ".svg", ".psd", ".xcf", ".kra", ".ora"],
+                "subdir": "Images",
+            },
+            "raw_photos": {
+                "extensions": [".raw", ".cr2", ".cr3", ".nef", ".arw", ".dng", ".orf", 
+                              ".rw2", ".pef", ".srw"],
+                "subdir": "RAW Photos",
+            },
+            "videos": {
+                "extensions": [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", 
+                              ".m4v", ".mpeg", ".mpg", ".3gp"],
+                "subdir": "Videos",
+            },
+            "audio": {
+                "extensions": [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", 
+                              ".aiff", ".ape", ".opus"],
+                "subdir": "Audio",
+            },
+            "projects": {
+                "extensions": [".blend", ".kdenlive", ".aup", ".aup3", ".sla", 
+                              ".ardour", ".lmms"],
+                "subdir": "Projects",
+            },
+            "3d_models": {
+                "extensions": [".obj", ".fbx", ".stl", ".gltf", ".glb", ".dae", ".3ds", ".ply"],
+                "subdir": "3D Models",
+            },
+            "vector": {
+                "extensions": [".ai", ".eps", ".svgz"],
+                "subdir": "Vector Graphics",
+            },
+            "documents": {
+                "extensions": [".pdf", ".xopp"],
+                "subdir": "Documents",
+            },
+        }
+        
+        results = {
+            "success": True,
+            "imported": [],
+            "skipped": [],
+            "errors": [],
+            "destination": str(dest_base),
+        }
+        
+        dest_base.mkdir(parents=True, exist_ok=True)
+        
+        files_to_import = []
+        if source.is_file():
+            files_to_import = [source]
+        elif source.is_dir():
+            files_to_import = [f for f in source.rglob("*") if f.is_file()]
+        
+        for file_path in files_to_import:
+            ext = file_path.suffix.lower()
+            category_found = None
+            
+            for category, info in media_categories.items():
+                if ext in info["extensions"]:
+                    category_found = category
+                    target_dir = dest_base / info["subdir"]
+                    break
+            
+            if not category_found:
+                results["skipped"].append({
+                    "file": str(file_path),
+                    "reason": "Unknown file type"
+                })
+                continue
+            
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            date_prefix = datetime.now().strftime("%Y-%m")
+            dated_dir = target_dir / date_prefix
+            dated_dir.mkdir(parents=True, exist_ok=True)
+            
+            target_file = dated_dir / file_path.name
+            counter = 1
+            while target_file.exists():
+                stem = file_path.stem
+                target_file = dated_dir / f"{stem}_{counter}{ext}"
+                counter += 1
+            
+            try:
+                shutil.copy2(file_path, target_file)
+                results["imported"].append({
+                    "source": str(file_path),
+                    "destination": str(target_file),
+                    "category": category_found,
+                })
+            except Exception as e:
+                results["errors"].append({
+                    "file": str(file_path),
+                    "error": str(e),
+                })
+        
+        return results
+    
+    def _export_project(self, app_id: str, project_path: str, 
+                        export_format: str, output_path: Optional[str] = None,
+                        options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Help export projects in various formats using application CLI tools"""
+        if app_id not in self.apps:
+            return {"success": False, "error": f"Unknown application: {app_id}"}
+        
+        app = self.apps[app_id]
+        if not app.installed:
+            return {"success": False, "error": f"{app.name} is not installed"}
+        
+        project = Path(project_path)
+        if not project.exists():
+            return {"success": False, "error": f"Project not found: {project_path}"}
+        
+        if output_path:
+            output = Path(output_path)
+        else:
+            output = project.parent / f"{project.stem}_export.{export_format}"
+        
+        export_commands = {
+            "blender": {
+                "png": ["blender", "-b", str(project), "-o", str(output.parent / output.stem), 
+                       "-F", "PNG", "-a"],
+                "mp4": ["blender", "-b", str(project), "-o", str(output.parent / output.stem),
+                       "-F", "FFMPEG", "-a"],
+                "obj": ["blender", "-b", str(project), "--python-expr",
+                       f"import bpy; bpy.ops.export_scene.obj(filepath='{output}')"],
+                "fbx": ["blender", "-b", str(project), "--python-expr",
+                       f"import bpy; bpy.ops.export_scene.fbx(filepath='{output}')"],
+                "stl": ["blender", "-b", str(project), "--python-expr",
+                       f"import bpy; bpy.ops.export_mesh.stl(filepath='{output}')"],
+                "gltf": ["blender", "-b", str(project), "--python-expr",
+                        f"import bpy; bpy.ops.export_scene.gltf(filepath='{output}')"],
+            },
+            "inkscape": {
+                "png": ["inkscape", str(project), "--export-type=png", f"--export-filename={output}"],
+                "pdf": ["inkscape", str(project), "--export-type=pdf", f"--export-filename={output}"],
+                "eps": ["inkscape", str(project), "--export-type=eps", f"--export-filename={output}"],
+                "svg": ["inkscape", str(project), "--export-plain-svg", f"--export-filename={output}"],
+            },
+            "gimp": {
+                "png": ["gimp", "-i", "-b",
+                       f"(let* ((image (car (gimp-file-load RUN-NONINTERACTIVE \"{project}\" \"{project.name}\"))) (drawable (car (gimp-image-merge-visible-layers image CLIP-TO-IMAGE)))) (file-png-save RUN-NONINTERACTIVE image drawable \"{output}\" \"{output.name}\" 0 9 1 1 1 1 1) (gimp-quit 0))",
+                       "-b", "(gimp-quit 0)"],
+                "jpg": ["gimp", "-i", "-b",
+                       f"(let* ((image (car (gimp-file-load RUN-NONINTERACTIVE \"{project}\" \"{project.name}\"))) (drawable (car (gimp-image-merge-visible-layers image CLIP-TO-IMAGE)))) (file-jpeg-save RUN-NONINTERACTIVE image drawable \"{output}\" \"{output.name}\" 0.9 0 1 1 \"\" 0 1 0 0) (gimp-quit 0))",
+                       "-b", "(gimp-quit 0)"],
+            },
+            "kdenlive": {
+                "mp4": ["kdenlive", "--render", str(project)],
+            },
+            "scribus": {
+                "pdf": ["scribus", "-g", "-py", "-", "--", str(project), str(output)],
+            },
+        }
+        
+        if app_id not in export_commands:
+            return {"success": False, "error": f"Export not supported for {app.name}"}
+        
+        if export_format not in export_commands[app_id]:
+            supported = list(export_commands[app_id].keys())
+            return {"success": False, "error": f"Format '{export_format}' not supported. Available: {supported}"}
+        
+        cmd = export_commands[app_id][export_format]
+        
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0 or output.exists():
+                return {
+                    "success": True,
+                    "output_file": str(output),
+                    "format": export_format,
+                    "app": app.name,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Export failed: {result.stderr or 'Unknown error'}",
+                    "command": " ".join(cmd),
+                }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Export timed out after 5 minutes"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     def get_apps_by_category(self, category: str) -> List[CreativeApp]:
         """Get apps filtered by category"""
         return [app for app in self.apps.values() if app.category == category]
@@ -231,6 +842,7 @@ class CreativeSuiteService:
     def get_status(self) -> Dict:
         """Get current status"""
         installed = [a for a in self.apps.values() if a.installed]
+        detected = self._detect_creative_apps()
         return {
             "version": VERSION,
             "total_apps": len(self.apps),
@@ -238,7 +850,8 @@ class CreativeSuiteService:
             "categories": list(set(a.category for a in self.apps.values())),
             "recent_projects": len(self.recent),
             "apps": [asdict(a) for a in self.apps.values()],
-            "recent": [asdict(r) for r in self.recent[:5]]
+            "recent": [asdict(r) for r in self.recent[:5]],
+            "detected_apps": detected,
         }
 
 
@@ -397,11 +1010,20 @@ def main():
     parser.add_argument('--status', action='store_true', help='Show status as JSON')
     parser.add_argument('--list', action='store_true', help='List all apps')
     parser.add_argument('--installed', action='store_true', help='List installed apps')
+    parser.add_argument('--detect', action='store_true', help='Detect installed creative apps and desktop files')
     parser.add_argument('--launch', metavar='APP_ID', help='Launch an app')
     parser.add_argument('--open', metavar='FILE', help='Open file with app')
+    parser.add_argument('--args', metavar='ARGS', help='Additional arguments for app launch (comma-separated)')
     parser.add_argument('--install', metavar='APP_ID', help='Install an app')
     parser.add_argument('--category', metavar='CATEGORY', help='Filter by category')
     parser.add_argument('--recent', action='store_true', help='Show recent projects')
+    parser.add_argument('--scan-recent', action='store_true', help='Scan app config files for recent projects')
+    parser.add_argument('--import-media', metavar='SOURCE', help='Import and organize media files')
+    parser.add_argument('--import-dest', metavar='DEST', help='Destination directory for media import')
+    parser.add_argument('--export', metavar='PROJECT', help='Export a project file')
+    parser.add_argument('--export-format', metavar='FORMAT', help='Export format (png, pdf, mp4, etc.)')
+    parser.add_argument('--export-output', metavar='OUTPUT', help='Output path for export')
+    parser.add_argument('--export-app', metavar='APP_ID', help='Application to use for export')
     parser.add_argument('--version', action='version', version=f'{APP_NAME} v{VERSION}')
     
     args = parser.parse_args()
@@ -409,6 +1031,18 @@ def main():
     
     if args.status:
         print(json.dumps(service.get_status(), indent=2))
+    elif args.detect:
+        detected = service._detect_creative_apps()
+        print("Detected creative applications:")
+        for app_id, info in detected.items():
+            status = "✓" if info["installed"] else "○"
+            desktop = info.get("desktop_file", "N/A")
+            binary = info.get("binary_path", "N/A")
+            print(f"  {status} {app_id}:")
+            print(f"      Desktop: {desktop}")
+            print(f"      Binary: {binary}")
+            if info.get("exec_command"):
+                print(f"      Command: {info['exec_command']}")
     elif args.list:
         apps = service.apps.values()
         if args.category:
@@ -424,10 +1058,10 @@ def main():
             print(f"  - {app.name} ({app.id})")
     elif args.launch:
         filepath = args.open if args.open else None
-        if service.launch_app(args.launch, filepath):
-            print(f"Launched {args.launch}")
-        else:
-            print(f"Failed to launch {args.launch}", file=sys.stderr)
+        extra_args = args.args.split(',') if args.args else None
+        success, message = service._launch_app(args.launch, filepath, extra_args)
+        print(message)
+        if not success:
             sys.exit(1)
     elif args.install:
         if service.install_app(args.install):
@@ -435,6 +1069,16 @@ def main():
         else:
             print(f"Failed to install {args.install}", file=sys.stderr)
             sys.exit(1)
+    elif args.scan_recent:
+        recent_projects = service._get_recent_projects()
+        if recent_projects:
+            print("Recent projects from application configs:")
+            for app_id, projects in recent_projects.items():
+                print(f"\n  {app_id.upper()}:")
+                for proj in projects[:5]:
+                    print(f"    - {proj['name']} ({proj['filepath']})")
+        else:
+            print("No recent projects found in application configs")
     elif args.recent:
         if service.recent:
             print("Recent projects:")
@@ -442,8 +1086,38 @@ def main():
                 print(f"  - {p.filepath} ({p.app_name})")
         else:
             print("No recent projects")
+    elif args.import_media:
+        result = service._import_media(args.import_media, args.import_dest)
+        if result["success"]:
+            print(f"Media import complete to: {result['destination']}")
+            print(f"  Imported: {len(result['imported'])} files")
+            if result['skipped']:
+                print(f"  Skipped: {len(result['skipped'])} files")
+            if result['errors']:
+                print(f"  Errors: {len(result['errors'])} files")
+            for item in result['imported'][:5]:
+                print(f"    + {item['category']}: {Path(item['destination']).name}")
+        else:
+            print(f"Import failed: {result.get('error', 'Unknown error')}", file=sys.stderr)
+            sys.exit(1)
+    elif args.export:
+        if not args.export_format:
+            print("Error: --export-format is required for export", file=sys.stderr)
+            sys.exit(1)
+        if not args.export_app:
+            print("Error: --export-app is required for export", file=sys.stderr)
+            sys.exit(1)
+        result = service._export_project(
+            args.export_app, args.export, args.export_format, args.export_output
+        )
+        if result["success"]:
+            print(f"Export complete: {result['output_file']}")
+        else:
+            print(f"Export failed: {result.get('error', 'Unknown error')}", file=sys.stderr)
+            sys.exit(1)
     elif args.gui or not any([args.status, args.list, args.installed, args.launch, 
-                               args.install, args.recent]):
+                               args.install, args.recent, args.detect, args.scan_recent,
+                               args.import_media, args.export]):
         if TKINTER_AVAILABLE:
             gui = CreativeSuiteGUI(service)
             gui.run()

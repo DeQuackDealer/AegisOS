@@ -402,37 +402,49 @@ class AegisAudioRouter:
         return []
     
     def _get_pipewire_sinks(self) -> List[AudioSink]:
-        """Get sinks using PipeWire"""
+        """Get sinks using PipeWire with pw-cli ls and pactl list sinks fallback"""
         sinks = []
         try:
             result = subprocess.run(
-                ["pw-cli", "list-objects"],
+                ["pw-cli", "ls", "Node"],
                 capture_output=True, text=True, timeout=10
             )
             
             if result.returncode == 0:
-                current_object = {}
-                for line in result.stdout.split('\n'):
-                    line = line.strip()
-                    
-                    if line.startswith('id '):
-                        if current_object and current_object.get('type') == 'PipeWire:Interface:Node':
-                            if 'Audio/Sink' in current_object.get('media_class', ''):
-                                sink = self._parse_pipewire_sink(current_object)
-                                if sink:
-                                    sinks.append(sink)
-                                    self.sinks[sink.id] = sink
-                        current_object = {'id': line.split()[1].rstrip(',')}
-                    elif ':' in line:
-                        key, _, value = line.partition(':')
-                        current_object[key.strip().replace('.', '_').replace('-', '_')] = value.strip().strip('"')
+                current_id = None
+                current_props = {}
                 
-                if current_object and current_object.get('type') == 'PipeWire:Interface:Node':
-                    if 'Audio/Sink' in current_object.get('media_class', ''):
-                        sink = self._parse_pipewire_sink(current_object)
-                        if sink:
-                            sinks.append(sink)
-                            self.sinks[sink.id] = sink
+                for line in result.stdout.split('\n'):
+                    id_match = re.match(r'\s*id\s+(\d+),\s+type\s+(\S+)', line)
+                    if id_match:
+                        if current_id and current_props.get('media.class') == 'Audio/Sink':
+                            sink = self._parse_pipewire_sink({
+                                'id': current_id,
+                                **{k.replace('.', '_').replace('-', '_'): v 
+                                   for k, v in current_props.items()}
+                            })
+                            if sink:
+                                sinks.append(sink)
+                                self.sinks[sink.id] = sink
+                        current_id = id_match.group(1)
+                        current_props = {}
+                    elif current_id and '*' in line:
+                        prop_match = re.match(r'\s*\*?\s*(\S+)\s*=\s*"?([^"]*)"?', line.strip())
+                        if prop_match:
+                            current_props[prop_match.group(1)] = prop_match.group(2)
+                
+                if current_id and current_props.get('media.class') == 'Audio/Sink':
+                    sink = self._parse_pipewire_sink({
+                        'id': current_id,
+                        **{k.replace('.', '_').replace('-', '_'): v 
+                           for k, v in current_props.items()}
+                    })
+                    if sink:
+                        sinks.append(sink)
+                        self.sinks[sink.id] = sink
+            
+            if not sinks:
+                sinks = self._get_sinks_via_pactl()
             
             result = subprocess.run(
                 ["wpctl", "status"],
@@ -475,8 +487,103 @@ class AegisAudioRouter:
                                 
         except Exception as e:
             self.logger.error(f"Error getting PipeWire sinks: {e}")
+            sinks = self._get_sinks_via_pactl()
         
         return sinks
+    
+    def _get_sinks_via_pactl(self) -> List[AudioSink]:
+        """Get sinks using pactl list sinks (works with both PipeWire and PulseAudio)"""
+        sinks = []
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sinks"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                current_sink = {}
+                for line in result.stdout.split('\n'):
+                    if line.startswith('Sink #'):
+                        if current_sink:
+                            sink = self._parse_pactl_sink(current_sink)
+                            if sink:
+                                sinks.append(sink)
+                                self.sinks[sink.id] = sink
+                        sink_id = line.replace('Sink #', '').strip()
+                        current_sink = {'id': sink_id}
+                    elif ':' in line and current_sink:
+                        key, _, value = line.partition(':')
+                        key = key.strip().lower()
+                        value = value.strip()
+                        current_sink[key] = value
+                        
+                        if 'name' in key and 'name' not in current_sink:
+                            current_sink['name'] = value
+                        elif 'description' in key:
+                            current_sink['description'] = value
+                        elif 'state' in key:
+                            current_sink['state'] = value
+                        elif 'driver' in key:
+                            current_sink['driver'] = value
+                        elif 'mute' in key:
+                            current_sink['muted'] = 'yes' in value.lower()
+                
+                if current_sink:
+                    sink = self._parse_pactl_sink(current_sink)
+                    if sink:
+                        sinks.append(sink)
+                        self.sinks[sink.id] = sink
+                        
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout getting sinks via pactl")
+        except Exception as e:
+            self.logger.error(f"Error getting sinks via pactl: {e}")
+        
+        return sinks
+    
+    def _parse_pactl_sink(self, data: dict) -> Optional[AudioSink]:
+        """Parse pactl list sinks output into AudioSink object"""
+        try:
+            sink_id = data.get('id', '')
+            name = data.get('name', f'Sink_{sink_id}')
+            description = data.get('description', name)
+            driver = data.get('driver', 'pulseaudio')
+            state = data.get('state', 'UNKNOWN')
+            muted = data.get('muted', False)
+            
+            volume = 1.0
+            if 'volume' in data:
+                vol_match = re.search(r'(\d+)%', data['volume'])
+                if vol_match:
+                    volume = int(vol_match.group(1)) / 100.0
+            
+            device_type = "unknown"
+            name_lower = name.lower()
+            if 'bluetooth' in name_lower or 'bluez' in name_lower:
+                device_type = "bluetooth"
+            elif 'usb' in name_lower:
+                device_type = "usb"
+            elif 'hdmi' in name_lower:
+                device_type = "hdmi"
+            elif 'analog' in name_lower or 'speaker' in name_lower:
+                device_type = "analog"
+            
+            is_virtual = 'null' in name_lower or 'virtual' in name_lower
+            
+            return AudioSink(
+                id=sink_id,
+                name=name,
+                description=description,
+                driver=driver,
+                state=state,
+                volume=volume,
+                muted=muted,
+                is_virtual=is_virtual,
+                device_type=device_type
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing pactl sink: {e}")
+            return None
     
     def _parse_pipewire_sink(self, obj: dict) -> Optional[AudioSink]:
         """Parse PipeWire object into AudioSink"""
@@ -567,6 +674,178 @@ class AegisAudioRouter:
         except Exception:
             pass
         return 1.0
+    
+    def _get_audio_streams(self) -> List[AudioStream]:
+        """Get running audio streams using pactl list sink-inputs"""
+        streams = []
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sink-inputs"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                current_stream = {}
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    
+                    if line.startswith('Sink Input #'):
+                        if current_stream:
+                            stream = self._parse_sink_input(current_stream)
+                            if stream:
+                                streams.append(stream)
+                                self.streams[stream.id] = stream
+                        stream_id = line.replace('Sink Input #', '').strip()
+                        current_stream = {'id': stream_id}
+                    elif ':' in line and current_stream:
+                        key, _, value = line.partition(':')
+                        key = key.strip().lower().replace(' ', '_')
+                        value = value.strip().strip('"')
+                        current_stream[key] = value
+                        
+                        if 'application.name' in line.lower():
+                            current_stream['app_name'] = value
+                        elif 'application.process.binary' in line.lower():
+                            current_stream['app_binary'] = value
+                        elif 'application.process.id' in line.lower():
+                            current_stream['pid'] = value
+                        elif 'sink:' in line.lower():
+                            current_stream['sink_id'] = value
+                
+                if current_stream:
+                    stream = self._parse_sink_input(current_stream)
+                    if stream:
+                        streams.append(stream)
+                        self.streams[stream.id] = stream
+                        
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout getting audio streams")
+        except Exception as e:
+            self.logger.error(f"Error getting audio streams: {e}")
+        
+        return streams
+    
+    def _parse_sink_input(self, data: dict) -> Optional[AudioStream]:
+        """Parse sink-input data into AudioStream object"""
+        try:
+            stream_id = data.get('id', '')
+            app_name = data.get('app_name', data.get('application.name', 'Unknown'))
+            app_binary = data.get('app_binary', data.get('application.process.binary', ''))
+            sink_id = data.get('sink_id', data.get('sink', ''))
+            pid = int(data.get('pid', data.get('application.process.id', 0)))
+            
+            volume = 1.0
+            if 'volume' in data:
+                vol_match = re.search(r'(\d+)%', data['volume'])
+                if vol_match:
+                    volume = int(vol_match.group(1)) / 100.0
+            
+            muted = 'yes' in data.get('mute', '').lower()
+            media_name = data.get('media.name', '')
+            
+            return AudioStream(
+                id=stream_id,
+                app_name=app_name,
+                app_binary=app_binary,
+                sink_id=sink_id,
+                sink_name="",
+                volume=volume,
+                muted=muted,
+                pid=pid,
+                media_name=media_name
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing sink input: {e}")
+            return None
+    
+    def _move_stream(self, stream_id: str, sink_id_or_name: str) -> bool:
+        """Move an audio stream to a specific sink using pactl move-sink-input"""
+        try:
+            result = subprocess.run(
+                ["pactl", "move-sink-input", str(stream_id), str(sink_id_or_name)],
+                capture_output=True, text=True, timeout=5
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Moved stream {stream_id} to sink {sink_id_or_name}")
+                return True
+            else:
+                self.logger.error(f"Failed to move stream: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout moving stream")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error moving stream: {e}")
+            return False
+    
+    def _create_virtual_sink(self, sink_name: str, description: str = "", 
+                             channels: int = 2, rate: int = 48000) -> Optional[str]:
+        """Create a virtual audio sink using pactl load-module module-null-sink
+        
+        Returns the module ID on success, None on failure.
+        """
+        if not description:
+            description = f"Aegis Virtual Sink - {sink_name}"
+        
+        try:
+            sink_props = f'device.description="{description}"'
+            
+            result = subprocess.run([
+                "pactl", "load-module", "module-null-sink",
+                f"sink_name={sink_name}",
+                f"sink_properties={sink_props}",
+                f"channels={channels}",
+                f"rate={rate}"
+            ], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                module_id = result.stdout.strip()
+                self.logger.info(f"Created virtual sink '{sink_name}' (module ID: {module_id})")
+                return module_id
+            else:
+                self.logger.error(f"Failed to create virtual sink: {result.stderr}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout creating virtual sink")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error creating virtual sink: {e}")
+            return None
+    
+    def _set_sink_volume(self, sink_id_or_name: str, volume_percent: int) -> bool:
+        """Set volume for a sink using pactl set-sink-volume
+        
+        Args:
+            sink_id_or_name: Sink index number or sink name
+            volume_percent: Volume level as percentage (0-150)
+        
+        Returns:
+            True on success, False on failure
+        """
+        volume_percent = max(0, min(150, volume_percent))
+        
+        try:
+            result = subprocess.run(
+                ["pactl", "set-sink-volume", str(sink_id_or_name), f"{volume_percent}%"],
+                capture_output=True, text=True, timeout=5
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Set sink {sink_id_or_name} volume to {volume_percent}%")
+                return True
+            else:
+                self.logger.error(f"Failed to set volume: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout setting sink volume")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error setting sink volume: {e}")
+            return False
     
     def get_sources(self) -> List[AudioSource]:
         """Get all audio input devices/sources"""
