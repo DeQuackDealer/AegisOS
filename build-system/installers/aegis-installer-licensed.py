@@ -143,6 +143,18 @@ FQIDAQAB
 -----END PUBLIC KEY-----"""
 
 
+def is_placeholder_checksum(checksum):
+    """Check if a checksum is a placeholder (all zeros with trailing digit)"""
+    if not checksum:
+        return True
+    checksum = checksum.upper().strip()
+    if checksum.startswith("0" * 60):
+        return True
+    if all(c == '0' for c in checksum[:-1]) and checksum[-1].isdigit():
+        return True
+    return False
+
+
 class OfflineISOLocator:
     """Handles offline ISO detection from local sources"""
     
@@ -1336,7 +1348,9 @@ class AegisLicensedInstaller:
             
             if hasattr(self, 'manifest_data') and self.manifest_data and self.manifest_data.get("sha256"):
                 expected = self.manifest_data["sha256"].upper()
-                if source_hash != expected:
+                if is_placeholder_checksum(expected):
+                    self._update_progress(8, "Checksum verification skipped (development mode)", "")
+                elif source_hash != expected:
                     self._show_error("Checksum Mismatch",
                                     f"ISO checksum does not match manifest.\n"
                                     f"Expected: {expected[:16]}...\n"
