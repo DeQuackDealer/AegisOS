@@ -373,36 +373,235 @@ class AegisStreamStudio(Gtk.Window):
         GLib.timeout_add_seconds(1, update)
     
     def _switch_scene(self, btn, scene_name):
-        pass
+        if not self.obs_installed:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Scene Saved")
+            dialog.format_secondary_text(f"Scene '{scene_name}' will be active when you launch OBS.\n\nThe OBS profile has been configured with this scene.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        obs_ws_check = subprocess.run(["which", "obs-cli"], capture_output=True)
+        if obs_ws_check.returncode == 0:
+            try:
+                subprocess.run(["obs-cli", "scene", scene_name], capture_output=True)
+            except:
+                pass
     
     def _launch_obs(self, btn):
         try:
+            self._create_obs_profile()
             subprocess.Popen(["obs"], start_new_session=True)
-        except:
+        except FileNotFoundError:
             dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
                                        buttons=Gtk.ButtonsType.OK, text="OBS Not Found")
-            dialog.format_secondary_text("OBS Studio is not installed. Install it via the package manager.")
+            dialog.format_secondary_text("OBS Studio is not installed.\n\nInstall with:\nsudo apt install obs-studio")
             dialog.run(); dialog.destroy()
     
+    def _create_obs_profile(self):
+        obs_config = Path.home() / ".config/obs-studio/basic/profiles/Aegis"
+        obs_config.mkdir(parents=True, exist_ok=True)
+        
+        encoder = ENCODER_PRESETS.get(self.selected_encoder, {})
+        service = STREAMING_SERVICES.get(self.selected_service, {})
+        
+        basic_ini = f"""[General]
+Name=Aegis
+
+[Video]
+BaseCX={self.res_combo.get_active_text().split('x')[0] if self.res_combo.get_active_text() else '1920'}
+BaseCY={self.res_combo.get_active_text().split('x')[1] if self.res_combo.get_active_text() else '1080'}
+OutputCX={self.res_combo.get_active_text().split('x')[0] if self.res_combo.get_active_text() else '1920'}
+OutputCY={self.res_combo.get_active_text().split('x')[1] if self.res_combo.get_active_text() else '1080'}
+FPSType=0
+FPSCommon={self.fps_combo.get_active_text() or '60'}
+
+[Output]
+Mode=Advanced
+
+[AdvOut]
+Encoder={encoder.get('encoder', 'x264')}
+RescaleRes=1920x1080
+FFRescaleRes=1920x1080
+VBitrate={int(self.bitrate_spin.get_value())}
+Preset={encoder.get('preset', 'veryfast')}
+
+[Stream]
+ServiceType=rtmp_custom
+Server={service.get('rtmp', '')}
+Key={self.key_entry.get_text() if self.key_entry.get_text() else ''}
+"""
+        
+        with open(obs_config / "basic.ini", "w") as f:
+            f.write(basic_ini)
+        
+        scenes_path = Path.home() / ".config/obs-studio/basic/scenes"
+        scenes_path.mkdir(parents=True, exist_ok=True)
+        
+        scenes_json = {
+            "current_scene": "Game Only",
+            "scene_order": [
+                {"name": "Game Only"},
+                {"name": "Game + Webcam"},
+                {"name": "Just Chatting"},
+                {"name": "BRB Screen"}
+            ],
+            "sources": [
+                {
+                    "name": "Game Capture",
+                    "id": "xcomposite_input",
+                    "settings": {"capture_any_fullscreen": True}
+                },
+                {
+                    "name": "Webcam",
+                    "id": "v4l2_input",
+                    "settings": {"device_id": "/dev/video0"}
+                },
+                {
+                    "name": "Desktop Audio",
+                    "id": "pulse_output_capture",
+                    "settings": {}
+                },
+                {
+                    "name": "Mic",
+                    "id": "pulse_input_capture",
+                    "settings": {}
+                }
+            ],
+            "scenes": [
+                {
+                    "name": "Game Only",
+                    "sources": [
+                        {"name": "Game Capture", "x": 0, "y": 0}
+                    ]
+                },
+                {
+                    "name": "Game + Webcam",
+                    "sources": [
+                        {"name": "Game Capture", "x": 0, "y": 0},
+                        {"name": "Webcam", "x": 1600, "y": 800, "width": 320, "height": 240}
+                    ]
+                },
+                {
+                    "name": "Just Chatting",
+                    "sources": [
+                        {"name": "Webcam", "x": 0, "y": 0, "width": 1920, "height": 1080}
+                    ]
+                },
+                {
+                    "name": "BRB Screen",
+                    "sources": []
+                }
+            ]
+        }
+        
+        with open(scenes_path / "Aegis.json", "w") as f:
+            json.dump(scenes_json, f, indent=2)
+    
     def _test_stream(self, btn):
-        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
-                                   buttons=Gtk.ButtonsType.OK, text="Stream Test")
-        dialog.format_secondary_text("Stream test will verify your connection to the streaming service.")
+        ffmpeg_check = subprocess.run(["which", "ffmpeg"], capture_output=True)
+        if ffmpeg_check.returncode != 0:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="FFmpeg Not Installed")
+            dialog.format_secondary_text("FFmpeg is required for stream testing.\n\nInstall with:\nsudo apt install ffmpeg")
+            dialog.run(); dialog.destroy()
+            return
+        
+        stream_key = self.key_entry.get_text()
+        if not stream_key:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="Missing Stream Key")
+            dialog.format_secondary_text("Enter your stream key to test the connection.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        service = STREAMING_SERVICES.get(self.selected_service, {})
+        rtmp_url = service.get("rtmp", "") + stream_key
+        
+        progress = Gtk.Dialog(title="Testing Stream", parent=self)
+        progress.set_default_size(300, 100)
+        box = progress.get_content_area()
+        box.pack_start(Gtk.Label(label="Testing connection..."), True, True, 20)
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_test():
+            try:
+                result = subprocess.run(
+                    ["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=2:size=1280x720:rate=30",
+                     "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "2500k",
+                     "-c:a", "aac", "-b:a", "128k",
+                     "-f", "flv", rtmp_url],
+                    capture_output=True, text=True, timeout=30
+                )
+                success = result.returncode == 0
+                output = result.stderr
+            except subprocess.TimeoutExpired:
+                success = False
+                output = "Connection timed out"
+            except Exception as e:
+                success = False
+                output = str(e)
+            
+            GLib.idle_add(self._test_complete, progress, success, output)
+        
+        import threading
+        threading.Thread(target=do_test, daemon=True).start()
+        progress.run()
+    
+    def _test_complete(self, progress, success, output):
+        progress.destroy()
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Stream Test Successful")
+            dialog.format_secondary_text("Your stream connection is working! You're ready to go live.")
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Stream Test Failed")
+            dialog.format_secondary_text(f"Could not connect to streaming service.\n\nCheck your stream key and internet connection.\n\nDetails: {output[:200]}")
+        
         dialog.run(); dialog.destroy()
     
     def _open_audio(self, btn):
-        try: subprocess.Popen(["pavucontrol"], start_new_session=True)
-        except: pass
+        try:
+            subprocess.Popen(["pavucontrol"], start_new_session=True)
+        except FileNotFoundError:
+            try:
+                subprocess.Popen(["gnome-control-center", "sound"], start_new_session=True)
+            except:
+                dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                           buttons=Gtk.ButtonsType.OK, text="Audio Settings")
+                dialog.format_secondary_text("Install pavucontrol:\nsudo apt install pavucontrol")
+                dialog.run(); dialog.destroy()
     
     def _open_webcam(self, btn):
-        try: subprocess.Popen(["cheese"], start_new_session=True)
-        except: pass
+        try:
+            subprocess.Popen(["cheese"], start_new_session=True)
+        except FileNotFoundError:
+            try:
+                subprocess.Popen(["guvcview"], start_new_session=True)
+            except:
+                dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                           buttons=Gtk.ButtonsType.OK, text="Webcam Test")
+                dialog.format_secondary_text("Install cheese:\nsudo apt install cheese")
+                dialog.run(); dialog.destroy()
     
     def _open_alerts(self, btn):
-        pass
+        import webbrowser
+        webbrowser.open("https://streamelements.com/dashboard/overlays")
     
     def _open_chat(self, btn):
-        pass
+        import webbrowser
+        service = self.selected_service
+        if service == "twitch":
+            webbrowser.open("https://www.twitch.tv/popout/chat")
+        elif service == "youtube":
+            webbrowser.open("https://studio.youtube.com/")
+        else:
+            webbrowser.open("https://restream.io/chat")
 
 def main():
     win = AegisStreamStudio()

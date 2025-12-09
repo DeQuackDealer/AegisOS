@@ -248,20 +248,153 @@ class AegisPerformanceTuner(Gtk.Window):
     
     def _apply(self, btn):
         profile = PROFILES.get(self.current_profile, {})
+        results = []
+        
         try:
             if profile.get("cpu"):
-                subprocess.run(["pkexec", "cpupower", "frequency-set", "-g", profile["cpu"]], capture_output=True)
+                governor = profile["cpu"]
+                
+                pkexec_check = subprocess.run(["which", "pkexec"], capture_output=True)
+                cpupower_check = subprocess.run(["which", "cpupower"], capture_output=True)
+                
+                if cpupower_check.returncode == 0 and pkexec_check.returncode == 0:
+                    result = subprocess.run(
+                        ["pkexec", "cpupower", "frequency-set", "-g", governor],
+                        capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        results.append(f"CPU governor set to '{governor}'")
+                    else:
+                        results.append(f"CPU governor: Failed ({result.stderr[:100]})")
+                elif pkexec_check.returncode == 0:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                        f.write(f"""#!/bin/bash
+for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    [ -w "$cpu" ] && echo {governor} > "$cpu"
+done
+""")
+                        script_path = f.name
+                    os.chmod(script_path, 0o700)
+                    result = subprocess.run(["pkexec", "bash", script_path], capture_output=True, text=True)
+                    os.unlink(script_path)
+                    if result.returncode == 0:
+                        results.append(f"CPU governor set to '{governor}'")
+                    else:
+                        results.append(f"CPU governor: Failed - try installing cpupower")
+                else:
+                    results.append("CPU governor: Skipped (pkexec not available)")
+            
             if profile.get("gamemode") and self.opt_switches.get("GameMode", Gtk.Switch()).get_active():
-                subprocess.run(["gamemoded", "-r"], capture_output=True)
+                gamemode_check = subprocess.run(["which", "gamemoderun"], capture_output=True)
+                if gamemode_check.returncode == 0:
+                    subprocess.run(["gamemoded", "-r"], capture_output=True)
+                    results.append("GameMode daemon refreshed")
+                else:
+                    results.append("GameMode not installed")
+            
+            if self.opt_switches.get("Compositor Bypass", Gtk.Switch()).get_active():
+                desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+                state_file = Path.home() / ".config/aegis/compositor_state"
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                if "xfce" in desktop:
+                    if not state_file.exists():
+                        current = subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing"], 
+                                                capture_output=True, text=True)
+                        if current.returncode == 0:
+                            with open(state_file, "w") as f:
+                                f.write(f"xfce:{current.stdout.strip()}")
+                    
+                    subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", "false"], 
+                                   capture_output=True)
+                    results.append("XFCE compositor disabled (original state saved)")
+                elif "gnome" in desktop:
+                    results.append("Compositor: GNOME uses GameMode for fullscreen optimization")
+                else:
+                    results.append("Compositor: Add 'compton --no-vsync' for gaming mode")
+            else:
+                state_file = Path.home() / ".config/aegis/compositor_state"
+                if state_file.exists():
+                    try:
+                        state = state_file.read_text().strip()
+                        if state.startswith("xfce:"):
+                            orig = state.split(":")[1]
+                            subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", orig], 
+                                          capture_output=True)
+                            state_file.unlink()
+                            results.append(f"Compositor restored to {orig}")
+                    except:
+                        pass
+            
+            if self.opt_switches.get("GPU Performance", Gtk.Switch()).get_active():
+                gpu_info = SystemInfo.get_gpu_info()
+                if gpu_info.get("vendor") == "NVIDIA":
+                    nvidia_check = subprocess.run(["which", "nvidia-settings"], capture_output=True)
+                    if nvidia_check.returncode == 0:
+                        subprocess.run(["nvidia-settings", "-a", "[gpu:0]/GpuPowerMizerMode=1"], capture_output=True)
+                        results.append("NVIDIA performance mode enabled")
+                    else:
+                        results.append("GPU: NVIDIA tools not found")
+                elif gpu_info.get("vendor") == "AMD":
+                    results.append("GPU: Use CoreCtrl for AMD performance tuning")
+                else:
+                    results.append("GPU performance: Manual config may be needed")
+            
+            if self.opt_switches.get("Memory Lock", Gtk.Switch()).get_active():
+                results.append("Memory optimization: Add 'vm.swappiness=10' to /etc/sysctl.conf")
+            
+            if self.opt_switches.get("Raw Mouse Input", Gtk.Switch()).get_active():
+                xinput_check = subprocess.run(["which", "xinput"], capture_output=True)
+                if xinput_check.returncode == 0:
+                    try:
+                        devices = subprocess.run(["xinput", "list", "--id-only"], capture_output=True, text=True)
+                        for dev_id in devices.stdout.strip().split('\n'):
+                            if dev_id.isdigit():
+                                subprocess.run(["xinput", "set-prop", dev_id, "libinput Accel Profile Enabled", "0,", "1"], 
+                                              capture_output=True)
+                        results.append("Mouse acceleration disabled")
+                    except:
+                        results.append("Mouse: Could not configure input devices")
+                else:
+                    results.append("Mouse: xinput not installed")
+            
+            config_dir = Path.home() / ".config/aegis"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            env_file = config_dir / "performance.env"
+            with open(env_file, "w") as f:
+                f.write("#!/bin/bash\n")
+                f.write(f"# Aegis Performance Profile: {profile.get('name', 'Custom')}\n\n")
+                f.write("export __GL_THREADED_OPTIMIZATIONS=1\n")
+                f.write("export __GL_SHADER_DISK_CACHE=1\n")
+                f.write("export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1\n")
+                f.write("export mesa_glthread=true\n")
+                f.write("export RADV_PERFTEST=gpl\n")
+                if profile.get("gamemode"):
+                    f.write("export ENABLE_GAMESCOPE_WSI=1\n")
+            os.chmod(env_file, 0o755)
+            results.append(f"Environment file: {env_file}")
+            
+            steam_launch = config_dir / "performance-steam-options.txt"
+            steam_opts = "gamemoderun mangohud %command%" if profile.get("gamemode") else "mangohud %command%"
+            with open(steam_launch, "w") as f:
+                f.write(f"# Steam launch options for {profile.get('name', 'Custom')} profile:\n")
+                f.write(f"{steam_opts}\n")
+            results.append(f"Steam options: {steam_launch}")
+            
             self._save_config()
             
             dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
                                        buttons=Gtk.ButtonsType.OK, text="Settings Applied")
-            dialog.format_secondary_text(f"Profile '{profile.get('name', '')}' applied successfully.")
+            results_text = "\n".join([f"✓ {r}" for r in results])
+            dialog.format_secondary_text(f"Profile '{profile.get('name', '')}' applied:\n\n{results_text}")
             dialog.run(); dialog.destroy()
+            
         except Exception as e:
             dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
-                                       buttons=Gtk.ButtonsType.OK, text=str(e))
+                                       buttons=Gtk.ButtonsType.OK, text="Error Applying Settings")
+            dialog.format_secondary_text(str(e))
             dialog.run(); dialog.destroy()
     
     def _start_monitor(self):

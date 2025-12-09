@@ -349,44 +349,177 @@ class AegisWineOptimizer(Gtk.Window):
         if not version or not self.selected_prefix:
             return
         
-        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
-                                   buttons=Gtk.ButtonsType.OK, text="DXVK Installation")
-        dialog.format_secondary_text(f"To install DXVK {version}, run:\nwinetricks dxvk\n\nOr use Lutris/ProtonUp-Qt for automated installation.")
-        dialog.run(); dialog.destroy()
+        prefix_path = str(self.selected_prefix.path)
+        
+        progress = Gtk.Dialog(title="Installing DXVK", parent=self)
+        progress.set_default_size(400, 150)
+        progress.set_modal(True)
+        
+        box = progress.get_content_area()
+        label = Gtk.Label(label=f"Installing DXVK {version}...")
+        box.pack_start(label, True, True, 20)
+        
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_install():
+            env = os.environ.copy()
+            env["WINEPREFIX"] = prefix_path
+            
+            try:
+                result = subprocess.run(
+                    ["winetricks", "-q", "dxvk"],
+                    env=env, capture_output=True, text=True, timeout=300
+                )
+                success = result.returncode == 0
+                output = result.stdout + result.stderr
+            except subprocess.TimeoutExpired:
+                success = False
+                output = "Installation timed out"
+            except FileNotFoundError:
+                success = False
+                output = "winetricks not found. Install with: sudo apt install winetricks"
+            except Exception as e:
+                success = False
+                output = str(e)
+            
+            GLib.idle_add(self._install_complete, progress, success, output, "DXVK")
+            return False
+        
+        import threading
+        threading.Thread(target=do_install, daemon=True).start()
+        progress.run()
     
     def _install_vkd3d(self, btn):
         version = self.vkd3d_combo.get_active_text()
         if not version or not self.selected_prefix:
             return
         
-        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
-                                   buttons=Gtk.ButtonsType.OK, text="VKD3D Installation")
-        dialog.format_secondary_text(f"To install VKD3D {version}, run:\nwinetricks vkd3d\n\nOr use Lutris/ProtonUp-Qt for automated installation.")
-        dialog.run(); dialog.destroy()
+        prefix_path = str(self.selected_prefix.path)
+        
+        progress = Gtk.Dialog(title="Installing VKD3D", parent=self)
+        progress.set_default_size(400, 150)
+        progress.set_modal(True)
+        
+        box = progress.get_content_area()
+        label = Gtk.Label(label=f"Installing VKD3D {version}...")
+        box.pack_start(label, True, True, 20)
+        
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_install():
+            env = os.environ.copy()
+            env["WINEPREFIX"] = prefix_path
+            
+            try:
+                result = subprocess.run(
+                    ["winetricks", "-q", "vkd3d"],
+                    env=env, capture_output=True, text=True, timeout=300
+                )
+                success = result.returncode == 0
+                output = result.stdout + result.stderr
+            except subprocess.TimeoutExpired:
+                success = False
+                output = "Installation timed out"
+            except FileNotFoundError:
+                success = False
+                output = "winetricks not found. Install with: sudo apt install winetricks"
+            except Exception as e:
+                success = False
+                output = str(e)
+            
+            GLib.idle_add(self._install_complete, progress, success, output, "VKD3D")
+            return False
+        
+        import threading
+        threading.Thread(target=do_install, daemon=True).start()
+        progress.run()
+    
+    def _install_complete(self, progress, success, output, component):
+        progress.destroy()
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text=f"{component} Installed")
+            dialog.format_secondary_text(f"{component} was successfully installed to the prefix.\n\nRe-scanning prefix to update status...")
+            self._rescan(None)
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text=f"{component} Installation Failed")
+            dialog.format_secondary_text(f"Error:\n{output[:500]}")
+        
+        dialog.run()
+        dialog.destroy()
     
     def _apply_tweaks(self, btn):
         if not self.selected_prefix:
             return
         
-        env_vars = []
-        if self.tweak_switches.get("Enable Esync", Gtk.Switch()).get_active():
-            env_vars.append("WINEESYNC=1")
-        if self.tweak_switches.get("Enable Fsync", Gtk.Switch()).get_active():
-            env_vars.append("WINEFSYNC=1")
-        if self.tweak_switches.get("Enable DXVK Async", Gtk.Switch()).get_active():
-            env_vars.append("DXVK_ASYNC=1")
-        if self.tweak_switches.get("Disable NVAPI", Gtk.Switch()).get_active():
-            env_vars.append("DXVK_ENABLE_NVAPI=0")
+        env_vars = {}
+        env_vars["WINEPREFIX"] = str(self.selected_prefix.path)
         
-        env_file = Path.home() / ".config/aegis/wine-env.sh"
-        env_file.parent.mkdir(parents=True, exist_ok=True)
+        if self.tweak_switches.get("Enable Esync", Gtk.Switch()).get_active():
+            env_vars["WINEESYNC"] = "1"
+        if self.tweak_switches.get("Enable Fsync", Gtk.Switch()).get_active():
+            env_vars["WINEFSYNC"] = "1"
+        if self.tweak_switches.get("Enable DXVK Async", Gtk.Switch()).get_active():
+            env_vars["DXVK_ASYNC"] = "1"
+        if self.tweak_switches.get("Disable NVAPI", Gtk.Switch()).get_active():
+            env_vars["DXVK_ENABLE_NVAPI"] = "0"
+            env_vars["PROTON_ENABLE_NVAPI"] = "0"
+        
+        env_vars["RADV_PERFTEST"] = "gpl"
+        env_vars["mesa_glthread"] = "true"
+        env_vars["__GL_SHADER_DISK_CACHE"] = "1"
+        env_vars["__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"] = "1"
+        
+        config_dir = Path.home() / ".config/aegis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        env_file = config_dir / "wine-env.sh"
         with open(env_file, "w") as f:
-            for var in env_vars:
-                f.write(f"export {var}\n")
+            f.write("#!/bin/bash\n")
+            f.write("# Aegis Wine Optimizer Environment\n")
+            f.write(f"# Generated for prefix: {self.selected_prefix.name}\n\n")
+            for k, v in env_vars.items():
+                f.write(f"export {k}=\"{v}\"\n")
+        os.chmod(env_file, 0o755)
+        
+        launch_script = config_dir / "wine-launch.sh"
+        with open(launch_script, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write(f"source {env_file}\n")
+            f.write('exec wine "$@"\n')
+        os.chmod(launch_script, 0o755)
+        
+        steam_opts = " ".join([f"{k}={v}" for k, v in env_vars.items() if k != "WINEPREFIX"])
+        steam_file = config_dir / "wine-steam-options.txt"
+        with open(steam_file, "w") as f:
+            f.write("# Copy to Steam game launch options:\n")
+            f.write(f"{steam_opts} %command%\n")
+        
+        bashrc = Path.home() / ".bashrc"
+        source_line = f"source {env_file} 2>/dev/null"
+        try:
+            content = bashrc.read_text() if bashrc.exists() else ""
+            if source_line not in content:
+                with open(bashrc, "a") as f:
+                    f.write(f"\n# Aegis Wine Optimizer\n{source_line}\n")
+        except: pass
         
         dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
                                    buttons=Gtk.ButtonsType.OK, text="Tweaks Applied")
-        dialog.format_secondary_text(f"Environment variables saved to:\n{env_file}\n\nAdd 'source {env_file}' to your shell profile or game launcher.")
+        msg = f"Created the following files:\n\n"
+        msg += f"1. {env_file}\n   (Environment variables - sourced on login)\n\n"
+        msg += f"2. {launch_script}\n   (Launch wrapper for Wine games)\n\n"
+        msg += f"3. {steam_file}\n   (Ready-to-paste Steam launch options)\n\n"
+        msg += "Settings will apply to new terminal sessions."
+        dialog.format_secondary_text(msg)
         dialog.run(); dialog.destroy()
     
     def _rescan(self, btn):

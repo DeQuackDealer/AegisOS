@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+"""
+Aegis MangoHud Configurator - Real HUD configuration with actual config file output
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib, Pango
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List
+
+MANGOHUD_OPTIONS = {
+    "performance": {
+        "fps": {"name": "Show FPS", "default": True, "type": "bool"},
+        "frametime": {"name": "Show Frametime", "default": True, "type": "bool"},
+        "frame_timing": {"name": "Frame Timing Graph", "default": True, "type": "bool"},
+        "fps_limit": {"name": "FPS Limit", "default": 0, "type": "int", "range": (0, 360)},
+        "vsync": {"name": "Force VSync", "default": -1, "type": "int", "range": (-1, 3)},
+    },
+    "cpu": {
+        "cpu_stats": {"name": "CPU Usage", "default": True, "type": "bool"},
+        "cpu_temp": {"name": "CPU Temperature", "default": True, "type": "bool"},
+        "cpu_power": {"name": "CPU Power", "default": False, "type": "bool"},
+        "cpu_mhz": {"name": "CPU Frequency", "default": False, "type": "bool"},
+        "cpu_load_change": {"name": "Color by Load", "default": True, "type": "bool"},
+        "core_load": {"name": "Per-Core Load", "default": False, "type": "bool"},
+    },
+    "gpu": {
+        "gpu_stats": {"name": "GPU Usage", "default": True, "type": "bool"},
+        "gpu_temp": {"name": "GPU Temperature", "default": True, "type": "bool"},
+        "gpu_power": {"name": "GPU Power", "default": False, "type": "bool"},
+        "gpu_core_clock": {"name": "GPU Clock", "default": False, "type": "bool"},
+        "gpu_mem_clock": {"name": "VRAM Clock", "default": False, "type": "bool"},
+        "gpu_load_change": {"name": "Color by Load", "default": True, "type": "bool"},
+        "vram": {"name": "VRAM Usage", "default": True, "type": "bool"},
+    },
+    "system": {
+        "ram": {"name": "RAM Usage", "default": True, "type": "bool"},
+        "swap": {"name": "Swap Usage", "default": False, "type": "bool"},
+        "procmem": {"name": "Process Memory", "default": False, "type": "bool"},
+        "io_read": {"name": "Disk Read", "default": False, "type": "bool"},
+        "io_write": {"name": "Disk Write", "default": False, "type": "bool"},
+        "battery": {"name": "Battery", "default": False, "type": "bool"},
+    },
+    "display": {
+        "position": {"name": "Position", "default": "top-left", "type": "choice", 
+                     "choices": ["top-left", "top-right", "bottom-left", "bottom-right", "top-center", "bottom-center"]},
+        "font_size": {"name": "Font Size", "default": 24, "type": "int", "range": (12, 48)},
+        "background_alpha": {"name": "Background Opacity", "default": 0.5, "type": "float", "range": (0.0, 1.0)},
+        "text_color": {"name": "Text Color", "default": "FFFFFF", "type": "color"},
+        "gpu_color": {"name": "GPU Color", "default": "2E9D5C", "type": "color"},
+        "cpu_color": {"name": "CPU Color", "default": "2E97CB", "type": "color"},
+        "fps_color": {"name": "FPS Color", "default": "B22222", "type": "color"},
+        "round_corners": {"name": "Round Corners", "default": 0, "type": "int", "range": (0, 20)},
+    },
+    "extra": {
+        "gamemode": {"name": "GameMode Status", "default": True, "type": "bool"},
+        "wine": {"name": "Wine/Proton Version", "default": True, "type": "bool"},
+        "engine_version": {"name": "Game Engine", "default": False, "type": "bool"},
+        "vulkan_driver": {"name": "Vulkan Driver", "default": False, "type": "bool"},
+        "arch": {"name": "Architecture", "default": False, "type": "bool"},
+        "time": {"name": "Time", "default": False, "type": "bool"},
+        "version": {"name": "MangoHud Version", "default": False, "type": "bool"},
+    }
+}
+
+PRESETS = {
+    "minimal": {
+        "name": "Minimal",
+        "desc": "FPS only",
+        "options": {"fps": True, "frametime": False, "frame_timing": False, "cpu_stats": False, 
+                    "gpu_stats": False, "ram": False, "vram": False, "font_size": 20}
+    },
+    "standard": {
+        "name": "Standard",
+        "desc": "FPS + CPU/GPU",
+        "options": {"fps": True, "frametime": True, "cpu_stats": True, "gpu_stats": True,
+                    "cpu_temp": True, "gpu_temp": True, "ram": True, "vram": True, "font_size": 24}
+    },
+    "detailed": {
+        "name": "Detailed",
+        "desc": "Full metrics",
+        "options": {"fps": True, "frametime": True, "frame_timing": True, "cpu_stats": True, 
+                    "gpu_stats": True, "cpu_temp": True, "gpu_temp": True, "cpu_power": True,
+                    "gpu_power": True, "cpu_mhz": True, "gpu_core_clock": True, "ram": True, 
+                    "vram": True, "procmem": True, "wine": True, "gamemode": True, "font_size": 22}
+    },
+    "benchmark": {
+        "name": "Benchmark",
+        "desc": "For testing",
+        "options": {"fps": True, "frametime": True, "frame_timing": True, "cpu_stats": True,
+                    "gpu_stats": True, "cpu_temp": True, "gpu_temp": True, "gpu_power": True,
+                    "gpu_core_clock": True, "gpu_mem_clock": True, "vram": True, "core_load": True,
+                    "time": True, "font_size": 20, "position": "top-right"}
+    }
+}
+
+class AegisMangoHudConfig(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #ff6b35; font-size: 28px; font-weight: bold; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 16px; margin: 8px; }
+    .card-title { color: #fff; font-size: 16px; font-weight: bold; }
+    .info-label { color: #888; font-size: 13px; }
+    .preset-btn { background: rgba(255,107,53,0.2); border: 2px solid transparent;
+                  border-radius: 8px; padding: 12px; color: #fff; }
+    .preset-btn:hover { background: rgba(255,107,53,0.3); }
+    .preset-btn:checked { border-color: #ff6b35; background: rgba(255,107,53,0.4); }
+    .apply-btn { background: #ff6b35; color: #fff; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .option-row { padding: 8px 0; }
+    .option-label { color: #fff; font-size: 13px; }
+    .preview-box { background: rgba(0,0,0,0.8); border-radius: 8px; padding: 16px; font-family: monospace; }
+    .preview-text { color: #fff; font-size: 14px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis MangoHud Configurator")
+        self.set_default_size(1000, 800)
+        
+        self.config_path = Path.home() / ".config/MangoHud/MangoHud.conf"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.options = {}
+        self._init_defaults()
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_existing_config()
+        self._create_ui()
+    
+    def _init_defaults(self):
+        for category, opts in MANGOHUD_OPTIONS.items():
+            for key, opt in opts.items():
+                self.options[key] = opt["default"]
+    
+    def _load_existing_config(self):
+        if self.config_path.exists():
+            try:
+                with open(self.config_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            key, val = line.split("=", 1)
+                            key = key.strip()
+                            val = val.strip()
+                            if key in self.options:
+                                if val.lower() in ("true", "1"):
+                                    self.options[key] = True
+                                elif val.lower() in ("false", "0"):
+                                    self.options[key] = False
+                                elif val.replace(".", "").isdigit():
+                                    self.options[key] = float(val) if "." in val else int(val)
+                                else:
+                                    self.options[key] = val
+                        else:
+                            if line in self.options:
+                                self.options[line] = True
+            except Exception as e:
+                print(f"Error loading config: {e}")
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        title = Gtk.Label(label="Aegis MangoHud Configurator")
+        title.get_style_context().add_class("title")
+        title.set_halign(Gtk.Align.START)
+        header.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Configure your in-game performance overlay")
+        subtitle.get_style_context().add_class("info-label")
+        subtitle.set_halign(Gtk.Align.START)
+        header.pack_start(subtitle, False, False, 4)
+        
+        main.pack_start(header, False, False, 0)
+        
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        main.pack_start(paned, True, True, 0)
+        
+        left_scroll = Gtk.ScrolledWindow()
+        left_scroll.set_size_request(650, -1)
+        
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left_box.set_margin_start(16); left_box.set_margin_end(8)
+        left_box.set_margin_top(16); left_box.set_margin_bottom(16)
+        
+        left_box.pack_start(self._create_presets_card(), False, False, 0)
+        
+        for category, opts in MANGOHUD_OPTIONS.items():
+            left_box.pack_start(self._create_category_card(category, opts), False, False, 0)
+        
+        left_scroll.add(left_box)
+        paned.pack1(left_scroll, True, False)
+        
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right_box.set_margin_start(8); right_box.set_margin_end(16)
+        right_box.set_margin_top(16); right_box.set_margin_bottom(16)
+        
+        preview_label = Gtk.Label(label="Config Preview")
+        preview_label.get_style_context().add_class("card-title")
+        preview_label.set_halign(Gtk.Align.START)
+        right_box.pack_start(preview_label, False, False, 8)
+        
+        preview_scroll = Gtk.ScrolledWindow()
+        preview_scroll.set_size_request(280, 400)
+        
+        self.preview_text = Gtk.TextView()
+        self.preview_text.set_editable(False)
+        self.preview_text.set_monospace(True)
+        self.preview_text.get_style_context().add_class("preview-box")
+        self.preview_text.modify_font(Pango.FontDescription("monospace 11"))
+        preview_scroll.add(self.preview_text)
+        right_box.pack_start(preview_scroll, True, True, 0)
+        
+        self._update_preview()
+        
+        actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        
+        save_btn = Gtk.Button(label="Save Configuration")
+        save_btn.get_style_context().add_class("apply-btn")
+        save_btn.connect("clicked", self._save_config)
+        actions.pack_start(save_btn, False, False, 0)
+        
+        test_btn = Gtk.Button(label="Test with glxgears")
+        test_btn.connect("clicked", self._test_mangohud)
+        actions.pack_start(test_btn, False, False, 0)
+        
+        right_box.pack_start(actions, False, False, 16)
+        
+        usage = Gtk.Label()
+        usage.set_markup("<small>Usage: <tt>mangohud game</tt> or set\n<tt>MANGOHUD=1</tt> environment variable</small>")
+        usage.get_style_context().add_class("info-label")
+        usage.set_halign(Gtk.Align.START)
+        right_box.pack_start(usage, False, False, 8)
+        
+        paned.pack2(right_box, False, False)
+    
+    def _create_presets_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Quick Presets")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        presets_box = Gtk.Box(spacing=8)
+        
+        for pid, preset in PRESETS.items():
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            
+            btn = Gtk.Button(label=preset["name"])
+            btn.get_style_context().add_class("preset-btn")
+            btn.set_size_request(100, 50)
+            btn.connect("clicked", self._apply_preset, pid)
+            box.pack_start(btn, False, False, 0)
+            
+            desc = Gtk.Label(label=preset["desc"])
+            desc.get_style_context().add_class("info-label")
+            box.pack_start(desc, False, False, 2)
+            
+            presets_box.pack_start(box, False, False, 0)
+        
+        card.pack_start(presets_box, False, False, 8)
+        return card
+    
+    def _create_category_card(self, category: str, opts: Dict) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label=category.upper())
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        grid = Gtk.Grid(column_spacing=16, row_spacing=4)
+        
+        col, row = 0, 0
+        self.widgets = getattr(self, 'widgets', {})
+        
+        for key, opt in opts.items():
+            opt_box = Gtk.Box(spacing=8)
+            opt_box.get_style_context().add_class("option-row")
+            
+            label = Gtk.Label(label=opt["name"])
+            label.get_style_context().add_class("option-label")
+            label.set_halign(Gtk.Align.START)
+            label.set_size_request(120, -1)
+            opt_box.pack_start(label, False, False, 0)
+            
+            if opt["type"] == "bool":
+                widget = Gtk.Switch()
+                widget.set_active(self.options.get(key, opt["default"]))
+                widget.connect("notify::active", self._on_bool_change, key)
+            elif opt["type"] == "int":
+                adj = Gtk.Adjustment(value=self.options.get(key, opt["default"]),
+                                     lower=opt["range"][0], upper=opt["range"][1], step_increment=1)
+                widget = Gtk.SpinButton(adjustment=adj)
+                widget.connect("value-changed", self._on_int_change, key)
+            elif opt["type"] == "float":
+                adj = Gtk.Adjustment(value=self.options.get(key, opt["default"]),
+                                     lower=opt["range"][0], upper=opt["range"][1], step_increment=0.1)
+                widget = Gtk.SpinButton(adjustment=adj, digits=1)
+                widget.connect("value-changed", self._on_float_change, key)
+            elif opt["type"] == "choice":
+                widget = Gtk.ComboBoxText()
+                for choice in opt["choices"]:
+                    widget.append_text(choice)
+                current = self.options.get(key, opt["default"])
+                if current in opt["choices"]:
+                    widget.set_active(opt["choices"].index(current))
+                widget.connect("changed", self._on_choice_change, key, opt["choices"])
+            elif opt["type"] == "color":
+                widget = Gtk.Entry()
+                widget.set_text(self.options.get(key, opt["default"]))
+                widget.set_width_chars(8)
+                widget.connect("changed", self._on_text_change, key)
+            else:
+                widget = Gtk.Entry()
+                widget.set_text(str(self.options.get(key, opt["default"])))
+                widget.connect("changed", self._on_text_change, key)
+            
+            self.widgets[key] = widget
+            opt_box.pack_start(widget, False, False, 0)
+            
+            grid.attach(opt_box, col, row, 1, 1)
+            col += 1
+            if col >= 2:
+                col = 0
+                row += 1
+        
+        card.pack_start(grid, False, False, 0)
+        return card
+    
+    def _on_bool_change(self, widget, param, key):
+        self.options[key] = widget.get_active()
+        self._update_preview()
+    
+    def _on_int_change(self, widget, key):
+        self.options[key] = int(widget.get_value())
+        self._update_preview()
+    
+    def _on_float_change(self, widget, key):
+        self.options[key] = widget.get_value()
+        self._update_preview()
+    
+    def _on_choice_change(self, widget, key, choices):
+        idx = widget.get_active()
+        if 0 <= idx < len(choices):
+            self.options[key] = choices[idx]
+        self._update_preview()
+    
+    def _on_text_change(self, widget, key):
+        self.options[key] = widget.get_text()
+        self._update_preview()
+    
+    def _apply_preset(self, btn, preset_id):
+        preset = PRESETS.get(preset_id, {})
+        self._init_defaults()
+        for key, val in preset.get("options", {}).items():
+            self.options[key] = val
+            if key in self.widgets:
+                w = self.widgets[key]
+                if isinstance(w, Gtk.Switch):
+                    w.set_active(val)
+                elif isinstance(w, Gtk.SpinButton):
+                    w.set_value(val)
+                elif isinstance(w, Gtk.ComboBoxText):
+                    for cat, opts in MANGOHUD_OPTIONS.items():
+                        if key in opts and opts[key]["type"] == "choice":
+                            choices = opts[key]["choices"]
+                            if val in choices:
+                                w.set_active(choices.index(val))
+                            break
+        self._update_preview()
+    
+    def _generate_config(self) -> str:
+        lines = ["# MangoHud configuration", "# Generated by Aegis MangoHud Configurator", ""]
+        
+        for category, opts in MANGOHUD_OPTIONS.items():
+            lines.append(f"# {category.upper()}")
+            for key, opt in opts.items():
+                val = self.options.get(key, opt["default"])
+                if opt["type"] == "bool":
+                    if val:
+                        lines.append(key)
+                elif opt["type"] in ("int", "float"):
+                    if val != 0 and val != opt["default"]:
+                        lines.append(f"{key}={val}")
+                    elif key in ("font_size", "background_alpha", "round_corners"):
+                        lines.append(f"{key}={val}")
+                elif opt["type"] == "choice":
+                    lines.append(f"{key}={val}")
+                elif opt["type"] == "color":
+                    if val != opt["default"]:
+                        lines.append(f"{key}={val}")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _update_preview(self):
+        config = self._generate_config()
+        buf = self.preview_text.get_buffer()
+        buf.set_text(config)
+    
+    def _save_config(self, btn):
+        config = self._generate_config()
+        
+        try:
+            if self.config_path.exists():
+                backup_path = self.config_path.with_suffix('.conf.bak')
+                import shutil
+                shutil.copy2(self.config_path, backup_path)
+            
+            with open(self.config_path, "w") as f:
+                f.write(config)
+            
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Configuration Saved")
+            msg = f"MangoHud config saved to:\n{self.config_path}\n\n"
+            msg += "To use MangoHud:\n"
+            msg += "  • Run: mangohud <game>\n"
+            msg += "  • Or set: MANGOHUD=1 in environment\n"
+            msg += "  • Or add to Steam launch options:\n    mangohud %command%"
+            dialog.format_secondary_text(msg)
+            dialog.run(); dialog.destroy()
+        except Exception as e:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Save Failed")
+            dialog.format_secondary_text(str(e))
+            dialog.run(); dialog.destroy()
+    
+    def _test_mangohud(self, btn):
+        mangohud_check = subprocess.run(["which", "mangohud"], capture_output=True)
+        if mangohud_check.returncode != 0:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="MangoHud Not Installed")
+            dialog.format_secondary_text("MangoHud is not installed.\n\nInstall with:\nsudo apt install mangohud\n\nConfiguration saved - it will work once installed.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        glxgears_check = subprocess.run(["which", "glxgears"], capture_output=True)
+        if glxgears_check.returncode != 0:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="glxgears Not Found")
+            dialog.format_secondary_text("glxgears is not installed.\n\nInstall with:\nsudo apt install mesa-utils\n\nYou can test with any game: mangohud <game>")
+            dialog.run(); dialog.destroy()
+            return
+        
+        try:
+            self._save_config(None)
+            subprocess.Popen(["mangohud", "glxgears"], start_new_session=True)
+        except Exception as e:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Error")
+            dialog.format_secondary_text(str(e))
+            dialog.run(); dialog.destroy()
+
+def main():
+    win = AegisMangoHudConfig()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
