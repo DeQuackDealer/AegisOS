@@ -360,6 +360,43 @@ def build_installers():
     return results
 
 
+def cleanup_build_artifacts():
+    """Clean up temporary build files after successful build"""
+    print()
+    print("[CLEANUP] Removing temporary build files...")
+    time.sleep(DELAY_SHORT)
+    
+    script_dir = Path(__file__).parent
+    
+    cleanup_dirs = ['build', '__pycache__']
+    cleanup_files = []
+    
+    for dirname in cleanup_dirs:
+        dirpath = script_dir / dirname
+        if dirpath.exists():
+            try:
+                shutil.rmtree(dirpath)
+                print(f"  ✓ Removed: {dirname}/")
+                time.sleep(0.2)
+            except Exception as e:
+                print(f"  ! Could not remove {dirname}/: {e}")
+    
+    for pattern in ['*.spec.bak', '*.pyc']:
+        for f in script_dir.glob(pattern):
+            try:
+                f.unlink()
+                cleanup_files.append(f.name)
+            except:
+                pass
+    
+    if cleanup_files:
+        print(f"  ✓ Removed {len(cleanup_files)} temporary files")
+    
+    print("  ✓ Cleanup complete - only .exe files remain in dist/")
+    print()
+    time.sleep(DELAY_SHORT)
+
+
 def print_summary(results):
     print()
     print("=" * 64)
@@ -450,7 +487,10 @@ def main():
         
         results = build_installers()
         
-        if print_summary(results):
+        success = print_summary(results)
+        
+        if success:
+            cleanup_build_artifacts()
             return 0
         else:
             return 1

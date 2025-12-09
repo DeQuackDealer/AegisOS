@@ -1240,7 +1240,7 @@ class AegisLicensedInstaller:
             self.folder_label.configure(text=folder)
     
     def _verify_and_install(self):
-        """Verify license and start installation"""
+        """Verify license, activate, and start installation"""
         if not self.validated_edition_id:
             messagebox.showerror("No License", "Please provide a valid license file.")
             return
@@ -1249,11 +1249,63 @@ class AegisLicensedInstaller:
             messagebox.showerror("No ISO", "No ISO file found. Please insert USB with ISO.")
             return
         
+        license_key = self.license_data.get("license_key") if self.license_data else None
+        if not license_key:
+            messagebox.showerror("Invalid License", "License key not found.")
+            return
+        
         self.cancel_operation = False
         self._show_step(2)
+        self._update_progress(0, "Activating license...", "Contacting server...")
         
-        self.copy_thread = threading.Thread(target=self._install_worker, daemon=True)
+        self.copy_thread = threading.Thread(
+            target=self._activate_and_install_worker,
+            args=(license_key,),
+            daemon=True
+        )
         self.copy_thread.start()
+    
+    def _activate_and_install_worker(self, license_key):
+        """Activate license then proceed with installation"""
+        try:
+            from activation_client import ActivationClient, HardwareFingerprint
+            
+            self._update_progress(2, "Checking license activation...", "")
+            
+            client = ActivationClient()
+            success, message, activation_data = client.activate(license_key, self.validated_edition_id)
+            
+            if not success:
+                if "Connection" in message or "timed out" in message.lower():
+                    self._update_progress(3, "Server unavailable, checking local activation...", "")
+                    offline_success, offline_message = client.check_offline(license_key, self.validated_edition_id)
+                    
+                    if offline_success:
+                        self._update_progress(5, "License verified (offline mode)", "")
+                    else:
+                        self._show_error("Activation Required", 
+                            "This license needs to be activated online first.\n"
+                            "Please connect to the internet and try again.")
+                        return
+                else:
+                    self._show_error("Activation Failed", message)
+                    return
+            else:
+                activations_left = 0
+                if activation_data:
+                    max_act = activation_data.get("max_activations", 3)
+                    used = activation_data.get("activations_used", 1)
+                    activations_left = max_act - used
+                
+                self._update_progress(5, f"License activated ({activations_left} activations remaining)", "")
+            
+            self._install_worker()
+            
+        except ImportError:
+            self._update_progress(5, "Activation module not available, proceeding...", "")
+            self._install_worker()
+        except Exception as e:
+            self._show_error("Activation Error", str(e))
     
     def _install_worker(self):
         """Copy ISO to install location with verification"""
