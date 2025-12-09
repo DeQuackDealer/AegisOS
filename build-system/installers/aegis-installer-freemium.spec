@@ -101,7 +101,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     uac_admin=False,
-    icon='../aegis-icon.ico',
+    icon=None,
     manifest='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity

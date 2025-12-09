@@ -31,6 +31,18 @@ a = Analysis(
         'base64',
         're',
         'datetime',
+        'binascii',
+        'typing',
+        'cryptography',
+        'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.hashes',
+        'cryptography.hazmat.primitives.serialization',
+        'cryptography.hazmat.primitives.asymmetric',
+        'cryptography.hazmat.primitives.asymmetric.padding',
+        'cryptography.hazmat.primitives.asymmetric.rsa',
+        'cryptography.hazmat.backends',
+        'cryptography.hazmat.backends.default_backend',
+        'cryptography.exceptions',
     ],
     hookspath=[],
     hooksconfig={},
@@ -102,7 +114,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     uac_admin=False,
-    icon='../aegis-icon.ico',
+    icon=None,
     manifest='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity

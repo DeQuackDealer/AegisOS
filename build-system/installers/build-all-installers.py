@@ -293,37 +293,33 @@ def build_installers():
         print()
         time.sleep(DELAY_SHORT)
         
-        spec_path = script_dir / installer["spec"]
+        script_path = script_dir / installer["script"]
         
-        if spec_path.exists():
-            print("      Using spec file for build configuration...")
-            cmd = [
-                sys.executable, '-m', 'PyInstaller',
-                '--distpath', str(script_dir / 'dist'),
-                '--workpath', str(script_dir / 'build'),
-                '--noconfirm',
-                '--clean',
-                str(spec_path)
-            ]
-        else:
-            print("      Using default build configuration...")
-            script_path = script_dir / installer["script"]
-            icon_path = script_dir.parent / "aegis-icon.ico"
-            
-            cmd = [
-                sys.executable, '-m', 'PyInstaller',
-                '--onefile',
-                '--windowed',
-                '--name', installer["output"].replace('.exe', ''),
-                '--distpath', str(script_dir / 'dist'),
-                '--workpath', str(script_dir / 'build'),
-                '--noconfirm',
-                '--clean',
-                str(script_path)
-            ]
-            
-            if icon_path.exists():
-                cmd.extend(['--icon', str(icon_path)])
+        print("      Building standalone executable...")
+        
+        cmd = [
+            sys.executable, '-m', 'PyInstaller',
+            '--onefile',
+            '--windowed',
+            '--name', installer["output"].replace('.exe', ''),
+            '--distpath', str(script_dir / 'dist'),
+            '--workpath', str(script_dir / 'build'),
+            '--noconfirm',
+            '--clean',
+        ]
+        
+        if 'licensed' in installer["script"].lower():
+            cmd.extend([
+                '--hidden-import', 'cryptography',
+                '--hidden-import', 'cryptography.hazmat.primitives',
+                '--hidden-import', 'cryptography.hazmat.primitives.hashes',
+                '--hidden-import', 'cryptography.hazmat.primitives.serialization',
+                '--hidden-import', 'cryptography.hazmat.primitives.asymmetric.padding',
+                '--hidden-import', 'cryptography.hazmat.backends',
+                '--collect-all', 'cryptography',
+            ])
+        
+        cmd.append(str(script_path))
         
         time.sleep(DELAY_SHORT)
         print("      Compiling... (this may take 1-2 minutes)")
