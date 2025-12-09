@@ -17,6 +17,7 @@ import webbrowser
 import json
 import shutil
 import urllib.request
+import urllib.error
 import ssl
 import socket
 

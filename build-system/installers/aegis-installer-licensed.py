@@ -20,6 +20,7 @@ import binascii
 from datetime import datetime
 from typing import Optional, Tuple, Any
 import urllib.request
+import urllib.error
 import ssl
 import socket
 
