@@ -49,6 +49,30 @@ def print_header():
     print()
 
 
+def install_pyinstaller():
+    """Install PyInstaller using pip"""
+    print("  → Installing PyInstaller...")
+    try:
+        result = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install', 'pyinstaller'],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print("  ✓ PyInstaller installed successfully")
+            return True
+        else:
+            print("  ✗ Failed to install PyInstaller")
+            if result.stderr:
+                for line in result.stderr.split('\n')[:3]:
+                    if line.strip():
+                        print(f"    {line}")
+            return False
+    except Exception as e:
+        print(f"  ✗ Error installing PyInstaller: {e}")
+        return False
+
+
 def check_requirements():
     print("[1/4] Checking requirements...")
     
@@ -56,10 +80,15 @@ def check_requirements():
         import PyInstaller
         print(f"  ✓ PyInstaller {PyInstaller.__version__} found")
     except ImportError:
-        print("  ✗ PyInstaller not found!")
-        print()
-        print("  Install with: pip install pyinstaller")
-        return False
+        print("  ✗ PyInstaller not found")
+        if not install_pyinstaller():
+            return False
+        try:
+            import PyInstaller
+            print(f"  ✓ PyInstaller {PyInstaller.__version__} ready")
+        except ImportError:
+            print("  ✗ PyInstaller still not available after install")
+            return False
     
     script_dir = Path(__file__).parent
     
@@ -201,9 +230,26 @@ def print_summary(results):
     print("-" * 60)
     print(f"  Total: {success_count}/{total_count} installers built successfully")
     
-    if success_count == total_count:
+    if success_count > 0:
+        script_dir = Path(__file__).parent
+        dist_dir = script_dir / 'dist'
+        abs_path = dist_dir.resolve()
+        
         print()
-        print("  Output files are in: build-system/installers/dist/")
+        print("=" * 60)
+        print("  OUTPUT LOCATION")
+        print("=" * 60)
+        print()
+        print(f"  {abs_path}")
+        print()
+        
+        print("  Files created:")
+        for installer in INSTALLERS:
+            output_file = dist_dir / installer["output"]
+            if output_file.exists():
+                size_mb = output_file.stat().st_size / (1024 * 1024)
+                print(f"    → {installer['output']} ({size_mb:.1f} MB)")
+        
         print()
         print("  Ready for distribution!")
     
