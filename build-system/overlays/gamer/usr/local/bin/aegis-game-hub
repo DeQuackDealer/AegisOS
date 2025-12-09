@@ -1,0 +1,738 @@
+#!/usr/bin/env python3
+"""
+Aegis Game Hub - Full-screen game library launcher
+SteamOS Big Picture style interface for Aegis OS Gamer Edition
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Pango
+import os
+import json
+import subprocess
+import glob
+import configparser
+from pathlib import Path
+from typing import List, Dict, Optional
+import threading
+import hashlib
+
+class Game:
+    def __init__(self, name: str, launch_cmd: str, source: str, 
+                 cover_path: str = "", installed: bool = True):
+        self.name = name
+        self.launch_cmd = launch_cmd
+        self.source = source
+        self.cover_path = cover_path
+        self.installed = installed
+        self.favorite = False
+        self.last_played = 0
+        self.play_time = 0
+        self.id = hashlib.md5(f"{name}{source}".encode()).hexdigest()[:12]
+
+class GameScanner:
+    def __init__(self):
+        self.games: List[Game] = []
+        self.cache_dir = Path.home() / ".cache" / "aegis-game-hub"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+    def scan_all(self) -> List[Game]:
+        self.games = []
+        self.scan_steam()
+        self.scan_lutris()
+        self.scan_heroic()
+        self.scan_native()
+        return self.games
+    
+    def scan_steam(self):
+        steam_paths = [
+            Path.home() / ".steam" / "steam" / "steamapps",
+            Path.home() / ".local" / "share" / "Steam" / "steamapps",
+        ]
+        for steam_path in steam_paths:
+            if not steam_path.exists():
+                continue
+            for acf in steam_path.glob("*.acf"):
+                try:
+                    with open(acf, 'r') as f:
+                        content = f.read()
+                    name = self._parse_vdf_value(content, "name")
+                    appid = self._parse_vdf_value(content, "appid")
+                    if name and appid:
+                        cover = self._find_steam_cover(appid, steam_path.parent)
+                        game = Game(
+                            name=name,
+                            launch_cmd=f"steam steam://rungameid/{appid}",
+                            source="Steam",
+                            cover_path=str(cover) if cover else ""
+                        )
+                        self.games.append(game)
+                except Exception:
+                    continue
+    
+    def _parse_vdf_value(self, content: str, key: str) -> Optional[str]:
+        import re
+        pattern = rf'"{key}"\s+"([^"]+)"'
+        match = re.search(pattern, content, re.IGNORECASE)
+        return match.group(1) if match else None
+    
+    def _find_steam_cover(self, appid: str, steam_dir: Path) -> Optional[Path]:
+        covers = [
+            steam_dir / "appcache" / "librarycache" / f"{appid}_library_600x900.jpg",
+            steam_dir / "appcache" / "librarycache" / f"{appid}_header.jpg",
+        ]
+        for cover in covers:
+            if cover.exists():
+                return cover
+        return None
+    
+    def scan_lutris(self):
+        lutris_db = Path.home() / ".local" / "share" / "lutris" / "pga.db"
+        if not lutris_db.exists():
+            return
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(lutris_db))
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, slug, runner FROM games WHERE installed = 1")
+            for row in cursor.fetchall():
+                name, slug, runner = row
+                cover = Path.home() / ".local" / "share" / "lutris" / "coverart" / f"{slug}.jpg"
+                game = Game(
+                    name=name,
+                    launch_cmd=f"lutris lutris:rungame/{slug}",
+                    source=f"Lutris ({runner})",
+                    cover_path=str(cover) if cover.exists() else ""
+                )
+                self.games.append(game)
+            conn.close()
+        except Exception:
+            pass
+    
+    def scan_heroic(self):
+        heroic_config = Path.home() / ".config" / "heroic" / "store_cache"
+        if not heroic_config.exists():
+            return
+        for store in ["gog_library.json", "legendary_library.json"]:
+            lib_file = heroic_config / store
+            if lib_file.exists():
+                try:
+                    with open(lib_file, 'r') as f:
+                        data = json.load(f)
+                    games = data.get("library", [])
+                    for g in games:
+                        if g.get("is_installed"):
+                            name = g.get("title", g.get("app_name", "Unknown"))
+                            app_name = g.get("app_name", "")
+                            source = "GOG" if "gog" in store else "Epic"
+                            game = Game(
+                                name=name,
+                                launch_cmd=f"xdg-open heroic://launch/{app_name}",
+                                source=f"Heroic ({source})",
+                                cover_path=""
+                            )
+                            self.games.append(game)
+                except Exception:
+                    continue
+    
+    def scan_native(self):
+        native_dirs = [
+            "/usr/share/applications",
+            str(Path.home() / ".local" / "share" / "applications"),
+        ]
+        game_categories = ["Game", "ActionGame", "AdventureGame", "ArcadeGame", 
+                          "BoardGame", "BlocksGame", "CardGame", "KidsGame",
+                          "LogicGame", "RolePlaying", "Shooter", "Simulation",
+                          "SportsGame", "StrategyGame"]
+        
+        for app_dir in native_dirs:
+            if not os.path.exists(app_dir):
+                continue
+            for desktop_file in glob.glob(os.path.join(app_dir, "*.desktop")):
+                try:
+                    config = configparser.ConfigParser(interpolation=None)
+                    config.read(desktop_file)
+                    if "Desktop Entry" not in config:
+                        continue
+                    entry = config["Desktop Entry"]
+                    categories = entry.get("Categories", "")
+                    if not any(cat in categories for cat in game_categories):
+                        continue
+                    name = entry.get("Name", "")
+                    exec_cmd = entry.get("Exec", "")
+                    icon = entry.get("Icon", "")
+                    if name and exec_cmd:
+                        exec_cmd = exec_cmd.replace("%u", "").replace("%U", "")
+                        exec_cmd = exec_cmd.replace("%f", "").replace("%F", "").strip()
+                        game = Game(
+                            name=name,
+                            launch_cmd=exec_cmd,
+                            source="Native",
+                            cover_path=icon
+                        )
+                        self.games.append(game)
+                except Exception:
+                    continue
+
+class GameCard(Gtk.EventBox):
+    def __init__(self, game: Game, on_launch, on_select):
+        super().__init__()
+        self.game = game
+        self.on_launch = on_launch
+        self.on_select = on_select
+        self.selected = False
+        
+        self.set_size_request(200, 300)
+        self.connect("button-press-event", self._on_click)
+        self.connect("enter-notify-event", self._on_hover)
+        
+        self.overlay = Gtk.Overlay()
+        self.add(self.overlay)
+        
+        self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.card.get_style_context().add_class("game-card")
+        self.overlay.add(self.card)
+        
+        if game.cover_path and os.path.exists(game.cover_path):
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    game.cover_path, 200, 260, True
+                )
+                self.cover_image = Gtk.Image.new_from_pixbuf(pixbuf)
+            except Exception:
+                self.cover_image = self._create_placeholder()
+        else:
+            self.cover_image = self._create_placeholder()
+        
+        self.card.pack_start(self.cover_image, True, True, 0)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label_box.get_style_context().add_class("game-label-box")
+        
+        self.name_label = Gtk.Label(label=game.name)
+        self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self.name_label.set_max_width_chars(20)
+        self.name_label.get_style_context().add_class("game-name")
+        label_box.pack_start(self.name_label, False, False, 4)
+        
+        self.source_label = Gtk.Label(label=game.source)
+        self.source_label.get_style_context().add_class("game-source")
+        label_box.pack_start(self.source_label, False, False, 2)
+        
+        self.card.pack_start(label_box, False, False, 0)
+        
+        if game.favorite:
+            fav_icon = Gtk.Image.new_from_icon_name("starred", Gtk.IconSize.BUTTON)
+            fav_icon.set_halign(Gtk.Align.END)
+            fav_icon.set_valign(Gtk.Align.START)
+            fav_icon.set_margin_top(8)
+            fav_icon.set_margin_end(8)
+            self.overlay.add_overlay(fav_icon)
+    
+    def _create_placeholder(self) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_size_request(200, 260)
+        box.get_style_context().add_class("game-placeholder")
+        
+        icon = Gtk.Image.new_from_icon_name("applications-games", Gtk.IconSize.DIALOG)
+        icon.set_valign(Gtk.Align.CENTER)
+        box.pack_start(icon, True, True, 0)
+        
+        return box
+    
+    def set_selected(self, selected: bool):
+        self.selected = selected
+        if selected:
+            self.card.get_style_context().add_class("selected")
+        else:
+            self.card.get_style_context().remove_class("selected")
+    
+    def _on_click(self, widget, event):
+        if event.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
+            self.on_launch(self.game)
+        else:
+            self.on_select(self)
+    
+    def _on_hover(self, widget, event):
+        self.on_select(self)
+
+class AegisGameHub(Gtk.Window):
+    CSS = """
+    window {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    }
+    
+    .header-bar {
+        background: rgba(0, 0, 0, 0.6);
+        padding: 20px 40px;
+    }
+    
+    .title-label {
+        color: #00d4ff;
+        font-size: 36px;
+        font-weight: bold;
+        text-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+    }
+    
+    .category-button {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        border-radius: 8px;
+        color: #ffffff;
+        padding: 12px 24px;
+        font-size: 16px;
+        margin: 4px;
+        transition: all 0.2s;
+    }
+    
+    .category-button:hover {
+        background: rgba(0, 212, 255, 0.3);
+    }
+    
+    .category-button:checked {
+        background: #00d4ff;
+        color: #1a1a2e;
+        font-weight: bold;
+    }
+    
+    .game-grid {
+        background: transparent;
+        padding: 20px;
+    }
+    
+    .game-card {
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        border: 2px solid transparent;
+        transition: all 0.3s;
+        margin: 8px;
+    }
+    
+    .game-card:hover {
+        background: rgba(255, 255, 255, 0.15);
+        border-color: rgba(0, 212, 255, 0.5);
+        transform: scale(1.02);
+    }
+    
+    .game-card.selected {
+        border-color: #00d4ff;
+        box-shadow: 0 0 30px rgba(0, 212, 255, 0.4);
+    }
+    
+    .game-label-box {
+        background: rgba(0, 0, 0, 0.7);
+        padding: 8px;
+        border-radius: 0 0 10px 10px;
+    }
+    
+    .game-name {
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: bold;
+    }
+    
+    .game-source {
+        color: #888888;
+        font-size: 11px;
+    }
+    
+    .game-placeholder {
+        background: linear-gradient(135deg, #2d3436 0%, #636e72 100%);
+        border-radius: 12px 12px 0 0;
+    }
+    
+    .game-placeholder image {
+        opacity: 0.4;
+    }
+    
+    .sidebar {
+        background: rgba(0, 0, 0, 0.4);
+        padding: 20px;
+    }
+    
+    .sidebar-button {
+        background: transparent;
+        border: none;
+        color: #ffffff;
+        font-size: 18px;
+        padding: 16px 24px;
+        border-radius: 8px;
+        margin: 4px 0;
+    }
+    
+    .sidebar-button:hover {
+        background: rgba(0, 212, 255, 0.2);
+    }
+    
+    .sidebar-button:checked {
+        background: rgba(0, 212, 255, 0.3);
+        border-left: 4px solid #00d4ff;
+    }
+    
+    .status-bar {
+        background: rgba(0, 0, 0, 0.8);
+        padding: 12px 40px;
+    }
+    
+    .status-label {
+        color: #888888;
+        font-size: 14px;
+    }
+    
+    .hint-label {
+        color: #00d4ff;
+        font-size: 14px;
+    }
+    
+    .no-games-label {
+        color: #888888;
+        font-size: 24px;
+    }
+    
+    .search-entry {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 20px;
+        color: #ffffff;
+        padding: 8px 16px;
+        font-size: 16px;
+    }
+    
+    .search-entry:focus {
+        border-color: #00d4ff;
+    }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Game Hub")
+        
+        self.scanner = GameScanner()
+        self.games: List[Game] = []
+        self.filtered_games: List[Game] = []
+        self.current_filter = "all"
+        self.selected_card: Optional[GameCard] = None
+        self.game_cards: List[GameCard] = []
+        
+        self._apply_css()
+        self._setup_window()
+        self._create_ui()
+        self._scan_games()
+        self._setup_controller()
+        
+    def _apply_css(self):
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+    
+    def _setup_window(self):
+        self.fullscreen()
+        self.set_decorated(False)
+        self.connect("key-press-event", self._on_key_press)
+        self.connect("destroy", Gtk.main_quit)
+    
+    def _create_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main_box)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.get_style_context().add_class("header-bar")
+        
+        logo_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        logo_icon = Gtk.Image.new_from_icon_name("applications-games", Gtk.IconSize.DIALOG)
+        logo_box.pack_start(logo_icon, False, False, 0)
+        
+        title = Gtk.Label(label="AEGIS GAME HUB")
+        title.get_style_context().add_class("title-label")
+        logo_box.pack_start(title, False, False, 0)
+        header.pack_start(logo_box, False, False, 0)
+        
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Search games...")
+        self.search_entry.get_style_context().add_class("search-entry")
+        self.search_entry.set_size_request(300, -1)
+        self.search_entry.connect("search-changed", self._on_search)
+        header.set_center_widget(self.search_entry)
+        
+        header_buttons = Gtk.Box(spacing=8)
+        
+        desktop_btn = Gtk.Button(label="Desktop Mode")
+        desktop_btn.get_style_context().add_class("category-button")
+        desktop_btn.connect("clicked", self._switch_to_desktop)
+        header_buttons.pack_start(desktop_btn, False, False, 0)
+        
+        settings_btn = Gtk.Button(label="Settings")
+        settings_btn.get_style_context().add_class("category-button")
+        settings_btn.connect("clicked", self._show_settings)
+        header_buttons.pack_start(settings_btn, False, False, 0)
+        
+        header.pack_end(header_buttons, False, False, 0)
+        main_box.pack_start(header, False, False, 0)
+        
+        content_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        main_box.pack_start(content_box, True, True, 0)
+        
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        sidebar.get_style_context().add_class("sidebar")
+        sidebar.set_size_request(200, -1)
+        
+        self.filter_buttons = {}
+        filters = [
+            ("all", "All Games"),
+            ("favorites", "Favorites"),
+            ("recent", "Recently Played"),
+            ("steam", "Steam"),
+            ("lutris", "Lutris"),
+            ("heroic", "Heroic"),
+            ("native", "Native"),
+        ]
+        
+        for filter_id, label in filters:
+            btn = Gtk.ToggleButton(label=label)
+            btn.get_style_context().add_class("sidebar-button")
+            btn.connect("toggled", self._on_filter, filter_id)
+            sidebar.pack_start(btn, False, False, 0)
+            self.filter_buttons[filter_id] = btn
+        
+        self.filter_buttons["all"].set_active(True)
+        
+        sidebar.pack_start(Gtk.Box(), True, True, 0)
+        
+        refresh_btn = Gtk.Button(label="Refresh Library")
+        refresh_btn.get_style_context().add_class("sidebar-button")
+        refresh_btn.connect("clicked", lambda w: self._scan_games())
+        sidebar.pack_start(refresh_btn, False, False, 0)
+        
+        content_box.pack_start(sidebar, False, False, 0)
+        
+        game_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        game_area.get_style_context().add_class("game-grid")
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        self.game_flow = Gtk.FlowBox()
+        self.game_flow.set_valign(Gtk.Align.START)
+        self.game_flow.set_max_children_per_line(10)
+        self.game_flow.set_min_children_per_line(3)
+        self.game_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.game_flow.set_homogeneous(True)
+        scroll.add(self.game_flow)
+        
+        game_area.pack_start(scroll, True, True, 0)
+        content_box.pack_start(game_area, True, True, 0)
+        
+        status_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        status_bar.get_style_context().add_class("status-bar")
+        
+        self.game_count_label = Gtk.Label(label="0 games")
+        self.game_count_label.get_style_context().add_class("status-label")
+        status_bar.pack_start(self.game_count_label, False, False, 0)
+        
+        hints = Gtk.Label(label="ENTER: Launch  |  F: Favorite  |  ESC: Exit  |  F5: Refresh  |  TAB: Desktop Mode")
+        hints.get_style_context().add_class("hint-label")
+        status_bar.pack_end(hints, False, False, 0)
+        
+        main_box.pack_start(status_bar, False, False, 0)
+    
+    def _scan_games(self):
+        def scan_thread():
+            games = self.scanner.scan_all()
+            GLib.idle_add(self._update_game_list, games)
+        
+        thread = threading.Thread(target=scan_thread)
+        thread.daemon = True
+        thread.start()
+    
+    def _update_game_list(self, games: List[Game]):
+        self.games = sorted(games, key=lambda g: g.name.lower())
+        self._apply_filter()
+        self.game_count_label.set_text(f"{len(self.games)} games")
+    
+    def _apply_filter(self):
+        search_text = self.search_entry.get_text().lower()
+        
+        if self.current_filter == "all":
+            self.filtered_games = self.games
+        elif self.current_filter == "favorites":
+            self.filtered_games = [g for g in self.games if g.favorite]
+        elif self.current_filter == "recent":
+            self.filtered_games = sorted(self.games, key=lambda g: g.last_played, reverse=True)[:20]
+        elif self.current_filter == "steam":
+            self.filtered_games = [g for g in self.games if "Steam" in g.source]
+        elif self.current_filter == "lutris":
+            self.filtered_games = [g for g in self.games if "Lutris" in g.source]
+        elif self.current_filter == "heroic":
+            self.filtered_games = [g for g in self.games if "Heroic" in g.source]
+        elif self.current_filter == "native":
+            self.filtered_games = [g for g in self.games if "Native" in g.source]
+        
+        if search_text:
+            self.filtered_games = [g for g in self.filtered_games 
+                                   if search_text in g.name.lower()]
+        
+        self._populate_grid()
+    
+    def _populate_grid(self):
+        for child in self.game_flow.get_children():
+            self.game_flow.remove(child)
+        
+        self.game_cards = []
+        self.selected_card = None
+        
+        if not self.filtered_games:
+            no_games = Gtk.Label(label="No games found")
+            no_games.get_style_context().add_class("no-games-label")
+            self.game_flow.add(no_games)
+        else:
+            for game in self.filtered_games:
+                card = GameCard(game, self._launch_game, self._select_card)
+                self.game_cards.append(card)
+                self.game_flow.add(card)
+        
+        self.game_flow.show_all()
+        
+        if self.game_cards:
+            self._select_card(self.game_cards[0])
+    
+    def _select_card(self, card: GameCard):
+        if self.selected_card:
+            self.selected_card.set_selected(False)
+        self.selected_card = card
+        card.set_selected(True)
+    
+    def _launch_game(self, game: Game):
+        try:
+            subprocess.Popen(game.launch_cmd, shell=True)
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Failed to launch {game.name}"
+            )
+            dialog.format_secondary_text(str(e))
+            dialog.run()
+            dialog.destroy()
+    
+    def _on_filter(self, button, filter_id):
+        if not button.get_active():
+            return
+        
+        self.current_filter = filter_id
+        for fid, btn in self.filter_buttons.items():
+            if fid != filter_id:
+                btn.set_active(False)
+        
+        self._apply_filter()
+    
+    def _on_search(self, entry):
+        self._apply_filter()
+    
+    def _on_key_press(self, widget, event):
+        keyval = event.keyval
+        
+        if keyval == Gdk.KEY_Escape:
+            self._confirm_exit()
+            return True
+        
+        if keyval == Gdk.KEY_Return and self.selected_card:
+            self._launch_game(self.selected_card.game)
+            return True
+        
+        if keyval == Gdk.KEY_F5:
+            self._scan_games()
+            return True
+        
+        if keyval == Gdk.KEY_Tab:
+            self._switch_to_desktop(None)
+            return True
+        
+        if keyval == Gdk.KEY_f and self.selected_card:
+            self.selected_card.game.favorite = not self.selected_card.game.favorite
+            self._apply_filter()
+            return True
+        
+        if keyval in (Gdk.KEY_Left, Gdk.KEY_Right, Gdk.KEY_Up, Gdk.KEY_Down):
+            self._navigate(keyval)
+            return True
+        
+        return False
+    
+    def _navigate(self, keyval):
+        if not self.game_cards or not self.selected_card:
+            return
+        
+        current_idx = self.game_cards.index(self.selected_card)
+        cols = max(1, self.game_flow.get_allocation().width // 220)
+        
+        if keyval == Gdk.KEY_Left:
+            new_idx = max(0, current_idx - 1)
+        elif keyval == Gdk.KEY_Right:
+            new_idx = min(len(self.game_cards) - 1, current_idx + 1)
+        elif keyval == Gdk.KEY_Up:
+            new_idx = max(0, current_idx - cols)
+        elif keyval == Gdk.KEY_Down:
+            new_idx = min(len(self.game_cards) - 1, current_idx + cols)
+        else:
+            return
+        
+        self._select_card(self.game_cards[new_idx])
+    
+    def _confirm_exit(self):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Exit Aegis Game Hub?"
+        )
+        dialog.format_secondary_text("Do you want to return to desktop?")
+        response = dialog.run()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.YES:
+            self._switch_to_desktop(None)
+    
+    def _switch_to_desktop(self, widget):
+        subprocess.Popen(["/usr/local/bin/aegis-mode-switch", "desktop"])
+        Gtk.main_quit()
+    
+    def _show_settings(self, widget):
+        dialog = Gtk.Dialog(
+            title="Settings",
+            transient_for=self,
+            flags=0
+        )
+        dialog.add_buttons(Gtk.STOCK_CLOSE, Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(400, 300)
+        
+        content = dialog.get_content_area()
+        content.set_spacing(16)
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(20)
+        
+        label = Gtk.Label(label="Aegis Game Hub Settings")
+        label.set_markup("<big><b>Aegis Game Hub Settings</b></big>")
+        content.pack_start(label, False, False, 0)
+        
+        content.show_all()
+        dialog.run()
+        dialog.destroy()
+    
+    def _setup_controller(self):
+        pass
+
+def main():
+    app = AegisGameHub()
+    app.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
