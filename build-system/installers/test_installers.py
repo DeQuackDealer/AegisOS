@@ -254,6 +254,49 @@ def test_activation_client():
         return False
 
 
+def test_obfuscation():
+    """Test obfuscation module"""
+    print("Testing obfuscation module...")
+    
+    try:
+        from obfuscation import StringProtector, IntegrityChecker, LicenseProtection, RuntimeProtection
+        
+        test_string = "https://aegis-os.com/api/v1/activate"
+        protected = StringProtector.protect(test_string)
+        revealed = StringProtector.reveal(protected)
+        
+        if revealed != test_string:
+            print(f"  ✗ String protection failed: {revealed[:30]}...")
+            return False
+        print(f"  ✓ String protection works")
+        
+        if not LicenseProtection.validate_key_format("BSIC-ABCD-1234-WXYZ"):
+            print("  ✗ Valid license key rejected")
+            return False
+        if LicenseProtection.validate_key_format("INVALID-KEY"):
+            print("  ✗ Invalid license key accepted")
+            return False
+        print("  ✓ License key validation works")
+        
+        token = RuntimeProtection.initialize(["test", "values", 123])
+        if not token or len(token) < 8:
+            print("  ✗ Runtime protection failed to initialize")
+            return False
+        if not RuntimeProtection.verify(["test", "values", 123]):
+            print("  ✗ Runtime verification failed")
+            return False
+        print("  ✓ Runtime protection works")
+        
+        return True
+        
+    except ImportError as e:
+        print(f"  ✗ Import error: {e}")
+        return False
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+        return False
+
+
 def test_python_syntax():
     """Test that all installer files have valid Python syntax"""
     print("Testing Python syntax...")
@@ -263,6 +306,7 @@ def test_python_syntax():
         "aegis-installer-licensed.py",
         "build-all-installers.py",
         "activation_client.py",
+        "obfuscation.py",
     ]
     
     all_valid = True
@@ -299,6 +343,7 @@ def main():
         ("License Validation", test_license_validation),
         ("Placeholder Checksum", test_placeholder_checksum),
         ("Activation Client", test_activation_client),
+        ("Obfuscation", test_obfuscation),
         ("Offline ISO Locator", test_offline_iso_locator),
     ]
     

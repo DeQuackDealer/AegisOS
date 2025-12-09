@@ -308,6 +308,13 @@ def build_installers():
             '--clean',
         ]
         
+        obfuscation_path = script_dir / "obfuscation.py"
+        if obfuscation_path.exists():
+            cmd.extend([
+                '--add-data', f'{obfuscation_path}{os.pathsep}.',
+                '--hidden-import', 'obfuscation',
+            ])
+        
         if 'licensed' in installer["script"].lower():
             activation_client_path = script_dir / "activation_client.py"
             cmd.extend([
