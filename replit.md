@@ -71,12 +71,15 @@ Over 50 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter)
 *   **aegis-security-suite**: ClamAV, UFW, encrypted folders
 *   **aegis-backup-suite**: Scheduled backups with cloud support
 
-**Gamer Edition Tools:**
-*   **aegis-game-center**: Unified game library (Steam, Lutris, Heroic, native)
-*   **aegis-performance-tuner**: CPU/GPU optimization, gaming profiles
-*   **aegis-stream-deck**: OBS integration, streaming controls
-*   **aegis-render-orchestrator**: Dual-GPU split rendering with per-region upscaling
+**Gamer Edition Tools (December 2025 - Fully Functional):**
+*   **aegis-game-scanner**: Detects games from Steam/Lutris/Heroic/native with fallback parsing for missing vdf/sqlite3
+*   **aegis-performance-tuner**: Real CPU governor/GPU/compositor settings with state save/restore, uses secure temp files
+*   **aegis-wine-optimizer**: Runs actual winetricks for DXVK/VKD3D, creates launch scripts with threading
+*   **aegis-stream-studio**: Creates real OBS profiles with stream keys, FFmpeg RTMP testing
+*   **aegis-mangohud-config**: Creates MangoHud.conf with presets, backups existing configs
+*   **aegis-controller-config**: Scans /dev/input, creates udev rules with install script
 *   **aegis-upscaler**: FSR/DLSS/ANU neural upscaling with game profiles
+*   **aegis-render-orchestrator**: Dual-GPU split rendering with per-region upscaling
 
 **Workplace Edition Tools:**
 *   **aegis-workspace-hub**: Enterprise app launcher with favorites
