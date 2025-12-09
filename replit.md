@@ -73,6 +73,8 @@ Over 50 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter)
 
 **Gamer Edition Tools (December 2025 - Fully Functional):**
 *   **aegis-game-scanner**: Detects games from Steam/Lutris/Heroic/native with fallback parsing for missing vdf/sqlite3
+*   **aegis-game-hub**: Full-screen console-style game library with GTK3, gamepad support via /dev/input/js*, keyboard navigation (arrow keys, Enter, F, ESC)
+*   **aegis-proton-manager**: GTK3 tool for Proton-GE/Wine-GE version management - download from GitHub, install with secure tar extraction, remove old versions
 *   **aegis-performance-tuner**: Real CPU governor/GPU/compositor settings with state save/restore, uses secure temp files
 *   **aegis-wine-optimizer**: Runs actual winetricks for DXVK/VKD3D, creates launch scripts with threading
 *   **aegis-stream-studio**: Creates real OBS profiles with stream keys, FFmpeg RTMP testing
@@ -83,7 +85,7 @@ Over 50 custom Python-based utilities (`/usr/local/bin/`) offering GUI (tkinter)
 
 **Workplace Edition Tools:**
 *   **aegis-workspace-hub**: Enterprise app launcher with favorites
-*   **aegis-it-toolkit**: Remote desktop, network diagnostics, VPN management
+*   **aegis-it-toolkit**: Remote desktop (RDP/VNC/SSH), network diagnostics (ping, port scan), VPN management (OpenVPN/WireGuard via pkexec)
 *   **aegis-document-vault**: Encrypted document storage with OCR and versioning
 
 **AI Developer Edition Tools:**
