@@ -759,7 +759,7 @@ class ProgressReporter:
         self.description = description
         self.start_time = datetime.now()
     
-    def update(self, step: int = None, message: str = ""):
+    def update(self, step: Optional[int] = None, message: str = ""):
         if step is not None:
             self.current_step = step
         else:
@@ -789,7 +789,7 @@ class AegisBuilder:
     """Main build class for Aegis OS"""
     
     def __init__(self, edition: str, simulate: bool = False, force_real: bool = False, 
-                 verbose: bool = False, gpg_key: str = None):
+                 verbose: bool = False, gpg_key: Optional[str] = None):
         self.edition = edition
         self.config = EDITIONS[edition]
         self.verbose = verbose
@@ -837,9 +837,9 @@ class AegisBuilder:
         with open(self.log_file, 'a') as f:
             f.write(log_msg + "\n")
     
-    def run_command(self, cmd: str, shell: bool = False, check: bool = True, 
+    def run_command(self, cmd, shell: bool = False, check: bool = True, 
                     capture: bool = True, sudo: bool = False, 
-                    timeout: int = None) -> str:
+                    timeout: Optional[int] = None) -> str:
         """Execute shell command with logging and error handling"""
         if sudo and os.geteuid() != 0:
             if isinstance(cmd, str):

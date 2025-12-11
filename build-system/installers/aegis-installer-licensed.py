@@ -1148,11 +1148,11 @@ class AegisLicensedInstaller:
     def _download_complete(self, dest_path, sha256_hash):
         """Handle successful download completion"""
         def complete():
-            self.final_edition_label.configure(text=self.validated_edition_name)
+            edition_name = self.validated_edition_name or "Unknown Edition"
+            self.final_edition_label.configure(text=edition_name)
             if self.license_data:
-                self.final_license_label.configure(
-                    text=f"Key: {self.license_data.get('license_key', 'N/A')}"
-                )
+                license_key = self.license_data.get('license_key', 'N/A') if self.license_data else 'N/A'
+                self.final_license_label.configure(text=f"Key: {license_key}")
             self.final_iso_path_label.configure(text=dest_path)
             self._show_step(3)
         
@@ -1175,6 +1175,8 @@ class AegisLicensedInstaller:
         self.progress_pct.configure(fg="#005A9E")
         self.progress_text.configure(fg="#666666")
         
+        if not self.validated_edition_id:
+            return
         edition = EDITIONS.get(self.validated_edition_id)
         if not edition:
             return
@@ -1436,11 +1438,11 @@ class AegisLicensedInstaller:
     
     def _install_complete(self, dest_path):
         def complete():
-            self.final_edition_label.configure(text=self.validated_edition_name)
+            edition_name = self.validated_edition_name or "Unknown Edition"
+            self.final_edition_label.configure(text=edition_name)
             if self.license_data:
-                self.final_license_label.configure(
-                    text=f"Key: {self.license_data.get('license_key', 'N/A')}"
-                )
+                license_key = self.license_data.get('license_key', 'N/A') if self.license_data else 'N/A'
+                self.final_license_label.configure(text=f"Key: {license_key}")
             self.final_iso_path_label.configure(text=dest_path)
             self._show_step(3)
         
