@@ -9,8 +9,7 @@ import os
 import sys
 import hashlib
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import subprocess
 from pathlib import Path
 import time
 import webbrowser
@@ -23,6 +22,37 @@ import urllib.request
 import urllib.error
 import ssl
 import socket
+
+
+def ensure_dependencies():
+    """Auto-install required dependencies if missing"""
+    required_packages = ['cryptography']
+    missing = []
+    
+    for pkg in required_packages:
+        try:
+            __import__(pkg)
+        except ImportError:
+            missing.append(pkg)
+    
+    if missing:
+        print(f"Installing required packages: {', '.join(missing)}...")
+        try:
+            subprocess.check_call([
+                sys.executable, '-m', 'pip', 'install', '--quiet'
+            ] + missing)
+            print("Dependencies installed successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: Could not install dependencies: {e}")
+            print("Please run: pip install cryptography")
+        except Exception as e:
+            print(f"Warning: Dependency check failed: {e}")
+
+
+ensure_dependencies()
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -763,8 +793,6 @@ class AegisLicensedInstaller:
         self._create_step2()
         self._create_step3()
         
-        self._show_step(1)
-        
         footer = tk.Frame(self.root, bg="#e0e0e0", height=55)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
@@ -779,6 +807,8 @@ class AegisLicensedInstaller:
                                     command=self._verify_and_install,
                                     style="Primary.TButton", state="disabled")
         self.btn_start.pack(side="left", padx=5)
+        
+        self._show_step(1)
     
     def _create_section(self, parent, title):
         frame = tk.Frame(parent, bg="white", bd=1, relief="solid")

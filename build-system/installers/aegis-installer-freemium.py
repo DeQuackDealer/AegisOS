@@ -542,8 +542,6 @@ class AegisFreemiumInstaller:
         self._create_step2()
         self._create_step3()
         
-        self._show_step(1)
-        
         footer = tk.Frame(self.root, bg="#e0e0e0", height=55)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
@@ -558,6 +556,8 @@ class AegisFreemiumInstaller:
                                     command=self._start_install, style="Primary.TButton",
                                     state="disabled")
         self.btn_start.pack(side="left", padx=5)
+        
+        self._show_step(1)
     
     def _create_section(self, parent, title):
         frame = tk.Frame(parent, bg="white", bd=1, relief="solid")
