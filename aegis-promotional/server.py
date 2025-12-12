@@ -1730,6 +1730,15 @@ def page_developers():
         return jsonify({'error': 'Page not found'}), 404
 
 
+@app.route('/iso-releases/<path:filename>')
+def serve_iso_file(filename):
+    """Serve ISO files for download."""
+    iso_dir = os.path.join(BASE_DIR, 'iso-releases')
+    if os.path.exists(os.path.join(iso_dir, filename)):
+        return send_from_directory(iso_dir, filename, as_attachment=True)
+    return jsonify({'error': 'File not found'}), 404
+
+
 @app.route('/api/validate-license', methods=['POST'])
 def validate_license():
     """
