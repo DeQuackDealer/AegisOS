@@ -27,14 +27,15 @@ import socket
 
 def get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        return os.path.join(base_path, relative_path)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
 def get_app_dir():
     """Get the directory where the app is running from"""
-    if hasattr(sys, '_MEIPASS'):
+    if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -69,19 +70,28 @@ ensure_dependencies()
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+from typing import Any
+
+CRYPTO_AVAILABLE = False
+hashes: Any = None
+serialization: Any = None
+padding: Any = None
+default_backend: Any = None
+InvalidSignature: Any = Exception
+
 try:
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding, rsa
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes as _hashes, serialization as _serialization
+    from cryptography.hazmat.primitives.asymmetric import padding as _padding, rsa
+    from cryptography.hazmat.backends import default_backend as _default_backend
+    from cryptography.exceptions import InvalidSignature as _InvalidSignature
+    hashes = _hashes
+    serialization = _serialization
+    padding = _padding
+    default_backend = _default_backend
+    InvalidSignature = _InvalidSignature
     CRYPTO_AVAILABLE = True
 except ImportError:
-    CRYPTO_AVAILABLE = False
-    hashes = None
-    serialization = None
-    padding = None
-    default_backend = None
-    InvalidSignature = Exception
+    pass
 
 VERSION = "3.0.0"
 APP_NAME = "Aegis OS Licensed Installer"
