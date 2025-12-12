@@ -68,7 +68,7 @@ except ImportError:
     default_backend = None
     InvalidSignature = Exception
 
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 APP_NAME = "Aegis OS Licensed Installer"
 
 ISO_DOWNLOAD_BASE_URL = "https://download.aegis-os.com/iso/licensed"

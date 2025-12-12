@@ -43,7 +43,7 @@ ensure_dependencies()
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 APP_NAME = "Aegis OS Freemium Installer"
 
 ISO_FILENAME = "aegis-freemium.iso"
