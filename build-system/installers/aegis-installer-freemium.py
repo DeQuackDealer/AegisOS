@@ -9,8 +9,7 @@ import os
 import sys
 import hashlib
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import subprocess
 from pathlib import Path
 import time
 import webbrowser
@@ -20,6 +19,29 @@ import urllib.request
 import urllib.error
 import ssl
 import socket
+
+
+def ensure_dependencies():
+    """Auto-install required dependencies if missing"""
+    required_packages = []
+    
+    for pkg in required_packages:
+        try:
+            __import__(pkg)
+        except ImportError:
+            print(f"Installing {pkg}...")
+            try:
+                subprocess.check_call([
+                    sys.executable, '-m', 'pip', 'install', '--quiet', pkg
+                ])
+            except Exception as e:
+                print(f"Warning: Could not install {pkg}: {e}")
+
+
+ensure_dependencies()
+
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 
 VERSION = "2.1.0"
 APP_NAME = "Aegis OS Freemium Installer"
@@ -1021,7 +1043,7 @@ class AegisFreemiumInstaller:
     def _install_complete(self, dest_path):
         def complete():
             self.final_iso_path_label.configure(text=dest_path)
-            self.hash_label.configure(text=self.iso_hash)
+            self.hash_label.configure(text=str(self.iso_hash or ""))
             self._show_step(3)
         
         self.root.after(0, complete)
