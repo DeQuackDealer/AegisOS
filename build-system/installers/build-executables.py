@@ -14,6 +14,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent.absolute()
 
 INSTALLERS = {
+    "media-tool": {
+        "script": "aegis-media-tool.py",
+        "name": "AegisOS-Media-Creation-Tool",
+        "icon": None
+    },
     "freemium": {
         "script": "aegis-installer-freemium.py",
         "name": "AegisOS-Freemium-Installer",
