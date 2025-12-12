@@ -28,7 +28,8 @@ INSTALLERS = {
 
 DATA_FILES = [
     "manifest.json",
-    "public_key.pem"
+    "public_key.pem",
+    "activation_client.py"
 ]
 
 def build_installer(installer_key: str, target_os: str = "linux"):

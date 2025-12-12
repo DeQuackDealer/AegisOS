@@ -21,6 +21,20 @@ import ssl
 import socket
 
 
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+
+def get_app_dir():
+    """Get the directory where the app is running from"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def ensure_dependencies():
     """Auto-install required dependencies if missing"""
     required_packages = []
@@ -93,11 +107,11 @@ class OfflineISOLocator:
         """Get all paths to search for ISO files"""
         paths = []
         
-        script_dir = Path(__file__).parent
-        paths.append(script_dir)
-        paths.append(script_dir / "iso")
-        paths.append(script_dir.parent / "iso")
-        paths.append(script_dir.parent.parent / "iso")
+        app_dir = Path(get_app_dir())
+        paths.append(app_dir)
+        paths.append(app_dir / "iso")
+        paths.append(app_dir.parent / "iso")
+        paths.append(app_dir.parent.parent / "iso")
         
         paths.append(Path.cwd())
         paths.append(Path.cwd() / "iso")
@@ -157,6 +171,14 @@ class OfflineISOLocator:
     @staticmethod
     def load_manifest(search_paths):
         """Load manifest.json from any search path"""
+        bundled_manifest = get_resource_path("manifest.json")
+        if os.path.exists(bundled_manifest):
+            try:
+                with open(bundled_manifest, 'r') as f:
+                    return json.load(f), bundled_manifest
+            except (json.JSONDecodeError, IOError):
+                pass
+        
         for path in search_paths:
             manifest_file = Path(path) / "manifest.json"
             if manifest_file.exists():
