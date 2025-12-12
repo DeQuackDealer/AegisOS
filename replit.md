@@ -1,5 +1,16 @@
 # Aegis OS Build System
 
+## Building ISOs with GitHub Actions
+
+Push this repo to GitHub and use the included workflow to build real ISOs:
+
+1. **Push to GitHub**: Create a repo and push this code
+2. **Run the workflow**: Go to Actions > "Build Aegis OS ISOs" > Run workflow
+3. **Select edition**: Choose which edition to build (or "all" for all 7)
+4. **Download artifacts**: ISOs appear as downloadable artifacts when complete
+
+The workflow runs on an Arch Linux container with all required tools (archiso, mkarchiso, etc).
+
 ## Overview
 Aegis OS is a commercial Linux distribution based on Arch Linux, offering 7 distinct OS editions (Freemium, Basic, Gamer, AI Developer, Gamer+AI, Server, Workplace) with a tiered software licensing model. The project encompasses an automated `archiso`-based build system for creating bootable ISOs, a Flask-based promotional website, a comprehensive offline installer system, and a payment/license management system. It aims to provide a Windows 10-inspired desktop experience, optimized gaming through Wine/Proton, and a suite of over 50 custom Python-based utilities, along with AI-powered security features across all editions. The project's ambition is to capture various market segments, from casual users to AI developers and enterprise clients.
 
