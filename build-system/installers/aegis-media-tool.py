@@ -9,6 +9,7 @@ Usage:
 3. Tool validates and downloads the correct ISO
 4. Flash to USB with Balena Etcher
 """
+from __future__ import annotations
 
 import os
 import sys
@@ -18,29 +19,41 @@ import threading
 import urllib.request
 import urllib.error
 import ssl
+import certifi
 from pathlib import Path
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 
-def get_resource_path(filename):
+def get_resource_path(filename: str) -> str:
     """Get the path to a bundled resource file."""
     if getattr(sys, 'frozen', False):
-        base_path = sys._MEIPASS
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, filename)
 
-def get_app_dir():
+def get_app_dir() -> str:
     """Get the directory where the app is running from."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
 
+TKINTER_AVAILABLE = False
+tk: Any = None
+ttk: Any = None
+filedialog: Any = None
+messagebox: Any = None
+
 try:
-    import tkinter as tk
-    from tkinter import ttk, filedialog, messagebox
+    import tkinter as _tk
+    from tkinter import ttk as _ttk, filedialog as _filedialog, messagebox as _messagebox
+    tk = _tk
+    ttk = _ttk
+    filedialog = _filedialog
+    messagebox = _messagebox
     TKINTER_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    pass
 
 VERSION = "3.0.0"
 APP_NAME = "Aegis OS Media Creation Tool"
@@ -107,12 +120,13 @@ class LicenseValidator:
     }
     
     @staticmethod
-    def get_ssl_context():
-        """Get SSL context for HTTPS requests."""
+    def get_ssl_context() -> ssl.SSLContext:
+        """Get SSL context for HTTPS requests with proper certificate verification."""
         try:
-            return ssl.create_default_context()
+            context = ssl.create_default_context(cafile=certifi.where())
+            return context
         except Exception:
-            return ssl._create_unverified_context()
+            return ssl.create_default_context()
     
     @classmethod
     def validate_format(cls, license_key: str) -> tuple:
@@ -533,8 +547,10 @@ class MediaCreationToolGUI:
         """Update status label (thread-safe)."""
         self.root.after(0, lambda: self.status_label.config(text=message))
     
-    def _run_download(self):
+    def _run_download(self) -> None:
         """Run the download in background thread."""
+        if self.downloader is None:
+            return
         success, message, filepath = self.downloader.download()
         self.root.after(0, lambda: self._download_complete(success, message, filepath))
     
