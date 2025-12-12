@@ -2025,6 +2025,119 @@ def validate_license():
         }), 500
 
 
+@app.route('/api/v1/validate', methods=['POST'])
+@rate_limit(limit=500)
+def api_v1_validate():
+    """
+    API v1 License validation endpoint for installers/media tool.
+    Maps to the same logic as /api/validate-license
+    """
+    return validate_license()
+
+
+@app.route('/api/v1/activate', methods=['POST'])
+@rate_limit(limit=100)
+def api_v1_activate():
+    """
+    API v1 Activation endpoint for installers.
+    Activates a license key and binds to hardware.
+    """
+    data = request.get_json() or {}
+    license_key = str(data.get('license_key', data.get('key', ''))).strip().upper()
+    machine_id = str(data.get('machine_id', data.get('hardware_id', ''))).strip()
+    edition = str(data.get('edition', '')).strip().lower()
+    
+    if not license_key:
+        return jsonify({'success': False, 'error': 'License key required'}), 400
+    
+    # Check database for license
+    db_license = License.query.filter_by(license_key=license_key).first()
+    if db_license:
+        if db_license.status == 'revoked':
+            return jsonify({'success': False, 'error': 'License has been revoked'}), 403
+        
+        # Track activation
+        activations = db_license.hardware_ids or []
+        if isinstance(activations, str):
+            try:
+                activations = json.loads(activations)
+            except:
+                activations = []
+        
+        if machine_id and machine_id not in activations:
+            if len(activations) >= 3:
+                return jsonify({
+                    'success': False, 
+                    'error': 'Maximum activations reached (3 devices)',
+                    'activations_used': len(activations),
+                    'activations_max': 3
+                }), 403
+            activations.append(machine_id)
+            db_license.hardware_ids = json.dumps(activations)
+            db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'activated': True,
+            'edition': db_license.tier,
+            'license_type': db_license.license_type,
+            'activations_used': len(activations),
+            'activations_max': 3
+        }), 200
+    
+    # Check demo licenses
+    demo_licenses = {
+        "BSIC-DEMO-TEST-2024": "basic",
+        "WORK-DEMO-TEST-2024": "workplace",
+        "GAME-DEMO-TEST-2024": "gamer",
+        "AIDV-DEMO-TEST-2024": "ai_dev",
+        "GMAI-DEMO-TEST-2024": "gamer_ai",
+        "SERV-DEMO-TEST-2024": "server"
+    }
+    
+    if license_key in demo_licenses:
+        return jsonify({
+            'success': True,
+            'activated': True,
+            'edition': demo_licenses[license_key],
+            'license_type': 'demo',
+            'activations_used': 1,
+            'activations_max': 999
+        }), 200
+    
+    return jsonify({'success': False, 'error': 'Invalid license key'}), 401
+
+
+@app.route('/api/v1/status', methods=['POST'])
+@rate_limit(limit=500)
+def api_v1_status():
+    """Check activation status for a license"""
+    data = request.get_json() or {}
+    license_key = str(data.get('license_key', data.get('key', ''))).strip().upper()
+    
+    if not license_key:
+        return jsonify({'error': 'License key required'}), 400
+    
+    db_license = License.query.filter_by(license_key=license_key).first()
+    if db_license:
+        activations = db_license.hardware_ids or []
+        if isinstance(activations, str):
+            try:
+                activations = json.loads(activations)
+            except:
+                activations = []
+        
+        return jsonify({
+            'valid': db_license.status == 'active',
+            'status': db_license.status,
+            'edition': db_license.tier,
+            'activations_used': len(activations),
+            'activations_max': 3
+        }), 200
+    
+    return jsonify({'valid': False, 'error': 'License not found'}), 404
+
+
 @app.route('/api/download-iso', methods=['GET', 'POST'])
 @rate_limit(limit=50, window=3600)
 def download_iso_with_license():
@@ -2101,23 +2214,26 @@ def download_iso_with_license():
             "INFO"
         )
 
-        # Return download info (in production, would serve actual file or signed URL)
-        iso_path = os.path.join(BASE_DIR, 'demo-isos', 'aegis-os-freemium.iso')
+        iso_path = os.path.join(BASE_DIR, 'iso-releases', 'aegis-os-freemium.iso')
         file_exists = os.path.exists(iso_path)
 
-        return jsonify({
-            'success': True,
-            'edition': 'freemium',
-            'message': 'Freemium edition download authorized',
-            'download_info': {
+        if file_exists:
+            base_url = request.host_url.rstrip('/')
+            return jsonify({
+                'success': True,
+                'edition': 'freemium',
+                'message': 'Freemium edition download ready',
+                'download_url': f'{base_url}/iso-releases/aegis-os-freemium.iso',
                 'filename': 'aegis-os-freemium.iso',
-                'version': 'v4.2.1 LTS',
-                'size_gb': 1.5,
-                'available': file_exists,
-                'sha256': 'a8f3e2c9b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4e7f2a5c8b1d4'
-            },
-            'license_required': False
-        }), 200
+                'available': True
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'edition': 'freemium',
+                'message': 'ISO files are not yet available. Aegis OS ISOs must be built on an Arch Linux system using archiso first. Check aegis-os.com for release announcements.',
+                'available': False
+            }), 503
 
     # Paid editions - require valid license token
     if not token:

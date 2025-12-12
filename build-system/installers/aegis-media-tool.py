@@ -103,8 +103,30 @@ EDITIONS = {
     }
 }
 
-DOWNLOAD_BASE_URL = "https://download.aegis-os.com/releases/v3.0.0"
-ACTIVATION_SERVER = "https://api.aegis-os.com/v1"
+def load_api_config():
+    """Load API configuration from manifest.json"""
+    manifest_path = get_resource_path("manifest.json")
+    try:
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+        api_config = manifest.get("api", {})
+        return {
+            "base_url": api_config.get("base_url", "https://aegis-os.com"),
+            "validate": api_config.get("validate_endpoint", "/api/v1/validate"),
+            "activate": api_config.get("activate_endpoint", "/api/v1/activate"),
+            "download": api_config.get("download_endpoint", "/api/download-iso")
+        }
+    except Exception:
+        return {
+            "base_url": "https://aegis-os.com",
+            "validate": "/api/v1/validate",
+            "activate": "/api/v1/activate",
+            "download": "/api/download-iso"
+        }
+
+API_CONFIG = load_api_config()
+ACTIVATION_SERVER = API_CONFIG["base_url"]
+DOWNLOAD_BASE_URL = API_CONFIG["base_url"]
 
 
 class LicenseValidator:
@@ -158,10 +180,10 @@ class LicenseValidator:
             return False, None, format_msg
         
         try:
-            url = f"{ACTIVATION_SERVER}/validate"
+            url = f"{ACTIVATION_SERVER}{API_CONFIG['validate']}"
             data = json.dumps({
-                "license_key": license_key.strip().upper(),
-                "action": "validate"
+                "key": license_key.strip().upper(),
+                "edition": edition
             }).encode('utf-8')
             
             request = urllib.request.Request(
@@ -192,13 +214,14 @@ class LicenseValidator:
 class ISODownloader:
     """Handles ISO download with progress tracking and checksum verification."""
     
-    def __init__(self, edition_id: str, destination: str, progress_callback: Optional[Callable] = None, status_callback: Optional[Callable] = None):
+    def __init__(self, edition_id: str, destination: str, progress_callback: Optional[Callable] = None, status_callback: Optional[Callable] = None, license_token: Optional[str] = None):
         self.edition_id = edition_id
         self.destination = destination
         self.progress_callback = progress_callback
         self.status_callback = status_callback
         self.cancelled = False
-        self.download_url = f"{DOWNLOAD_BASE_URL}/aegis-os-{edition_id}-x86_64.iso"
+        self.license_token = license_token
+        self.download_api_url = f"{ACTIVATION_SERVER}{API_CONFIG['download']}"
         self.expected_size = EDITIONS.get(edition_id, {}).get("size_mb", 3000) * 1024 * 1024
         self.expected_checksum = self._load_expected_checksum()
     
@@ -238,22 +261,46 @@ class ISODownloader:
     
     def download(self) -> tuple:
         """
-        Download the ISO file.
+        Download the ISO file using the API endpoint.
         Returns: (success, message, filepath)
         """
         try:
-            self.update_status(f"Connecting to download server...")
+            self.update_status(f"Requesting download from server...")
             self.update_progress(0, "Connecting...")
             
             context = LicenseValidator.get_ssl_context()
             
+            download_url = f"{self.download_api_url}?edition={self.edition_id}"
+            if self.license_token:
+                download_url += f"&token={self.license_token}"
+            
             request = urllib.request.Request(
-                self.download_url,
-                headers={'User-Agent': f'AegisOS-MediaTool/{VERSION}'}
+                download_url,
+                headers={
+                    'User-Agent': f'AegisOS-MediaTool/{VERSION}',
+                    'Authorization': f'Bearer {self.license_token}' if self.license_token else ''
+                }
             )
             
             try:
                 response = urllib.request.urlopen(request, timeout=30, context=context)
+                content_type = response.headers.get('Content-Type', '')
+                
+                if 'application/json' in content_type:
+                    result = json.loads(response.read().decode('utf-8'))
+                    if result.get('download_url'):
+                        actual_url = result['download_url']
+                        self.update_status("Following download link...")
+                        request = urllib.request.Request(
+                            actual_url,
+                            headers={'User-Agent': f'AegisOS-MediaTool/{VERSION}'}
+                        )
+                        response = urllib.request.urlopen(request, timeout=30, context=context)
+                    elif result.get('available') == False:
+                        return False, result.get('message', 'ISO files are not yet available. Please check aegis-os.com for updates.'), None
+                    else:
+                        return False, f"Download not available: {result.get('message', 'Please check aegis-os.com for updates.')}", None
+                
                 total_size = int(response.headers.get('Content-Length', self.expected_size))
             except urllib.error.HTTPError as e:
                 if e.code == 404:
@@ -481,6 +528,7 @@ class MediaCreationToolGUI:
                 text=f"Valid! Edition: {EDITIONS[edition]['name']}",
                 foreground='green'
             )
+            self.validated_license_key = key
             self.root.after(1000, lambda: self._start_download(edition))
         else:
             self.validation_label.config(text=message, foreground='red')
@@ -562,11 +610,13 @@ class MediaCreationToolGUI:
         )
         self.cancel_btn.pack(pady=20)
         
+        license_token = getattr(self, 'validated_license_key', None)
         self.downloader = ISODownloader(
             edition_id,
             self.save_path.get(),
             progress_callback=self._update_progress,
-            status_callback=self._update_status
+            status_callback=self._update_status,
+            license_token=license_token
         )
         
         self.download_thread = threading.Thread(target=self._run_download)

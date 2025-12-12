@@ -34,7 +34,25 @@ except ImportError:
     CRYPTO_AVAILABLE = False
 
 
-ACTIVATION_SERVER_URL = "https://activate.aegis-os.com/api/v1"
+def _get_activation_server_url():
+    """Load activation server URL from manifest.json"""
+    try:
+        import os
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        if getattr(sys, 'frozen', False):
+            base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+        manifest_path = os.path.join(base_dir, "manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'r') as f:
+                import json
+                manifest = json.load(f)
+                api_config = manifest.get("api", {})
+                return api_config.get("base_url", "https://aegis-os.com")
+    except Exception:
+        pass
+    return "https://aegis-os.com"
+
+ACTIVATION_SERVER_URL = _get_activation_server_url()
 ACTIVATION_CACHE_DIR = Path.home() / ".aegis" / "activation"
 MAX_ACTIVATIONS_PER_LICENSE = 3
 ACTIVATION_CACHE_VALIDITY_DAYS = 30
