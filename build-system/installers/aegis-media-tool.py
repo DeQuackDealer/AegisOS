@@ -190,9 +190,9 @@ class LicenseValidator:
 
 
 class ISODownloader:
-    """Handles ISO download with progress tracking."""
+    """Handles ISO download with progress tracking and checksum verification."""
     
-    def __init__(self, edition_id: str, destination: str, progress_callback=None, status_callback=None):
+    def __init__(self, edition_id: str, destination: str, progress_callback: Optional[Callable] = None, status_callback: Optional[Callable] = None):
         self.edition_id = edition_id
         self.destination = destination
         self.progress_callback = progress_callback
@@ -200,6 +200,27 @@ class ISODownloader:
         self.cancelled = False
         self.download_url = f"{DOWNLOAD_BASE_URL}/aegis-os-{edition_id}-x86_64.iso"
         self.expected_size = EDITIONS.get(edition_id, {}).get("size_mb", 3000) * 1024 * 1024
+        self.expected_checksum = self._load_expected_checksum()
+    
+    def _load_expected_checksum(self) -> Optional[str]:
+        """Load expected SHA-256 checksum from manifest."""
+        try:
+            manifest_path = get_resource_path("manifest.json")
+            if os.path.exists(manifest_path):
+                with open(manifest_path, 'r') as f:
+                    manifest = json.load(f)
+                edition_key = self.edition_id.replace("-", "_")
+                if self.edition_id == "ai-developer":
+                    edition_key = "aidev"
+                elif self.edition_id == "gamer-ai":
+                    edition_key = "gamer_ai"
+                edition_data = manifest.get("editions", {}).get(edition_key, {})
+                checksum = edition_data.get("sha256")
+                if checksum and not checksum.startswith("00000"):
+                    return checksum
+        except Exception:
+            pass
+        return None
     
     def cancel(self):
         """Cancel the download."""
@@ -275,13 +296,32 @@ class ISODownloader:
                     os.remove(self.destination)
                 return False, "Download cancelled", None
             
-            self.update_progress(100, "Complete")
-            self.update_status("Download complete!")
+            self.update_progress(100, "Verifying...")
+            self.update_status("Verifying download integrity...")
+            
+            if self.expected_checksum:
+                actual_checksum = self._calculate_checksum(self.destination)
+                if actual_checksum != self.expected_checksum.lower():
+                    os.remove(self.destination)
+                    return False, "Download verification failed - file may be corrupted. Please try again.", None
+                self.update_status("Download verified successfully!")
+            else:
+                self.update_status("Download complete! (checksum not available)")
             
             return True, "ISO downloaded successfully", self.destination
             
         except Exception as e:
+            if os.path.exists(self.destination):
+                os.remove(self.destination)
             return False, f"Download error: {str(e)}", None
+    
+    def _calculate_checksum(self, filepath: str) -> str:
+        """Calculate SHA-256 checksum of a file."""
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest().lower()
 
 
 class MediaCreationToolGUI:

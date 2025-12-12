@@ -22,6 +22,9 @@ def test_offline_iso_locator():
     
     loader = SourceFileLoader("freemium", str(Path(__file__).parent / "aegis-installer-freemium.py"))
     spec = spec_from_loader("freemium", loader)
+    if spec is None:
+        print("  ✗ Could not load freemium module spec")
+        return False
     freemium = module_from_spec(spec)
     
     sys.modules['tkinter'] = type(sys)('tkinter')
@@ -304,6 +307,7 @@ def test_python_syntax():
     files = [
         "aegis-installer-freemium.py",
         "aegis-installer-licensed.py",
+        "aegis-media-tool.py",
         "build-all-installers.py",
         "activation_client.py",
         "obfuscation.py",
