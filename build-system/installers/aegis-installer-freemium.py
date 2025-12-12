@@ -62,14 +62,14 @@ ALT_ISO_FILENAMES = [
 ]
 
 FEATURES = [
-    "Core desktop environment",
-    "Firefox browser",
-    "Basic office suite",
-    "Media player",
-    "File manager",
-    "Basic security",
-    "Software center",
-    "30-day premium trial"
+    "Arch Linux Rolling Release",
+    "XFCE Desktop (Windows 10 style)",
+    "Firefox Web Browser",
+    "LibreOffice Suite",
+    "VLC Media Player",
+    "Thunar File Manager",
+    "Basic Security Tools",
+    "30-day Premium Trial"
 ]
 
 
@@ -548,6 +548,10 @@ class AegisFreemiumInstaller:
         title = tk.Label(header_inner, text="Aegis OS Freemium Edition",
                         font=("Segoe UI", 18, "bold"), bg="#0078D7", fg="white")
         title.pack(pady=(15, 2))
+        
+        base_label = tk.Label(header_inner, text="Based on Arch Linux (Rolling Release)",
+                             font=("Segoe UI", 10, "italic"), bg="#0078D7", fg="#B0D4F1")
+        base_label.pack()
         
         subtitle = tk.Label(header_inner, text="Offline Installer - No Internet Required",
                            font=("Segoe UI", 11), bg="#0078D7", fg="#E0E0E0")

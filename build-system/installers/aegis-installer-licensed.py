@@ -80,12 +80,14 @@ EDITIONS = {
         "name": "Aegis OS Basic",
         "prefix": "BSIC",
         "price": "$69 Lifetime",
-        "size_gb": 3.5,
+        "size_gb": 5.0,
+        "kernel": "linux",
         "features": [
-            "All Freemium Features",
-            "500+ Professional Apps",
-            "Development Tools & IDEs", 
-            "Aegis DeskLink Pro",
+            "Arch Linux Rolling Release",
+            "XFCE Desktop (Windows-style)",
+            "VS Code & Development Tools", 
+            "Docker Container Support",
+            "Advanced Security Suite",
             "24/7 Email Support"
         ],
         "iso_filename": "aegis-basic.iso"
@@ -94,12 +96,14 @@ EDITIONS = {
         "name": "Aegis OS Workplace",
         "prefix": "WORK",
         "price": "$49 Lifetime",
-        "size_gb": 4.0,
+        "size_gb": 5.5,
+        "kernel": "linux-lts",
         "features": [
-            "All Basic Features",
-            "Office 365 Compatibility",
-            "Team Collaboration",
-            "Remote Desktop",
+            "LTS Kernel (Stability)",
+            "LibreOffice Suite",
+            "Video Conferencing",
+            "VPN & Remote Desktop",
+            "Document Management",
             "Enterprise Security"
         ],
         "iso_filename": "aegis-workplace.iso"
@@ -108,13 +112,17 @@ EDITIONS = {
         "name": "Aegis OS Gamer",
         "prefix": "GAME",
         "price": "$69 Lifetime",
-        "size_gb": 4.5,
+        "size_gb": 6.5,
+        "kernel": "linux-zen",
         "features": [
-            "All Basic Features",
-            "Steam + Proton Gaming",
-            "GPU Optimizations",
-            "Low-latency Kernel",
-            "Gaming Support"
+            "linux-zen Gaming Kernel",
+            "Steam + Lutris Pre-installed",
+            "Proton/Wine + GameScope",
+            "MangoHUD Performance Overlay",
+            "NVIDIA/AMD/Intel Optimized",
+            "Controller Support",
+            "OBS Streaming Studio",
+            "Low-latency PipeWire Audio"
         ],
         "iso_filename": "aegis-gamer.iso"
     },
@@ -122,12 +130,14 @@ EDITIONS = {
         "name": "Aegis OS AI Developer",
         "prefix": "AIDV",
         "price": "$89 Lifetime",
-        "size_gb": 6.0,
+        "size_gb": 8.0,
+        "kernel": "linux",
         "features": [
-            "All Basic Features",
-            "PyTorch & TensorFlow",
-            "CUDA Toolkit",
-            "Jupyter Notebooks",
+            "CUDA & cuDNN Pre-configured",
+            "PyTorch & TensorFlow Ready",
+            "JupyterLab & VS Code",
+            "Docker & Kubernetes",
+            "GPU Monitoring (nvtop)",
             "Developer Support"
         ],
         "iso_filename": "aegis-aidev.iso"
@@ -136,12 +146,14 @@ EDITIONS = {
         "name": "Aegis OS Gamer + AI",
         "prefix": "GMAI",
         "price": "$129 Lifetime",
-        "size_gb": 8.0,
+        "size_gb": 10.0,
+        "kernel": "linux-zen",
         "features": [
             "All Gamer Features",
-            "All AI Dev Features",
-            "AI Game Optimization",
-            "Neural Upscaling",
+            "All AI Developer Features",
+            "AI-Powered Upscaling",
+            "Neural Game Enhancement",
+            "ML Streaming Tools",
             "Priority Support"
         ],
         "iso_filename": "aegis-gamer-ai.iso"
@@ -150,12 +162,14 @@ EDITIONS = {
         "name": "Aegis OS Server",
         "prefix": "SERV",
         "price": "$129 Lifetime",
-        "size_gb": 3.0,
+        "size_gb": 4.0,
+        "kernel": "linux-lts",
         "features": [
+            "LTS Kernel (Stability)",
             "Headless Server Mode",
             "Docker & Kubernetes",
-            "Database Servers",
-            "Monitoring Stack",
+            "PostgreSQL & Redis",
+            "Prometheus & Grafana",
             "Enterprise SLA"
         ],
         "iso_filename": "aegis-server.iso"
@@ -778,6 +792,10 @@ class AegisLicensedInstaller:
                         font=("Segoe UI", 18, "bold"), bg="#005A9E", fg="white")
         title.pack(pady=(15, 2))
         
+        base_label = tk.Label(header_inner, text="Based on Arch Linux (Rolling Release)",
+                             font=("Segoe UI", 10, "italic"), bg="#005A9E", fg="#B0D4F1")
+        base_label.pack()
+        
         subtitle = tk.Label(header_inner, text="Offline Installer with RSA License Verification",
                            font=("Segoe UI", 11), bg="#005A9E", fg="#E0E0E0")
         subtitle.pack()
@@ -1248,6 +1266,13 @@ class AegisLicensedInstaller:
         if not edition:
             return
         
+        kernel = edition.get("kernel", "linux")
+        kernel_label = {
+            "linux": "Standard Kernel",
+            "linux-zen": "Gaming Kernel (linux-zen)",
+            "linux-lts": "LTS Kernel (Stability)"
+        }.get(kernel, kernel)
+        
         self.edition_name_label.configure(
             text=f"{edition['name']} ({edition['price']})",
             fg="#005A9E"
@@ -1255,6 +1280,17 @@ class AegisLicensedInstaller:
         
         for widget in self.features_frame.winfo_children():
             widget.destroy()
+        
+        kernel_frame = tk.Frame(self.features_frame, bg="#e8f4fc")
+        kernel_frame.pack(anchor="w", pady=(0, 5), fill="x")
+        
+        kernel_icon = tk.Label(kernel_frame, text="🐧", font=("Segoe UI", 10),
+                              bg="#e8f4fc")
+        kernel_icon.pack(side="left", padx=(5, 2))
+        
+        kernel_lbl = tk.Label(kernel_frame, text=f"Arch Linux • {kernel_label}",
+                             font=("Segoe UI", 9, "bold"), bg="#e8f4fc", fg="#0066cc")
+        kernel_lbl.pack(side="left", pady=3)
         
         for feature in edition["features"]:
             f_frame = tk.Frame(self.features_frame, bg="white")

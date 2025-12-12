@@ -49,8 +49,8 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 ## External Dependencies
 
 ### Build System Dependencies
-*   **Buildroot**: Embedded Linux build system.
-*   **Linux Build Tools**: GCC, Make, debootstrap, mksquashfs, xorriso, isolinux, squashfs-tools.
+*   **archiso**: Arch Linux ISO build system.
+*   **Linux Build Tools**: GCC, Make, pacman, mksquashfs, xorriso, syslinux, squashfs-tools.
 *   **Python 3**: For build orchestration.
 
 ### Web Server Dependencies
