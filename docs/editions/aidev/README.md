@@ -1,403 +1,429 @@
 # Aegis OS AI Developer Edition
 
-**Your complete AI/ML development workstation - GPU-accelerated, container-ready**
-
-[![License](https://img.shields.io/badge/License-Open%20Source-green.svg)]()
-[![Arch Linux](https://img.shields.io/badge/Based%20on-Arch%20Linux-1793D1.svg)]()
-[![CUDA](https://img.shields.io/badge/CUDA-Ready-76B900.svg)]()
-[![PyTorch](https://img.shields.io/badge/PyTorch-Included-EE4C2C.svg)]()
-
----
-
 ## Overview
 
-Aegis OS AI Developer Edition is designed for machine learning engineers, data scientists, and AI researchers. It comes pre-configured with CUDA, cuDNN, PyTorch, TensorFlow, JupyterLab, and containerized workflows for reproducible research.
+Aegis OS AI Developer Edition is the ultimate platform for machine learning engineers, data scientists, and AI researchers. Pre-configured with GPU drivers, ML frameworks, and development tools, it eliminates the hours of setup typically required for AI development environments. Built on Arch Linux for access to the latest packages and rolling updates.
 
-**This is an open-source preview** - Join us in building the ultimate ML workstation!
+## Key Features
 
----
+### GPU Computing Ready
+- **NVIDIA CUDA Support** - Pre-installed drivers and CUDA toolkit
+- **AMD ROCm Support** - OpenCL and HIP for AMD GPUs
+- **Multi-GPU Configurations** - Train across multiple GPUs seamlessly
+- **Tensor Core Optimization** - Automatic mixed precision support
 
-## Features
-
-### GPU Compute
-- **CUDA Toolkit** (latest)
-- **cuDNN** for deep learning
-- **ROCm** support for AMD GPUs
-- **OpenCL** for cross-platform compute
-- GPU monitoring and management tools
-
-### ML Frameworks
-- **PyTorch** with CUDA support
-- **TensorFlow** with GPU acceleration
-- **JAX** for high-performance computing
-- **scikit-learn** for classical ML
-- **XGBoost/LightGBM** for gradient boosting
+### Pre-installed ML Frameworks
+| Framework | Version | GPU Support |
+|-----------|---------|-------------|
+| PyTorch | Latest | CUDA, ROCm |
+| TensorFlow | Latest | CUDA, ROCm |
+| JAX | Latest | CUDA |
+| ONNX Runtime | Latest | CUDA, TensorRT |
+| Hugging Face | Latest | All backends |
 
 ### Development Environment
-- **JupyterLab** with extensions
-- **VS Code** with Python/ML extensions
-- **Neovim** with LSP support
-- **Conda/Mamba** package manager
-- **Poetry** for dependency management
+- **JupyterLab** - Interactive notebooks with GPU support
+- **VS Code** - Pre-configured with Python, Jupyter extensions
+- **tmux** - Terminal multiplexer for long training runs
+- **Git LFS** - Large file storage for datasets and models
 
-### Containers & MLOps
-- **Docker** with NVIDIA Container Toolkit
-- **Podman** rootless containers
-- **Kubernetes** CLI tools
-- **MLflow** for experiment tracking
-- **DVC** for data versioning
+### Container & Virtualization
+- **Docker** - Pre-installed with NVIDIA Container Toolkit
+- **Podman** - Rootless containers
+- **NVIDIA Container Toolkit** - GPU passthrough to containers
 
-### Data Science Tools
-- **Pandas, NumPy, SciPy**
-- **Matplotlib, Seaborn, Plotly**
-- **Apache Spark** (PySpark)
-- **Dask** for parallel computing
-- **Polars** for fast dataframes
+### LLM Development
+- **Ollama** - Run local LLMs easily
+- **llama.cpp** - Efficient CPU/GPU inference
+- **vLLM** - High-throughput LLM serving
+- **Text Generation WebUI** - Local LLM chat interface
 
-### LLM & Generative AI
-- **Ollama** for local LLMs
-- **llama.cpp** for efficient inference
-- **Hugging Face Transformers**
-- **LangChain** for LLM apps
-- **ONNX Runtime** for model deployment
+## System Requirements
 
----
+| Component | Minimum | Recommended | Heavy Training |
+|-----------|---------|-------------|----------------|
+| CPU | 8-core | 16-core | 32-core+ |
+| RAM | 16 GB | 64 GB | 128 GB+ |
+| GPU | RTX 3060 12GB | RTX 4090 24GB | Multi-GPU setup |
+| GPU VRAM | 8 GB | 24 GB | 48 GB+ total |
+| Storage | 256 GB NVMe | 1 TB NVMe | 2 TB+ NVMe RAID |
 
-## Package List
+### Supported GPUs
 
-### NVIDIA Stack
-```
-nvidia
-nvidia-utils
-lib32-nvidia-utils
-cuda
-cuda-tools
-cudnn
-nvidia-container-toolkit
-```
+#### NVIDIA (Recommended)
+| Series | Cards | CUDA Compute |
+|--------|-------|--------------|
+| RTX 40 | 4090, 4080, 4070 Ti | 8.9 |
+| RTX 30 | 3090, 3080, 3070 | 8.6 |
+| RTX 20 | 2080 Ti, 2080, 2070 | 7.5 |
+| Tesla/Datacenter | A100, V100, H100 | 8.0+ |
 
-### AMD ROCm (Alternative)
-```
-rocm-core
-rocm-hip-runtime
-rocm-opencl-runtime
-```
+#### AMD (ROCm Support)
+| Series | Cards |
+|--------|-------|
+| RX 7000 | 7900 XTX, 7900 XT |
+| RX 6000 | 6900 XT, 6800 XT |
+| Instinct | MI250X, MI210, MI100 |
 
-### Python ML
-```
-python
-python-pip
-python-virtualenv
-python-pytorch-cuda
-python-torchvision-cuda
-python-tensorflow-cuda
-python-numpy
-python-pandas
-python-matplotlib
-python-scikit-learn
-python-jupyterlab
+## Installation
+
+### Download
+1. Download from [aegis-os.com/download/aidev](https://aegis-os.com/download/aidev)
+2. Verify checksum:
+   ```bash
+   sha256sum aegis-os-aidev-3.0.0.iso
+   ```
+
+### Installation
+```bash
+# Flash to USB
+sudo dd if=aegis-os-aidev-3.0.0.iso of=/dev/sdX bs=4M status=progress
 ```
 
-### Containers
-```
-docker
-docker-compose
-podman
-kubectl
-helm
-```
+Boot from USB and follow the installer. The AI Developer edition includes additional setup steps:
+1. GPU driver selection (NVIDIA/AMD)
+2. CUDA version selection
+3. Initial framework installation
+4. JupyterLab configuration
 
-### Development
-```
-visual-studio-code-bin (AUR)
-neovim
-git
-git-lfs
-tmux
-```
+## Included Aegis Tools
 
-### MLOps
-```
-mlflow
-dvc
-tensorboard
-```
+### ML Studio (`aegis-ml-studio`)
+Unified ML development interface:
+- Project management
+- Environment creation
+- Training job monitoring
+- Model registry
+- Experiment tracking (MLflow integration)
 
-See `build-system/archiso/packages/aidev.txt` for the complete list.
+### Compute Stack (`aegis-compute-stack`)
+GPU and compute management:
+- GPU utilization monitoring
+- Memory management
+- Multi-GPU job scheduling
+- Temperature and power monitoring
+- Automatic throttling prevention
 
----
+### Model Hub (`aegis-model-hub`)
+Local model management:
+- Download from Hugging Face
+- GGUF/GGML model support
+- Quantization tools
+- Model benchmarking
+- Storage optimization
 
-## Building from Source
+### Inference Engine (`aegis-inference-engine`)
+Deploy models locally:
+- REST API generation
+- Batch inference
+- Streaming responses
+- Load balancing
+- Model hot-swapping
 
-### Prerequisites
-- Arch Linux system with NVIDIA GPU
-- Root access
-- 20GB+ free disk space
-- archiso package
+### GPU Tools (`aegis-gpu-tools`)
+Low-level GPU management:
+- Driver updates
+- CUDA toolkit management
+- cuDNN installation
+- TensorRT optimization
+- Power profile management
 
-### Build Steps
+### Data Science Tools (`aegis-data-science`)
+Data preparation utilities:
+- Dataset browser
+- Data cleaning tools
+- Feature engineering
+- Visualization dashboards
+- Database connectors
+
+### LLM Tools (`aegis-llm-tools`)
+Local LLM development:
+- Ollama integration
+- llama.cpp management
+- Prompt engineering workspace
+- RAG pipeline builder
+- Fine-tuning utilities
+
+## Development Environment
+
+### Python Environment
+Aegis AI Developer uses virtual environments for clean dependency management:
 
 ```bash
-# Clone the repository
-git clone https://github.com/DeQuackDealer/AegisOSRepo.git
-cd AegisOSRepo
+# Create new ML environment
+python -m venv ~/ml-env
+source ~/ml-env/bin/activate
 
-# Checkout the AI dev preview branch
-git checkout preview/aidev
-
-# Install archiso
-sudo pacman -S archiso
-
-# Build the ISO
-cd build-system
-sudo python build-aegis.py --edition aidev --real-build
+# Or use conda (included)
+conda create -n myproject python=3.11
+conda activate myproject
 ```
 
----
-
-## Directory Structure
-
-```
-AegisOSRepo/
-├── build-system/
-│   ├── archiso/
-│   │   ├── packages/
-│   │   │   └── aidev.txt         # AI/ML package list
-│   │   └── airootfs/
-│   │       └── etc/
-│   │           └── conda/        # Conda config
-│   ├── overlays/
-│   │   └── aidev/
-│   │       ├── jupyter/          # JupyterLab config
-│   │       └── vscode/           # VS Code settings
-│   └── build-aegis.py
-├── docs/
-│   └── editions/
-│       └── aidev/
-│           └── README.md         # This file
-└── CONTRIBUTING.md
-```
-
----
-
-## GPU Setup
-
-### NVIDIA GPUs
-
-Verify CUDA installation:
+### Pre-configured Aliases
 ```bash
-nvidia-smi
-nvcc --version
-python -c "import torch; print(torch.cuda.is_available())"
+# ~/.bashrc additions
+alias jl='jupyter lab'
+alias tb='tensorboard --logdir'
+alias gpu='nvidia-smi'
+alias gpuwatch='watch -n 1 nvidia-smi'
+alias trainenv='source ~/ml-env/bin/activate'
 ```
 
-### AMD GPUs (ROCm)
-
-Verify ROCm installation:
-```bash
-rocminfo
-python -c "import torch; print(torch.cuda.is_available())"  # Uses HIP
-```
-
-### Multi-GPU Training
-
-Set visible devices:
-```bash
-export CUDA_VISIBLE_DEVICES=0,1  # Use GPUs 0 and 1
-```
-
----
-
-## Development Workflows
-
-### JupyterLab
+### JupyterLab Setup
+JupyterLab is pre-configured with:
+- GPU memory extension
+- Variable inspector
+- Git integration
+- Collaborative editing
+- Custom AI themes
 
 Start JupyterLab:
 ```bash
 jupyter lab --no-browser --port=8888
 ```
 
-Pre-installed extensions:
-- jupyterlab-git
-- jupyterlab-lsp
-- jupyterlab-tensorboard
-
-### VS Code
-
-Pre-installed extensions:
-- Python
-- Pylance
-- Jupyter
-- Docker
-- Remote - SSH
-
-### Conda Environments
-
-Create ML environment:
-```bash
-conda create -n ml python=3.11 pytorch torchvision cuda-toolkit -c pytorch -c nvidia
-conda activate ml
-```
-
----
-
-## Container Workflows
-
 ### Docker with GPU
-
 ```bash
-# Run PyTorch container
+# Run PyTorch container with GPU
 docker run --gpus all -it pytorch/pytorch:latest
 
-# Run TensorFlow container
+# Run TensorFlow with GPU
 docker run --gpus all -it tensorflow/tensorflow:latest-gpu
 
-# Run custom training
-docker run --gpus all -v $(pwd):/workspace my-training-image
+# Custom container with all GPUs
+docker run --gpus all \
+  -v /data:/data \
+  -v $(pwd):/workspace \
+  -p 8888:8888 \
+  aegis-ml-base:latest
 ```
 
-### Podman (Rootless)
+## Quick Start Guides
+
+### Training Your First Model
+
+```python
+# train_mnist.py
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+# Check GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Load data
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.1307,), (0.3081,))
+])
+
+train_data = datasets.MNIST('./data', train=True, download=True, transform=transform)
+train_loader = DataLoader(train_data, batch_size=64, shuffle=True)
+
+# Simple model
+model = nn.Sequential(
+    nn.Flatten(),
+    nn.Linear(784, 128),
+    nn.ReLU(),
+    nn.Linear(128, 10)
+).to(device)
+
+# Train
+optimizer = torch.optim.Adam(model.parameters())
+criterion = nn.CrossEntropyLoss()
+
+for epoch in range(5):
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+    print(f"Epoch {epoch+1} complete")
+
+# Save model
+torch.save(model.state_dict(), "mnist_model.pth")
+```
+
+### Running Local LLMs
 
 ```bash
-# Same syntax, no root needed
-podman run --device nvidia.com/gpu=all -it pytorch/pytorch:latest
+# Start Ollama
+ollama serve &
+
+# Pull a model
+ollama pull llama2:7b
+
+# Run inference
+ollama run llama2:7b "Explain neural networks simply"
+
+# Or use the API
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama2:7b",
+  "prompt": "Hello, how are you?"
+}'
 ```
 
----
+### Fine-tuning with Hugging Face
 
-## Local LLMs
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
+from datasets import load_dataset
 
-### Ollama
+# Load model and tokenizer
+model_name = "meta-llama/Llama-2-7b-hf"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
 
+# Load dataset
+dataset = load_dataset("your_dataset")
+
+# Training arguments
+training_args = TrainingArguments(
+    output_dir="./results",
+    num_train_epochs=3,
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    learning_rate=2e-5,
+    fp16=True,
+    save_steps=100,
+    logging_steps=10,
+)
+
+# Train
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=dataset["train"],
+)
+trainer.train()
+```
+
+## Monitoring & Optimization
+
+### GPU Monitoring
 ```bash
-# Install and run Llama 2
-ollama run llama2
+# Real-time GPU stats
+nvidia-smi dmon
 
-# Run Code Llama
-ollama run codellama
+# Detailed GPU info
+nvidia-smi -q
 
-# API access
-curl http://localhost:11434/api/generate -d '{"model":"llama2","prompt":"Hello"}'
+# GPU memory by process
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
 ```
 
-### llama.cpp
-
+### Training Monitoring
 ```bash
-# Quantized inference
-./main -m models/llama-7b.gguf -p "Write a poem about Linux"
+# Start TensorBoard
+tensorboard --logdir=./runs --port=6006
+
+# MLflow tracking
+mlflow ui --port=5000
 ```
 
----
+### Memory Optimization
+```python
+# Enable gradient checkpointing
+model.gradient_checkpointing_enable()
 
-## Customization
+# Use mixed precision
+from torch.cuda.amp import autocast, GradScaler
+scaler = GradScaler()
 
-### Adding ML Packages
+with autocast():
+    output = model(input)
+    loss = criterion(output, target)
 
-1. Edit `build-system/archiso/packages/aidev.txt`
-2. For Python packages, add to pip requirements
-3. For system packages, use pacman names
-4. Test GPU compatibility
-5. Submit a Pull Request
+scaler.scale(loss).backward()
+scaler.step(optimizer)
+scaler.update()
+```
 
-### JupyterLab Extensions
+## Pricing & Licensing
 
-1. Add to `build-system/overlays/aidev/jupyter/`
-2. Create install script
-3. Document the extension
-4. Submit a Pull Request
+**Price: $89 (one-time)**
 
-### Custom CUDA Libraries
+Includes:
+- Lifetime license for AI Developer Edition
+- All future 3.x updates
+- Priority beta access
+- Priority support (1 year)
 
-1. Add to overlay directory
-2. Update LD_LIBRARY_PATH in profile
-3. Test with sample code
-4. Submit a Pull Request
+### Upgrade Paths
+| From | To | Price |
+|------|-----|-------|
+| Freemium | AI Developer | $89 |
+| AI Developer | Gamer+AI | $40 |
+| Basic | AI Developer | $49 |
 
----
+## Support
+
+### Documentation
+- [docs.aegis-os.com/aidev](https://docs.aegis-os.com/aidev)
+- [Wiki: ML Optimization Guides](https://wiki.aegis-os.com/ml)
+
+### Community
+- [Discord #ai-dev](https://discord.gg/aegis-os)
+- [Reddit r/AegisAI](https://reddit.com/r/aegisai)
+
+### Troubleshooting
+
+#### CUDA not detected
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check CUDA version
+nvcc --version
+
+# Reinstall CUDA
+sudo pacman -S cuda cudnn
+```
+
+#### Out of GPU memory
+1. Reduce batch size
+2. Enable gradient checkpointing
+3. Use mixed precision (fp16/bf16)
+4. Use DeepSpeed or FSDP for distributed training
+
+#### Slow training
+1. Check GPU utilization with `nvidia-smi`
+2. Optimize data loading (num_workers, pin_memory)
+3. Use compiled models (torch.compile)
+4. Profile with PyTorch Profiler
 
 ## Contributing
 
-Help us build the best ML workstation! See [CONTRIBUTING.md](/CONTRIBUTING.md).
+### Development
+```bash
+git clone https://github.com/DeQuackDealer/AegisOSRepo.git
+cd AegisOSRepo
+git checkout preview/aidev
+```
 
-### Priority Contributions
-- GPU driver compatibility
-- ML framework updates
-- Jupyter extensions
-- MLOps tool integration
-- Documentation and tutorials
+### Contributing ML Tools
+- Share optimized training scripts
+- Contribute model configs
+- Report framework compatibility issues
+- Improve documentation
 
-### Testing
+See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for guidelines.
 
-Test your changes:
-1. Verify GPU detection
-2. Run PyTorch CUDA test
-3. Run TensorFlow GPU test
-4. Test container GPU passthrough
-5. Run a simple training job
+## Version History
 
----
-
-## Benchmarks
-
-Help us collect benchmarks! Submit results for:
-
-| Model | GPU | Time | Notes |
-|-------|-----|------|-------|
-| ResNet-50 | - | - | Submit results |
-| BERT | - | - | Submit results |
-| Llama 7B | - | - | Submit results |
+| Version | Date | Highlights |
+|---------|------|------------|
+| 3.0.0 | 2024-12 | Arch Linux base, CUDA 12.x |
+| 2.5.0 | Legacy | Ubuntu-based (deprecated) |
 
 ---
 
-## Known Issues
-
-| Issue | Status | Workaround |
-|-------|--------|------------|
-| None yet | - | - |
-
----
-
-## Roadmap
-
-- [ ] Auto-detect and install GPU drivers
-- [ ] Pre-built Conda environments
-- [ ] Jupyter notebook templates
-- [ ] Model zoo with pre-downloaded models
-- [ ] Cloud GPU integration (vast.ai, Lambda)
-
----
-
-## FAQ
-
-**Q: Can I use multiple GPUs?**
-A: Yes! Set `CUDA_VISIBLE_DEVICES` or use distributed training.
-
-**Q: Does it support AMD GPUs?**
-A: Yes, with ROCm. Select AMD packages during install.
-
-**Q: How do I update CUDA?**
-A: `sudo pacman -Syu cuda` - Arch keeps it current.
-
-**Q: Can I train models overnight?**
-A: Yes, use `tmux` or `screen` to keep sessions alive.
-
----
-
-## Resources
-
-- [PyTorch Docs](https://pytorch.org/docs/)
-- [TensorFlow Docs](https://www.tensorflow.org/guide)
-- [Hugging Face](https://huggingface.co/docs)
-- [NVIDIA CUDA Docs](https://docs.nvidia.com/cuda/)
-
----
-
-## Links
-
-- [Main Repository](https://github.com/DeQuackDealer/AegisOSRepo)
-- [Contributing Guide](/CONTRIBUTING.md)
-- [Issue Tracker](https://github.com/DeQuackDealer/AegisOSRepo/issues)
-
----
-
-**Build the future with Aegis OS AI Developer!**
+**Aegis OS AI Developer** - Your ML workstation, ready to go.

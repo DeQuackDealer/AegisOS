@@ -1,260 +1,185 @@
 # Aegis OS Freemium Edition
 
-**The open-source base for Aegis OS - Your gateway to Linux gaming and productivity**
-
-[![License](https://img.shields.io/badge/License-Open%20Source-green.svg)]()
-[![Arch Linux](https://img.shields.io/badge/Based%20on-Arch%20Linux-1793D1.svg)]()
-[![Wine](https://img.shields.io/badge/Wine-Enabled-722F37.svg)]()
-[![Proton](https://img.shields.io/badge/Proton-Ready-1A9FFF.svg)]()
-
----
-
 ## Overview
 
-Aegis OS Freemium is the foundational edition of Aegis OS, designed to provide a seamless transition from Windows to Linux. Built on Arch Linux with a Windows 10-inspired interface, it includes Wine and Proton for running Windows applications.
+Aegis OS Freemium is the free entry point into the Aegis ecosystem. Built on Arch Linux with a Windows 10-inspired XFCE desktop, it provides a familiar, polished experience for users transitioning from Windows or trying Linux for the first time.
 
-**This is an open-source preview** - Community contributions are welcome!
+## Key Features
 
----
+### Desktop Experience
+- **XFCE4 Desktop Environment** - Lightweight yet powerful, customized to look and feel like Windows 10
+- **Windows 10-Style Theming** - Familiar taskbar, start menu, and window controls
+- **Aero Snap** - Drag windows to screen edges for quick tiling
+- **Translucent Taskbar** - Modern visual effects without heavy resource usage
 
-## Features
+### Pre-installed Applications
+| Category | Application | Description |
+|----------|-------------|-------------|
+| Browser | Firefox | Privacy-focused web browser |
+| Office | LibreOffice | Full office suite (Writer, Calc, Impress) |
+| Media | VLC Media Player | Plays virtually any media format |
+| File Manager | Thunar | Fast, lightweight file manager |
+| Archive | File Roller | Compress and extract archives |
 
-### Desktop Environment
-- **XFCE4** with Windows 10-inspired theme
-- Familiar taskbar, start menu, and system tray
-- Dark and light theme support
-- Custom icon pack
+### 30-Day Premium Trial
+New installations include a 30-day trial of Premium features:
+- **Aegis Theme Manager** - Full customization suite
+- **Aegis Wallpaper Manager** - Dynamic wallpapers and slideshow
+- **Aegis Security Basics** - Firewall management and system hardening
+- **Priority Updates** - Faster access to system updates
 
-### Windows Compatibility
-- **Wine 9.x** pre-configured
-- **Proton** for Steam games
-- Windows application launcher
-- File association for .exe files
+### System Requirements
 
-### Core Applications
-- Firefox ESR (web browser)
-- LibreOffice (office suite)
-- VLC (media player)
-- Thunar (file manager)
-- GNOME Terminal
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| CPU | 64-bit dual-core 2GHz | Quad-core 3GHz+ |
+| RAM | 2 GB | 4 GB+ |
+| Storage | 20 GB | 50 GB+ SSD |
+| Graphics | Intel HD 4000 / AMD GCN 1.0 | Dedicated GPU |
 
-### System Tools
-- NetworkManager (network configuration)
-- PipeWire (modern audio)
-- CUPS (printing)
-- Timeshift (system backup)
+## Installation
 
----
+### Download
+1. Download the ISO from [aegis-os.com/download](https://aegis-os.com/download)
+2. Verify the SHA256 checksum:
+   ```bash
+   sha256sum aegis-os-freemium-3.0.0.iso
+   ```
 
-## Package List
+### Create Bootable USB
+Using Balena Etcher (recommended):
+1. Download [Balena Etcher](https://www.balena.io/etcher/)
+2. Select the Aegis OS ISO
+3. Select your USB drive (8GB+ recommended)
+4. Click "Flash!"
 
-The Freemium edition includes the following packages:
-
-### Base System
-```
-base
-base-devel
-linux
-linux-firmware
-linux-headers
-```
-
-### Desktop
-```
-xfce4
-xfce4-goodies
-lightdm
-lightdm-gtk-greeter
-thunar
-thunar-volman
-```
-
-### Wine/Proton
-```
-wine
-wine-mono
-wine-gecko
-winetricks
-lib32-gnutls
-lib32-libpulse
-lib32-openal
-lib32-mesa
+Or using dd (Linux/macOS):
+```bash
+sudo dd if=aegis-os-freemium-3.0.0.iso of=/dev/sdX bs=4M status=progress
+sync
 ```
 
-### Applications
-```
-firefox
-libreoffice-fresh
-vlc
-gimp
-```
+### Boot and Install
+1. Insert the USB and restart your computer
+2. Access boot menu (usually F12, F2, or Del during startup)
+3. Select the USB drive
+4. Follow the graphical installer
 
-### Utilities
-```
-neofetch
-htop
-vim
-nano
-git
-wget
-curl
-unzip
-p7zip
-```
+## Included Tools
 
-See `build-system/archiso/packages/freemium.txt` for the complete list.
+### Aegis Welcome
+First-run wizard that guides new users through:
+- System tour and introduction
+- Driver installation
+- Update configuration
+- Optional software installation
 
----
+### Aegis Theme Manager
+Customize your desktop appearance:
+- Light and Dark themes
+- Accent colors
+- Icon packs
+- Window button layouts
 
-## Building from Source
+### Aegis Upgrade Prompt
+Shows available premium features and upgrade paths to paid editions.
 
-### Prerequisites
-- Arch Linux system (or VM)
-- Root access
-- 10GB+ free disk space
-- archiso package
+### Aegis Feature Gate
+Manages trial period and premium feature access.
 
-### Build Steps
+## Package Management
+
+Aegis OS uses `pacman`, the Arch Linux package manager:
 
 ```bash
-# Clone the repository
-git clone https://github.com/DeQuackDealer/AegisOSRepo.git
-cd AegisOSRepo
+# Update system
+sudo pacman -Syu
 
-# Checkout the freemium preview branch
-git checkout preview/freemium
+# Install a package
+sudo pacman -S package-name
 
-# Install archiso
-sudo pacman -S archiso
+# Search for packages
+pacman -Ss keyword
 
-# Build the ISO
-cd build-system
-sudo python build-aegis.py --edition freemium --real-build
+# Remove a package
+sudo pacman -Rs package-name
 ```
 
-The ISO will be created in `build-system/output/`.
+### AUR Access
+The Arch User Repository (AUR) provides community packages. Install `yay` for easy AUR access:
 
----
+```bash
+# Install yay (included in Aegis)
+sudo pacman -S yay
 
-## Directory Structure
-
-```
-AegisOSRepo/
-├── build-system/
-│   ├── archiso/
-│   │   ├── packages/
-│   │   │   └── freemium.txt      # Package list
-│   │   ├── airootfs/             # Root filesystem overlay
-│   │   │   ├── etc/              # System configuration
-│   │   │   └── usr/local/bin/    # Custom scripts
-│   │   ├── profiledef.sh         # ISO profile
-│   │   └── pacman.conf           # Package manager config
-│   ├── overlays/
-│   │   └── freemium/             # Edition-specific files
-│   └── build-aegis.py            # Build script
-├── docs/
-│   └── editions/
-│       └── freemium/
-│           └── README.md         # This file
-└── CONTRIBUTING.md               # Contribution guidelines
+# Install AUR package
+yay -S aur-package-name
 ```
 
----
+## Upgrading to Paid Editions
 
-## Customization
+### Available Upgrades
 
-### Adding Packages
+| Edition | Price | Best For |
+|---------|-------|----------|
+| Basic | $69 | Productivity and general use |
+| Gamer | $69 | Gaming with Wine/Proton |
+| Workplace | $49 | Business and enterprise |
+| AI Developer | $89 | Machine learning and data science |
+| Gamer+AI | $129 | Gaming + AI development |
+| Server | $129 | Server deployment |
 
-1. Edit `build-system/archiso/packages/freemium.txt`
-2. Add one package per line
-3. Use `pacman -Ss <name>` to find exact package names
-4. Submit a Pull Request
+### Upgrade Process
+1. Visit [aegis-os.com/store](https://aegis-os.com/store)
+2. Purchase your preferred edition
+3. Receive license key via email
+4. Run `aegis-license-manager` to activate
+5. System will download and install edition-specific packages
 
-### Adding Custom Scripts
+## Support
 
-1. Place scripts in `build-system/archiso/airootfs/usr/local/bin/`
-2. Make them executable: `chmod +x script-name`
-3. Document the script's purpose
-4. Submit a Pull Request
+### Documentation
+- [docs.aegis-os.com](https://docs.aegis-os.com)
 
-### Modifying Desktop Theme
+### Community
+- [Discord](https://discord.gg/aegis-os)
+- [Reddit](https://reddit.com/r/aegisos)
+- [GitHub Discussions](https://github.com/DeQuackDealer/AegisOSRepo/discussions)
 
-1. Theme files go in `build-system/overlays/freemium/`
-2. GTK themes: `usr/share/themes/`
-3. Icons: `usr/share/icons/`
-4. XFCE config: `etc/skel/.config/xfce4/`
-
----
+### Bug Reports
+Report issues on GitHub: [github.com/DeQuackDealer/AegisOSRepo/issues](https://github.com/DeQuackDealer/AegisOSRepo/issues)
 
 ## Contributing
 
-We welcome contributions! Please read [CONTRIBUTING.md](/CONTRIBUTING.md) before submitting.
+We welcome contributions! See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for guidelines.
 
-### Good First Issues
-- Adding useful packages
-- Improving documentation
-- Creating custom scripts
-- Bug fixes
+### Development Setup
+```bash
+git clone https://github.com/DeQuackDealer/AegisOSRepo.git
+cd AegisOSRepo
+git checkout preview/freemium
+```
 
-### How to Contribute
-1. Fork the repository
-2. Checkout `preview/freemium`
-3. Create a feature branch
-4. Make your changes
-5. Submit a Pull Request
-
----
-
-## Testing
-
-### In a Virtual Machine
-1. Build or download the ISO
-2. Create a VM (VirtualBox, QEMU, VMware)
-3. Boot from the ISO
-4. Test functionality
-
-### Checklist
-- [ ] System boots to desktop
-- [ ] Network connectivity works
-- [ ] Wine runs Windows apps
-- [ ] Audio works
-- [ ] Applications launch correctly
-
----
-
-## Known Issues
-
-| Issue | Status | Workaround |
-|-------|--------|------------|
-| None yet | - | - |
-
-Report bugs via [GitHub Issues](https://github.com/DeQuackDealer/AegisOSRepo/issues).
-
----
-
-## Roadmap
-
-- [ ] Improve Windows theme accuracy
-- [ ] Better Wine integration
-- [ ] One-click Windows app installer
-- [ ] System restore points
-- [ ] Auto-update mechanism
-
----
+### Building from Source
+```bash
+cd build-system
+python3 build-aegis.py --edition freemium --simulate --verbose
+```
 
 ## License
 
-This is an open-source preview edition. See LICENSE file for details.
+Aegis OS Freemium is provided free of charge for personal and educational use.
+Commercial use requires a paid license.
+
+See [LICENSE](../../../LICENSE) for full terms.
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 3.0.0 | 2024-12 | Initial Arch Linux-based release |
+| 2.x | Legacy | Ubuntu-based versions (deprecated) |
 
 ---
 
-## Links
-
-- [Main Repository](https://github.com/DeQuackDealer/AegisOSRepo)
-- [Contributing Guide](/CONTRIBUTING.md)
-- [Issue Tracker](https://github.com/DeQuackDealer/AegisOSRepo/issues)
-- [Discussions](https://github.com/DeQuackDealer/AegisOSRepo/discussions)
-
----
-
-**Built with love by the Aegis OS community**
+**Aegis OS Freemium** - Your gateway to the Aegis ecosystem.
