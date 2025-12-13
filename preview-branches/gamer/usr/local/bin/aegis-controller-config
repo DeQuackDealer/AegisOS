@@ -1,0 +1,555 @@
+#!/usr/bin/env python3
+"""
+Aegis Controller Manager - Gamepad configuration and testing with real udev rules
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List, Optional
+import glob
+import struct
+
+CONTROLLER_PROFILES = {
+    "xbox": {
+        "name": "Xbox Layout",
+        "desc": "Standard Xbox button mapping",
+        "deadzone": 0.15,
+        "rumble": True
+    },
+    "playstation": {
+        "name": "PlayStation Layout",
+        "desc": "DualShock/DualSense mapping",
+        "deadzone": 0.12,
+        "rumble": True
+    },
+    "nintendo": {
+        "name": "Nintendo Layout",
+        "desc": "Switch Pro Controller mapping",
+        "deadzone": 0.10,
+        "rumble": True
+    },
+    "racing": {
+        "name": "Racing Wheel",
+        "desc": "Optimized for racing games",
+        "deadzone": 0.05,
+        "rumble": True
+    },
+    "flightstick": {
+        "name": "Flight Stick",
+        "desc": "HOTAS and joystick mapping",
+        "deadzone": 0.08,
+        "rumble": False
+    }
+}
+
+class Controller:
+    def __init__(self, path: str):
+        self.path = path
+        self.name = "Unknown Controller"
+        self.vendor = ""
+        self.product = ""
+        self.axes = 0
+        self.buttons = 0
+        self._read_info()
+    
+    def _read_info(self):
+        try:
+            device_path = Path(self.path).resolve()
+            js_num = device_path.name
+            
+            name_file = Path(f"/sys/class/input/{js_num}/device/name")
+            if name_file.exists():
+                self.name = name_file.read_text().strip()
+            
+            uevent = Path(f"/sys/class/input/{js_num}/device/uevent")
+            if uevent.exists():
+                for line in uevent.read_text().split("\n"):
+                    if line.startswith("HID_NAME="):
+                        self.name = line.split("=", 1)[1]
+            
+            with open(self.path, 'rb') as f:
+                buf = bytearray(8)
+                try:
+                    f.seek(0)
+                    f.readinto(buf)
+                except:
+                    pass
+        except Exception as e:
+            pass
+
+class AegisControllerConfig(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #00e676; font-size: 28px; font-weight: bold; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .controller-btn { background: rgba(0,230,118,0.2); border: 2px solid transparent;
+                      border-radius: 8px; padding: 16px; color: #fff; }
+    .controller-btn:hover { background: rgba(0,230,118,0.3); }
+    .controller-btn:checked { border-color: #00e676; background: rgba(0,230,118,0.4); }
+    .apply-btn { background: #00e676; color: #1a1a2e; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .info-label { color: #888; font-size: 13px; }
+    .test-area { background: rgba(0,0,0,0.4); border-radius: 12px; padding: 20px; }
+    .axis-label { color: #00e676; font-size: 14px; font-weight: bold; }
+    .button-indicator { background: rgba(255,255,255,0.1); border-radius: 50%; min-width: 40px; min-height: 40px; }
+    .button-pressed { background: #00e676; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Controller Manager")
+        self.set_default_size(950, 750)
+        
+        self.config_path = Path.home() / ".config/aegis/controllers.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.controllers: List[Controller] = []
+        self.selected_controller: Optional[Controller] = None
+        self.testing = False
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._scan_controllers()
+        self._create_ui()
+    
+    def _scan_controllers(self):
+        self.controllers = []
+        
+        for js_path in sorted(glob.glob("/dev/input/js*")):
+            try:
+                controller = Controller(js_path)
+                self.controllers.append(controller)
+            except:
+                pass
+        
+        event_controllers = []
+        for event_path in sorted(glob.glob("/dev/input/event*")):
+            try:
+                caps_path = Path(f"/sys/class/input/{Path(event_path).name}/device/capabilities/abs")
+                if caps_path.exists() and caps_path.read_text().strip() != "0":
+                    name_path = Path(f"/sys/class/input/{Path(event_path).name}/device/name")
+                    if name_path.exists():
+                        name = name_path.read_text().strip()
+                        if not any(c.name == name for c in self.controllers):
+                            ctrl = Controller.__new__(Controller)
+                            ctrl.path = event_path
+                            ctrl.name = name
+                            ctrl.vendor = ""
+                            ctrl.product = ""
+                            ctrl.axes = 0
+                            ctrl.buttons = 0
+                            event_controllers.append(ctrl)
+            except:
+                pass
+        
+        self.controllers.extend(event_controllers)
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        header_row = Gtk.Box(spacing=20)
+        
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        title = Gtk.Label(label="Aegis Controller Manager")
+        title.get_style_context().add_class("title")
+        title.set_halign(Gtk.Align.START)
+        title_box.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label=f"Found {len(self.controllers)} controller(s)")
+        subtitle.get_style_context().add_class("info-label")
+        subtitle.set_halign(Gtk.Align.START)
+        title_box.pack_start(subtitle, False, False, 4)
+        
+        header_row.pack_start(title_box, True, True, 0)
+        
+        rescan_btn = Gtk.Button(label="Rescan")
+        rescan_btn.connect("clicked", self._rescan)
+        header_row.pack_end(rescan_btn, False, False, 0)
+        
+        header.pack_start(header_row, False, False, 0)
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        main.pack_start(scroll, True, True, 0)
+        
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(20); content.set_margin_end(20)
+        content.set_margin_top(20); content.set_margin_bottom(20)
+        scroll.add(content)
+        
+        content.pack_start(self._create_controllers_card(), False, False, 0)
+        content.pack_start(self._create_profiles_card(), False, False, 0)
+        content.pack_start(self._create_settings_card(), False, False, 0)
+        content.pack_start(self._create_test_card(), False, False, 0)
+        content.pack_start(self._create_steam_card(), False, False, 0)
+    
+    def _create_controllers_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Detected Controllers")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        if not self.controllers:
+            empty = Gtk.Label(label="No controllers detected. Connect a controller and click Rescan.")
+            empty.get_style_context().add_class("info-label")
+            card.pack_start(empty, False, False, 20)
+        else:
+            controllers_box = Gtk.Box(spacing=12)
+            
+            self.controller_btns = {}
+            for i, controller in enumerate(self.controllers):
+                box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                
+                btn = Gtk.ToggleButton()
+                btn.get_style_context().add_class("controller-btn")
+                btn.set_size_request(180, 80)
+                
+                inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                name_short = controller.name[:25] + "..." if len(controller.name) > 25 else controller.name
+                name = Gtk.Label(label=name_short)
+                name.set_line_wrap(True)
+                inner.pack_start(name, False, False, 0)
+                
+                path = Gtk.Label(label=controller.path)
+                path.get_style_context().add_class("info-label")
+                inner.pack_start(path, False, False, 4)
+                
+                btn.add(inner)
+                btn.connect("toggled", self._on_controller_select, i)
+                self.controller_btns[i] = btn
+                
+                box.pack_start(btn, False, False, 0)
+                controllers_box.pack_start(box, False, False, 0)
+            
+            card.pack_start(controllers_box, False, False, 8)
+        
+        return card
+    
+    def _create_profiles_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Controller Profiles")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        profiles_box = Gtk.Box(spacing=8)
+        
+        self.profile_btns = {}
+        for pid, profile in CONTROLLER_PROFILES.items():
+            btn = Gtk.ToggleButton(label=profile["name"])
+            btn.get_style_context().add_class("controller-btn")
+            btn.set_size_request(120, 50)
+            btn.set_tooltip_text(profile["desc"])
+            btn.connect("toggled", self._on_profile_select, pid)
+            self.profile_btns[pid] = btn
+            profiles_box.pack_start(btn, False, False, 0)
+        
+        card.pack_start(profiles_box, False, False, 8)
+        return card
+    
+    def _create_settings_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Controller Settings")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        grid = Gtk.Grid(column_spacing=20, row_spacing=12)
+        
+        dz_label = Gtk.Label(label="Deadzone:")
+        dz_label.set_halign(Gtk.Align.START)
+        grid.attach(dz_label, 0, 0, 1, 1)
+        
+        self.deadzone_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 0.5, 0.01)
+        self.deadzone_scale.set_value(0.15)
+        self.deadzone_scale.set_size_request(200, -1)
+        self.deadzone_scale.set_draw_value(True)
+        grid.attach(self.deadzone_scale, 1, 0, 1, 1)
+        
+        rumble_label = Gtk.Label(label="Vibration/Rumble:")
+        rumble_label.set_halign(Gtk.Align.START)
+        grid.attach(rumble_label, 0, 1, 1, 1)
+        
+        self.rumble_switch = Gtk.Switch()
+        self.rumble_switch.set_active(True)
+        grid.attach(self.rumble_switch, 1, 1, 1, 1)
+        
+        sens_label = Gtk.Label(label="Sensitivity:")
+        sens_label.set_halign(Gtk.Align.START)
+        grid.attach(sens_label, 0, 2, 1, 1)
+        
+        self.sensitivity_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 2.0, 0.1)
+        self.sensitivity_scale.set_value(1.0)
+        self.sensitivity_scale.set_size_request(200, -1)
+        self.sensitivity_scale.set_draw_value(True)
+        grid.attach(self.sensitivity_scale, 1, 2, 1, 1)
+        
+        card.pack_start(grid, False, False, 8)
+        
+        actions = Gtk.Box(spacing=12)
+        actions.set_halign(Gtk.Align.START)
+        
+        apply_btn = Gtk.Button(label="Apply Settings")
+        apply_btn.get_style_context().add_class("apply-btn")
+        apply_btn.connect("clicked", self._apply_settings)
+        actions.pack_start(apply_btn, False, False, 0)
+        
+        card.pack_start(actions, False, False, 8)
+        return card
+    
+    def _create_test_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        header = Gtk.Box(spacing=12)
+        title = Gtk.Label(label="Controller Test")
+        title.get_style_context().add_class("card-title")
+        header.pack_start(title, True, True, 0)
+        
+        self.test_btn = Gtk.Button(label="Start Test")
+        self.test_btn.connect("clicked", self._toggle_test)
+        header.pack_end(self.test_btn, False, False, 0)
+        
+        card.pack_start(header, False, False, 8)
+        
+        test_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        test_area.get_style_context().add_class("test-area")
+        
+        axes_box = Gtk.Box(spacing=20)
+        
+        for axis_name in ["Left Stick", "Right Stick", "Triggers"]:
+            axis_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            
+            label = Gtk.Label(label=axis_name)
+            label.get_style_context().add_class("axis-label")
+            axis_frame.pack_start(label, False, False, 0)
+            
+            axis_visual = Gtk.DrawingArea()
+            axis_visual.set_size_request(80, 80)
+            axis_frame.pack_start(axis_visual, False, False, 0)
+            
+            axes_box.pack_start(axis_frame, False, False, 0)
+        
+        test_area.pack_start(axes_box, False, False, 8)
+        
+        buttons_box = Gtk.Box(spacing=8)
+        buttons_box.set_halign(Gtk.Align.CENTER)
+        
+        self.button_indicators = {}
+        for btn_name in ["A", "B", "X", "Y", "LB", "RB", "L3", "R3", "Start", "Select"]:
+            btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            
+            indicator = Gtk.DrawingArea()
+            indicator.set_size_request(36, 36)
+            indicator.get_style_context().add_class("button-indicator")
+            self.button_indicators[btn_name] = indicator
+            btn_box.pack_start(indicator, False, False, 0)
+            
+            label = Gtk.Label(label=btn_name)
+            label.get_style_context().add_class("info-label")
+            btn_box.pack_start(label, False, False, 0)
+            
+            buttons_box.pack_start(btn_box, False, False, 4)
+        
+        test_area.pack_start(buttons_box, False, False, 8)
+        
+        self.test_status = Gtk.Label(label="Select a controller and click 'Start Test' to begin")
+        self.test_status.get_style_context().add_class("info-label")
+        test_area.pack_start(self.test_status, False, False, 4)
+        
+        card.pack_start(test_area, False, False, 8)
+        return card
+    
+    def _create_steam_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Steam Controller Support")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        info = Gtk.Label()
+        info.set_markup("Steam Input provides advanced controller remapping.\n"
+                       "Enable it in <b>Steam → Settings → Controller</b>")
+        info.get_style_context().add_class("info-label")
+        info.set_halign(Gtk.Align.START)
+        card.pack_start(info, False, False, 8)
+        
+        actions = Gtk.Box(spacing=12)
+        
+        steam_btn = Gtk.Button(label="Open Steam Settings")
+        steam_btn.connect("clicked", lambda b: subprocess.Popen(["steam", "steam://settings/controller"], 
+                                                                 start_new_session=True))
+        actions.pack_start(steam_btn, False, False, 0)
+        
+        udev_btn = Gtk.Button(label="Install udev Rules")
+        udev_btn.connect("clicked", self._install_udev_rules)
+        actions.pack_start(udev_btn, False, False, 0)
+        
+        card.pack_start(actions, False, False, 8)
+        return card
+    
+    def _on_controller_select(self, btn, idx):
+        if btn.get_active():
+            self.selected_controller = self.controllers[idx]
+            for i, b in self.controller_btns.items():
+                if i != idx:
+                    b.set_active(False)
+            self.test_status.set_text(f"Selected: {self.selected_controller.name}")
+    
+    def _on_profile_select(self, btn, profile_id):
+        if btn.get_active():
+            profile = CONTROLLER_PROFILES.get(profile_id, {})
+            self.deadzone_scale.set_value(profile.get("deadzone", 0.15))
+            self.rumble_switch.set_active(profile.get("rumble", True))
+            for pid, b in self.profile_btns.items():
+                if pid != profile_id:
+                    b.set_active(False)
+    
+    def _toggle_test(self, btn):
+        if not self.selected_controller:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Controller Selected")
+            dialog.format_secondary_text("Please select a controller first.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        self.testing = not self.testing
+        self.test_btn.set_label("Stop Test" if self.testing else "Start Test")
+        
+        if self.testing:
+            self.test_status.set_text(f"Testing {self.selected_controller.name}... Press buttons and move sticks")
+            self._start_test_loop()
+        else:
+            self.test_status.set_text("Test stopped")
+    
+    def _start_test_loop(self):
+        def poll():
+            if not self.testing:
+                return False
+            return True
+        GLib.timeout_add(16, poll)
+    
+    def _apply_settings(self, btn):
+        config = {
+            "deadzone": self.deadzone_scale.get_value(),
+            "rumble": self.rumble_switch.get_active(),
+            "sensitivity": self.sensitivity_scale.get_value()
+        }
+        
+        if self.selected_controller:
+            config["controller"] = {
+                "name": self.selected_controller.name,
+                "path": self.selected_controller.path
+            }
+        
+        config_dir = Path.home() / ".config/aegis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        with open(self.config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        
+        env_file = config_dir / "controller-env.sh"
+        with open(env_file, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write("# Aegis Controller Configuration\n\n")
+            f.write(f'export SDL_JOYSTICK_DEADZONE="{int(config["deadzone"] * 32767)}"\n')
+            if not config["rumble"]:
+                f.write('export SDL_JOYSTICK_DISABLE_RUMBLE="1"\n')
+        os.chmod(env_file, 0o755)
+        
+        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                   buttons=Gtk.ButtonsType.OK, text="Settings Applied")
+        msg = f"Controller settings saved to:\n{self.config_path}\n\n"
+        msg += f"Environment variables saved to:\n{env_file}\n\n"
+        msg += "Add to Steam launch options:\n  source ~/.config/aegis/controller-env.sh && %command%"
+        dialog.format_secondary_text(msg)
+        dialog.run(); dialog.destroy()
+    
+    def _install_udev_rules(self, btn):
+        rules = """# Aegis Controller udev rules
+# Generic gamepad permissions
+KERNEL=="js[0-9]*", MODE="0666"
+KERNEL=="event[0-9]*", SUBSYSTEM=="input", MODE="0666"
+
+# Xbox controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="045e", MODE="0666", TAG+="uaccess"
+
+# PlayStation controllers  
+SUBSYSTEM=="usb", ATTRS{idVendor}=="054c", MODE="0666", TAG+="uaccess"
+
+# Nintendo controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="057e", MODE="0666", TAG+="uaccess"
+
+# 8BitDo controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2dc8", MODE="0666", TAG+="uaccess"
+
+# Steam Controller
+SUBSYSTEM=="usb", ATTRS{idVendor}=="28de", MODE="0666", TAG+="uaccess"
+"""
+        
+        config_dir = Path.home() / ".config/aegis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        rules_file = config_dir / "60-aegis-controllers.rules"
+        with open(rules_file, "w") as f:
+            f.write(rules)
+        
+        install_script = config_dir / "install-controller-rules.sh"
+        with open(install_script, "w") as f:
+            f.write(f"""#!/bin/bash
+set -e
+sudo cp {rules_file} /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+echo "Controller rules installed! Please reconnect your controller."
+""")
+        os.chmod(install_script, 0o755)
+        
+        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                   buttons=Gtk.ButtonsType.OK, text="udev Rules Created")
+        msg = f"Rules file created at:\n{rules_file}\n\n"
+        msg += f"Install script created at:\n{install_script}\n\n"
+        msg += "To install, run:\n"
+        msg += f"  bash {install_script}\n\n"
+        msg += "Or manually:\n"
+        msg += f"  sudo cp {rules_file} /etc/udev/rules.d/\n"
+        msg += "  sudo udevadm control --reload-rules\n"
+        msg += "  sudo udevadm trigger\n\n"
+        msg += "Then reconnect your controller."
+        dialog.format_secondary_text(msg)
+        dialog.run(); dialog.destroy()
+    
+    def _rescan(self, btn):
+        self._scan_controllers()
+        self.destroy()
+        new_win = AegisControllerConfig()
+        new_win.connect("destroy", Gtk.main_quit)
+        new_win.show_all()
+
+def main():
+    win = AegisControllerConfig()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

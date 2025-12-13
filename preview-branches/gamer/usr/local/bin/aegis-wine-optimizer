@@ -1,0 +1,786 @@
+#!/usr/bin/env python3
+"""
+Aegis Wine Optimizer - Wine/Proton prefix management and optimization
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List, Optional
+import shutil
+
+DXVK_VERSIONS = ["2.4", "2.3.1", "2.3", "2.2", "2.1"]
+VKD3D_VERSIONS = ["2.12", "2.11", "2.10", "2.9"]
+WINE_VERSIONS = ["wine-9.0", "wine-8.0", "wine-ge-proton", "proton-ge-8"]
+
+class WinePrefix:
+    def __init__(self, path: str, name: str = ""):
+        self.path = Path(path)
+        self.name = name or self.path.name
+        self.arch = self._detect_arch()
+        self.dxvk_version = self._detect_dxvk()
+        self.vkd3d_version = self._detect_vkd3d()
+    
+    def _detect_arch(self) -> str:
+        system_reg = self.path / "system.reg"
+        if system_reg.exists():
+            try:
+                with open(system_reg, "r") as f:
+                    content = f.read(500)
+                    if "#arch=win64" in content:
+                        return "win64"
+            except: pass
+        return "win32"
+    
+    def _detect_dxvk(self) -> str:
+        dll = self.path / "drive_c/windows/system32/d3d11.dll"
+        if dll.exists():
+            try:
+                result = subprocess.run(["strings", str(dll)], capture_output=True, text=True)
+                if "DXVK" in result.stdout:
+                    for line in result.stdout.split("\n"):
+                        if "DXVK" in line and any(v in line for v in DXVK_VERSIONS):
+                            return line.strip()
+            except: pass
+            return "DXVK (unknown)"
+        return "None"
+    
+    def _detect_vkd3d(self) -> str:
+        dll = self.path / "drive_c/windows/system32/d3d12.dll"
+        if dll.exists():
+            return "Installed"
+        return "None"
+
+def install_dxvk(prefix_path: str, version: str = None) -> tuple:
+    """
+    Install DXVK to a Wine prefix using winetricks.
+    
+    Args:
+        prefix_path: Path to the Wine prefix
+        version: DXVK version to install (optional, uses latest if not specified)
+    
+    Returns:
+        tuple: (success: bool, output: str)
+    """
+    env = os.environ.copy()
+    env["WINEPREFIX"] = prefix_path
+    
+    cmd = ["winetricks", "-q"]
+    if version:
+        cmd.append(f"dxvk{version.replace('.', '')}")
+    else:
+        cmd.append("dxvk")
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        return (result.returncode == 0, result.stdout + result.stderr)
+    except subprocess.TimeoutExpired:
+        return (False, "Installation timed out after 5 minutes")
+    except FileNotFoundError:
+        return (False, "winetricks not found. Install with: sudo apt install winetricks")
+    except Exception as e:
+        return (False, str(e))
+
+
+def install_vkd3d(prefix_path: str, version: str = None) -> tuple:
+    """
+    Install VKD3D (DirectX 12 to Vulkan) to a Wine prefix using winetricks.
+    
+    Args:
+        prefix_path: Path to the Wine prefix
+        version: VKD3D version to install (optional, uses latest if not specified)
+    
+    Returns:
+        tuple: (success: bool, output: str)
+    """
+    env = os.environ.copy()
+    env["WINEPREFIX"] = prefix_path
+    
+    cmd = ["winetricks", "-q", "vkd3d"]
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        return (result.returncode == 0, result.stdout + result.stderr)
+    except subprocess.TimeoutExpired:
+        return (False, "Installation timed out after 5 minutes")
+    except FileNotFoundError:
+        return (False, "winetricks not found. Install with: sudo apt install winetricks")
+    except Exception as e:
+        return (False, str(e))
+
+
+def run_winetricks(prefix_path: str) -> tuple:
+    """
+    Open the winetricks GUI for the specified Wine prefix.
+    
+    Args:
+        prefix_path: Path to the Wine prefix
+    
+    Returns:
+        tuple: (success: bool, output: str)
+    """
+    env = os.environ.copy()
+    env["WINEPREFIX"] = prefix_path
+    
+    try:
+        process = subprocess.Popen(
+            ["winetricks", "--gui"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        return (True, f"Winetricks GUI launched for prefix: {prefix_path}")
+    except FileNotFoundError:
+        return (False, "winetricks not found. Install with: sudo apt install winetricks")
+    except Exception as e:
+        return (False, str(e))
+
+
+def create_launch_script(prefix_path: str, game_exe: str = None, script_name: str = None,
+                         enable_esync: bool = True, enable_fsync: bool = True,
+                         enable_dxvk_async: bool = True, disable_nvapi: bool = False,
+                         custom_env: dict = None) -> tuple:
+    """
+    Create a launch script with gaming optimizations for a Wine prefix.
+    
+    Args:
+        prefix_path: Path to the Wine prefix
+        game_exe: Path to the game executable (optional)
+        script_name: Name for the launch script (optional, derived from game_exe if not provided)
+        enable_esync: Enable Wine esync for reduced CPU overhead
+        enable_fsync: Enable Wine fsync (requires kernel support)
+        enable_dxvk_async: Enable DXVK async shader compilation
+        disable_nvapi: Disable NVAPI (fixes issues with some NVIDIA games)
+        custom_env: Additional custom environment variables
+    
+    Returns:
+        tuple: (success: bool, script_path: str or error message)
+    """
+    try:
+        config_dir = Path.home() / ".config/aegis/launch-scripts"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        if script_name:
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in script_name)
+        elif game_exe:
+            safe_name = Path(game_exe).stem
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)
+        else:
+            safe_name = Path(prefix_path).name
+            safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in safe_name)
+        
+        script_path = config_dir / f"launch-{safe_name}.sh"
+        
+        env_vars = {
+            "WINEPREFIX": prefix_path,
+            "RADV_PERFTEST": "gpl",
+            "mesa_glthread": "true",
+            "__GL_SHADER_DISK_CACHE": "1",
+            "__GL_SHADER_DISK_CACHE_SKIP_CLEANUP": "1",
+            "WINE_LARGE_ADDRESS_AWARE": "1",
+            "STAGING_SHARED_MEMORY": "1",
+            "STAGING_WRITECOPY": "1",
+        }
+        
+        if enable_esync:
+            env_vars["WINEESYNC"] = "1"
+        if enable_fsync:
+            env_vars["WINEFSYNC"] = "1"
+        if enable_dxvk_async:
+            env_vars["DXVK_ASYNC"] = "1"
+            env_vars["DXVK_CONFIG_FILE"] = ""
+        if disable_nvapi:
+            env_vars["DXVK_ENABLE_NVAPI"] = "0"
+            env_vars["PROTON_ENABLE_NVAPI"] = "0"
+        
+        if custom_env:
+            env_vars.update(custom_env)
+        
+        with open(script_path, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write("# Aegis Wine Optimizer - Gaming Launch Script\n")
+            f.write(f"# Generated for prefix: {prefix_path}\n")
+            if game_exe:
+                f.write(f"# Game: {game_exe}\n")
+            f.write(f"# Created: {subprocess.run(['date'], capture_output=True, text=True).stdout.strip()}\n")
+            f.write("\n")
+            
+            f.write("# Gaming optimizations\n")
+            for key, value in env_vars.items():
+                f.write(f'export {key}="{value}"\n')
+            f.write("\n")
+            
+            f.write("# Optional: Set CPU governor to performance (requires root)\n")
+            f.write("# sudo cpupower frequency-set -g performance 2>/dev/null\n")
+            f.write("\n")
+            
+            f.write("# Optional: Disable compositor (improves performance in some cases)\n")
+            f.write("# xfconf-query -c xfwm4 -p /general/use_compositing -s false 2>/dev/null\n")
+            f.write("\n")
+            
+            if game_exe:
+                f.write(f'# Launch the game\n')
+                f.write(f'cd "{Path(game_exe).parent}"\n')
+                f.write(f'exec wine "{game_exe}" "$@"\n')
+            else:
+                f.write('# Launch wine with any arguments passed to this script\n')
+                f.write('exec wine "$@"\n')
+        
+        os.chmod(script_path, 0o755)
+        
+        desktop_file = config_dir / f"{safe_name}.desktop"
+        with open(desktop_file, "w") as f:
+            f.write("[Desktop Entry]\n")
+            f.write("Type=Application\n")
+            f.write(f"Name={safe_name}\n")
+            f.write(f"Exec={script_path}\n")
+            f.write("Icon=wine\n")
+            f.write("Categories=Game;\n")
+            f.write("Terminal=false\n")
+        
+        return (True, str(script_path))
+    except Exception as e:
+        return (False, str(e))
+
+
+class AegisWineOptimizer(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #722f8c; font-size: 28px; font-weight: bold; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .prefix-row { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin: 4px 0; }
+    .prefix-name { color: #fff; font-size: 14px; font-weight: bold; }
+    .prefix-info { color: #888; font-size: 12px; }
+    .opt-btn { background: rgba(114,47,140,0.3); border: none; border-radius: 4px;
+               padding: 8px 16px; color: #fff; margin: 4px; }
+    .opt-btn:hover { background: rgba(114,47,140,0.5); }
+    .apply-btn { background: #722f8c; color: #fff; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .section-title { color: #aaa; font-size: 14px; font-weight: bold; margin-top: 16px; }
+    .info-label { color: #888; font-size: 13px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Wine Optimizer")
+        self.set_default_size(950, 750)
+        self.prefixes: List[WinePrefix] = []
+        self.selected_prefix: Optional[WinePrefix] = None
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._scan_prefixes()
+        self._create_ui()
+    
+    def _scan_prefixes(self):
+        locations = [
+            Path.home() / ".wine",
+            Path.home() / ".local/share/Steam/steamapps/compatdata",
+            Path.home() / ".local/share/lutris/runners/wine",
+            Path.home() / "Games",
+        ]
+        
+        for loc in locations:
+            if not loc.exists(): continue
+            if loc.name == ".wine":
+                self.prefixes.append(WinePrefix(str(loc), "Default Wine Prefix"))
+            elif loc.name == "compatdata":
+                for subdir in loc.iterdir():
+                    pfx = subdir / "pfx"
+                    if pfx.exists():
+                        self.prefixes.append(WinePrefix(str(pfx), f"Steam App {subdir.name}"))
+            else:
+                for subdir in loc.iterdir():
+                    if (subdir / "system.reg").exists():
+                        self.prefixes.append(WinePrefix(str(subdir)))
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        title = Gtk.Label(label="Aegis Wine Optimizer")
+        title.get_style_context().add_class("title")
+        title.set_halign(Gtk.Align.START)
+        header.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Optimize Wine/Proton prefixes for better gaming performance")
+        subtitle.get_style_context().add_class("info-label")
+        subtitle.set_halign(Gtk.Align.START)
+        header.pack_start(subtitle, False, False, 4)
+        
+        main.pack_start(header, False, False, 0)
+        
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        main.pack_start(paned, True, True, 0)
+        
+        left_scroll = Gtk.ScrolledWindow()
+        left_scroll.set_size_request(300, -1)
+        
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        left_box.set_margin_start(16); left_box.set_margin_end(8)
+        left_box.set_margin_top(16); left_box.set_margin_bottom(16)
+        
+        prefix_title = Gtk.Label(label="Wine Prefixes")
+        prefix_title.get_style_context().add_class("section-title")
+        prefix_title.set_halign(Gtk.Align.START)
+        left_box.pack_start(prefix_title, False, False, 8)
+        
+        self.prefix_list = Gtk.ListBox()
+        self.prefix_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.prefix_list.connect("row-selected", self._on_prefix_selected)
+        
+        for prefix in self.prefixes:
+            row = self._create_prefix_row(prefix)
+            self.prefix_list.add(row)
+        
+        left_box.pack_start(self.prefix_list, True, True, 0)
+        
+        scan_btn = Gtk.Button(label="Rescan Prefixes")
+        scan_btn.connect("clicked", self._rescan)
+        left_box.pack_start(scan_btn, False, False, 8)
+        
+        left_scroll.add(left_box)
+        paned.pack1(left_scroll, False, False)
+        
+        right_scroll = Gtk.ScrolledWindow()
+        
+        self.right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.right_box.set_margin_start(8); self.right_box.set_margin_end(16)
+        self.right_box.set_margin_top(16); self.right_box.set_margin_bottom(16)
+        
+        self._show_no_selection()
+        
+        right_scroll.add(self.right_box)
+        paned.pack2(right_scroll, True, True)
+    
+    def _create_prefix_row(self, prefix: WinePrefix) -> Gtk.ListBoxRow:
+        row = Gtk.ListBoxRow()
+        row.prefix = prefix
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.get_style_context().add_class("prefix-row")
+        box.set_margin_start(4); box.set_margin_end(4)
+        box.set_margin_top(4); box.set_margin_bottom(4)
+        
+        name = Gtk.Label(label=prefix.name)
+        name.get_style_context().add_class("prefix-name")
+        name.set_halign(Gtk.Align.START)
+        name.set_ellipsize(True)
+        box.pack_start(name, False, False, 0)
+        
+        info = Gtk.Label(label=f"{prefix.arch} | DXVK: {prefix.dxvk_version[:20]}")
+        info.get_style_context().add_class("prefix-info")
+        info.set_halign(Gtk.Align.START)
+        box.pack_start(info, False, False, 0)
+        
+        row.add(box)
+        return row
+    
+    def _show_no_selection(self):
+        for child in self.right_box.get_children():
+            self.right_box.remove(child)
+        
+        label = Gtk.Label(label="Select a Wine prefix to view optimization options")
+        label.get_style_context().add_class("info-label")
+        self.right_box.pack_start(label, True, True, 0)
+        self.right_box.show_all()
+    
+    def _on_prefix_selected(self, listbox, row):
+        if not row:
+            self._show_no_selection()
+            return
+        
+        self.selected_prefix = row.prefix
+        self._show_prefix_options()
+    
+    def _show_prefix_options(self):
+        for child in self.right_box.get_children():
+            self.right_box.remove(child)
+        
+        prefix = self.selected_prefix
+        if not prefix: return
+        
+        title = Gtk.Label()
+        title.set_markup(f"<big><b>{prefix.name}</b></big>")
+        title.set_halign(Gtk.Align.START)
+        self.right_box.pack_start(title, False, False, 0)
+        
+        path_label = Gtk.Label(label=str(prefix.path))
+        path_label.get_style_context().add_class("info-label")
+        path_label.set_halign(Gtk.Align.START)
+        path_label.set_selectable(True)
+        self.right_box.pack_start(path_label, False, False, 4)
+        
+        info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        info_card.get_style_context().add_class("card")
+        
+        info_title = Gtk.Label(label="Current Configuration")
+        info_title.get_style_context().add_class("card-title")
+        info_title.set_halign(Gtk.Align.START)
+        info_card.pack_start(info_title, False, False, 8)
+        
+        grid = Gtk.Grid(column_spacing=20, row_spacing=8)
+        labels = [("Architecture", prefix.arch), ("DXVK", prefix.dxvk_version), ("VKD3D", prefix.vkd3d_version)]
+        for i, (k, v) in enumerate(labels):
+            lbl = Gtk.Label(label=f"{k}:"); lbl.set_halign(Gtk.Align.START)
+            val = Gtk.Label(label=v); val.set_halign(Gtk.Align.START)
+            grid.attach(lbl, 0, i, 1, 1)
+            grid.attach(val, 1, i, 1, 1)
+        info_card.pack_start(grid, False, False, 0)
+        
+        self.right_box.pack_start(info_card, False, False, 16)
+        
+        opt_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        opt_card.get_style_context().add_class("card")
+        
+        opt_title = Gtk.Label(label="Optimizations")
+        opt_title.get_style_context().add_class("card-title")
+        opt_title.set_halign(Gtk.Align.START)
+        opt_card.pack_start(opt_title, False, False, 8)
+        
+        dxvk_row = Gtk.Box(spacing=8)
+        dxvk_label = Gtk.Label(label="Install/Update DXVK:")
+        dxvk_label.set_halign(Gtk.Align.START)
+        dxvk_row.pack_start(dxvk_label, False, False, 0)
+        
+        self.dxvk_combo = Gtk.ComboBoxText()
+        for v in DXVK_VERSIONS:
+            self.dxvk_combo.append_text(v)
+        self.dxvk_combo.set_active(0)
+        dxvk_row.pack_start(self.dxvk_combo, False, False, 0)
+        
+        dxvk_btn = Gtk.Button(label="Install")
+        dxvk_btn.get_style_context().add_class("opt-btn")
+        dxvk_btn.connect("clicked", self._install_dxvk)
+        dxvk_row.pack_start(dxvk_btn, False, False, 0)
+        
+        opt_card.pack_start(dxvk_row, False, False, 8)
+        
+        vkd3d_row = Gtk.Box(spacing=8)
+        vkd3d_label = Gtk.Label(label="Install/Update VKD3D:")
+        vkd3d_row.pack_start(vkd3d_label, False, False, 0)
+        
+        self.vkd3d_combo = Gtk.ComboBoxText()
+        for v in VKD3D_VERSIONS:
+            self.vkd3d_combo.append_text(v)
+        self.vkd3d_combo.set_active(0)
+        vkd3d_row.pack_start(self.vkd3d_combo, False, False, 0)
+        
+        vkd3d_btn = Gtk.Button(label="Install")
+        vkd3d_btn.get_style_context().add_class("opt-btn")
+        vkd3d_btn.connect("clicked", self._install_vkd3d)
+        vkd3d_row.pack_start(vkd3d_btn, False, False, 0)
+        
+        opt_card.pack_start(vkd3d_row, False, False, 8)
+        
+        winetricks_row = Gtk.Box(spacing=8)
+        winetricks_label = Gtk.Label(label="Winetricks GUI:")
+        winetricks_label.set_halign(Gtk.Align.START)
+        winetricks_row.pack_start(winetricks_label, False, False, 0)
+        
+        winetricks_btn = Gtk.Button(label="Open Winetricks")
+        winetricks_btn.get_style_context().add_class("opt-btn")
+        winetricks_btn.connect("clicked", self._run_winetricks)
+        winetricks_row.pack_start(winetricks_btn, False, False, 0)
+        
+        opt_card.pack_start(winetricks_row, False, False, 8)
+        
+        launch_row = Gtk.Box(spacing=8)
+        launch_label = Gtk.Label(label="Create Launch Script:")
+        launch_label.set_halign(Gtk.Align.START)
+        launch_row.pack_start(launch_label, False, False, 0)
+        
+        launch_btn = Gtk.Button(label="Create Script")
+        launch_btn.get_style_context().add_class("opt-btn")
+        launch_btn.connect("clicked", self._create_launch_script)
+        launch_row.pack_start(launch_btn, False, False, 0)
+        
+        opt_card.pack_start(launch_row, False, False, 8)
+        
+        self.right_box.pack_start(opt_card, False, False, 0)
+        
+        tweaks_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        tweaks_card.get_style_context().add_class("card")
+        
+        tweaks_title = Gtk.Label(label="Performance Tweaks")
+        tweaks_title.get_style_context().add_class("card-title")
+        tweaks_title.set_halign(Gtk.Align.START)
+        tweaks_card.pack_start(tweaks_title, False, False, 8)
+        
+        tweaks = [
+            ("Enable Esync", "Reduces CPU overhead for synchronization"),
+            ("Enable Fsync", "Better sync (requires kernel support)"),
+            ("Enable DXVK Async", "Shader compilation in background"),
+            ("Large Address Aware", "Allow >2GB memory for 32-bit games"),
+            ("Disable NVAPI", "Fix issues with some games on NVIDIA"),
+        ]
+        
+        self.tweak_switches = {}
+        for name, desc in tweaks:
+            row = Gtk.Box(spacing=12)
+            
+            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            name_lbl = Gtk.Label(label=name)
+            name_lbl.set_halign(Gtk.Align.START)
+            labels.pack_start(name_lbl, False, False, 0)
+            
+            desc_lbl = Gtk.Label(label=desc)
+            desc_lbl.get_style_context().add_class("info-label")
+            desc_lbl.set_halign(Gtk.Align.START)
+            labels.pack_start(desc_lbl, False, False, 0)
+            
+            row.pack_start(labels, True, True, 0)
+            
+            switch = Gtk.Switch()
+            switch.set_active(True)
+            self.tweak_switches[name] = switch
+            row.pack_start(switch, False, False, 0)
+            
+            tweaks_card.pack_start(row, False, False, 8)
+        
+        self.right_box.pack_start(tweaks_card, False, False, 16)
+        
+        actions = Gtk.Box(spacing=12)
+        actions.set_halign(Gtk.Align.CENTER)
+        
+        apply_btn = Gtk.Button(label="Apply All Tweaks")
+        apply_btn.get_style_context().add_class("apply-btn")
+        apply_btn.connect("clicked", self._apply_tweaks)
+        actions.pack_start(apply_btn, False, False, 0)
+        
+        self.right_box.pack_start(actions, False, False, 16)
+        self.right_box.show_all()
+    
+    def _install_dxvk(self, btn):
+        version = self.dxvk_combo.get_active_text()
+        if not version or not self.selected_prefix:
+            return
+        
+        prefix_path = str(self.selected_prefix.path)
+        
+        progress = Gtk.Dialog(title="Installing DXVK", parent=self)
+        progress.set_default_size(400, 150)
+        progress.set_modal(True)
+        
+        box = progress.get_content_area()
+        label = Gtk.Label(label=f"Installing DXVK {version}...")
+        box.pack_start(label, True, True, 20)
+        
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_install():
+            success, output = install_dxvk(prefix_path, version)
+            GLib.idle_add(self._install_complete, progress, success, output, "DXVK")
+            return False
+        
+        import threading
+        threading.Thread(target=do_install, daemon=True).start()
+        progress.run()
+    
+    def _install_vkd3d(self, btn):
+        version = self.vkd3d_combo.get_active_text()
+        if not version or not self.selected_prefix:
+            return
+        
+        prefix_path = str(self.selected_prefix.path)
+        
+        progress = Gtk.Dialog(title="Installing VKD3D", parent=self)
+        progress.set_default_size(400, 150)
+        progress.set_modal(True)
+        
+        box = progress.get_content_area()
+        label = Gtk.Label(label=f"Installing VKD3D {version}...")
+        box.pack_start(label, True, True, 20)
+        
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_install():
+            success, output = install_vkd3d(prefix_path, version)
+            GLib.idle_add(self._install_complete, progress, success, output, "VKD3D")
+            return False
+        
+        import threading
+        threading.Thread(target=do_install, daemon=True).start()
+        progress.run()
+    
+    def _install_complete(self, progress, success, output, component):
+        progress.destroy()
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text=f"{component} Installed")
+            dialog.format_secondary_text(f"{component} was successfully installed to the prefix.\n\nRe-scanning prefix to update status...")
+            self._rescan(None)
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text=f"{component} Installation Failed")
+            dialog.format_secondary_text(f"Error:\n{output[:500]}")
+        
+        dialog.run()
+        dialog.destroy()
+    
+    def _apply_tweaks(self, btn):
+        if not self.selected_prefix:
+            return
+        
+        env_vars = {}
+        env_vars["WINEPREFIX"] = str(self.selected_prefix.path)
+        
+        if self.tweak_switches.get("Enable Esync", Gtk.Switch()).get_active():
+            env_vars["WINEESYNC"] = "1"
+        if self.tweak_switches.get("Enable Fsync", Gtk.Switch()).get_active():
+            env_vars["WINEFSYNC"] = "1"
+        if self.tweak_switches.get("Enable DXVK Async", Gtk.Switch()).get_active():
+            env_vars["DXVK_ASYNC"] = "1"
+        if self.tweak_switches.get("Disable NVAPI", Gtk.Switch()).get_active():
+            env_vars["DXVK_ENABLE_NVAPI"] = "0"
+            env_vars["PROTON_ENABLE_NVAPI"] = "0"
+        
+        env_vars["RADV_PERFTEST"] = "gpl"
+        env_vars["mesa_glthread"] = "true"
+        env_vars["__GL_SHADER_DISK_CACHE"] = "1"
+        env_vars["__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"] = "1"
+        
+        config_dir = Path.home() / ".config/aegis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        env_file = config_dir / "wine-env.sh"
+        with open(env_file, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write("# Aegis Wine Optimizer Environment\n")
+            f.write(f"# Generated for prefix: {self.selected_prefix.name}\n\n")
+            for k, v in env_vars.items():
+                f.write(f"export {k}=\"{v}\"\n")
+        os.chmod(env_file, 0o755)
+        
+        launch_script = config_dir / "wine-launch.sh"
+        with open(launch_script, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write(f"source {env_file}\n")
+            f.write('exec wine "$@"\n')
+        os.chmod(launch_script, 0o755)
+        
+        steam_opts = " ".join([f"{k}={v}" for k, v in env_vars.items() if k != "WINEPREFIX"])
+        steam_file = config_dir / "wine-steam-options.txt"
+        with open(steam_file, "w") as f:
+            f.write("# Copy to Steam game launch options:\n")
+            f.write(f"{steam_opts} %command%\n")
+        
+        bashrc = Path.home() / ".bashrc"
+        source_line = f"source {env_file} 2>/dev/null"
+        try:
+            content = bashrc.read_text() if bashrc.exists() else ""
+            if source_line not in content:
+                with open(bashrc, "a") as f:
+                    f.write(f"\n# Aegis Wine Optimizer\n{source_line}\n")
+        except: pass
+        
+        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                   buttons=Gtk.ButtonsType.OK, text="Tweaks Applied")
+        msg = f"Created the following files:\n\n"
+        msg += f"1. {env_file}\n   (Environment variables - sourced on login)\n\n"
+        msg += f"2. {launch_script}\n   (Launch wrapper for Wine games)\n\n"
+        msg += f"3. {steam_file}\n   (Ready-to-paste Steam launch options)\n\n"
+        msg += "Settings will apply to new terminal sessions."
+        dialog.format_secondary_text(msg)
+        dialog.run(); dialog.destroy()
+    
+    def _run_winetricks(self, btn):
+        if not self.selected_prefix:
+            return
+        
+        prefix_path = str(self.selected_prefix.path)
+        success, message = run_winetricks(prefix_path)
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Winetricks Launched")
+            dialog.format_secondary_text(message)
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Failed to Launch Winetricks")
+            dialog.format_secondary_text(message)
+        
+        dialog.run()
+        dialog.destroy()
+    
+    def _create_launch_script(self, btn):
+        if not self.selected_prefix:
+            return
+        
+        prefix_path = str(self.selected_prefix.path)
+        
+        enable_esync = self.tweak_switches.get("Enable Esync", Gtk.Switch()).get_active()
+        enable_fsync = self.tweak_switches.get("Enable Fsync", Gtk.Switch()).get_active()
+        enable_dxvk_async = self.tweak_switches.get("Enable DXVK Async", Gtk.Switch()).get_active()
+        disable_nvapi = self.tweak_switches.get("Disable NVAPI", Gtk.Switch()).get_active()
+        
+        success, result = create_launch_script(
+            prefix_path=prefix_path,
+            script_name=self.selected_prefix.name,
+            enable_esync=enable_esync,
+            enable_fsync=enable_fsync,
+            enable_dxvk_async=enable_dxvk_async,
+            disable_nvapi=disable_nvapi
+        )
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Launch Script Created")
+            msg = f"Created launch script at:\n\n{result}\n\n"
+            msg += "You can run this script to launch Wine games with optimized settings.\n"
+            msg += "A .desktop file was also created for easy access from your application menu."
+            dialog.format_secondary_text(msg)
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Failed to Create Launch Script")
+            dialog.format_secondary_text(f"Error: {result}")
+        
+        dialog.run()
+        dialog.destroy()
+    
+    def _rescan(self, btn):
+        self.prefixes = []
+        self._scan_prefixes()
+        for child in self.prefix_list.get_children():
+            self.prefix_list.remove(child)
+        for prefix in self.prefixes:
+            row = self._create_prefix_row(prefix)
+            self.prefix_list.add(row)
+        self.prefix_list.show_all()
+
+def main():
+    win = AegisWineOptimizer()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

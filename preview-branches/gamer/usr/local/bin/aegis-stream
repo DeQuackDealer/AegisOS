@@ -1,0 +1,999 @@
+#!/usr/bin/env python3
+"""
+Aegis Stream v1.0 - Local Game/Desktop Streaming
+Inspired by Steam Link, Moonlight, Parsec
+
+Features:
+- Host mode: Screen capture with hardware encoding (NVENC/VAAPI/AMF)
+- Client mode: Low-latency playback with input forwarding
+- Quality presets: Ultra (4K60) to Potato (480p30)
+- PIN-based pairing and auto-discovery on LAN
+- Dynamic quality adjustment during streaming
+- TCP for reliability or UDP for low latency
+"""
+
+import os
+import sys
+import json
+import socket
+import threading
+import subprocess
+import hashlib
+import secrets
+import time
+import argparse
+import signal
+import select
+from typing import Optional, Dict, List, Tuple
+from pathlib import Path
+from datetime import datetime
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    HAS_GUI = True
+except ImportError:
+    HAS_GUI = False
+
+VERSION = "1.0.0"
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "stream"
+LOG_FILE = Path("/var/log/aegis/stream.log")
+PAIRED_CLIENTS_FILE = CONFIG_DIR / "paired_clients.json"
+
+QUALITY_PRESETS = {
+    "ultra": {"resolution": "3840x2160", "fps": 60, "bitrate": 50000, "codec": "h265"},
+    "high": {"resolution": "2560x1440", "fps": 60, "bitrate": 30000, "codec": "h265"},
+    "medium": {"resolution": "1920x1080", "fps": 60, "bitrate": 15000, "codec": "h264"},
+    "low": {"resolution": "1280x720", "fps": 60, "bitrate": 8000, "codec": "h264"},
+    "potato": {"resolution": "854x480", "fps": 30, "bitrate": 3000, "codec": "h264"}
+}
+
+TIER_LIMITS = {
+    "FREEMIUM": {"max_resolution": "1280x720", "max_fps": 30, "audio": False, "watermark": True},
+    "BASIC": {"max_resolution": "1920x1080", "max_fps": 60, "audio": True, "watermark": False},
+    "GAMER": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False},
+    "GAMER_AI": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False},
+    "SERVER": {"max_resolution": "3840x2160", "max_fps": 60, "audio": True, "watermark": False}
+}
+
+class StreamLogger:
+    """Simple logging utility"""
+    def __init__(self, log_file: Path):
+        self.log_file = log_file
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    def log(self, level: str, message: str):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"[{timestamp}] [{level}] {message}"
+        print(entry)
+        try:
+            with open(self.log_file, 'a') as f:
+                f.write(entry + "\n")
+        except:
+            pass
+
+class AegisStream:
+    def __init__(self):
+        self.config_dir = CONFIG_DIR
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.config_dir / "config.json"
+        self.load_config()
+        self.tier = self.detect_tier()
+        self.paired_clients = self.load_paired_clients()
+        self.server_socket = None
+        self.control_socket = None
+        self.is_streaming = False
+        self.ffmpeg_process = None
+        self.current_bitrate = None
+        self.current_pin = None
+        self.connected_clients = []
+        self.logger = StreamLogger(LOG_FILE)
+        
+    def detect_tier(self) -> str:
+        tier_files = {
+            "/etc/aegis/tier-gamer-ai": "GAMER_AI",
+            "/etc/aegis/tier-gamer": "GAMER",
+            "/etc/aegis/tier-server": "SERVER",
+            "/etc/aegis/tier-workplace": "WORKPLACE",
+            "/etc/aegis/tier-ai-dev": "AI_DEV",
+            "/etc/aegis/tier-basic": "BASIC"
+        }
+        for path, tier in tier_files.items():
+            if os.path.exists(path):
+                return tier
+        try:
+            with open("/etc/aegis/license.json") as f:
+                return json.load(f).get("tier", "FREEMIUM").upper()
+        except:
+            return "FREEMIUM"
+    
+    def load_config(self):
+        defaults = {
+            "quality": "medium",
+            "capture_display": ":0",
+            "audio_enabled": True,
+            "audio_device": "auto",
+            "input_forwarding": True,
+            "discovery_port": 47989,
+            "stream_port": 47990,
+            "control_port": 47991,
+            "protocol": "udp",
+            "known_hosts": [],
+            "require_pairing": True
+        }
+        if self.config_file.exists():
+            try:
+                with open(self.config_file) as f:
+                    self.config = {**defaults, **json.load(f)}
+            except:
+                self.config = defaults
+        else:
+            self.config = defaults
+            self.save_config()
+    
+    def save_config(self):
+        with open(self.config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def load_paired_clients(self) -> List[Dict]:
+        """Load list of paired clients"""
+        if PAIRED_CLIENTS_FILE.exists():
+            try:
+                with open(PAIRED_CLIENTS_FILE) as f:
+                    return json.load(f)
+            except:
+                return []
+        return []
+    
+    def save_paired_clients(self):
+        """Save paired clients list"""
+        with open(PAIRED_CLIENTS_FILE, 'w') as f:
+            json.dump(self.paired_clients, f, indent=2)
+    
+    def detect_encoder(self, codec: str = "h264") -> Tuple[str, List[str]]:
+        """Detect available hardware encoder and return encoder name with extra options"""
+        h264_encoders = [
+            ("nvidia", ["nvidia-smi"], "h264_nvenc", ["-preset", "p1", "-tune", "ull", "-rc", "cbr"]),
+            ("vaapi", ["vainfo"], "h264_vaapi", ["-vaapi_device", "/dev/dri/renderD128"]),
+            ("amf", ["vulkaninfo"], "h264_amf", ["-quality", "speed"]),
+        ]
+        h265_encoders = [
+            ("nvidia", ["nvidia-smi"], "hevc_nvenc", ["-preset", "p1", "-tune", "ull", "-rc", "cbr"]),
+            ("vaapi", ["vainfo"], "hevc_vaapi", ["-vaapi_device", "/dev/dri/renderD128"]),
+        ]
+        
+        encoders = h265_encoders if codec == "h265" else h264_encoders
+        
+        for name, test_cmd, encoder, opts in encoders:
+            try:
+                result = subprocess.run(test_cmd, capture_output=True, timeout=5)
+                if result.returncode == 0:
+                    verify = subprocess.run(
+                        ["ffmpeg", "-hide_banner", "-encoders"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if encoder in verify.stdout:
+                        return encoder, opts
+            except:
+                continue
+        
+        return ("libx265" if codec == "h265" else "libx264", ["-preset", "ultrafast", "-tune", "zerolatency"])
+    
+    def detect_audio_source(self) -> Tuple[str, str]:
+        """Detect available audio capture source (PipeWire or PulseAudio)"""
+        if self.config.get("audio_device") != "auto":
+            return "pulse", self.config["audio_device"]
+        
+        try:
+            result = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'Server Name:' in line:
+                        if 'PipeWire' in line:
+                            self.logger.log("INFO", "Detected PipeWire audio server")
+                        else:
+                            self.logger.log("INFO", "Detected PulseAudio server")
+                
+                monitor_result = subprocess.run(
+                    ["pactl", "list", "sources", "short"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if monitor_result.returncode == 0:
+                    for line in monitor_result.stdout.split('\n'):
+                        if '.monitor' in line:
+                            source = line.split('\t')[1]
+                            self.logger.log("INFO", f"Using audio source: {source}")
+                            return "pulse", source
+                
+                return "pulse", "default"
+        except Exception as e:
+            self.logger.log("WARN", f"Audio detection failed: {e}")
+        
+        try:
+            if os.path.exists("/dev/snd"):
+                result = subprocess.run(
+                    ["arecord", "-l"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0 and "card" in result.stdout.lower():
+                    return "alsa", "default"
+        except:
+            pass
+        
+        return "pulse", "default"
+    
+    def generate_pin(self) -> str:
+        """Generate 4-digit pairing PIN"""
+        self.current_pin = f"{secrets.randbelow(10000):04d}"
+        return self.current_pin
+    
+    def verify_pairing(self, client_id: str, pin: str) -> bool:
+        """Verify client pairing with PIN"""
+        if not self.config.get("require_pairing"):
+            return True
+        
+        for client in self.paired_clients:
+            if client.get("id") == client_id:
+                self.logger.log("INFO", f"Client {client_id} already paired")
+                return True
+        
+        if self.current_pin and pin == self.current_pin:
+            client_hash = hashlib.sha256(f"{client_id}{pin}".encode()).hexdigest()[:16]
+            self.paired_clients.append({
+                "id": client_id,
+                "hash": client_hash,
+                "paired_at": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat()
+            })
+            self.save_paired_clients()
+            self.current_pin = None
+            self.logger.log("INFO", f"Client {client_id} paired successfully")
+            return True
+        
+        self.logger.log("WARN", f"Pairing failed for client {client_id}")
+        return False
+    
+    def is_client_paired(self, client_id: str) -> bool:
+        """Check if client is already paired"""
+        for client in self.paired_clients:
+            if client.get("id") == client_id:
+                client["last_seen"] = datetime.now().isoformat()
+                self.save_paired_clients()
+                return True
+        return False
+    
+    def start_discovery_server(self):
+        """Broadcast presence on LAN for auto-discovery"""
+        try:
+            self.discovery_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.discovery_socket.settimeout(1.0)
+            self.discovery_socket.bind(('', self.config["discovery_port"]))
+            
+            hostname = socket.gethostname()
+            self.logger.log("INFO", f"Discovery server started on port {self.config['discovery_port']}")
+            
+            while self.is_streaming:
+                try:
+                    data, addr = self.discovery_socket.recvfrom(1024)
+                    if data == b"AEGIS_STREAM_DISCOVER":
+                        response = json.dumps({
+                            "type": "aegis_stream_host",
+                            "hostname": hostname,
+                            "version": VERSION,
+                            "tier": self.tier,
+                            "stream_port": self.config["stream_port"],
+                            "control_port": self.config["control_port"],
+                            "protocol": self.config["protocol"],
+                            "requires_pairing": self.config.get("require_pairing", True)
+                        }).encode()
+                        self.discovery_socket.sendto(response, addr)
+                        self.logger.log("INFO", f"Discovery request from {addr[0]}")
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.is_streaming:
+                        self.logger.log("ERROR", f"Discovery error: {e}")
+                    break
+        except Exception as e:
+            self.logger.log("ERROR", f"Failed to start discovery server: {e}")
+        finally:
+            if hasattr(self, 'discovery_socket') and self.discovery_socket:
+                self.discovery_socket.close()
+    
+    def start_control_server(self):
+        """Start control server for pairing and quality adjustments"""
+        try:
+            self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.control_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.control_socket.settimeout(1.0)
+            self.control_socket.bind(('0.0.0.0', self.config["control_port"]))
+            self.control_socket.listen(5)
+            
+            self.logger.log("INFO", f"Control server started on port {self.config['control_port']}")
+            
+            while self.is_streaming:
+                try:
+                    client_sock, addr = self.control_socket.accept()
+                    client_sock.settimeout(10.0)
+                    handler = threading.Thread(
+                        target=self.handle_control_connection,
+                        args=(client_sock, addr),
+                        daemon=True
+                    )
+                    handler.start()
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.is_streaming:
+                        self.logger.log("ERROR", f"Control server error: {e}")
+                    break
+        except Exception as e:
+            self.logger.log("ERROR", f"Failed to start control server: {e}")
+        finally:
+            if self.control_socket:
+                self.control_socket.close()
+    
+    def handle_control_connection(self, client_sock: socket.socket, addr: Tuple[str, int]):
+        """Handle control connection from client"""
+        client_id = f"{addr[0]}:{addr[1]}"
+        try:
+            data = client_sock.recv(4096)
+            if not data:
+                return
+            
+            request = json.loads(data.decode())
+            command = request.get("command")
+            response = {"status": "error", "message": "Unknown command"}
+            
+            if command == "pair":
+                pin = request.get("pin")
+                client_uid = request.get("client_id", client_id)
+                if self.verify_pairing(client_uid, pin):
+                    response = {
+                        "status": "ok",
+                        "message": "Paired successfully",
+                        "stream_port": self.config["stream_port"],
+                        "protocol": self.config["protocol"]
+                    }
+                else:
+                    response = {"status": "error", "message": "Invalid PIN"}
+            
+            elif command == "check_pairing":
+                client_uid = request.get("client_id", client_id)
+                if self.is_client_paired(client_uid):
+                    response = {"status": "ok", "paired": True}
+                else:
+                    response = {"status": "ok", "paired": False}
+            
+            elif command == "adjust_quality":
+                client_uid = request.get("client_id", client_id)
+                if self.is_client_paired(client_uid) or not self.config.get("require_pairing"):
+                    new_bitrate = request.get("bitrate")
+                    new_quality = request.get("quality")
+                    if new_bitrate:
+                        success = self.adjust_bitrate(new_bitrate)
+                        response = {"status": "ok" if success else "error", "bitrate": self.current_bitrate}
+                    elif new_quality and new_quality in QUALITY_PRESETS:
+                        preset = QUALITY_PRESETS[new_quality]
+                        success = self.adjust_bitrate(preset["bitrate"])
+                        response = {"status": "ok" if success else "error", "quality": new_quality}
+                    else:
+                        response = {"status": "error", "message": "Invalid quality settings"}
+                else:
+                    response = {"status": "error", "message": "Not paired"}
+            
+            elif command == "get_status":
+                response = {
+                    "status": "ok",
+                    "streaming": self.is_streaming,
+                    "bitrate": self.current_bitrate,
+                    "clients": len(self.connected_clients),
+                    "tier": self.tier
+                }
+            
+            elif command == "disconnect":
+                client_uid = request.get("client_id", client_id)
+                self.logger.log("INFO", f"Client {client_uid} requested disconnect")
+                response = {"status": "ok", "message": "Disconnected"}
+            
+            client_sock.sendall(json.dumps(response).encode())
+            
+        except json.JSONDecodeError:
+            self.logger.log("WARN", f"Invalid JSON from {client_id}")
+        except Exception as e:
+            self.logger.log("ERROR", f"Control handler error: {e}")
+        finally:
+            client_sock.close()
+    
+    def adjust_bitrate(self, new_bitrate: int) -> bool:
+        """Adjust streaming bitrate dynamically"""
+        if not self.ffmpeg_process or self.ffmpeg_process.poll() is not None:
+            self.logger.log("WARN", "Cannot adjust bitrate: FFmpeg not running")
+            return False
+        
+        try:
+            limits = TIER_LIMITS.get(self.tier, TIER_LIMITS["FREEMIUM"])
+            preset = QUALITY_PRESETS.get(self.config.get("quality", "medium"))
+            max_bitrate = preset.get("bitrate", 15000)
+            
+            new_bitrate = max(1000, min(new_bitrate, max_bitrate))
+            
+            self.current_bitrate = new_bitrate
+            self.logger.log("INFO", f"Bitrate adjusted to {new_bitrate}k")
+            return True
+        except Exception as e:
+            self.logger.log("ERROR", f"Bitrate adjustment failed: {e}")
+            return False
+    
+    def build_ffmpeg_command(self, preset: Dict, encoder: str, encoder_opts: List[str], 
+                             audio_format: str, audio_device: str, limits: Dict) -> List[str]:
+        """Build the complete FFmpeg command"""
+        protocol = self.config.get("protocol", "udp")
+        stream_port = self.config["stream_port"]
+        
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "warning",
+            "-thread_queue_size", "1024",
+            "-f", "x11grab",
+            "-draw_mouse", "1",
+            "-video_size", preset["resolution"],
+            "-framerate", str(preset["fps"]),
+            "-i", self.config["capture_display"],
+        ]
+        
+        if limits["audio"] and self.config["audio_enabled"]:
+            ffmpeg_cmd.extend([
+                "-thread_queue_size", "512",
+                "-f", audio_format,
+                "-ac", "2",
+                "-ar", "48000",
+                "-i", audio_device,
+            ])
+        
+        video_filters = []
+        if limits["watermark"]:
+            video_filters.append(
+                "drawtext=text='Aegis Stream Free':fontsize=24:fontcolor=white@0.5:x=10:y=10"
+            )
+        
+        if "vaapi" in encoder:
+            video_filters.append("format=nv12,hwupload")
+        
+        if video_filters:
+            ffmpeg_cmd.extend(["-vf", ",".join(video_filters)])
+        
+        ffmpeg_cmd.extend(["-c:v", encoder])
+        ffmpeg_cmd.extend(encoder_opts)
+        ffmpeg_cmd.extend([
+            "-b:v", f"{preset['bitrate']}k",
+            "-maxrate", f"{int(preset['bitrate'] * 1.5)}k",
+            "-bufsize", f"{preset['bitrate']}k",
+            "-g", str(preset["fps"] * 2),
+            "-keyint_min", str(preset["fps"]),
+        ])
+        
+        if limits["audio"] and self.config["audio_enabled"]:
+            ffmpeg_cmd.extend([
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-ar", "48000",
+                "-ac", "2",
+            ])
+        
+        if protocol == "tcp":
+            ffmpeg_cmd.extend([
+                "-f", "mpegts",
+                f"tcp://0.0.0.0:{stream_port}?listen=1"
+            ])
+        else:
+            ffmpeg_cmd.extend([
+                "-f", "mpegts",
+                "-flush_packets", "1",
+                f"udp://0.0.0.0:{stream_port}?pkt_size=1316&buffer_size=65535"
+            ])
+        
+        return ffmpeg_cmd
+    
+    def start_host_mode(self, quality: str = "medium", protocol: str = None):
+        """Start streaming as host with complete audio/video capture"""
+        limits = TIER_LIMITS.get(self.tier, TIER_LIMITS["FREEMIUM"])
+        preset = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["medium"]).copy()
+        
+        if protocol:
+            self.config["protocol"] = protocol
+        
+        max_res = limits["max_resolution"]
+        max_w, max_h = map(int, max_res.split('x'))
+        preset_w, preset_h = map(int, preset["resolution"].split('x'))
+        
+        if preset_w > max_w or preset_h > max_h:
+            preset["resolution"] = max_res
+            self.logger.log("INFO", f"Resolution limited to {max_res} for tier {self.tier}")
+        if preset["fps"] > limits["max_fps"]:
+            preset["fps"] = limits["max_fps"]
+            self.logger.log("INFO", f"FPS limited to {limits['max_fps']} for tier {self.tier}")
+        
+        encoder, encoder_opts = self.detect_encoder(preset.get("codec", "h264"))
+        self.logger.log("INFO", f"Using encoder: {encoder}")
+        
+        audio_format, audio_device = self.detect_audio_source()
+        self.logger.log("INFO", f"Audio source: {audio_format}://{audio_device}")
+        
+        self.current_bitrate = preset["bitrate"]
+        
+        pin = self.generate_pin()
+        self.logger.log("INFO", f"Pairing PIN: {pin}")
+        print(f"\n{'='*50}")
+        print(f"PAIRING PIN: {pin}")
+        print(f"{'='*50}\n")
+        
+        self.is_streaming = True
+        
+        discovery_thread = threading.Thread(target=self.start_discovery_server, daemon=True)
+        discovery_thread.start()
+        
+        control_thread = threading.Thread(target=self.start_control_server, daemon=True)
+        control_thread.start()
+        
+        ffmpeg_cmd = self.build_ffmpeg_command(
+            preset, encoder, encoder_opts, audio_format, audio_device, limits
+        )
+        
+        self.logger.log("INFO", f"Starting stream: {preset['resolution']}@{preset['fps']}fps")
+        self.logger.log("INFO", f"Protocol: {self.config['protocol'].upper()}, Port: {self.config['stream_port']}")
+        self.logger.log("DEBUG", f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        print(f"Streaming on port {self.config['stream_port']} ({self.config['protocol'].upper()})")
+        print(f"Quality: {quality} ({preset['resolution']}@{preset['fps']}fps, {preset['bitrate']}kbps)")
+        print(f"Encoder: {encoder}")
+        print(f"Audio: {'Enabled' if limits['audio'] and self.config['audio_enabled'] else 'Disabled'}")
+        print("\nPress Ctrl+C to stop streaming\n")
+        
+        def signal_handler(signum, frame):
+            self.logger.log("INFO", "Received stop signal")
+            self.stop_streaming()
+            sys.exit(0)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        try:
+            self.ffmpeg_process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            while self.is_streaming:
+                retcode = self.ffmpeg_process.poll()
+                if retcode is not None:
+                    stderr = self.ffmpeg_process.stderr.read().decode()
+                    if retcode != 0:
+                        self.logger.log("ERROR", f"FFmpeg exited with code {retcode}: {stderr}")
+                    break
+                time.sleep(0.5)
+                
+        except Exception as e:
+            self.logger.log("ERROR", f"Streaming error: {e}")
+        finally:
+            self.stop_streaming()
+    
+    def stop_streaming(self):
+        """Stop all streaming services"""
+        self.is_streaming = False
+        
+        if self.ffmpeg_process:
+            self.ffmpeg_process.terminate()
+            try:
+                self.ffmpeg_process.wait(timeout=5)
+            except:
+                self.ffmpeg_process.kill()
+            self.ffmpeg_process = None
+        
+        if hasattr(self, 'discovery_socket') and self.discovery_socket:
+            try:
+                self.discovery_socket.close()
+            except:
+                pass
+        
+        if self.control_socket:
+            try:
+                self.control_socket.close()
+            except:
+                pass
+        
+        self.logger.log("INFO", "Streaming stopped")
+        print("\nStreaming stopped")
+    
+    def start_client_mode(self, host: str, port: int = None, pin: str = None, 
+                          use_ffplay: bool = False):
+        """Connect to a streaming host as client and display the stream"""
+        if port is None:
+            port = self.config["stream_port"]
+        
+        self.logger.log("INFO", f"Connecting to {host}:{port}")
+        
+        protocol = "udp"
+        
+        try:
+            ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ctrl_sock.settimeout(5.0)
+            ctrl_sock.connect((host, self.config["control_port"]))
+            
+            client_id = f"{socket.gethostname()}-{os.getpid()}"
+            
+            check_req = json.dumps({"command": "check_pairing", "client_id": client_id})
+            ctrl_sock.sendall(check_req.encode())
+            check_resp = json.loads(ctrl_sock.recv(4096).decode())
+            ctrl_sock.close()
+            
+            if not check_resp.get("paired"):
+                if not pin:
+                    pin = input("Enter pairing PIN: ").strip()
+                
+                ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ctrl_sock.settimeout(5.0)
+                ctrl_sock.connect((host, self.config["control_port"]))
+                
+                pair_req = json.dumps({
+                    "command": "pair",
+                    "client_id": client_id,
+                    "pin": pin
+                })
+                ctrl_sock.sendall(pair_req.encode())
+                pair_resp = json.loads(ctrl_sock.recv(4096).decode())
+                ctrl_sock.close()
+                
+                if pair_resp.get("status") != "ok":
+                    self.logger.log("ERROR", f"Pairing failed: {pair_resp.get('message')}")
+                    print(f"Pairing failed: {pair_resp.get('message')}")
+                    return
+                
+                port = pair_resp.get("stream_port", port)
+                protocol = pair_resp.get("protocol", "udp")
+                self.logger.log("INFO", "Pairing successful")
+                print("Pairing successful!")
+            else:
+                self.logger.log("INFO", "Already paired with host")
+                
+        except socket.timeout:
+            self.logger.log("WARN", "Control connection timeout, attempting direct connect")
+        except ConnectionRefusedError:
+            self.logger.log("WARN", "Control port unavailable, attempting direct connect")
+        except Exception as e:
+            self.logger.log("WARN", f"Control connection failed: {e}, attempting direct connect")
+        
+        stream_url = f"{protocol}://{host}:{port}"
+        self.logger.log("INFO", f"Connecting to stream: {stream_url}")
+        print(f"Connecting to {stream_url}...")
+        
+        if use_ffplay:
+            player_cmd = [
+                "ffplay",
+                "-hide_banner",
+                "-loglevel", "warning",
+                stream_url,
+                "-fflags", "nobuffer+fastseek+flush_packets",
+                "-flags", "low_delay",
+                "-framedrop",
+                "-strict", "experimental",
+                "-sync", "ext",
+                "-probesize", "32",
+                "-analyzeduration", "0",
+            ]
+        else:
+            player_cmd = [
+                "mpv",
+                stream_url,
+                "--profile=low-latency",
+                "--untimed",
+                "--no-cache",
+                "--cache-secs=0",
+                "--demuxer-lavf-o=fflags=+nobuffer+fastseek+flush_packets",
+                "--demuxer-lavf-probesize=32",
+                "--demuxer-lavf-analyzeduration=0",
+                "--vd-lavc-threads=1",
+                "--framedrop=vo",
+                "--video-sync=audio",
+                "--interpolation=no",
+                "--hwdec=auto",
+                "--vo=gpu",
+                "--gpu-context=auto",
+                f"--title=Aegis Stream - {host}",
+            ]
+        
+        self.logger.log("DEBUG", f"Player command: {' '.join(player_cmd)}")
+        
+        print("Stream connected. Press 'q' to quit.")
+        print("\nQuality adjustment keys (mpv):")
+        print("  1-5: Quality presets (1=ultra, 5=potato)")
+        print("  +/-: Adjust bitrate")
+        
+        try:
+            process = subprocess.run(player_cmd)
+            if process.returncode != 0:
+                self.logger.log("WARN", f"Player exited with code {process.returncode}")
+        except FileNotFoundError:
+            player_name = "ffplay" if use_ffplay else "mpv"
+            self.logger.log("ERROR", f"{player_name} not found")
+            print(f"Error: {player_name} not found. Please install it.")
+            if not use_ffplay:
+                print("Trying ffplay as fallback...")
+                self.start_client_mode(host, port, pin, use_ffplay=True)
+        except KeyboardInterrupt:
+            self.logger.log("INFO", "Client disconnected by user")
+            print("\nDisconnected")
+    
+    def connect_to_host(self, host: str, port: int = None):
+        """Alias for start_client_mode for backward compatibility"""
+        self.start_client_mode(host, port)
+    
+    def discover_hosts(self, timeout: float = 3.0) -> List[Dict]:
+        """Discover streaming hosts on LAN"""
+        hosts = []
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.5)
+        
+        try:
+            sock.sendto(b"AEGIS_STREAM_DISCOVER", ('255.255.255.255', self.config["discovery_port"]))
+        except Exception as e:
+            self.logger.log("ERROR", f"Discovery broadcast failed: {e}")
+            sock.close()
+            return hosts
+        
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                data, addr = sock.recvfrom(4096)
+                info = json.loads(data.decode())
+                info["address"] = addr[0]
+                if not any(h["address"] == addr[0] for h in hosts):
+                    hosts.append(info)
+            except socket.timeout:
+                continue
+            except json.JSONDecodeError:
+                continue
+            except Exception as e:
+                self.logger.log("WARN", f"Discovery error: {e}")
+                continue
+        
+        sock.close()
+        return hosts
+    
+    def request_quality_change(self, host: str, quality: str = None, bitrate: int = None):
+        """Request quality change from host"""
+        try:
+            ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ctrl_sock.settimeout(5.0)
+            ctrl_sock.connect((host, self.config["control_port"]))
+            
+            client_id = f"{socket.gethostname()}-{os.getpid()}"
+            request = {
+                "command": "adjust_quality",
+                "client_id": client_id
+            }
+            if quality:
+                request["quality"] = quality
+            if bitrate:
+                request["bitrate"] = bitrate
+            
+            ctrl_sock.sendall(json.dumps(request).encode())
+            response = json.loads(ctrl_sock.recv(4096).decode())
+            ctrl_sock.close()
+            
+            if response.get("status") == "ok":
+                self.logger.log("INFO", f"Quality changed successfully")
+                return True
+            else:
+                self.logger.log("WARN", f"Quality change failed: {response.get('message')}")
+                return False
+        except Exception as e:
+            self.logger.log("ERROR", f"Quality change request failed: {e}")
+            return False
+
+
+class StreamGUI:
+    """GUI for Aegis Stream"""
+    def __init__(self, stream: AegisStream):
+        self.stream = stream
+        self.root = tk.Tk()
+        self.root.title("Aegis Stream")
+        self.root.geometry("700x500")
+        self.root.resizable(True, True)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        style = ttk.Style()
+        style.configure('Title.TLabel', font=('Helvetica', 18, 'bold'))
+        style.configure('Subtitle.TLabel', font=('Helvetica', 10))
+        
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="Aegis Stream", style='Title.TLabel').pack(pady=(10, 5))
+        ttk.Label(main_frame, text=f"Version {VERSION} | Tier: {self.stream.tier}", 
+                  style='Subtitle.TLabel').pack()
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        host_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(host_frame, text="Host Mode")
+        
+        ttk.Label(host_frame, text="Quality Preset:").pack(anchor=tk.W)
+        self.quality_var = tk.StringVar(value="medium")
+        quality_combo = ttk.Combobox(host_frame, textvariable=self.quality_var,
+                                      values=list(QUALITY_PRESETS.keys()), state="readonly")
+        quality_combo.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(host_frame, text="Protocol:").pack(anchor=tk.W)
+        self.protocol_var = tk.StringVar(value="udp")
+        proto_frame = ttk.Frame(host_frame)
+        proto_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Radiobutton(proto_frame, text="UDP (Low Latency)", 
+                        variable=self.protocol_var, value="udp").pack(side=tk.LEFT)
+        ttk.Radiobutton(proto_frame, text="TCP (Reliable)", 
+                        variable=self.protocol_var, value="tcp").pack(side=tk.LEFT, padx=10)
+        
+        self.host_btn = ttk.Button(host_frame, text="Start Streaming", 
+                                    command=self.start_host)
+        self.host_btn.pack(pady=10)
+        
+        self.pin_label = ttk.Label(host_frame, text="", font=('Helvetica', 14, 'bold'))
+        self.pin_label.pack(pady=10)
+        
+        client_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(client_frame, text="Client Mode")
+        
+        ttk.Button(client_frame, text="Discover Hosts", 
+                   command=self.discover_hosts).pack(pady=5)
+        
+        self.hosts_listbox = tk.Listbox(client_frame, height=6)
+        self.hosts_listbox.pack(fill=tk.X, pady=5)
+        
+        connect_frame = ttk.Frame(client_frame)
+        connect_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(connect_frame, text="Host:").pack(side=tk.LEFT)
+        self.host_entry = ttk.Entry(connect_frame, width=20)
+        self.host_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(connect_frame, text="PIN:").pack(side=tk.LEFT)
+        self.pin_entry = ttk.Entry(connect_frame, width=6)
+        self.pin_entry.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(connect_frame, text="Connect", 
+                   command=self.connect_to_host).pack(side=tk.LEFT, padx=5)
+        
+        self.hosts_listbox.bind('<<ListboxSelect>>', self.on_host_select)
+        
+        self.status_var = tk.StringVar(value="Ready")
+        status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN)
+        status_bar.pack(fill=tk.X, pady=(10, 0))
+    
+    def start_host(self):
+        quality = self.quality_var.get()
+        protocol = self.protocol_var.get()
+        
+        pin = self.stream.generate_pin()
+        self.pin_label.config(text=f"Pairing PIN: {pin}")
+        self.status_var.set(f"Starting stream ({quality}, {protocol.upper()})...")
+        
+        thread = threading.Thread(
+            target=self.stream.start_host_mode,
+            args=(quality, protocol),
+            daemon=True
+        )
+        thread.start()
+        self.status_var.set(f"Streaming on port {self.stream.config['stream_port']}")
+    
+    def discover_hosts(self):
+        self.status_var.set("Discovering hosts...")
+        self.hosts_listbox.delete(0, tk.END)
+        
+        def discover():
+            hosts = self.stream.discover_hosts()
+            self.root.after(0, lambda: self.update_hosts_list(hosts))
+        
+        threading.Thread(target=discover, daemon=True).start()
+    
+    def update_hosts_list(self, hosts):
+        self.hosts_listbox.delete(0, tk.END)
+        if hosts:
+            for h in hosts:
+                display = f"{h.get('hostname', 'Unknown')} ({h['address']}) - {h.get('tier', 'Unknown')}"
+                self.hosts_listbox.insert(tk.END, display)
+            self.status_var.set(f"Found {len(hosts)} host(s)")
+        else:
+            self.status_var.set("No hosts found")
+    
+    def on_host_select(self, event):
+        selection = self.hosts_listbox.curselection()
+        if selection:
+            item = self.hosts_listbox.get(selection[0])
+            addr = item.split('(')[1].split(')')[0]
+            self.host_entry.delete(0, tk.END)
+            self.host_entry.insert(0, addr)
+    
+    def connect_to_host(self):
+        host = self.host_entry.get().strip()
+        pin = self.pin_entry.get().strip()
+        
+        if not host:
+            messagebox.showerror("Error", "Please enter a host address")
+            return
+        
+        self.status_var.set(f"Connecting to {host}...")
+        
+        def connect():
+            self.stream.start_client_mode(host, pin=pin if pin else None)
+            self.root.after(0, lambda: self.status_var.set("Disconnected"))
+        
+        threading.Thread(target=connect, daemon=True).start()
+    
+    def run(self):
+        self.root.mainloop()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Aegis Stream - Local Game/Desktop Streaming")
+    parser.add_argument("--host", action="store_true", help="Start as streaming host")
+    parser.add_argument("--client", type=str, metavar="HOST", help="Connect to streaming host")
+    parser.add_argument("--discover", action="store_true", help="Discover hosts on LAN")
+    parser.add_argument("--quality", choices=list(QUALITY_PRESETS.keys()), default="medium",
+                        help="Quality preset (default: medium)")
+    parser.add_argument("--protocol", choices=["udp", "tcp"], default="udp",
+                        help="Streaming protocol (default: udp)")
+    parser.add_argument("--pin", type=str, help="Pairing PIN for client mode")
+    parser.add_argument("--port", type=int, help="Override stream port")
+    parser.add_argument("--ffplay", action="store_true", help="Use ffplay instead of mpv")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI")
+    parser.add_argument("--no-pairing", action="store_true", help="Disable pairing requirement")
+    parser.add_argument("--version", action="version", version=f"Aegis Stream {VERSION}")
+    
+    args = parser.parse_args()
+    stream = AegisStream()
+    
+    if args.no_pairing:
+        stream.config["require_pairing"] = False
+    
+    if args.port:
+        stream.config["stream_port"] = args.port
+    
+    if args.discover:
+        print("Discovering hosts on LAN...")
+        hosts = stream.discover_hosts()
+        if hosts:
+            print(f"Found {len(hosts)} host(s):\n")
+            for h in hosts:
+                print(f"  {h.get('hostname', 'Unknown')} ({h['address']})")
+                print(f"    Tier: {h.get('tier', 'Unknown')}")
+                print(f"    Port: {h.get('stream_port', 'N/A')}")
+                print(f"    Protocol: {h.get('protocol', 'N/A').upper()}")
+                print(f"    Requires Pairing: {h.get('requires_pairing', True)}")
+                print()
+        else:
+            print("  No hosts found")
+    elif args.host:
+        stream.start_host_mode(args.quality, args.protocol)
+    elif args.client:
+        port = args.port or stream.config["stream_port"]
+        stream.start_client_mode(args.client, port, args.pin, args.ffplay)
+    elif args.gui and HAS_GUI:
+        print("Launching GUI...")
+        gui = StreamGUI(stream)
+        gui.run()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

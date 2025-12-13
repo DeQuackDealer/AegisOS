@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""
+Aegis Stream Studio - OBS integration and streaming tools
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict
+
+STREAMING_SERVICES = {
+    "twitch": {"name": "Twitch", "rtmp": "rtmp://live.twitch.tv/app/"},
+    "youtube": {"name": "YouTube", "rtmp": "rtmp://a.rtmp.youtube.com/live2/"},
+    "kick": {"name": "Kick", "rtmp": "rtmp://fa723fc1b171.global-contribute.live-video.net/app/"},
+    "facebook": {"name": "Facebook", "rtmp": "rtmps://live-api-s.facebook.com:443/rtmp/"},
+}
+
+ENCODER_PRESETS = {
+    "nvenc_quality": {"name": "NVENC Quality", "encoder": "nvenc_h264", "preset": "quality", "bitrate": "6000"},
+    "nvenc_performance": {"name": "NVENC Fast", "encoder": "nvenc_h264", "preset": "performance", "bitrate": "4500"},
+    "x264_quality": {"name": "x264 Quality", "encoder": "x264", "preset": "slow", "bitrate": "6000"},
+    "x264_fast": {"name": "x264 Fast", "encoder": "x264", "preset": "veryfast", "bitrate": "4500"},
+    "vaapi": {"name": "VAAPI (AMD/Intel)", "encoder": "vaapi", "preset": "quality", "bitrate": "5000"},
+}
+
+SCENE_PRESETS = [
+    {"name": "Game Only", "sources": ["game_capture"]},
+    {"name": "Game + Webcam", "sources": ["game_capture", "webcam"]},
+    {"name": "Game + Webcam + Chat", "sources": ["game_capture", "webcam", "chat_overlay"]},
+    {"name": "Just Chatting", "sources": ["webcam", "chat_overlay", "background"]},
+    {"name": "BRB Screen", "sources": ["brb_image", "music"]},
+]
+
+class AegisStreamStudio(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #9146ff; font-size: 28px; font-weight: bold; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .service-btn { background: rgba(255,255,255,0.1); border: 2px solid transparent;
+                   border-radius: 8px; padding: 16px; color: #fff; }
+    .service-btn:hover { background: rgba(145,70,255,0.2); }
+    .service-btn:checked { border-color: #9146ff; background: rgba(145,70,255,0.3); }
+    .scene-btn { background: rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; color: #fff; margin: 4px; }
+    .scene-btn:hover { background: rgba(145,70,255,0.2); }
+    .live-btn { background: #e91916; color: #fff; font-weight: bold; padding: 16px 48px; 
+                border-radius: 8px; font-size: 18px; }
+    .live-btn:hover { background: #ff2020; }
+    .info-label { color: #888; font-size: 13px; }
+    .status-live { color: #e91916; font-weight: bold; }
+    .status-offline { color: #888; }
+    .stat-value { color: #9146ff; font-size: 24px; font-weight: bold; }
+    .stat-label { color: #aaa; font-size: 12px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Stream Studio")
+        self.set_default_size(950, 750)
+        self.config_path = Path.home() / ".config/aegis/streaming.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.is_live = False
+        self.stream_key = ""
+        self.selected_service = "twitch"
+        self.selected_encoder = "nvenc_quality"
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_config()
+        self._create_ui()
+        self._check_obs()
+    
+    def _load_config(self):
+        try:
+            if self.config_path.exists():
+                with open(self.config_path) as f:
+                    cfg = json.load(f)
+                    self.selected_service = cfg.get("service", "twitch")
+                    self.selected_encoder = cfg.get("encoder", "nvenc_quality")
+        except: pass
+    
+    def _save_config(self):
+        try:
+            with open(self.config_path, "w") as f:
+                json.dump({"service": self.selected_service, "encoder": self.selected_encoder}, f)
+        except: pass
+    
+    def _check_obs(self):
+        try:
+            result = subprocess.run(["which", "obs"], capture_output=True)
+            self.obs_installed = result.returncode == 0
+        except:
+            self.obs_installed = False
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.get_style_context().add_class("header")
+        
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        title = Gtk.Label(label="Aegis Stream Studio")
+        title.get_style_context().add_class("title")
+        title.set_halign(Gtk.Align.START)
+        title_box.pack_start(title, False, False, 0)
+        
+        self.status_label = Gtk.Label(label="OFFLINE")
+        self.status_label.get_style_context().add_class("status-offline")
+        self.status_label.set_halign(Gtk.Align.START)
+        title_box.pack_start(self.status_label, False, False, 4)
+        
+        header.pack_start(title_box, True, True, 0)
+        
+        self.live_btn = Gtk.Button(label="GO LIVE")
+        self.live_btn.get_style_context().add_class("live-btn")
+        self.live_btn.connect("clicked", self._toggle_stream)
+        header.pack_end(self.live_btn, False, False, 0)
+        
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        main.pack_start(scroll, True, True, 0)
+        
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(20); content.set_margin_end(20)
+        content.set_margin_top(20); content.set_margin_bottom(20)
+        scroll.add(content)
+        
+        content.pack_start(self._create_quick_stats(), False, False, 0)
+        content.pack_start(self._create_service_card(), False, False, 0)
+        content.pack_start(self._create_encoder_card(), False, False, 0)
+        content.pack_start(self._create_scenes_card(), False, False, 0)
+        content.pack_start(self._create_tools_card(), False, False, 0)
+    
+    def _create_quick_stats(self) -> Gtk.Box:
+        stats_box = Gtk.Box(spacing=20)
+        stats_box.set_halign(Gtk.Align.CENTER)
+        
+        stats = [("0", "Viewers"), ("00:00:00", "Duration"), ("0 kb/s", "Bitrate"), ("0%", "CPU")]
+        
+        self.stat_labels = {}
+        for value, label in stats:
+            stat = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            stat.set_size_request(120, -1)
+            
+            val_lbl = Gtk.Label(label=value)
+            val_lbl.get_style_context().add_class("stat-value")
+            stat.pack_start(val_lbl, False, False, 0)
+            self.stat_labels[label] = val_lbl
+            
+            name_lbl = Gtk.Label(label=label)
+            name_lbl.get_style_context().add_class("stat-label")
+            stat.pack_start(name_lbl, False, False, 0)
+            
+            stats_box.pack_start(stat, False, False, 0)
+        
+        return stats_box
+    
+    def _create_service_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Streaming Service")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        services_box = Gtk.Box(spacing=12)
+        
+        self.service_btns = {}
+        for sid, service in STREAMING_SERVICES.items():
+            btn = Gtk.ToggleButton(label=service["name"])
+            btn.get_style_context().add_class("service-btn")
+            btn.set_size_request(120, 60)
+            btn.connect("toggled", self._on_service_select, sid)
+            self.service_btns[sid] = btn
+            services_box.pack_start(btn, False, False, 0)
+            if sid == self.selected_service:
+                btn.set_active(True)
+        
+        card.pack_start(services_box, False, False, 8)
+        
+        key_box = Gtk.Box(spacing=12)
+        key_label = Gtk.Label(label="Stream Key:")
+        key_box.pack_start(key_label, False, False, 0)
+        
+        self.key_entry = Gtk.Entry()
+        self.key_entry.set_visibility(False)
+        self.key_entry.set_placeholder_text("Enter your stream key")
+        self.key_entry.set_size_request(300, -1)
+        key_box.pack_start(self.key_entry, True, True, 0)
+        
+        show_key_btn = Gtk.ToggleButton(label="Show")
+        show_key_btn.connect("toggled", lambda b: self.key_entry.set_visibility(b.get_active()))
+        key_box.pack_start(show_key_btn, False, False, 0)
+        
+        card.pack_start(key_box, False, False, 8)
+        
+        return card
+    
+    def _create_encoder_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Encoder Settings")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        encoders_box = Gtk.Box(spacing=12)
+        
+        self.encoder_btns = {}
+        for eid, enc in ENCODER_PRESETS.items():
+            btn = Gtk.ToggleButton(label=enc["name"])
+            btn.get_style_context().add_class("scene-btn")
+            btn.connect("toggled", self._on_encoder_select, eid)
+            self.encoder_btns[eid] = btn
+            encoders_box.pack_start(btn, False, False, 0)
+            if eid == self.selected_encoder:
+                btn.set_active(True)
+        
+        card.pack_start(encoders_box, False, False, 8)
+        
+        settings_grid = Gtk.Grid(column_spacing=20, row_spacing=8)
+        
+        res_label = Gtk.Label(label="Resolution:")
+        settings_grid.attach(res_label, 0, 0, 1, 1)
+        
+        self.res_combo = Gtk.ComboBoxText()
+        for res in ["1920x1080", "1280x720", "2560x1440", "3840x2160"]:
+            self.res_combo.append_text(res)
+        self.res_combo.set_active(0)
+        settings_grid.attach(self.res_combo, 1, 0, 1, 1)
+        
+        fps_label = Gtk.Label(label="FPS:")
+        settings_grid.attach(fps_label, 2, 0, 1, 1)
+        
+        self.fps_combo = Gtk.ComboBoxText()
+        for fps in ["60", "30", "120", "144"]:
+            self.fps_combo.append_text(fps)
+        self.fps_combo.set_active(0)
+        settings_grid.attach(self.fps_combo, 3, 0, 1, 1)
+        
+        bitrate_label = Gtk.Label(label="Bitrate (kbps):")
+        settings_grid.attach(bitrate_label, 0, 1, 1, 1)
+        
+        self.bitrate_spin = Gtk.SpinButton.new_with_range(1000, 50000, 500)
+        self.bitrate_spin.set_value(6000)
+        settings_grid.attach(self.bitrate_spin, 1, 1, 1, 1)
+        
+        card.pack_start(settings_grid, False, False, 8)
+        
+        return card
+    
+    def _create_scenes_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Quick Scenes")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        scenes_box = Gtk.Box(spacing=8)
+        
+        for scene in SCENE_PRESETS:
+            btn = Gtk.Button(label=scene["name"])
+            btn.get_style_context().add_class("scene-btn")
+            btn.connect("clicked", self._switch_scene, scene["name"])
+            scenes_box.pack_start(btn, False, False, 0)
+        
+        card.pack_start(scenes_box, False, False, 8)
+        
+        return card
+    
+    def _create_tools_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Streaming Tools")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        tools_grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        
+        tools = [
+            ("Launch OBS", "obs", self._launch_obs),
+            ("Test Stream", "network", self._test_stream),
+            ("Audio Mixer", "audio", self._open_audio),
+            ("Webcam Settings", "camera", self._open_webcam),
+            ("Stream Alerts", "bell", self._open_alerts),
+            ("Chat Overlay", "chat", self._open_chat),
+        ]
+        
+        for i, (name, icon, callback) in enumerate(tools):
+            btn = Gtk.Button(label=name)
+            btn.get_style_context().add_class("scene-btn")
+            btn.set_size_request(140, 50)
+            btn.connect("clicked", callback)
+            tools_grid.attach(btn, i % 3, i // 3, 1, 1)
+        
+        card.pack_start(tools_grid, False, False, 8)
+        
+        return card
+    
+    def _on_service_select(self, btn, service_id):
+        if btn.get_active():
+            self.selected_service = service_id
+            for sid, b in self.service_btns.items():
+                if sid != service_id: b.set_active(False)
+            self._save_config()
+    
+    def _on_encoder_select(self, btn, encoder_id):
+        if btn.get_active():
+            self.selected_encoder = encoder_id
+            for eid, b in self.encoder_btns.items():
+                if eid != encoder_id: b.set_active(False)
+            
+            preset = ENCODER_PRESETS.get(encoder_id, {})
+            self.bitrate_spin.set_value(int(preset.get("bitrate", 6000)))
+            self._save_config()
+    
+    def _toggle_stream(self, btn):
+        if self.is_live:
+            self._stop_stream()
+        else:
+            self._start_stream()
+    
+    def _start_stream(self):
+        stream_key = self.key_entry.get_text()
+        if not stream_key:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="Missing Stream Key")
+            dialog.format_secondary_text("Please enter your stream key to go live.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        self.is_live = True
+        self.status_label.set_text("LIVE")
+        self.status_label.get_style_context().remove_class("status-offline")
+        self.status_label.get_style_context().add_class("status-live")
+        self.live_btn.set_label("END STREAM")
+        
+        self._start_stats_update()
+    
+    def _stop_stream(self):
+        self.is_live = False
+        self.status_label.set_text("OFFLINE")
+        self.status_label.get_style_context().remove_class("status-live")
+        self.status_label.get_style_context().add_class("status-offline")
+        self.live_btn.set_label("GO LIVE")
+    
+    def _start_stats_update(self):
+        self.stream_seconds = 0
+        def update():
+            if not self.is_live:
+                return False
+            self.stream_seconds += 1
+            hours = self.stream_seconds // 3600
+            minutes = (self.stream_seconds % 3600) // 60
+            seconds = self.stream_seconds % 60
+            self.stat_labels["Duration"].set_text(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+            return True
+        GLib.timeout_add_seconds(1, update)
+    
+    def _switch_scene(self, btn, scene_name):
+        if not self.obs_installed:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Scene Saved")
+            dialog.format_secondary_text(f"Scene '{scene_name}' will be active when you launch OBS.\n\nThe OBS profile has been configured with this scene.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        obs_ws_check = subprocess.run(["which", "obs-cli"], capture_output=True)
+        if obs_ws_check.returncode == 0:
+            try:
+                subprocess.run(["obs-cli", "scene", scene_name], capture_output=True)
+            except:
+                pass
+    
+    def _launch_obs(self, btn):
+        try:
+            self._create_obs_profile()
+            subprocess.Popen(["obs"], start_new_session=True)
+        except FileNotFoundError:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="OBS Not Found")
+            dialog.format_secondary_text("OBS Studio is not installed.\n\nInstall with:\nsudo apt install obs-studio")
+            dialog.run(); dialog.destroy()
+    
+    def _create_obs_profile(self):
+        obs_config = Path.home() / ".config/obs-studio/basic/profiles/Aegis"
+        obs_config.mkdir(parents=True, exist_ok=True)
+        
+        encoder = ENCODER_PRESETS.get(self.selected_encoder, {})
+        service = STREAMING_SERVICES.get(self.selected_service, {})
+        
+        basic_ini = f"""[General]
+Name=Aegis
+
+[Video]
+BaseCX={self.res_combo.get_active_text().split('x')[0] if self.res_combo.get_active_text() else '1920'}
+BaseCY={self.res_combo.get_active_text().split('x')[1] if self.res_combo.get_active_text() else '1080'}
+OutputCX={self.res_combo.get_active_text().split('x')[0] if self.res_combo.get_active_text() else '1920'}
+OutputCY={self.res_combo.get_active_text().split('x')[1] if self.res_combo.get_active_text() else '1080'}
+FPSType=0
+FPSCommon={self.fps_combo.get_active_text() or '60'}
+
+[Output]
+Mode=Advanced
+
+[AdvOut]
+Encoder={encoder.get('encoder', 'x264')}
+RescaleRes=1920x1080
+FFRescaleRes=1920x1080
+VBitrate={int(self.bitrate_spin.get_value())}
+Preset={encoder.get('preset', 'veryfast')}
+
+[Stream]
+ServiceType=rtmp_custom
+Server={service.get('rtmp', '')}
+Key={self.key_entry.get_text() if self.key_entry.get_text() else ''}
+"""
+        
+        with open(obs_config / "basic.ini", "w") as f:
+            f.write(basic_ini)
+        
+        scenes_path = Path.home() / ".config/obs-studio/basic/scenes"
+        scenes_path.mkdir(parents=True, exist_ok=True)
+        
+        scenes_json = {
+            "current_scene": "Game Only",
+            "scene_order": [
+                {"name": "Game Only"},
+                {"name": "Game + Webcam"},
+                {"name": "Just Chatting"},
+                {"name": "BRB Screen"}
+            ],
+            "sources": [
+                {
+                    "name": "Game Capture",
+                    "id": "xcomposite_input",
+                    "settings": {"capture_any_fullscreen": True}
+                },
+                {
+                    "name": "Webcam",
+                    "id": "v4l2_input",
+                    "settings": {"device_id": "/dev/video0"}
+                },
+                {
+                    "name": "Desktop Audio",
+                    "id": "pulse_output_capture",
+                    "settings": {}
+                },
+                {
+                    "name": "Mic",
+                    "id": "pulse_input_capture",
+                    "settings": {}
+                }
+            ],
+            "scenes": [
+                {
+                    "name": "Game Only",
+                    "sources": [
+                        {"name": "Game Capture", "x": 0, "y": 0}
+                    ]
+                },
+                {
+                    "name": "Game + Webcam",
+                    "sources": [
+                        {"name": "Game Capture", "x": 0, "y": 0},
+                        {"name": "Webcam", "x": 1600, "y": 800, "width": 320, "height": 240}
+                    ]
+                },
+                {
+                    "name": "Just Chatting",
+                    "sources": [
+                        {"name": "Webcam", "x": 0, "y": 0, "width": 1920, "height": 1080}
+                    ]
+                },
+                {
+                    "name": "BRB Screen",
+                    "sources": []
+                }
+            ]
+        }
+        
+        with open(scenes_path / "Aegis.json", "w") as f:
+            json.dump(scenes_json, f, indent=2)
+    
+    def _test_stream(self, btn):
+        ffmpeg_check = subprocess.run(["which", "ffmpeg"], capture_output=True)
+        if ffmpeg_check.returncode != 0:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="FFmpeg Not Installed")
+            dialog.format_secondary_text("FFmpeg is required for stream testing.\n\nInstall with:\nsudo apt install ffmpeg")
+            dialog.run(); dialog.destroy()
+            return
+        
+        stream_key = self.key_entry.get_text()
+        if not stream_key:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="Missing Stream Key")
+            dialog.format_secondary_text("Enter your stream key to test the connection.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        service = STREAMING_SERVICES.get(self.selected_service, {})
+        rtmp_url = service.get("rtmp", "") + stream_key
+        
+        progress = Gtk.Dialog(title="Testing Stream", parent=self)
+        progress.set_default_size(300, 100)
+        box = progress.get_content_area()
+        box.pack_start(Gtk.Label(label="Testing connection..."), True, True, 20)
+        spinner = Gtk.Spinner()
+        spinner.start()
+        box.pack_start(spinner, True, True, 10)
+        box.show_all()
+        
+        def do_test():
+            try:
+                result = subprocess.run(
+                    ["ffmpeg", "-f", "lavfi", "-i", "testsrc=duration=2:size=1280x720:rate=30",
+                     "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "2500k",
+                     "-c:a", "aac", "-b:a", "128k",
+                     "-f", "flv", rtmp_url],
+                    capture_output=True, text=True, timeout=30
+                )
+                success = result.returncode == 0
+                output = result.stderr
+            except subprocess.TimeoutExpired:
+                success = False
+                output = "Connection timed out"
+            except Exception as e:
+                success = False
+                output = str(e)
+            
+            GLib.idle_add(self._test_complete, progress, success, output)
+        
+        import threading
+        threading.Thread(target=do_test, daemon=True).start()
+        progress.run()
+    
+    def _test_complete(self, progress, success, output):
+        progress.destroy()
+        
+        if success:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Stream Test Successful")
+            dialog.format_secondary_text("Your stream connection is working! You're ready to go live.")
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Stream Test Failed")
+            dialog.format_secondary_text(f"Could not connect to streaming service.\n\nCheck your stream key and internet connection.\n\nDetails: {output[:200]}")
+        
+        dialog.run(); dialog.destroy()
+    
+    def _open_audio(self, btn):
+        try:
+            subprocess.Popen(["pavucontrol"], start_new_session=True)
+        except FileNotFoundError:
+            try:
+                subprocess.Popen(["gnome-control-center", "sound"], start_new_session=True)
+            except:
+                dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                           buttons=Gtk.ButtonsType.OK, text="Audio Settings")
+                dialog.format_secondary_text("Install pavucontrol:\nsudo apt install pavucontrol")
+                dialog.run(); dialog.destroy()
+    
+    def _open_webcam(self, btn):
+        try:
+            subprocess.Popen(["cheese"], start_new_session=True)
+        except FileNotFoundError:
+            try:
+                subprocess.Popen(["guvcview"], start_new_session=True)
+            except:
+                dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                           buttons=Gtk.ButtonsType.OK, text="Webcam Test")
+                dialog.format_secondary_text("Install cheese:\nsudo apt install cheese")
+                dialog.run(); dialog.destroy()
+    
+    def _open_alerts(self, btn):
+        import webbrowser
+        webbrowser.open("https://streamelements.com/dashboard/overlays")
+    
+    def _open_chat(self, btn):
+        import webbrowser
+        service = self.selected_service
+        if service == "twitch":
+            webbrowser.open("https://www.twitch.tv/popout/chat")
+        elif service == "youtube":
+            webbrowser.open("https://studio.youtube.com/")
+        else:
+            webbrowser.open("https://restream.io/chat")
+
+def main():
+    win = AegisStreamStudio()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

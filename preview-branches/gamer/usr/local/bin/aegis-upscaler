@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""
+Aegis Upscaler - FSR/DLSS/Neural upscaling manager for gaming
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List
+
+UPSCALE_BACKENDS = {
+    "fsr1": {"name": "AMD FSR 1.0", "desc": "Fast spatial upscaling", "quality": ["Ultra Quality", "Quality", "Balanced", "Performance"]},
+    "fsr2": {"name": "AMD FSR 2.2", "desc": "Temporal upscaling with motion vectors", "quality": ["Quality", "Balanced", "Performance", "Ultra Performance"]},
+    "fsr3": {"name": "AMD FSR 3.0", "desc": "Frame generation + upscaling", "quality": ["Quality", "Balanced", "Performance"]},
+    "dlss": {"name": "NVIDIA DLSS", "desc": "AI-powered upscaling (RTX only)", "quality": ["Quality", "Balanced", "Performance", "Ultra Performance"]},
+    "xess": {"name": "Intel XeSS", "desc": "Intel AI upscaling", "quality": ["Ultra Quality", "Quality", "Balanced", "Performance"]},
+    "anu": {"name": "Aegis Neural (ANU)", "desc": "Custom neural network upscaler", "quality": ["Ultra Quality", "Quality", "Balanced", "Performance"]}
+}
+
+class GameProfile:
+    def __init__(self, name: str, exe: str, backend: str, quality: str, enabled: bool = True):
+        self.name = name
+        self.exe = exe
+        self.backend = backend
+        self.quality = quality
+        self.enabled = enabled
+
+class AegisUpscaler(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #ff6b00; font-size: 28px; font-weight: bold; }
+    .subtitle { color: #888; font-size: 14px; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .backend-btn { background: rgba(255,255,255,0.1); border: 2px solid transparent;
+                   border-radius: 8px; padding: 16px; color: #fff; }
+    .backend-btn:hover { background: rgba(255,107,0,0.2); }
+    .backend-btn:checked { border-color: #ff6b00; background: rgba(255,107,0,0.3); }
+    .quality-btn { background: rgba(255,255,255,0.1); border: none; border-radius: 4px;
+                   padding: 8px 16px; color: #fff; margin: 4px; }
+    .quality-btn:checked { background: #ff6b00; }
+    .apply-btn { background: #ff6b00; color: #fff; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .info-label { color: #888; font-size: 13px; }
+    .game-row { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin: 4px 0; }
+    .game-name { color: #fff; font-size: 14px; font-weight: bold; }
+    .game-info { color: #888; font-size: 12px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Upscaler")
+        self.set_default_size(950, 750)
+        self.config_path = Path.home() / ".config/aegis/upscaler.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.current_backend = "fsr2"
+        self.current_quality = "Quality"
+        self.global_enabled = True
+        self.game_profiles: List[GameProfile] = []
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_config()
+        self._create_ui()
+    
+    def _load_config(self):
+        try:
+            if self.config_path.exists():
+                with open(self.config_path) as f:
+                    cfg = json.load(f)
+                    self.current_backend = cfg.get("backend", "fsr2")
+                    self.current_quality = cfg.get("quality", "Quality")
+                    self.global_enabled = cfg.get("enabled", True)
+                    for g in cfg.get("games", []):
+                        self.game_profiles.append(GameProfile(**g))
+        except: pass
+    
+    def _save_config(self):
+        try:
+            cfg = {
+                "backend": self.current_backend,
+                "quality": self.current_quality,
+                "enabled": self.global_enabled,
+                "games": [{"name": g.name, "exe": g.exe, "backend": g.backend, 
+                          "quality": g.quality, "enabled": g.enabled} for g in self.game_profiles]
+            }
+            with open(self.config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except: pass
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        title_row = Gtk.Box(spacing=16)
+        title = Gtk.Label(label="Aegis Upscaler")
+        title.get_style_context().add_class("title")
+        title_row.pack_start(title, False, False, 0)
+        
+        self.global_switch = Gtk.Switch()
+        self.global_switch.set_active(self.global_enabled)
+        self.global_switch.set_valign(Gtk.Align.CENTER)
+        self.global_switch.connect("notify::active", self._on_global_toggle)
+        title_row.pack_end(self.global_switch, False, False, 0)
+        
+        header.pack_start(title_row, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Enhance game visuals with AI-powered upscaling")
+        subtitle.get_style_context().add_class("subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        header.pack_start(subtitle, False, False, 4)
+        
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        main.pack_start(scroll, True, True, 0)
+        
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(20); content.set_margin_end(20)
+        content.set_margin_top(20); content.set_margin_bottom(20)
+        scroll.add(content)
+        
+        content.pack_start(self._create_backend_card(), False, False, 0)
+        content.pack_start(self._create_quality_card(), False, False, 0)
+        content.pack_start(self._create_games_card(), False, False, 0)
+        
+        actions = Gtk.Box(spacing=12)
+        actions.set_halign(Gtk.Align.CENTER)
+        
+        apply_btn = Gtk.Button(label="Save Settings")
+        apply_btn.get_style_context().add_class("apply-btn")
+        apply_btn.connect("clicked", self._save_settings)
+        actions.pack_start(apply_btn, False, False, 0)
+        
+        content.pack_start(actions, False, False, 20)
+    
+    def _create_backend_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Upscaling Backend")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        
+        self.backend_btns = {}
+        col, row = 0, 0
+        for bid, backend in UPSCALE_BACKENDS.items():
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            
+            btn = Gtk.ToggleButton()
+            btn.get_style_context().add_class("backend-btn")
+            btn.set_size_request(140, 80)
+            
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            name = Gtk.Label(label=backend["name"])
+            name.set_markup(f"<b>{backend['name']}</b>")
+            inner.pack_start(name, False, False, 0)
+            
+            desc = Gtk.Label(label=backend["desc"])
+            desc.get_style_context().add_class("info-label")
+            desc.set_line_wrap(True)
+            desc.set_max_width_chars(15)
+            inner.pack_start(desc, False, False, 4)
+            
+            btn.add(inner)
+            btn.connect("toggled", self._on_backend_select, bid)
+            self.backend_btns[bid] = btn
+            
+            if bid == self.current_backend:
+                btn.set_active(True)
+            
+            grid.attach(btn, col, row, 1, 1)
+            col += 1
+            if col >= 3:
+                col = 0; row += 1
+        
+        card.pack_start(grid, False, False, 8)
+        return card
+    
+    def _create_quality_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Quality Preset")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        self.quality_box = Gtk.Box(spacing=8)
+        self._update_quality_buttons()
+        card.pack_start(self.quality_box, False, False, 8)
+        
+        info = Gtk.Label(label="Higher quality = better visuals, lower quality = higher performance")
+        info.get_style_context().add_class("info-label")
+        info.set_halign(Gtk.Align.START)
+        card.pack_start(info, False, False, 0)
+        
+        return card
+    
+    def _update_quality_buttons(self):
+        for child in self.quality_box.get_children():
+            self.quality_box.remove(child)
+        
+        backend = UPSCALE_BACKENDS.get(self.current_backend, {})
+        qualities = backend.get("quality", ["Quality", "Balanced", "Performance"])
+        
+        self.quality_btns = {}
+        for q in qualities:
+            btn = Gtk.ToggleButton(label=q)
+            btn.get_style_context().add_class("quality-btn")
+            btn.connect("toggled", self._on_quality_select, q)
+            self.quality_btns[q] = btn
+            self.quality_box.pack_start(btn, False, False, 0)
+            if q == self.current_quality:
+                btn.set_active(True)
+        
+        self.quality_box.show_all()
+    
+    def _create_games_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        header = Gtk.Box(spacing=12)
+        title = Gtk.Label(label="Per-Game Profiles")
+        title.get_style_context().add_class("card-title")
+        header.pack_start(title, False, False, 0)
+        
+        add_btn = Gtk.Button(label="+ Add Game")
+        add_btn.connect("clicked", self._add_game_profile)
+        header.pack_end(add_btn, False, False, 0)
+        
+        card.pack_start(header, False, False, 8)
+        
+        self.games_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._refresh_games_list()
+        card.pack_start(self.games_list, False, False, 0)
+        
+        if not self.game_profiles:
+            empty = Gtk.Label(label="No per-game profiles configured. Games will use global settings.")
+            empty.get_style_context().add_class("info-label")
+            self.games_list.pack_start(empty, False, False, 8)
+        
+        return card
+    
+    def _refresh_games_list(self):
+        for child in self.games_list.get_children():
+            self.games_list.remove(child)
+        
+        for game in self.game_profiles:
+            row = Gtk.Box(spacing=12)
+            row.get_style_context().add_class("game-row")
+            
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            name = Gtk.Label(label=game.name)
+            name.get_style_context().add_class("game-name")
+            name.set_halign(Gtk.Align.START)
+            info.pack_start(name, False, False, 0)
+            
+            details = Gtk.Label(label=f"{UPSCALE_BACKENDS.get(game.backend, {}).get('name', game.backend)} - {game.quality}")
+            details.get_style_context().add_class("game-info")
+            details.set_halign(Gtk.Align.START)
+            info.pack_start(details, False, False, 0)
+            
+            row.pack_start(info, True, True, 0)
+            
+            switch = Gtk.Switch()
+            switch.set_active(game.enabled)
+            switch.set_valign(Gtk.Align.CENTER)
+            row.pack_start(switch, False, False, 0)
+            
+            self.games_list.pack_start(row, False, False, 0)
+        
+        self.games_list.show_all()
+    
+    def _on_backend_select(self, btn, backend_id):
+        if btn.get_active():
+            self.current_backend = backend_id
+            for bid, b in self.backend_btns.items():
+                if bid != backend_id: b.set_active(False)
+            self._update_quality_buttons()
+    
+    def _on_quality_select(self, btn, quality):
+        if btn.get_active():
+            self.current_quality = quality
+            for q, b in self.quality_btns.items():
+                if q != quality: b.set_active(False)
+    
+    def _on_global_toggle(self, switch, param):
+        self.global_enabled = switch.get_active()
+    
+    def _add_game_profile(self, btn):
+        dialog = Gtk.FileChooserDialog(title="Select Game Executable", parent=self,
+                                        action=Gtk.FileChooserAction.OPEN)
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        
+        if dialog.run() == Gtk.ResponseType.OK:
+            exe_path = dialog.get_filename()
+            name = os.path.basename(exe_path).replace(".exe", "").replace("-", " ").title()
+            self.game_profiles.append(GameProfile(name, exe_path, self.current_backend, self.current_quality))
+            self._refresh_games_list()
+        
+        dialog.destroy()
+    
+    def _save_settings(self, btn):
+        self._save_config()
+        
+        fsr_mode_map = {"Ultra Quality": "5", "Quality": "4", "Balanced": "3", 
+                        "Performance": "2", "Ultra Performance": "1"}
+        fsr_mode = fsr_mode_map.get(self.current_quality, "3")
+        
+        env_vars = {
+            "ENABLE_GAMESCOPE_WSI": "1",
+            "WINE_FULLSCREEN_FSR": "1" if self.global_enabled and "fsr" in self.current_backend else "0",
+            "WINE_FULLSCREEN_FSR_MODE": fsr_mode,
+            "DXVK_ENABLE_NVAPI": "0",
+            "PROTON_ENABLE_NVAPI": "0",
+            "__GL_SHADER_DISK_CACHE": "1",
+            "__GL_SHADER_DISK_CACHE_SKIP_CLEANUP": "1",
+        }
+        
+        if "fsr" in self.current_backend:
+            env_vars["WINE_FULLSCREEN_FSR"] = "1"
+            env_vars["WINE_FULLSCREEN_FSR_STRENGTH"] = {"Ultra Quality": "0", "Quality": "1", 
+                                                         "Balanced": "2", "Performance": "3"}.get(self.current_quality, "1")
+        
+        config_dir = Path.home() / ".config/aegis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        env_file = config_dir / "upscaler.env"
+        with open(env_file, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write("# Aegis Upscaler Environment Variables\n")
+            f.write("# Source this file before launching games:\n")
+            f.write("# source ~/.config/aegis/upscaler.env\n\n")
+            for k, v in env_vars.items():
+                f.write(f"export {k}={v}\n")
+        
+        steam_opts = []
+        if self.global_enabled:
+            if "fsr" in self.current_backend:
+                steam_opts.append(f"WINE_FULLSCREEN_FSR=1 WINE_FULLSCREEN_FSR_MODE={fsr_mode}")
+            if self.current_backend == "fsr3":
+                steam_opts.append("ENABLE_VK_LAYER_VALVE_steam_fossilize_1=0")
+            steam_opts.append("gamemoderun %command%")
+        
+        steam_file = config_dir / "steam_launch_options.txt"
+        with open(steam_file, "w") as f:
+            f.write("# Copy this to Steam game launch options:\n")
+            f.write(" ".join(steam_opts) + "\n")
+        
+        if self.global_enabled and self.current_backend in ["fsr1", "fsr2"]:
+            vkbasalt_config = config_dir / "vkBasalt.conf"
+            cas_strength = {"Ultra Quality": "0.2", "Quality": "0.4", "Balanced": "0.6", 
+                           "Performance": "0.8"}.get(self.current_quality, "0.4")
+            with open(vkbasalt_config, "w") as f:
+                f.write("# vkBasalt config for Aegis Upscaler\n")
+                f.write("effects = cas\n")
+                f.write(f"casSharpness = {cas_strength}\n")
+        
+        bashrc_line = 'source ~/.config/aegis/upscaler.env 2>/dev/null'
+        bashrc = Path.home() / ".bashrc"
+        try:
+            content = bashrc.read_text() if bashrc.exists() else ""
+            if bashrc_line not in content:
+                with open(bashrc, "a") as f:
+                    f.write(f"\n# Aegis Upscaler\n{bashrc_line}\n")
+        except: pass
+        
+        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                   buttons=Gtk.ButtonsType.OK, text="Settings Applied")
+        msg = f"Using {UPSCALE_BACKENDS.get(self.current_backend, {}).get('name', '')} at {self.current_quality}\n\n"
+        msg += "Created:\n"
+        msg += f"  - {env_file} (environment variables)\n"
+        msg += f"  - {steam_file} (Steam launch options)\n"
+        msg += "\nEnvironment will be active on next login."
+        dialog.format_secondary_text(msg)
+        dialog.run(); dialog.destroy()
+
+def main():
+    win = AegisUpscaler()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

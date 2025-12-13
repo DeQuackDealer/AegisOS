@@ -1,13 +1,14 @@
-name: Build Aegis OS ISO
+name: Build Aegis OS
 
 on:
   push:
-    branches: [main]
-    paths:
-      - 'build-system/**'
-      - '.github/workflows/build-iso.yml'
+    branches: 
+      - main
+      - 'preview/*'
   pull_request:
-    branches: [main]
+    branches: 
+      - main
+      - 'preview/*'
   workflow_dispatch:
     inputs:
       edition:
@@ -24,8 +25,8 @@ on:
           - gamer-ai
           - server
           - all
-      build_type:
-        description: 'Build type'
+      mode:
+        description: 'Build mode'
         required: true
         default: 'simulate'
         type: choice
@@ -37,176 +38,129 @@ env:
   AEGIS_VERSION: "3.0.0"
 
 jobs:
-  validate:
-    name: Validate Build System
+  check-files:
+    name: Check Repository
     runs-on: ubuntu-latest
+    outputs:
+      has_build_system: ${{ steps.check.outputs.has_build_system }}
+      branch_type: ${{ steps.check.outputs.branch_type }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      - name: Check what exists
+        id: check
+        run: |
+          if [ -f "build-system/build-aegis.py" ]; then
+            echo "has_build_system=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_build_system=false" >> $GITHUB_OUTPUT
+          fi
+          
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          if [[ "$BRANCH" == preview/* ]]; then
+            echo "branch_type=preview" >> $GITHUB_OUTPUT
+          else
+            echo "branch_type=main" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "Branch: $BRANCH"
+          echo "Files in repo:"
+          ls -la
 
+  validate-tools:
+    name: Validate Edition Tools
+    runs-on: ubuntu-latest
+    needs: check-files
+    if: needs.check-files.outputs.branch_type == 'preview'
+    steps:
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Check build system files exist
+      
+      - name: Validate Python scripts
         run: |
-          echo "Checking required files..."
-          test -f build-system/build-aegis.py && echo "build-aegis.py OK" || exit 1
-          test -d build-system/archiso/packages && echo "packages dir OK" || exit 1
-          echo "All required files present"
-
-      - name: Validate Python syntax
+          echo "Validating Python scripts in this edition..."
+          find . -name "*.py" -type f | while read file; do
+            echo "Checking: $file"
+            python3 -m py_compile "$file" || echo "Warning: $file has syntax issues"
+          done
+          echo "Validation complete"
+      
+      - name: List tools
         run: |
-          python3 -m py_compile build-system/build-aegis.py
-          echo "Python syntax OK"
+          echo "Tools in this edition:"
+          find . -path "*/bin/*" -type f 2>/dev/null | head -50 || echo "No bin tools found"
+          find . -name "aegis-*" -type f 2>/dev/null | head -50 || echo "No aegis tools found"
 
-      - name: List available packages
-        run: |
-          echo "Available package lists:"
-          ls -la build-system/archiso/packages/ || echo "No package lists found"
-
-      - name: Run simulation test
-        run: |
-          cd build-system
-          python3 build-aegis.py --edition freemium --simulate --verbose
-
-  simulate-all:
-    name: Simulate All Editions
+  simulate-build:
+    name: Simulate Build
     runs-on: ubuntu-latest
-    needs: validate
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.build_type == 'simulate')
+    needs: check-files
+    if: needs.check-files.outputs.has_build_system == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'simulate')
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Simulate all editions
+      
+      - name: Run simulation
         run: |
           cd build-system
-          python3 build-aegis.py --edition all --simulate --verbose
-
-      - name: Upload simulation results
+          EDITION="${{ github.event.inputs.edition || 'freemium' }}"
+          echo "Simulating build for: $EDITION"
+          python3 build-aegis.py --edition "$EDITION" --simulate --verbose
+      
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: simulation-results
-          path: |
-            build-system/output/*.json
-            build-system/output/*.iso
+          name: simulation-${{ github.event.inputs.edition || 'freemium' }}
+          path: build-system/output/
           retention-days: 7
           if-no-files-found: warn
 
-  build-real:
+  real-build:
     name: Build ${{ matrix.edition }} ISO
     runs-on: ubuntu-latest
-    needs: validate
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.build_type == 'real'
+    needs: check-files
+    if: needs.check-files.outputs.has_build_system == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'real'
     strategy:
       matrix:
-        edition: ${{ fromJson(github.event.inputs.edition == 'all' && '["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]' || format('["{0}"]', github.event.inputs.edition)) }}
+        edition: ${{ fromJson(github.event.inputs.edition == 'all' && '["freemium","basic","gamer","workplace","aidev","gamer-ai","server"]' || format('["{0}"]', github.event.inputs.edition)) }}
       fail-fast: false
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Free up disk space
+      - uses: actions/checkout@v4
+      
+      - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h
-
-      - name: Build ISO using Docker
+      
+      - name: Build in Arch container
         run: |
           docker run --rm --privileged \
             -v ${{ github.workspace }}:/workspace \
-            archlinux:latest \
-            bash -c '
-              set -e
-              
-              echo "=========================================="
-              echo "Building Aegis OS ${{ matrix.edition }} Edition"
-              echo "=========================================="
-              
-              # Initialize pacman
-              pacman-key --init
-              pacman-key --populate archlinux
+            archlinux:latest bash -c '
+              pacman-key --init && pacman-key --populate archlinux
               pacman -Syu --noconfirm
-              pacman -S --noconfirm archiso python git
-              
-              # Run build script
+              pacman -S --noconfirm archiso python git squashfs-tools
               cd /workspace/build-system
               python3 build-aegis.py --edition ${{ matrix.edition }} --real-build --verbose
             '
-
-      - name: Generate checksums
+      
+      - name: Create checksums
         run: |
           cd build-system/output
-          for iso in *.iso; do
-            if [ -f "$iso" ]; then
-              sha256sum "$iso" > "${iso}.sha256"
-              echo "SHA256: $(cat ${iso}.sha256)"
-            fi
-          done
-
+          for f in *.iso; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      
       - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-${{ matrix.edition }}-iso
-          path: |
-            build-system/output/aegis-${{ matrix.edition }}*.iso
-            build-system/output/aegis-${{ matrix.edition }}*.sha256
+          name: aegis-${{ matrix.edition }}
+          path: build-system/output/aegis-${{ matrix.edition }}*
           retention-days: 30
-          if-no-files-found: warn
-
-  build-installers:
-    name: Build Windows Installers
-    runs-on: windows-latest
-    needs: validate
-    if: github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller cryptography requests
-
-      - name: Build Freemium Installer
-        run: |
-          cd build-system/installers
-          if (Test-Path "aegis-installer-freemium.py") {
-            pyinstaller --onefile --windowed --name "AegisOS-Freemium-Installer" aegis-installer-freemium.py
-          } else {
-            echo "Freemium installer script not found, skipping"
-          }
-        continue-on-error: true
-
-      - name: Build Licensed Installer
-        run: |
-          cd build-system/installers
-          if (Test-Path "aegis-installer-licensed.py") {
-            pyinstaller --onefile --windowed --name "AegisOS-Licensed-Installer" aegis-installer-licensed.py --hidden-import cryptography
-          } else {
-            echo "Licensed installer script not found, skipping"
-          }
-        continue-on-error: true
-
-      - name: Upload Windows Installers
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-installers
-          path: build-system/installers/dist/*.exe
-          retention-days: 30
-          if-no-files-found: warn

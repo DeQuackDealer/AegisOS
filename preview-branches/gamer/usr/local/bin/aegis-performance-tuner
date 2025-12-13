@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+"""
+Aegis Performance Tuner - CPU/GPU optimization for gaming
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict
+
+PROFILES = {
+    "performance": {"name": "Maximum Performance", "cpu": "performance", "gpu": "performance", "gamemode": True},
+    "balanced": {"name": "Balanced", "cpu": "schedutil", "gpu": "balanced", "gamemode": True},
+    "quiet": {"name": "Quiet/Cool", "cpu": "powersave", "gpu": "power_saving", "gamemode": False},
+    "streaming": {"name": "Streaming", "cpu": "performance", "gpu": "balanced", "gamemode": True},
+    "vr": {"name": "VR Gaming", "cpu": "performance", "gpu": "performance", "gamemode": True}
+}
+
+class SystemInfo:
+    @staticmethod
+    def get_cpu_info() -> Dict:
+        info = {"model": "Unknown", "cores": os.cpu_count() or 0, "governor": "unknown", "freq": 0}
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if "model name" in line:
+                        info["model"] = line.split(":")[1].strip()
+                        break
+            gov_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
+            if os.path.exists(gov_path):
+                with open(gov_path) as f:
+                    info["governor"] = f.read().strip()
+            freq_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
+            if os.path.exists(freq_path):
+                with open(freq_path) as f:
+                    info["freq"] = int(f.read().strip()) // 1000
+        except: pass
+        return info
+    
+    @staticmethod
+    def get_gpu_info() -> Dict:
+        info = {"vendor": "Unknown", "model": "Unknown", "driver": "Unknown"}
+        try:
+            result = subprocess.run(["lspci"], capture_output=True, text=True)
+            for line in result.stdout.split("\n"):
+                if "VGA" in line or "3D" in line:
+                    info["model"] = line.split(":")[-1].strip()[:60]
+                    if "NVIDIA" in line.upper(): info["vendor"] = "NVIDIA"
+                    elif "AMD" in line.upper(): info["vendor"] = "AMD"
+                    elif "INTEL" in line.upper(): info["vendor"] = "Intel"
+                    break
+        except: pass
+        return info
+    
+    @staticmethod
+    def get_memory_info() -> Dict:
+        info = {"total": 0, "available": 0, "percent": 0}
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if "MemTotal" in line: info["total"] = int(line.split()[1]) // 1024
+                    elif "MemAvailable" in line: info["available"] = int(line.split()[1]) // 1024
+            if info["total"]: info["percent"] = int(100 * (info["total"] - info["available"]) / info["total"])
+        except: pass
+        return info
+
+class AegisPerformanceTuner(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.6); padding: 20px; }
+    .title { color: #00d4ff; font-size: 28px; font-weight: bold; }
+    .card { background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .info-label { color: #888; font-size: 13px; }
+    .value-label { color: #00d4ff; font-size: 14px; }
+    .profile-btn { background: rgba(255,255,255,0.1); border: 2px solid transparent; 
+                   border-radius: 8px; padding: 16px; color: #fff; font-size: 14px; }
+    .profile-btn:hover { background: rgba(0,212,255,0.2); }
+    .profile-btn:checked { border-color: #00d4ff; background: rgba(0,212,255,0.3); }
+    .apply-btn { background: #00d4ff; color: #1a1a2e; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .toggle-row { padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .toggle-label { color: #fff; font-size: 14px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Performance Tuner")
+        self.set_default_size(900, 700)
+        self.current_profile = "balanced"
+        self.config_path = Path.home() / ".config/aegis/performance.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_config()
+        self._create_ui()
+        self._start_monitor()
+    
+    def _load_config(self):
+        try:
+            if self.config_path.exists():
+                with open(self.config_path) as f:
+                    self.current_profile = json.load(f).get("profile", "balanced")
+        except: pass
+    
+    def _save_config(self):
+        try:
+            with open(self.config_path, "w") as f:
+                json.dump({"profile": self.current_profile}, f)
+        except: pass
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        title = Gtk.Label(label="Aegis Performance Tuner")
+        title.get_style_context().add_class("title")
+        title.set_halign(Gtk.Align.START)
+        header.pack_start(title, False, False, 0)
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        main.pack_start(scroll, True, True, 0)
+        
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(20); content.set_margin_end(20)
+        content.set_margin_top(20); content.set_margin_bottom(20)
+        scroll.add(content)
+        
+        content.pack_start(self._create_sysinfo(), False, False, 0)
+        content.pack_start(self._create_profiles(), False, False, 0)
+        content.pack_start(self._create_optimizations(), False, False, 0)
+        
+        actions = Gtk.Box(spacing=12)
+        actions.set_halign(Gtk.Align.CENTER)
+        apply_btn = Gtk.Button(label="Apply Settings")
+        apply_btn.get_style_context().add_class("apply-btn")
+        apply_btn.connect("clicked", self._apply)
+        actions.pack_start(apply_btn, False, False, 0)
+        content.pack_start(actions, False, False, 20)
+    
+    def _create_sysinfo(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="System Information")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        cpu = SystemInfo.get_cpu_info()
+        gpu = SystemInfo.get_gpu_info()
+        mem = SystemInfo.get_memory_info()
+        
+        grid = Gtk.Grid(column_spacing=30, row_spacing=8)
+        
+        for i, (k, v) in enumerate([("CPU", cpu["model"]), ("Governor", cpu["governor"]), ("Frequency", f"{cpu['freq']} MHz")]):
+            lbl = Gtk.Label(label=f"{k}:"); lbl.get_style_context().add_class("info-label"); lbl.set_halign(Gtk.Align.START)
+            val = Gtk.Label(label=str(v)[:50]); val.get_style_context().add_class("value-label"); val.set_halign(Gtk.Align.START)
+            grid.attach(lbl, 0, i, 1, 1); grid.attach(val, 1, i, 1, 1)
+        
+        for i, (k, v) in enumerate([("GPU", gpu["model"]), ("Vendor", gpu["vendor"]), ("Driver", gpu["driver"])]):
+            lbl = Gtk.Label(label=f"{k}:"); lbl.get_style_context().add_class("info-label"); lbl.set_halign(Gtk.Align.START)
+            val = Gtk.Label(label=str(v)[:50]); val.get_style_context().add_class("value-label"); val.set_halign(Gtk.Align.START)
+            grid.attach(lbl, 2, i, 1, 1); grid.attach(val, 3, i, 1, 1)
+        
+        card.pack_start(grid, False, False, 0)
+        
+        self.mem_label = Gtk.Label(label=f"Memory: {mem['percent']}% used ({mem['available']}MB free)")
+        self.mem_label.get_style_context().add_class("info-label")
+        self.mem_label.set_halign(Gtk.Align.START)
+        card.pack_start(self.mem_label, False, False, 8)
+        
+        return card
+    
+    def _create_profiles(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Performance Profiles")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        flow = Gtk.FlowBox()
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_max_children_per_line(5)
+        
+        self.profile_btns = {}
+        for pid, p in PROFILES.items():
+            btn = Gtk.ToggleButton(label=p["name"])
+            btn.get_style_context().add_class("profile-btn")
+            btn.set_size_request(150, 70)
+            btn.connect("toggled", self._on_profile, pid)
+            self.profile_btns[pid] = btn
+            flow.add(btn)
+            if pid == self.current_profile: btn.set_active(True)
+        
+        card.pack_start(flow, False, False, 8)
+        return card
+    
+    def _create_optimizations(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Active Optimizations")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        opts = [("GameMode", "Feral GameMode for CPU/GPU optimization"),
+                ("Compositor Bypass", "Disable compositor during games"),
+                ("GPU Performance", "Force maximum GPU clocks"),
+                ("Memory Lock", "Lock game memory to prevent swapping"),
+                ("Raw Mouse Input", "Disable mouse acceleration")]
+        
+        self.opt_switches = {}
+        for name, desc in opts:
+            row = Gtk.Box(spacing=12)
+            row.get_style_context().add_class("toggle-row")
+            
+            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            lbl = Gtk.Label(label=name); lbl.get_style_context().add_class("toggle-label"); lbl.set_halign(Gtk.Align.START)
+            labels.pack_start(lbl, False, False, 0)
+            row.pack_start(labels, True, True, 0)
+            
+            switch = Gtk.Switch()
+            switch.set_active(True)
+            self.opt_switches[name] = switch
+            row.pack_start(switch, False, False, 0)
+            
+            card.pack_start(row, False, False, 0)
+        
+        return card
+    
+    def _on_profile(self, btn, pid):
+        if btn.get_active():
+            self.current_profile = pid
+            for p, b in self.profile_btns.items():
+                if p != pid: b.set_active(False)
+    
+    def _apply(self, btn):
+        profile = PROFILES.get(self.current_profile, {})
+        results = []
+        
+        try:
+            if profile.get("cpu"):
+                governor = profile["cpu"]
+                
+                pkexec_check = subprocess.run(["which", "pkexec"], capture_output=True)
+                cpupower_check = subprocess.run(["which", "cpupower"], capture_output=True)
+                
+                if cpupower_check.returncode == 0 and pkexec_check.returncode == 0:
+                    result = subprocess.run(
+                        ["pkexec", "cpupower", "frequency-set", "-g", governor],
+                        capture_output=True, text=True
+                    )
+                    if result.returncode == 0:
+                        results.append(f"CPU governor set to '{governor}'")
+                    else:
+                        results.append(f"CPU governor: Failed ({result.stderr[:100]})")
+                elif pkexec_check.returncode == 0:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as f:
+                        f.write(f"""#!/bin/bash
+for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    [ -w "$cpu" ] && echo {governor} > "$cpu"
+done
+""")
+                        script_path = f.name
+                    os.chmod(script_path, 0o700)
+                    result = subprocess.run(["pkexec", "bash", script_path], capture_output=True, text=True)
+                    os.unlink(script_path)
+                    if result.returncode == 0:
+                        results.append(f"CPU governor set to '{governor}'")
+                    else:
+                        results.append(f"CPU governor: Failed - try installing cpupower")
+                else:
+                    results.append("CPU governor: Skipped (pkexec not available)")
+            
+            if profile.get("gamemode") and self.opt_switches.get("GameMode", Gtk.Switch()).get_active():
+                gamemode_check = subprocess.run(["which", "gamemoderun"], capture_output=True)
+                if gamemode_check.returncode == 0:
+                    subprocess.run(["gamemoded", "-r"], capture_output=True)
+                    results.append("GameMode daemon refreshed")
+                else:
+                    results.append("GameMode not installed")
+            
+            if self.opt_switches.get("Compositor Bypass", Gtk.Switch()).get_active():
+                desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+                state_file = Path.home() / ".config/aegis/compositor_state"
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                if "xfce" in desktop:
+                    if not state_file.exists():
+                        current = subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing"], 
+                                                capture_output=True, text=True)
+                        if current.returncode == 0:
+                            with open(state_file, "w") as f:
+                                f.write(f"xfce:{current.stdout.strip()}")
+                    
+                    subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", "false"], 
+                                   capture_output=True)
+                    results.append("XFCE compositor disabled (original state saved)")
+                elif "gnome" in desktop:
+                    results.append("Compositor: GNOME uses GameMode for fullscreen optimization")
+                else:
+                    results.append("Compositor: Add 'compton --no-vsync' for gaming mode")
+            else:
+                state_file = Path.home() / ".config/aegis/compositor_state"
+                if state_file.exists():
+                    try:
+                        state = state_file.read_text().strip()
+                        if state.startswith("xfce:"):
+                            orig = state.split(":")[1]
+                            subprocess.run(["xfconf-query", "-c", "xfwm4", "-p", "/general/use_compositing", "-s", orig], 
+                                          capture_output=True)
+                            state_file.unlink()
+                            results.append(f"Compositor restored to {orig}")
+                    except:
+                        pass
+            
+            if self.opt_switches.get("GPU Performance", Gtk.Switch()).get_active():
+                gpu_info = SystemInfo.get_gpu_info()
+                if gpu_info.get("vendor") == "NVIDIA":
+                    nvidia_check = subprocess.run(["which", "nvidia-settings"], capture_output=True)
+                    if nvidia_check.returncode == 0:
+                        subprocess.run(["nvidia-settings", "-a", "[gpu:0]/GpuPowerMizerMode=1"], capture_output=True)
+                        results.append("NVIDIA performance mode enabled")
+                    else:
+                        results.append("GPU: NVIDIA tools not found")
+                elif gpu_info.get("vendor") == "AMD":
+                    results.append("GPU: Use CoreCtrl for AMD performance tuning")
+                else:
+                    results.append("GPU performance: Manual config may be needed")
+            
+            if self.opt_switches.get("Memory Lock", Gtk.Switch()).get_active():
+                results.append("Memory optimization: Add 'vm.swappiness=10' to /etc/sysctl.conf")
+            
+            if self.opt_switches.get("Raw Mouse Input", Gtk.Switch()).get_active():
+                xinput_check = subprocess.run(["which", "xinput"], capture_output=True)
+                if xinput_check.returncode == 0:
+                    try:
+                        devices = subprocess.run(["xinput", "list", "--id-only"], capture_output=True, text=True)
+                        for dev_id in devices.stdout.strip().split('\n'):
+                            if dev_id.isdigit():
+                                subprocess.run(["xinput", "set-prop", dev_id, "libinput Accel Profile Enabled", "0,", "1"], 
+                                              capture_output=True)
+                        results.append("Mouse acceleration disabled")
+                    except:
+                        results.append("Mouse: Could not configure input devices")
+                else:
+                    results.append("Mouse: xinput not installed")
+            
+            config_dir = Path.home() / ".config/aegis"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            env_file = config_dir / "performance.env"
+            with open(env_file, "w") as f:
+                f.write("#!/bin/bash\n")
+                f.write(f"# Aegis Performance Profile: {profile.get('name', 'Custom')}\n\n")
+                f.write("export __GL_THREADED_OPTIMIZATIONS=1\n")
+                f.write("export __GL_SHADER_DISK_CACHE=1\n")
+                f.write("export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1\n")
+                f.write("export mesa_glthread=true\n")
+                f.write("export RADV_PERFTEST=gpl\n")
+                if profile.get("gamemode"):
+                    f.write("export ENABLE_GAMESCOPE_WSI=1\n")
+            os.chmod(env_file, 0o755)
+            results.append(f"Environment file: {env_file}")
+            
+            steam_launch = config_dir / "performance-steam-options.txt"
+            steam_opts = "gamemoderun mangohud %command%" if profile.get("gamemode") else "mangohud %command%"
+            with open(steam_launch, "w") as f:
+                f.write(f"# Steam launch options for {profile.get('name', 'Custom')} profile:\n")
+                f.write(f"{steam_opts}\n")
+            results.append(f"Steam options: {steam_launch}")
+            
+            self._save_config()
+            
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Settings Applied")
+            results_text = "\n".join([f"✓ {r}" for r in results])
+            dialog.format_secondary_text(f"Profile '{profile.get('name', '')}' applied:\n\n{results_text}")
+            dialog.run(); dialog.destroy()
+            
+        except Exception as e:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.ERROR,
+                                       buttons=Gtk.ButtonsType.OK, text="Error Applying Settings")
+            dialog.format_secondary_text(str(e))
+            dialog.run(); dialog.destroy()
+    
+    def _start_monitor(self):
+        def update():
+            mem = SystemInfo.get_memory_info()
+            self.mem_label.set_text(f"Memory: {mem['percent']}% used ({mem['available']}MB free)")
+            return True
+        GLib.timeout_add_seconds(3, update)
+
+def main():
+    win = AegisPerformanceTuner()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

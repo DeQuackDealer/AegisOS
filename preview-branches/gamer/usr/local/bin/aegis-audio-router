@@ -1,0 +1,2030 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Audio Router - Multi-Output Audio Routing Tool
+Advanced audio routing for gaming, streaming, and voice chat
+
+Features:
+- Per-application audio output selection
+- PipeWire/WirePlumber integration with PulseAudio fallback
+- Virtual audio sink creation
+- Gaming-optimized presets
+- Stream audio routing for OBS
+- Volume normalization
+- Audio visualization
+- Low-latency mode for gaming
+- Bluetooth and USB audio device hotplug support
+"""
+
+import os
+import sys
+import json
+import subprocess
+import logging
+import argparse
+import threading
+import time
+import re
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+
+
+class LicenseTier(Enum):
+    FREEMIUM = 1
+    BASIC = 2
+    GAMER = 3
+    GAMER_AI = 4
+    SERVER = 5
+
+
+class AudioBackend(Enum):
+    PIPEWIRE = "pipewire"
+    PULSEAUDIO = "pulseaudio"
+    NONE = "none"
+
+
+@dataclass
+class AudioSink:
+    """Audio output device/sink"""
+    id: str
+    name: str
+    description: str
+    driver: str
+    state: str
+    volume: float = 1.0
+    muted: bool = False
+    is_default: bool = False
+    is_virtual: bool = False
+    device_type: str = "unknown"
+    channels: int = 2
+    sample_rate: int = 48000
+
+
+@dataclass
+class AudioSource:
+    """Audio input device/source"""
+    id: str
+    name: str
+    description: str
+    driver: str
+    state: str
+    volume: float = 1.0
+    muted: bool = False
+    is_default: bool = False
+    device_type: str = "unknown"
+
+
+@dataclass
+class AudioStream:
+    """Running audio application stream"""
+    id: str
+    app_name: str
+    app_binary: str
+    sink_id: str
+    sink_name: str
+    volume: float = 1.0
+    muted: bool = False
+    pid: int = 0
+    media_name: str = ""
+
+
+@dataclass
+class AudioPreset:
+    """Audio routing preset"""
+    name: str
+    description: str
+    routes: Dict[str, str]
+    virtual_sinks: List[str]
+    settings: Dict[str, Any]
+
+
+class AegisAudioRouter:
+    """Main audio routing class"""
+    
+    VERSION = "1.5.0"
+    APP_NAME = "Aegis Audio Router"
+    
+    FULL_FEATURE_TIERS = [LicenseTier.GAMER, LicenseTier.GAMER_AI, LicenseTier.SERVER]
+    
+    DEFAULT_PRESETS = {
+        "gaming": AudioPreset(
+            name="Gaming",
+            description="Optimized for gaming - game audio to headphones, voice chat to speakers",
+            routes={
+                "discord": "speakers",
+                "steam": "headphones",
+                "lutris": "headphones",
+                "retroarch": "headphones",
+                "wine": "headphones",
+                "gamescope": "headphones"
+            },
+            virtual_sinks=["Gaming_Audio", "Voice_Chat"],
+            settings={
+                "low_latency": True,
+                "quantum": 64,
+                "normalize_volume": True
+            }
+        ),
+        "streaming": AudioPreset(
+            name="Streaming",
+            description="For streamers - separate game audio from mic for OBS",
+            routes={
+                "obs": "monitor",
+                "discord": "Voice_Monitor",
+                "steam": "Game_Capture",
+                "spotify": "Music_Capture"
+            },
+            virtual_sinks=["Game_Capture", "Voice_Monitor", "Music_Capture", "Stream_Mix"],
+            settings={
+                "low_latency": True,
+                "quantum": 128,
+                "normalize_volume": True,
+                "create_monitor_sinks": True
+            }
+        ),
+        "music_production": AudioPreset(
+            name="Music Production",
+            description="Low-latency audio for DAW work",
+            routes={},
+            virtual_sinks=["DAW_Output", "Sample_Preview"],
+            settings={
+                "low_latency": True,
+                "quantum": 32,
+                "normalize_volume": False,
+                "sample_rate": 96000
+            }
+        ),
+        "voice_chat": AudioPreset(
+            name="Voice Chat",
+            description="Optimized for voice communication",
+            routes={
+                "discord": "headphones",
+                "mumble": "headphones",
+                "teamspeak": "headphones",
+                "zoom": "headphones"
+            },
+            virtual_sinks=[],
+            settings={
+                "low_latency": True,
+                "quantum": 64,
+                "normalize_volume": True,
+                "echo_cancellation": True,
+                "noise_suppression": True
+            }
+        ),
+        "default": AudioPreset(
+            name="Default",
+            description="Standard audio routing",
+            routes={},
+            virtual_sinks=[],
+            settings={
+                "low_latency": False,
+                "quantum": 1024,
+                "normalize_volume": False
+            }
+        )
+    }
+    
+    def __init__(self, headless: bool = False):
+        self.headless = headless
+        self.version = self.VERSION
+        
+        self.config_dir = Path("/etc/aegis")
+        self.data_dir = Path("/var/lib/aegis/audio")
+        self.log_dir = Path("/var/log/aegis")
+        self.cache_dir = Path.home() / ".cache" / "aegis-audio"
+        self.pipewire_config_dir = Path("/etc/pipewire/pipewire.conf.d")
+        
+        self.config_file = self.config_dir / "audio-router.json"
+        self.presets_file = self.data_dir / "presets.json"
+        self.license_file = self.config_dir / "license.json"
+        
+        self.audio_backend = AudioBackend.NONE
+        self.sinks: Dict[str, AudioSink] = {}
+        self.sources: Dict[str, AudioSource] = {}
+        self.streams: Dict[str, AudioStream] = {}
+        self.virtual_sinks: Dict[str, AudioSink] = {}
+        self.custom_presets: Dict[str, AudioPreset] = {}
+        
+        self.license_tier = LicenseTier.FREEMIUM
+        self.monitoring = False
+        self.monitor_thread = None
+        self.hotplug_thread = None
+        
+        self.ensure_directories()
+        self.setup_logging()
+        self.detect_audio_backend()
+        self.load_license_tier()
+        self.load_config()
+        self.load_custom_presets()
+        
+    def ensure_directories(self):
+        """Create required directories"""
+        dirs = [self.config_dir, self.data_dir, self.log_dir, self.cache_dir]
+        for directory in dirs:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
+    
+    def setup_logging(self):
+        """Configure logging"""
+        log_file = self.log_dir / "audio-router.log"
+        try:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[
+                    logging.FileHandler(log_file),
+                    logging.StreamHandler() if not self.headless else logging.NullHandler()
+                ]
+            )
+        except PermissionError:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - [%(name)s] %(message)s',
+                handlers=[logging.StreamHandler()]
+            )
+        self.logger = logging.getLogger("AegisAudioRouter")
+        self.logger.info(f"Starting {self.APP_NAME} v{self.VERSION}")
+    
+    def detect_audio_backend(self):
+        """Detect available audio backend"""
+        if shutil.which("pw-cli") and self._check_pipewire_running():
+            self.audio_backend = AudioBackend.PIPEWIRE
+            self.logger.info("Using PipeWire audio backend")
+        elif shutil.which("pactl") and self._check_pulseaudio_running():
+            self.audio_backend = AudioBackend.PULSEAUDIO
+            self.logger.info("Using PulseAudio audio backend")
+        else:
+            self.audio_backend = AudioBackend.NONE
+            self.logger.warning("No audio backend detected")
+    
+    def _check_pipewire_running(self) -> bool:
+        """Check if PipeWire is running"""
+        try:
+            result = subprocess.run(
+                ["pw-cli", "info", "0"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _check_pulseaudio_running(self) -> bool:
+        """Check if PulseAudio is running"""
+        try:
+            result = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def load_license_tier(self):
+        """Load and determine license tier"""
+        try:
+            if self.license_file.exists():
+                with open(self.license_file, 'r') as f:
+                    license_data = json.load(f)
+                
+                edition = license_data.get('edition', 'freemium').lower()
+                tier_map = {
+                    'freemium': LicenseTier.FREEMIUM,
+                    'basic': LicenseTier.BASIC,
+                    'gamer': LicenseTier.GAMER,
+                    'gamer-ai': LicenseTier.GAMER_AI,
+                    'gamer_ai': LicenseTier.GAMER_AI,
+                    'server': LicenseTier.SERVER
+                }
+                self.license_tier = tier_map.get(edition, LicenseTier.FREEMIUM)
+            else:
+                marker_files = [
+                    ("/etc/aegis-gamer-marker", LicenseTier.GAMER),
+                    ("/etc/aegis-gamer-ai-marker", LicenseTier.GAMER_AI),
+                    ("/etc/aegis-server-marker", LicenseTier.SERVER),
+                    ("/etc/aegis-basic-marker", LicenseTier.BASIC),
+                    ("/etc/aegis-freemium-marker", LicenseTier.FREEMIUM),
+                ]
+                for marker, tier in marker_files:
+                    if Path(marker).exists():
+                        self.license_tier = tier
+                        break
+                        
+        except Exception as e:
+            self.logger.warning(f"Failed to load license tier: {e}")
+            self.license_tier = LicenseTier.FREEMIUM
+        
+        self.logger.info(f"License tier: {self.license_tier.name}")
+    
+    def is_full_version(self) -> bool:
+        """Check if running full version with all features"""
+        return self.license_tier in self.FULL_FEATURE_TIERS
+    
+    def load_config(self):
+        """Load router configuration"""
+        default_config = {
+            "default_sink": "",
+            "default_source": "",
+            "auto_route_enabled": True,
+            "low_latency_mode": True,
+            "volume_normalization": False,
+            "normalize_target_db": -14.0,
+            "hotplug_monitoring": True,
+            "bluetooth_enabled": True,
+            "visualization_enabled": False,
+            "last_preset": "default",
+            "custom_routes": {},
+            "app_sink_associations": {},
+            "quantum": 256,
+            "sample_rate": 48000
+        }
+        
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    self.config = {**default_config, **json.load(f)}
+            else:
+                self.config = default_config
+                self.save_config()
+        except (json.JSONDecodeError, Exception) as e:
+            self.logger.error(f"Error loading config: {e}")
+            self.config = default_config
+    
+    def save_config(self):
+        """Save configuration"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save config - permission denied")
+    
+    def load_custom_presets(self):
+        """Load user-defined presets"""
+        try:
+            if self.presets_file.exists():
+                with open(self.presets_file, 'r') as f:
+                    data = json.load(f)
+                    for name, preset_data in data.items():
+                        self.custom_presets[name] = AudioPreset(**preset_data)
+        except Exception as e:
+            self.logger.error(f"Error loading custom presets: {e}")
+    
+    def save_custom_presets(self):
+        """Save user-defined presets"""
+        try:
+            data = {name: asdict(preset) for name, preset in self.custom_presets.items()}
+            with open(self.presets_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except PermissionError:
+            self.logger.warning("Cannot save presets - permission denied")
+    
+    def get_sinks(self) -> List[AudioSink]:
+        """Get all audio output devices/sinks"""
+        self.sinks.clear()
+        
+        if self.audio_backend == AudioBackend.PIPEWIRE:
+            return self._get_pipewire_sinks()
+        elif self.audio_backend == AudioBackend.PULSEAUDIO:
+            return self._get_pulseaudio_sinks()
+        
+        return []
+    
+    def _get_pipewire_sinks(self) -> List[AudioSink]:
+        """Get sinks using PipeWire with pw-cli ls and pactl list sinks fallback"""
+        sinks = []
+        try:
+            result = subprocess.run(
+                ["pw-cli", "ls", "Node"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                current_id = None
+                current_props = {}
+                
+                for line in result.stdout.split('\n'):
+                    id_match = re.match(r'\s*id\s+(\d+),\s+type\s+(\S+)', line)
+                    if id_match:
+                        if current_id and current_props.get('media.class') == 'Audio/Sink':
+                            sink = self._parse_pipewire_sink({
+                                'id': current_id,
+                                **{k.replace('.', '_').replace('-', '_'): v 
+                                   for k, v in current_props.items()}
+                            })
+                            if sink:
+                                sinks.append(sink)
+                                self.sinks[sink.id] = sink
+                        current_id = id_match.group(1)
+                        current_props = {}
+                    elif current_id and '*' in line:
+                        prop_match = re.match(r'\s*\*?\s*(\S+)\s*=\s*"?([^"]*)"?', line.strip())
+                        if prop_match:
+                            current_props[prop_match.group(1)] = prop_match.group(2)
+                
+                if current_id and current_props.get('media.class') == 'Audio/Sink':
+                    sink = self._parse_pipewire_sink({
+                        'id': current_id,
+                        **{k.replace('.', '_').replace('-', '_'): v 
+                           for k, v in current_props.items()}
+                    })
+                    if sink:
+                        sinks.append(sink)
+                        self.sinks[sink.id] = sink
+            
+            if not sinks:
+                sinks = self._get_sinks_via_pactl()
+            
+            result = subprocess.run(
+                ["wpctl", "status"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                in_sinks = False
+                for line in result.stdout.split('\n'):
+                    if 'Sinks:' in line:
+                        in_sinks = True
+                        continue
+                    elif 'Sources:' in line or 'Streams:' in line:
+                        in_sinks = False
+                        continue
+                    
+                    if in_sinks and line.strip():
+                        match = re.match(r'\s*(\*?)\s*(\d+)\.\s+(.+?)(?:\s+\[vol:\s*([\d.]+)\])?$', line)
+                        if match:
+                            is_default = match.group(1) == '*'
+                            sink_id = match.group(2)
+                            name = match.group(3).strip()
+                            volume = float(match.group(4)) if match.group(4) else 1.0
+                            
+                            if sink_id in self.sinks:
+                                self.sinks[sink_id].is_default = is_default
+                                self.sinks[sink_id].volume = volume
+                            else:
+                                sink = AudioSink(
+                                    id=sink_id,
+                                    name=name,
+                                    description=name,
+                                    driver="pipewire",
+                                    state="RUNNING",
+                                    volume=volume,
+                                    is_default=is_default
+                                )
+                                sinks.append(sink)
+                                self.sinks[sink_id] = sink
+                                
+        except Exception as e:
+            self.logger.error(f"Error getting PipeWire sinks: {e}")
+            sinks = self._get_sinks_via_pactl()
+        
+        return sinks
+    
+    def _get_sinks_via_pactl(self) -> List[AudioSink]:
+        """Get sinks using pactl list sinks (works with both PipeWire and PulseAudio)"""
+        sinks = []
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sinks"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                current_sink = {}
+                for line in result.stdout.split('\n'):
+                    if line.startswith('Sink #'):
+                        if current_sink:
+                            sink = self._parse_pactl_sink(current_sink)
+                            if sink:
+                                sinks.append(sink)
+                                self.sinks[sink.id] = sink
+                        sink_id = line.replace('Sink #', '').strip()
+                        current_sink = {'id': sink_id}
+                    elif ':' in line and current_sink:
+                        key, _, value = line.partition(':')
+                        key = key.strip().lower()
+                        value = value.strip()
+                        current_sink[key] = value
+                        
+                        if 'name' in key and 'name' not in current_sink:
+                            current_sink['name'] = value
+                        elif 'description' in key:
+                            current_sink['description'] = value
+                        elif 'state' in key:
+                            current_sink['state'] = value
+                        elif 'driver' in key:
+                            current_sink['driver'] = value
+                        elif 'mute' in key:
+                            current_sink['muted'] = 'yes' in value.lower()
+                
+                if current_sink:
+                    sink = self._parse_pactl_sink(current_sink)
+                    if sink:
+                        sinks.append(sink)
+                        self.sinks[sink.id] = sink
+                        
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout getting sinks via pactl")
+        except Exception as e:
+            self.logger.error(f"Error getting sinks via pactl: {e}")
+        
+        return sinks
+    
+    def _parse_pactl_sink(self, data: dict) -> Optional[AudioSink]:
+        """Parse pactl list sinks output into AudioSink object"""
+        try:
+            sink_id = data.get('id', '')
+            name = data.get('name', f'Sink_{sink_id}')
+            description = data.get('description', name)
+            driver = data.get('driver', 'pulseaudio')
+            state = data.get('state', 'UNKNOWN')
+            muted = data.get('muted', False)
+            
+            volume = 1.0
+            if 'volume' in data:
+                vol_match = re.search(r'(\d+)%', data['volume'])
+                if vol_match:
+                    volume = int(vol_match.group(1)) / 100.0
+            
+            device_type = "unknown"
+            name_lower = name.lower()
+            if 'bluetooth' in name_lower or 'bluez' in name_lower:
+                device_type = "bluetooth"
+            elif 'usb' in name_lower:
+                device_type = "usb"
+            elif 'hdmi' in name_lower:
+                device_type = "hdmi"
+            elif 'analog' in name_lower or 'speaker' in name_lower:
+                device_type = "analog"
+            
+            is_virtual = 'null' in name_lower or 'virtual' in name_lower
+            
+            return AudioSink(
+                id=sink_id,
+                name=name,
+                description=description,
+                driver=driver,
+                state=state,
+                volume=volume,
+                muted=muted,
+                is_virtual=is_virtual,
+                device_type=device_type
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing pactl sink: {e}")
+            return None
+    
+    def _parse_pipewire_sink(self, obj: dict) -> Optional[AudioSink]:
+        """Parse PipeWire object into AudioSink"""
+        try:
+            sink_id = obj.get('id', '')
+            name = obj.get('node_name', obj.get('node_nick', f'Sink_{sink_id}'))
+            description = obj.get('node_description', name)
+            
+            device_type = "unknown"
+            if 'bluetooth' in name.lower() or 'bluez' in obj.get('factory_name', '').lower():
+                device_type = "bluetooth"
+            elif 'usb' in obj.get('device_bus', '').lower():
+                device_type = "usb"
+            elif 'hdmi' in name.lower():
+                device_type = "hdmi"
+            elif 'analog' in name.lower() or 'speaker' in name.lower():
+                device_type = "analog"
+            
+            is_virtual = 'virtual' in name.lower() or obj.get('factory_name', '') == 'support.null-audio-sink'
+            
+            return AudioSink(
+                id=sink_id,
+                name=name,
+                description=description,
+                driver="pipewire",
+                state=obj.get('node_state', 'UNKNOWN'),
+                is_virtual=is_virtual,
+                device_type=device_type
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing sink: {e}")
+            return None
+    
+    def _get_pulseaudio_sinks(self) -> List[AudioSink]:
+        """Get sinks using PulseAudio"""
+        sinks = []
+        try:
+            result = subprocess.run(
+                ["pactl", "-f", "json", "list", "sinks"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                data = json.loads(result.stdout)
+                for sink_data in data:
+                    sink = AudioSink(
+                        id=str(sink_data.get('index', '')),
+                        name=sink_data.get('name', ''),
+                        description=sink_data.get('description', ''),
+                        driver=sink_data.get('driver', 'pulseaudio'),
+                        state=sink_data.get('state', 'UNKNOWN'),
+                        volume=self._parse_pa_volume(sink_data.get('volume', {})),
+                        muted=sink_data.get('mute', False)
+                    )
+                    sinks.append(sink)
+                    self.sinks[sink.id] = sink
+                    
+        except json.JSONDecodeError:
+            result = subprocess.run(
+                ["pactl", "list", "short", "sinks"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        sink = AudioSink(
+                            id=parts[0],
+                            name=parts[1],
+                            description=parts[1],
+                            driver="pulseaudio",
+                            state=parts[4] if len(parts) > 4 else "UNKNOWN"
+                        )
+                        sinks.append(sink)
+                        self.sinks[sink.id] = sink
+        except Exception as e:
+            self.logger.error(f"Error getting PulseAudio sinks: {e}")
+        
+        return sinks
+    
+    def _parse_pa_volume(self, volume_data: dict) -> float:
+        """Parse PulseAudio volume data"""
+        try:
+            if isinstance(volume_data, dict):
+                values = [ch.get('value_percent', '100%') for ch in volume_data.values() if isinstance(ch, dict)]
+                if values:
+                    return float(values[0].rstrip('%')) / 100.0
+        except Exception:
+            pass
+        return 1.0
+    
+    def _get_audio_streams(self) -> List[AudioStream]:
+        """Get running audio streams using pactl list sink-inputs"""
+        streams = []
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sink-inputs"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            if result.returncode == 0:
+                current_stream = {}
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    
+                    if line.startswith('Sink Input #'):
+                        if current_stream:
+                            stream = self._parse_sink_input(current_stream)
+                            if stream:
+                                streams.append(stream)
+                                self.streams[stream.id] = stream
+                        stream_id = line.replace('Sink Input #', '').strip()
+                        current_stream = {'id': stream_id}
+                    elif ':' in line and current_stream:
+                        key, _, value = line.partition(':')
+                        key = key.strip().lower().replace(' ', '_')
+                        value = value.strip().strip('"')
+                        current_stream[key] = value
+                        
+                        if 'application.name' in line.lower():
+                            current_stream['app_name'] = value
+                        elif 'application.process.binary' in line.lower():
+                            current_stream['app_binary'] = value
+                        elif 'application.process.id' in line.lower():
+                            current_stream['pid'] = value
+                        elif 'sink:' in line.lower():
+                            current_stream['sink_id'] = value
+                
+                if current_stream:
+                    stream = self._parse_sink_input(current_stream)
+                    if stream:
+                        streams.append(stream)
+                        self.streams[stream.id] = stream
+                        
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout getting audio streams")
+        except Exception as e:
+            self.logger.error(f"Error getting audio streams: {e}")
+        
+        return streams
+    
+    def _parse_sink_input(self, data: dict) -> Optional[AudioStream]:
+        """Parse sink-input data into AudioStream object"""
+        try:
+            stream_id = data.get('id', '')
+            app_name = data.get('app_name', data.get('application.name', 'Unknown'))
+            app_binary = data.get('app_binary', data.get('application.process.binary', ''))
+            sink_id = data.get('sink_id', data.get('sink', ''))
+            pid = int(data.get('pid', data.get('application.process.id', 0)))
+            
+            volume = 1.0
+            if 'volume' in data:
+                vol_match = re.search(r'(\d+)%', data['volume'])
+                if vol_match:
+                    volume = int(vol_match.group(1)) / 100.0
+            
+            muted = 'yes' in data.get('mute', '').lower()
+            media_name = data.get('media.name', '')
+            
+            return AudioStream(
+                id=stream_id,
+                app_name=app_name,
+                app_binary=app_binary,
+                sink_id=sink_id,
+                sink_name="",
+                volume=volume,
+                muted=muted,
+                pid=pid,
+                media_name=media_name
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing sink input: {e}")
+            return None
+    
+    def _move_stream(self, stream_id: str, sink_id_or_name: str) -> bool:
+        """Move an audio stream to a specific sink using pactl move-sink-input"""
+        try:
+            result = subprocess.run(
+                ["pactl", "move-sink-input", str(stream_id), str(sink_id_or_name)],
+                capture_output=True, text=True, timeout=5
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Moved stream {stream_id} to sink {sink_id_or_name}")
+                return True
+            else:
+                self.logger.error(f"Failed to move stream: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout moving stream")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error moving stream: {e}")
+            return False
+    
+    def _create_virtual_sink(self, sink_name: str, description: str = "", 
+                             channels: int = 2, rate: int = 48000) -> Optional[str]:
+        """Create a virtual audio sink using pactl load-module module-null-sink
+        
+        Returns the module ID on success, None on failure.
+        """
+        if not description:
+            description = f"Aegis Virtual Sink - {sink_name}"
+        
+        try:
+            sink_props = f'device.description="{description}"'
+            
+            result = subprocess.run([
+                "pactl", "load-module", "module-null-sink",
+                f"sink_name={sink_name}",
+                f"sink_properties={sink_props}",
+                f"channels={channels}",
+                f"rate={rate}"
+            ], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                module_id = result.stdout.strip()
+                self.logger.info(f"Created virtual sink '{sink_name}' (module ID: {module_id})")
+                return module_id
+            else:
+                self.logger.error(f"Failed to create virtual sink: {result.stderr}")
+                return None
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout creating virtual sink")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error creating virtual sink: {e}")
+            return None
+    
+    def _set_sink_volume(self, sink_id_or_name: str, volume_percent: int) -> bool:
+        """Set volume for a sink using pactl set-sink-volume
+        
+        Args:
+            sink_id_or_name: Sink index number or sink name
+            volume_percent: Volume level as percentage (0-150)
+        
+        Returns:
+            True on success, False on failure
+        """
+        volume_percent = max(0, min(150, volume_percent))
+        
+        try:
+            result = subprocess.run(
+                ["pactl", "set-sink-volume", str(sink_id_or_name), f"{volume_percent}%"],
+                capture_output=True, text=True, timeout=5
+            )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Set sink {sink_id_or_name} volume to {volume_percent}%")
+                return True
+            else:
+                self.logger.error(f"Failed to set volume: {result.stderr}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.logger.error("Timeout setting sink volume")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error setting sink volume: {e}")
+            return False
+    
+    def get_sources(self) -> List[AudioSource]:
+        """Get all audio input devices/sources"""
+        self.sources.clear()
+        sources = []
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run(
+                    ["wpctl", "status"],
+                    capture_output=True, text=True, timeout=10
+                )
+                
+                if result.returncode == 0:
+                    in_sources = False
+                    for line in result.stdout.split('\n'):
+                        if 'Sources:' in line:
+                            in_sources = True
+                            continue
+                        elif 'Streams:' in line or 'Filters:' in line:
+                            in_sources = False
+                            continue
+                        
+                        if in_sources and line.strip():
+                            match = re.match(r'\s*(\*?)\s*(\d+)\.\s+(.+?)(?:\s+\[vol:\s*([\d.]+)\])?$', line)
+                            if match:
+                                is_default = match.group(1) == '*'
+                                source_id = match.group(2)
+                                name = match.group(3).strip()
+                                volume = float(match.group(4)) if match.group(4) else 1.0
+                                
+                                source = AudioSource(
+                                    id=source_id,
+                                    name=name,
+                                    description=name,
+                                    driver="pipewire",
+                                    state="RUNNING",
+                                    volume=volume,
+                                    is_default=is_default
+                                )
+                                sources.append(source)
+                                self.sources[source_id] = source
+                                
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                result = subprocess.run(
+                    ["pactl", "list", "short", "sources"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        parts = line.split('\t')
+                        if len(parts) >= 2:
+                            source = AudioSource(
+                                id=parts[0],
+                                name=parts[1],
+                                description=parts[1],
+                                driver="pulseaudio",
+                                state=parts[4] if len(parts) > 4 else "UNKNOWN"
+                            )
+                            sources.append(source)
+                            self.sources[source.id] = source
+                            
+        except Exception as e:
+            self.logger.error(f"Error getting sources: {e}")
+        
+        return sources
+    
+    def get_streams(self) -> List[AudioStream]:
+        """Get all running audio streams/applications"""
+        self.streams.clear()
+        streams = []
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run(
+                    ["pw-cli", "list-objects"],
+                    capture_output=True, text=True, timeout=10
+                )
+                
+                if result.returncode == 0:
+                    current_object = {}
+                    for line in result.stdout.split('\n'):
+                        line = line.strip()
+                        
+                        if line.startswith('id '):
+                            if current_object and 'Stream/Output/Audio' in current_object.get('media_class', ''):
+                                stream = self._parse_pipewire_stream(current_object)
+                                if stream:
+                                    streams.append(stream)
+                                    self.streams[stream.id] = stream
+                            current_object = {'id': line.split()[1].rstrip(',')}
+                        elif ':' in line:
+                            key, _, value = line.partition(':')
+                            current_object[key.strip().replace('.', '_').replace('-', '_')] = value.strip().strip('"')
+                    
+                    if current_object and 'Stream/Output/Audio' in current_object.get('media_class', ''):
+                        stream = self._parse_pipewire_stream(current_object)
+                        if stream:
+                            streams.append(stream)
+                            self.streams[stream.id] = stream
+                            
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                result = subprocess.run(
+                    ["pactl", "list", "short", "sink-inputs"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if not line.strip():
+                            continue
+                        parts = line.split('\t')
+                        if len(parts) >= 2:
+                            stream = AudioStream(
+                                id=parts[0],
+                                app_name=parts[3] if len(parts) > 3 else "Unknown",
+                                app_binary=parts[3] if len(parts) > 3 else "",
+                                sink_id=parts[1],
+                                sink_name=""
+                            )
+                            streams.append(stream)
+                            self.streams[stream.id] = stream
+                            
+        except Exception as e:
+            self.logger.error(f"Error getting streams: {e}")
+        
+        return streams
+    
+    def _parse_pipewire_stream(self, obj: dict) -> Optional[AudioStream]:
+        """Parse PipeWire stream object"""
+        try:
+            stream_id = obj.get('id', '')
+            app_name = obj.get('application_name', obj.get('node_name', 'Unknown'))
+            app_binary = obj.get('application_process_binary', '')
+            pid = int(obj.get('application_process_id', 0))
+            media_name = obj.get('media_name', '')
+            
+            return AudioStream(
+                id=stream_id,
+                app_name=app_name,
+                app_binary=app_binary,
+                sink_id="",
+                sink_name="",
+                pid=pid,
+                media_name=media_name
+            )
+        except Exception as e:
+            self.logger.warning(f"Error parsing stream: {e}")
+            return None
+    
+    def route_app_to_sink(self, app_name: str, sink_name: str) -> bool:
+        """Route an application's audio to a specific sink"""
+        if not self.is_full_version():
+            if len(self.config.get("custom_routes", {})) >= 3:
+                self.logger.warning("Basic tier limited to 3 custom routes. Upgrade for unlimited routing.")
+                return False
+        
+        self.get_streams()
+        self.get_sinks()
+        
+        target_stream = None
+        for stream in self.streams.values():
+            if (app_name.lower() in stream.app_name.lower() or 
+                app_name.lower() in stream.app_binary.lower()):
+                target_stream = stream
+                break
+        
+        if not target_stream:
+            self.logger.warning(f"No running stream found for app: {app_name}")
+            return False
+        
+        target_sink = None
+        for sink in self.sinks.values():
+            if (sink_name.lower() in sink.name.lower() or 
+                sink_name.lower() in sink.description.lower()):
+                target_sink = sink
+                break
+        
+        if not target_sink:
+            self.logger.warning(f"Sink not found: {sink_name}")
+            return False
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run(
+                    ["wpctl", "set-default", target_sink.id],
+                    capture_output=True, text=True, timeout=5
+                )
+                
+                result = subprocess.run(
+                    ["pw-cli", "set-param", target_stream.id, "Props", f"{{ target.node = {target_sink.id} }}"],
+                    capture_output=True, text=True, timeout=5
+                )
+                
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                result = subprocess.run(
+                    ["pactl", "move-sink-input", target_stream.id, target_sink.name],
+                    capture_output=True, text=True, timeout=5
+                )
+            
+            if result.returncode == 0:
+                self.logger.info(f"Routed {app_name} to {sink_name}")
+                self.config["custom_routes"][app_name.lower()] = sink_name
+                self.config["app_sink_associations"][app_name.lower()] = target_sink.id
+                self.save_config()
+                return True
+            else:
+                self.logger.error(f"Failed to route: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error routing audio: {e}")
+            return False
+    
+    def create_virtual_sink(self, name: str, description: str = "") -> Optional[AudioSink]:
+        """Create a virtual audio sink"""
+        if not self.is_full_version():
+            if len(self.virtual_sinks) >= 1:
+                self.logger.warning("Basic tier limited to 1 virtual sink. Upgrade for unlimited virtual sinks.")
+                return None
+        
+        if not description:
+            description = f"Aegis Virtual Sink - {name}"
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run([
+                    "pw-cli", "create-node", "adapter",
+                    "factory.name=support.null-audio-sink",
+                    f"node.name={name}",
+                    f"node.description={description}",
+                    "media.class=Audio/Sink",
+                    "audio.position=FL,FR",
+                    "monitor.channel-volumes=true"
+                ], capture_output=True, text=True, timeout=10)
+                
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                result = subprocess.run([
+                    "pactl", "load-module", "module-null-sink",
+                    f"sink_name={name}",
+                    f"sink_properties=device.description=\"{description}\""
+                ], capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                self.logger.info(f"Created virtual sink: {name}")
+                
+                time.sleep(0.5)
+                self.get_sinks()
+                
+                for sink in self.sinks.values():
+                    if name.lower() in sink.name.lower():
+                        sink.is_virtual = True
+                        self.virtual_sinks[name] = sink
+                        return sink
+                
+                virtual_sink = AudioSink(
+                    id=f"virtual_{name}",
+                    name=name,
+                    description=description,
+                    driver=self.audio_backend.value,
+                    state="RUNNING",
+                    is_virtual=True
+                )
+                self.virtual_sinks[name] = virtual_sink
+                return virtual_sink
+            else:
+                self.logger.error(f"Failed to create virtual sink: {result.stderr}")
+                
+        except Exception as e:
+            self.logger.error(f"Error creating virtual sink: {e}")
+        
+        return None
+    
+    def remove_virtual_sink(self, name: str) -> bool:
+        """Remove a virtual audio sink"""
+        try:
+            if name in self.virtual_sinks:
+                sink = self.virtual_sinks[name]
+                
+                if self.audio_backend == AudioBackend.PIPEWIRE:
+                    result = subprocess.run(
+                        ["pw-cli", "destroy", sink.id],
+                        capture_output=True, text=True, timeout=5
+                    )
+                elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                    result = subprocess.run(
+                        ["pactl", "unload-module", sink.id],
+                        capture_output=True, text=True, timeout=5
+                    )
+                
+                if result.returncode == 0:
+                    del self.virtual_sinks[name]
+                    self.logger.info(f"Removed virtual sink: {name}")
+                    return True
+                    
+        except Exception as e:
+            self.logger.error(f"Error removing virtual sink: {e}")
+        
+        return False
+    
+    def apply_preset(self, preset_name: str) -> bool:
+        """Apply an audio routing preset"""
+        preset_name_lower = preset_name.lower()
+        
+        preset = None
+        if preset_name_lower in self.DEFAULT_PRESETS:
+            preset = self.DEFAULT_PRESETS[preset_name_lower]
+        elif preset_name_lower in self.custom_presets:
+            preset = self.custom_presets[preset_name_lower]
+        
+        if not preset:
+            self.logger.error(f"Preset not found: {preset_name}")
+            return False
+        
+        self.logger.info(f"Applying preset: {preset.name}")
+        
+        if not self.is_full_version() and preset_name_lower not in ["default", "gaming"]:
+            self.logger.warning(f"Preset {preset.name} requires Gamer edition or higher")
+            return False
+        
+        for vsink_name in preset.virtual_sinks:
+            if vsink_name not in self.virtual_sinks:
+                self.create_virtual_sink(vsink_name)
+        
+        settings = preset.settings
+        
+        if settings.get("low_latency"):
+            self.set_low_latency_mode(True, settings.get("quantum", 64))
+        
+        if settings.get("normalize_volume"):
+            self.config["volume_normalization"] = True
+        
+        self.get_streams()
+        for app_pattern, sink_pattern in preset.routes.items():
+            for stream in self.streams.values():
+                if app_pattern.lower() in stream.app_name.lower() or \
+                   app_pattern.lower() in stream.app_binary.lower():
+                    self.route_app_to_sink(stream.app_name, sink_pattern)
+        
+        self.config["last_preset"] = preset_name_lower
+        self.save_config()
+        
+        self.logger.info(f"Preset {preset.name} applied successfully")
+        return True
+    
+    def set_low_latency_mode(self, enabled: bool, quantum: int = 64) -> bool:
+        """Enable or disable low-latency audio mode"""
+        if not self.is_full_version() and quantum < 128:
+            quantum = 128
+            self.logger.warning("Quantum below 128 requires Gamer edition")
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run([
+                    "pw-metadata", "-n", "settings", "0",
+                    "clock.force-quantum", str(quantum) if enabled else "0"
+                ], capture_output=True, text=True, timeout=5)
+                
+                if result.returncode == 0:
+                    self.config["low_latency_mode"] = enabled
+                    self.config["quantum"] = quantum
+                    self.save_config()
+                    self.logger.info(f"Low-latency mode {'enabled' if enabled else 'disabled'} (quantum={quantum})")
+                    return True
+                    
+        except Exception as e:
+            self.logger.error(f"Error setting low-latency mode: {e}")
+        
+        return False
+    
+    def set_volume(self, sink_id: str, volume: float) -> bool:
+        """Set volume for a sink (0.0 to 1.5)"""
+        volume = max(0.0, min(1.5, volume))
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run(
+                    ["wpctl", "set-volume", sink_id, str(volume)],
+                    capture_output=True, text=True, timeout=5
+                )
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                volume_percent = int(volume * 100)
+                result = subprocess.run(
+                    ["pactl", "set-sink-volume", sink_id, f"{volume_percent}%"],
+                    capture_output=True, text=True, timeout=5
+                )
+            
+            return result.returncode == 0
+            
+        except Exception as e:
+            self.logger.error(f"Error setting volume: {e}")
+            return False
+    
+    def set_mute(self, sink_id: str, muted: bool) -> bool:
+        """Mute or unmute a sink"""
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                result = subprocess.run(
+                    ["wpctl", "set-mute", sink_id, "1" if muted else "0"],
+                    capture_output=True, text=True, timeout=5
+                )
+            elif self.audio_backend == AudioBackend.PULSEAUDIO:
+                result = subprocess.run(
+                    ["pactl", "set-sink-mute", sink_id, "1" if muted else "0"],
+                    capture_output=True, text=True, timeout=5
+                )
+            
+            return result.returncode == 0
+            
+        except Exception as e:
+            self.logger.error(f"Error setting mute: {e}")
+            return False
+    
+    def start_hotplug_monitoring(self):
+        """Start monitoring for USB/Bluetooth audio device hotplug"""
+        if not self.config.get("hotplug_monitoring"):
+            return
+        
+        if self.hotplug_thread and self.hotplug_thread.is_alive():
+            return
+        
+        self.monitoring = True
+        self.hotplug_thread = threading.Thread(target=self._hotplug_monitor_loop, daemon=True)
+        self.hotplug_thread.start()
+        self.logger.info("Started hotplug monitoring")
+    
+    def stop_hotplug_monitoring(self):
+        """Stop hotplug monitoring"""
+        self.monitoring = False
+        if self.hotplug_thread:
+            self.hotplug_thread.join(timeout=2)
+    
+    def _hotplug_monitor_loop(self):
+        """Monitor for device changes"""
+        known_sinks = set()
+        
+        while self.monitoring:
+            try:
+                current_sinks = set()
+                for sink in self.get_sinks():
+                    current_sinks.add(sink.id)
+                
+                new_sinks = current_sinks - known_sinks
+                removed_sinks = known_sinks - current_sinks
+                
+                for sink_id in new_sinks:
+                    if sink_id in self.sinks:
+                        sink = self.sinks[sink_id]
+                        self.logger.info(f"New audio device detected: {sink.name}")
+                        
+                        if sink.device_type == "bluetooth" and self.config.get("bluetooth_enabled"):
+                            self.logger.info(f"Bluetooth device connected: {sink.name}")
+                        elif sink.device_type == "usb":
+                            self.logger.info(f"USB audio device connected: {sink.name}")
+                
+                for sink_id in removed_sinks:
+                    self.logger.info(f"Audio device removed: {sink_id}")
+                
+                known_sinks = current_sinks
+                
+            except Exception as e:
+                self.logger.error(f"Error in hotplug monitor: {e}")
+            
+            time.sleep(2)
+    
+    def get_audio_levels(self) -> Dict[str, float]:
+        """Get current audio levels for visualization"""
+        levels = {}
+        
+        if not self.is_full_version():
+            return levels
+        
+        try:
+            if self.audio_backend == AudioBackend.PIPEWIRE:
+                pass
+                
+        except Exception as e:
+            self.logger.error(f"Error getting audio levels: {e}")
+        
+        return levels
+    
+    def format_sinks_list(self) -> str:
+        """Format sinks list for CLI output"""
+        self.get_sinks()
+        
+        if not self.sinks:
+            return "No audio output devices found"
+        
+        output = ["Audio Output Devices (Sinks):", "=" * 50]
+        
+        for sink in sorted(self.sinks.values(), key=lambda s: s.name):
+            default_marker = " [DEFAULT]" if sink.is_default else ""
+            virtual_marker = " [VIRTUAL]" if sink.is_virtual else ""
+            muted_marker = " [MUTED]" if sink.muted else ""
+            
+            output.append(f"  {sink.id}: {sink.name}{default_marker}{virtual_marker}{muted_marker}")
+            output.append(f"      Description: {sink.description}")
+            output.append(f"      Type: {sink.device_type} | State: {sink.state} | Volume: {int(sink.volume * 100)}%")
+            output.append("")
+        
+        return "\n".join(output)
+    
+    def format_streams_list(self) -> str:
+        """Format running apps list for CLI output"""
+        self.get_streams()
+        
+        if not self.streams:
+            return "No running audio applications found"
+        
+        output = ["Running Audio Applications:", "=" * 50]
+        
+        for stream in sorted(self.streams.values(), key=lambda s: s.app_name):
+            muted_marker = " [MUTED]" if stream.muted else ""
+            
+            output.append(f"  {stream.id}: {stream.app_name}{muted_marker}")
+            if stream.app_binary:
+                output.append(f"      Binary: {stream.app_binary}")
+            if stream.media_name:
+                output.append(f"      Media: {stream.media_name}")
+            output.append(f"      PID: {stream.pid} | Volume: {int(stream.volume * 100)}%")
+            output.append("")
+        
+        return "\n".join(output)
+    
+    def format_presets_list(self) -> str:
+        """Format presets list for CLI output"""
+        output = ["Available Presets:", "=" * 50]
+        
+        for name, preset in self.DEFAULT_PRESETS.items():
+            tier_note = ""
+            if name not in ["default", "gaming"] and not self.is_full_version():
+                tier_note = " [Requires Gamer Edition]"
+            output.append(f"  {name}: {preset.description}{tier_note}")
+        
+        if self.custom_presets:
+            output.append("")
+            output.append("Custom Presets:")
+            for name, preset in self.custom_presets.items():
+                output.append(f"  {name}: {preset.description}")
+        
+        return "\n".join(output)
+
+
+class AudioRouterGUI:
+    """Tkinter GUI for Audio Router"""
+    
+    def __init__(self, router: AegisAudioRouter):
+        self.router = router
+        self.root = None
+        self.refresh_timer = None
+    
+    def run(self):
+        """Launch the GUI"""
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available")
+            return
+        
+        self.root = tk.Tk()
+        self.root.title(f"{self.router.APP_NAME} v{self.router.VERSION}")
+        self.root.geometry("900x700")
+        self.root.minsize(800, 600)
+        
+        try:
+            self.root.tk.call('tk', 'scaling', 1.2)
+        except:
+            pass
+        
+        self.setup_styles()
+        self.create_widgets()
+        self.refresh_data()
+        
+        self.router.start_hotplug_monitoring()
+        
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.mainloop()
+    
+    def setup_styles(self):
+        """Configure ttk styles"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        style.configure('TFrame', background='#2b2b2b')
+        style.configure('TLabel', background='#2b2b2b', foreground='#ffffff')
+        style.configure('TButton', padding=6)
+        style.configure('Header.TLabel', font=('Helvetica', 14, 'bold'))
+        style.configure('Status.TLabel', font=('Helvetica', 10))
+        
+        style.configure('Treeview', 
+                       background='#3c3f41',
+                       foreground='#ffffff',
+                       fieldbackground='#3c3f41',
+                       rowheight=30)
+        style.configure('Treeview.Heading',
+                       background='#4a4a4a',
+                       foreground='#ffffff',
+                       font=('Helvetica', 10, 'bold'))
+    
+    def create_widgets(self):
+        """Create GUI widgets"""
+        main_frame = ttk.Frame(self.root, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        title_label = ttk.Label(header_frame, text=f"🎧 {self.router.APP_NAME}", style='Header.TLabel')
+        title_label.pack(side=tk.LEFT)
+        
+        tier_text = f"Edition: {self.router.license_tier.name}"
+        if not self.router.is_full_version():
+            tier_text += " (Limited Features)"
+        tier_label = ttk.Label(header_frame, text=tier_text, style='Status.TLabel')
+        tier_label.pack(side=tk.RIGHT)
+        
+        backend_text = f"Backend: {self.router.audio_backend.value.upper()}"
+        backend_label = ttk.Label(header_frame, text=backend_text, style='Status.TLabel')
+        backend_label.pack(side=tk.RIGHT, padx=20)
+        
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        sinks_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(sinks_frame, text='🔊 Output Devices')
+        self.create_sinks_tab(sinks_frame)
+        
+        streams_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(streams_frame, text='🎮 Applications')
+        self.create_streams_tab(streams_frame)
+        
+        routing_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(routing_frame, text='🔀 Routing')
+        self.create_routing_tab(routing_frame)
+        
+        presets_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(presets_frame, text='⚡ Presets')
+        self.create_presets_tab(presets_frame)
+        
+        if self.router.is_full_version():
+            virtual_frame = ttk.Frame(notebook, padding=10)
+            notebook.add(virtual_frame, text='🎛️ Virtual Sinks')
+            self.create_virtual_tab(virtual_frame)
+        
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        refresh_btn = ttk.Button(bottom_frame, text="🔄 Refresh", command=self.refresh_data)
+        refresh_btn.pack(side=tk.LEFT)
+        
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(bottom_frame, textvariable=self.status_var, style='Status.TLabel')
+        status_label.pack(side=tk.RIGHT)
+    
+    def create_sinks_tab(self, parent):
+        """Create output devices tab"""
+        columns = ('id', 'name', 'type', 'state', 'volume', 'default')
+        self.sinks_tree = ttk.Treeview(parent, columns=columns, show='headings', height=15)
+        
+        self.sinks_tree.heading('id', text='ID')
+        self.sinks_tree.heading('name', text='Name')
+        self.sinks_tree.heading('type', text='Type')
+        self.sinks_tree.heading('state', text='State')
+        self.sinks_tree.heading('volume', text='Volume')
+        self.sinks_tree.heading('default', text='Default')
+        
+        self.sinks_tree.column('id', width=50)
+        self.sinks_tree.column('name', width=300)
+        self.sinks_tree.column('type', width=100)
+        self.sinks_tree.column('state', width=100)
+        self.sinks_tree.column('volume', width=80)
+        self.sinks_tree.column('default', width=80)
+        
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.sinks_tree.yview)
+        self.sinks_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.sinks_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        set_default_btn = ttk.Button(btn_frame, text="Set as Default", command=self.set_default_sink)
+        set_default_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.volume_var = tk.IntVar(value=100)
+        volume_scale = ttk.Scale(btn_frame, from_=0, to=150, variable=self.volume_var, 
+                                  orient=tk.HORIZONTAL, length=200)
+        volume_scale.pack(side=tk.LEFT, padx=10)
+        
+        set_volume_btn = ttk.Button(btn_frame, text="Set Volume", command=self.set_sink_volume)
+        set_volume_btn.pack(side=tk.LEFT, padx=5)
+    
+    def create_streams_tab(self, parent):
+        """Create applications tab"""
+        columns = ('id', 'app', 'binary', 'volume', 'pid')
+        self.streams_tree = ttk.Treeview(parent, columns=columns, show='headings', height=15)
+        
+        self.streams_tree.heading('id', text='ID')
+        self.streams_tree.heading('app', text='Application')
+        self.streams_tree.heading('binary', text='Binary')
+        self.streams_tree.heading('volume', text='Volume')
+        self.streams_tree.heading('pid', text='PID')
+        
+        self.streams_tree.column('id', width=50)
+        self.streams_tree.column('app', width=250)
+        self.streams_tree.column('binary', width=200)
+        self.streams_tree.column('volume', width=80)
+        self.streams_tree.column('pid', width=80)
+        
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.streams_tree.yview)
+        self.streams_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.streams_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def create_routing_tab(self, parent):
+        """Create routing tab"""
+        instructions = ttk.Label(parent, text="Route application audio to specific output devices")
+        instructions.pack(pady=10)
+        
+        route_frame = ttk.Frame(parent)
+        route_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(route_frame, text="Application:").pack(side=tk.LEFT, padx=5)
+        self.app_combo = ttk.Combobox(route_frame, width=30)
+        self.app_combo.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Label(route_frame, text="→").pack(side=tk.LEFT, padx=10)
+        
+        ttk.Label(route_frame, text="Output:").pack(side=tk.LEFT, padx=5)
+        self.sink_combo = ttk.Combobox(route_frame, width=30)
+        self.sink_combo.pack(side=tk.LEFT, padx=5)
+        
+        route_btn = ttk.Button(route_frame, text="Route", command=self.route_audio)
+        route_btn.pack(side=tk.LEFT, padx=10)
+        
+        routes_label = ttk.Label(parent, text="Current Routes:", style='Header.TLabel')
+        routes_label.pack(pady=(20, 10), anchor=tk.W)
+        
+        columns = ('app', 'sink')
+        self.routes_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
+        
+        self.routes_tree.heading('app', text='Application')
+        self.routes_tree.heading('sink', text='Output Device')
+        
+        self.routes_tree.column('app', width=300)
+        self.routes_tree.column('sink', width=300)
+        
+        self.routes_tree.pack(fill=tk.BOTH, expand=True)
+    
+    def create_presets_tab(self, parent):
+        """Create presets tab"""
+        presets_label = ttk.Label(parent, text="Quick Presets", style='Header.TLabel')
+        presets_label.pack(pady=10)
+        
+        presets_frame = ttk.Frame(parent)
+        presets_frame.pack(fill=tk.X, pady=10)
+        
+        for name, preset in self.router.DEFAULT_PRESETS.items():
+            btn_frame = ttk.Frame(presets_frame)
+            btn_frame.pack(fill=tk.X, pady=5)
+            
+            btn_text = f"⚡ {preset.name}"
+            if not self.router.is_full_version() and name not in ["default", "gaming"]:
+                btn_text += " 🔒"
+            
+            btn = ttk.Button(btn_frame, text=btn_text, 
+                            command=lambda n=name: self.apply_preset(n))
+            btn.pack(side=tk.LEFT, padx=5)
+            
+            desc_label = ttk.Label(btn_frame, text=preset.description)
+            desc_label.pack(side=tk.LEFT, padx=10)
+        
+        settings_label = ttk.Label(parent, text="Quick Settings", style='Header.TLabel')
+        settings_label.pack(pady=(20, 10))
+        
+        settings_frame = ttk.Frame(parent)
+        settings_frame.pack(fill=tk.X)
+        
+        self.low_latency_var = tk.BooleanVar(value=self.router.config.get("low_latency_mode", False))
+        low_latency_check = ttk.Checkbutton(settings_frame, text="Low Latency Mode (Gaming)",
+                                            variable=self.low_latency_var,
+                                            command=self.toggle_low_latency)
+        low_latency_check.pack(anchor=tk.W, pady=5)
+        
+        self.normalize_var = tk.BooleanVar(value=self.router.config.get("volume_normalization", False))
+        normalize_check = ttk.Checkbutton(settings_frame, text="Volume Normalization",
+                                          variable=self.normalize_var,
+                                          command=self.toggle_normalization)
+        normalize_check.pack(anchor=tk.W, pady=5)
+        
+        self.hotplug_var = tk.BooleanVar(value=self.router.config.get("hotplug_monitoring", True))
+        hotplug_check = ttk.Checkbutton(settings_frame, text="USB/Bluetooth Hotplug Detection",
+                                        variable=self.hotplug_var,
+                                        command=self.toggle_hotplug)
+        hotplug_check.pack(anchor=tk.W, pady=5)
+    
+    def create_virtual_tab(self, parent):
+        """Create virtual sinks tab"""
+        create_frame = ttk.Frame(parent)
+        create_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(create_frame, text="Sink Name:").pack(side=tk.LEFT, padx=5)
+        self.vsink_name_entry = ttk.Entry(create_frame, width=30)
+        self.vsink_name_entry.pack(side=tk.LEFT, padx=5)
+        
+        create_btn = ttk.Button(create_frame, text="Create Virtual Sink", 
+                               command=self.create_virtual_sink)
+        create_btn.pack(side=tk.LEFT, padx=10)
+        
+        vsinks_label = ttk.Label(parent, text="Virtual Sinks:", style='Header.TLabel')
+        vsinks_label.pack(pady=10, anchor=tk.W)
+        
+        columns = ('name', 'id', 'state')
+        self.vsinks_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
+        
+        self.vsinks_tree.heading('name', text='Name')
+        self.vsinks_tree.heading('id', text='ID')
+        self.vsinks_tree.heading('state', text='State')
+        
+        self.vsinks_tree.pack(fill=tk.BOTH, expand=True)
+        
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        remove_btn = ttk.Button(btn_frame, text="Remove Selected", command=self.remove_virtual_sink)
+        remove_btn.pack(side=tk.LEFT, padx=5)
+    
+    def refresh_data(self):
+        """Refresh all data from the audio system"""
+        self.status_var.set("Refreshing...")
+        
+        for item in self.sinks_tree.get_children():
+            self.sinks_tree.delete(item)
+        
+        for sink in self.router.get_sinks():
+            default = "✓" if sink.is_default else ""
+            virtual = "[V] " if sink.is_virtual else ""
+            self.sinks_tree.insert('', tk.END, values=(
+                sink.id,
+                f"{virtual}{sink.name}",
+                sink.device_type,
+                sink.state,
+                f"{int(sink.volume * 100)}%",
+                default
+            ))
+        
+        for item in self.streams_tree.get_children():
+            self.streams_tree.delete(item)
+        
+        apps = []
+        for stream in self.router.get_streams():
+            self.streams_tree.insert('', tk.END, values=(
+                stream.id,
+                stream.app_name,
+                stream.app_binary,
+                f"{int(stream.volume * 100)}%",
+                stream.pid
+            ))
+            apps.append(stream.app_name)
+        
+        self.app_combo['values'] = apps
+        self.sink_combo['values'] = [s.name for s in self.router.sinks.values()]
+        
+        for item in self.routes_tree.get_children():
+            self.routes_tree.delete(item)
+        
+        for app, sink in self.router.config.get("custom_routes", {}).items():
+            self.routes_tree.insert('', tk.END, values=(app, sink))
+        
+        if hasattr(self, 'vsinks_tree'):
+            for item in self.vsinks_tree.get_children():
+                self.vsinks_tree.delete(item)
+            
+            for name, sink in self.router.virtual_sinks.items():
+                self.vsinks_tree.insert('', tk.END, values=(name, sink.id, sink.state))
+        
+        self.status_var.set("Ready")
+        
+        if self.refresh_timer:
+            self.root.after_cancel(self.refresh_timer)
+        self.refresh_timer = self.root.after(5000, self.refresh_data)
+    
+    def set_default_sink(self):
+        """Set selected sink as default"""
+        selection = self.sinks_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select an output device")
+            return
+        
+        item = self.sinks_tree.item(selection[0])
+        sink_id = item['values'][0]
+        
+        try:
+            if self.router.audio_backend == AudioBackend.PIPEWIRE:
+                subprocess.run(["wpctl", "set-default", str(sink_id)], check=True)
+            elif self.router.audio_backend == AudioBackend.PULSEAUDIO:
+                sink_name = self.router.sinks[str(sink_id)].name
+                subprocess.run(["pactl", "set-default-sink", sink_name], check=True)
+            
+            self.status_var.set(f"Set default sink: {sink_id}")
+            self.refresh_data()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to set default sink: {e}")
+    
+    def set_sink_volume(self):
+        """Set volume for selected sink"""
+        selection = self.sinks_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select an output device")
+            return
+        
+        item = self.sinks_tree.item(selection[0])
+        sink_id = str(item['values'][0])
+        volume = self.volume_var.get() / 100.0
+        
+        if self.router.set_volume(sink_id, volume):
+            self.status_var.set(f"Volume set to {int(volume * 100)}%")
+            self.refresh_data()
+        else:
+            messagebox.showerror("Error", "Failed to set volume")
+    
+    def route_audio(self):
+        """Route selected app to selected sink"""
+        app = self.app_combo.get()
+        sink = self.sink_combo.get()
+        
+        if not app or not sink:
+            messagebox.showwarning("Warning", "Please select both application and output device")
+            return
+        
+        if self.router.route_app_to_sink(app, sink):
+            self.status_var.set(f"Routed {app} to {sink}")
+            self.refresh_data()
+        else:
+            messagebox.showerror("Error", f"Failed to route {app} to {sink}")
+    
+    def apply_preset(self, preset_name: str):
+        """Apply a preset"""
+        if self.router.apply_preset(preset_name):
+            self.status_var.set(f"Applied preset: {preset_name}")
+            self.refresh_data()
+        else:
+            messagebox.showerror("Error", f"Failed to apply preset: {preset_name}")
+    
+    def toggle_low_latency(self):
+        """Toggle low latency mode"""
+        enabled = self.low_latency_var.get()
+        quantum = 64 if enabled else 1024
+        self.router.set_low_latency_mode(enabled, quantum)
+        self.status_var.set(f"Low latency mode: {'On' if enabled else 'Off'}")
+    
+    def toggle_normalization(self):
+        """Toggle volume normalization"""
+        self.router.config["volume_normalization"] = self.normalize_var.get()
+        self.router.save_config()
+    
+    def toggle_hotplug(self):
+        """Toggle hotplug monitoring"""
+        self.router.config["hotplug_monitoring"] = self.hotplug_var.get()
+        self.router.save_config()
+        
+        if self.hotplug_var.get():
+            self.router.start_hotplug_monitoring()
+        else:
+            self.router.stop_hotplug_monitoring()
+    
+    def create_virtual_sink(self):
+        """Create a new virtual sink"""
+        name = self.vsink_name_entry.get().strip()
+        if not name:
+            messagebox.showwarning("Warning", "Please enter a sink name")
+            return
+        
+        name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        
+        if self.router.create_virtual_sink(name):
+            self.status_var.set(f"Created virtual sink: {name}")
+            self.vsink_name_entry.delete(0, tk.END)
+            self.refresh_data()
+        else:
+            messagebox.showerror("Error", f"Failed to create virtual sink: {name}")
+    
+    def remove_virtual_sink(self):
+        """Remove selected virtual sink"""
+        selection = self.vsinks_tree.selection()
+        if not selection:
+            messagebox.showwarning("Warning", "Please select a virtual sink")
+            return
+        
+        item = self.vsinks_tree.item(selection[0])
+        name = item['values'][0]
+        
+        if self.router.remove_virtual_sink(name):
+            self.status_var.set(f"Removed virtual sink: {name}")
+            self.refresh_data()
+        else:
+            messagebox.showerror("Error", f"Failed to remove virtual sink: {name}")
+    
+    def on_close(self):
+        """Handle window close"""
+        self.router.stop_hotplug_monitoring()
+        if self.refresh_timer:
+            self.root.after_cancel(self.refresh_timer)
+        self.root.destroy()
+
+
+def main():
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description=f"Aegis Audio Router v{AegisAudioRouter.VERSION} - Multi-output audio routing tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  aegis-audio-router --list-sinks          List all output devices
+  aegis-audio-router --list-apps           List running audio applications
+  aegis-audio-router --route Discord Speakers  Route Discord to Speakers
+  aegis-audio-router --preset gaming       Apply gaming preset
+  aegis-audio-router --low-latency on      Enable low-latency mode
+  aegis-audio-router --gui                 Launch graphical interface
+        """
+    )
+    
+    parser.add_argument('--version', action='version', 
+                       version=f'Aegis Audio Router v{AegisAudioRouter.VERSION}')
+    parser.add_argument('--gui', action='store_true', 
+                       help='Launch graphical interface')
+    parser.add_argument('--list-sinks', action='store_true', 
+                       help='List all audio output devices')
+    parser.add_argument('--list-sources', action='store_true', 
+                       help='List all audio input devices')
+    parser.add_argument('--list-apps', action='store_true', 
+                       help='List running audio applications')
+    parser.add_argument('--list-presets', action='store_true', 
+                       help='List available presets')
+    parser.add_argument('--route', nargs=2, metavar=('APP', 'SINK'),
+                       help='Route application audio to specific sink')
+    parser.add_argument('--preset', type=str, metavar='NAME',
+                       help='Apply audio routing preset')
+    parser.add_argument('--create-sink', type=str, metavar='NAME',
+                       help='Create a virtual audio sink')
+    parser.add_argument('--remove-sink', type=str, metavar='NAME',
+                       help='Remove a virtual audio sink')
+    parser.add_argument('--low-latency', type=str, choices=['on', 'off'],
+                       help='Enable or disable low-latency mode')
+    parser.add_argument('--quantum', type=int, default=64,
+                       help='Set audio quantum/buffer size (default: 64)')
+    parser.add_argument('--set-volume', nargs=2, metavar=('SINK', 'VOLUME'),
+                       help='Set sink volume (0-150)')
+    parser.add_argument('--mute', nargs=2, metavar=('SINK', 'STATE'),
+                       help='Mute/unmute sink (on/off)')
+    parser.add_argument('--status', action='store_true',
+                       help='Show audio system status')
+    parser.add_argument('--monitor', action='store_true',
+                       help='Start hotplug device monitoring')
+    parser.add_argument('--json', action='store_true',
+                       help='Output in JSON format')
+    
+    args = parser.parse_args()
+    
+    if args.gui:
+        if not TKINTER_AVAILABLE:
+            print("Error: tkinter is not available. Install python3-tk package.")
+            sys.exit(1)
+        router = AegisAudioRouter(headless=False)
+        gui = AudioRouterGUI(router)
+        gui.run()
+        return
+    
+    router = AegisAudioRouter(headless=True)
+    
+    if args.list_sinks:
+        if args.json:
+            sinks = [asdict(s) for s in router.get_sinks()]
+            print(json.dumps(sinks, indent=2))
+        else:
+            print(router.format_sinks_list())
+    
+    elif args.list_sources:
+        sources = router.get_sources()
+        if args.json:
+            print(json.dumps([asdict(s) for s in sources], indent=2))
+        else:
+            print("Audio Input Devices (Sources):")
+            print("=" * 50)
+            for source in sources:
+                default = " [DEFAULT]" if source.is_default else ""
+                print(f"  {source.id}: {source.name}{default}")
+    
+    elif args.list_apps:
+        if args.json:
+            streams = [asdict(s) for s in router.get_streams()]
+            print(json.dumps(streams, indent=2))
+        else:
+            print(router.format_streams_list())
+    
+    elif args.list_presets:
+        print(router.format_presets_list())
+    
+    elif args.route:
+        app_name, sink_name = args.route
+        if router.route_app_to_sink(app_name, sink_name):
+            print(f"Successfully routed {app_name} to {sink_name}")
+        else:
+            print(f"Failed to route {app_name} to {sink_name}")
+            sys.exit(1)
+    
+    elif args.preset:
+        if router.apply_preset(args.preset):
+            print(f"Successfully applied preset: {args.preset}")
+        else:
+            print(f"Failed to apply preset: {args.preset}")
+            sys.exit(1)
+    
+    elif args.create_sink:
+        sink = router.create_virtual_sink(args.create_sink)
+        if sink:
+            print(f"Created virtual sink: {args.create_sink}")
+        else:
+            print(f"Failed to create virtual sink: {args.create_sink}")
+            sys.exit(1)
+    
+    elif args.remove_sink:
+        if router.remove_virtual_sink(args.remove_sink):
+            print(f"Removed virtual sink: {args.remove_sink}")
+        else:
+            print(f"Failed to remove virtual sink: {args.remove_sink}")
+            sys.exit(1)
+    
+    elif args.low_latency:
+        enabled = args.low_latency == 'on'
+        if router.set_low_latency_mode(enabled, args.quantum):
+            print(f"Low-latency mode {'enabled' if enabled else 'disabled'} (quantum={args.quantum})")
+        else:
+            print("Failed to set low-latency mode")
+            sys.exit(1)
+    
+    elif args.set_volume:
+        sink_id, volume = args.set_volume
+        volume = float(volume) / 100.0 if float(volume) > 1.5 else float(volume)
+        if router.set_volume(sink_id, volume):
+            print(f"Volume set to {int(volume * 100)}%")
+        else:
+            print("Failed to set volume")
+            sys.exit(1)
+    
+    elif args.mute:
+        sink_id, state = args.mute
+        muted = state.lower() in ['on', '1', 'true', 'yes']
+        if router.set_mute(sink_id, muted):
+            print(f"{'Muted' if muted else 'Unmuted'} sink {sink_id}")
+        else:
+            print("Failed to set mute state")
+            sys.exit(1)
+    
+    elif args.status:
+        print(f"Aegis Audio Router v{router.VERSION}")
+        print(f"Audio Backend: {router.audio_backend.value}")
+        print(f"License Tier: {router.license_tier.name}")
+        print(f"Low-Latency Mode: {'Enabled' if router.config.get('low_latency_mode') else 'Disabled'}")
+        print(f"Quantum: {router.config.get('quantum', 256)}")
+        print(f"Volume Normalization: {'Enabled' if router.config.get('volume_normalization') else 'Disabled'}")
+        print()
+        print(f"Output Devices: {len(router.get_sinks())}")
+        print(f"Input Devices: {len(router.get_sources())}")
+        print(f"Running Streams: {len(router.get_streams())}")
+        print(f"Virtual Sinks: {len(router.virtual_sinks)}")
+    
+    elif args.monitor:
+        print("Starting hotplug monitoring... (Ctrl+C to stop)")
+        router.start_hotplug_monitoring()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            router.stop_hotplug_monitoring()
+            print("\nMonitoring stopped")
+    
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

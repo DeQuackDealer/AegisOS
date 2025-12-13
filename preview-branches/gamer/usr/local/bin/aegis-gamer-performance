@@ -1,0 +1,1194 @@
+#!/usr/bin/env python3
+"""
+Aegis OS Gamer Performance - Advanced Gaming Performance Optimization Tool
+Comprehensive performance tuning for gaming workloads with GUI and CLI modes
+Inspired by Bazzite, SteamOS, and Pop!_OS gaming optimizations
+"""
+
+import os
+import sys
+import subprocess
+import json
+import logging
+import argparse
+import threading
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+
+TIER_LIMIT = "gamer"
+VERSION = "1.5.0"
+
+CONFIG_FILE = "/etc/aegis/gamer-performance.json"
+LOG_FILE = "/var/log/aegis/performance.log"
+PROTON_DIR = "/home/aegis/.local/share/Steam/compatibilitytools.d"
+WINE_PREFIX = "/home/aegis/.wine"
+
+PRESETS = {
+    "balanced": {
+        "name": "Balanced",
+        "description": "Default profile - good balance of battery and performance",
+        "cpu_governor": "schedutil",
+        "gpu_power_profile": "balanced",
+        "gpu_fan_mode": "auto",
+        "memory_optimization": "moderate",
+        "network_optimization": "standard",
+        "compositor": True,
+        "fsr_enabled": False,
+        "fsr_sharpness": 0.5,
+        "vrr_enabled": True,
+        "frame_limit": 0,
+        "raw_input": False,
+        "gamemode_enabled": True,
+        "swappiness": 60,
+        "zram_enabled": True,
+        "zram_size_percent": 50
+    },
+    "performance": {
+        "name": "Performance",
+        "description": "Maximum performance - full power, max FPS",
+        "cpu_governor": "performance",
+        "gpu_power_profile": "performance",
+        "gpu_fan_mode": "aggressive",
+        "memory_optimization": "aggressive",
+        "network_optimization": "gaming",
+        "compositor": False,
+        "fsr_enabled": True,
+        "fsr_sharpness": 0.8,
+        "vrr_enabled": True,
+        "frame_limit": 0,
+        "raw_input": True,
+        "gamemode_enabled": True,
+        "swappiness": 10,
+        "zram_enabled": True,
+        "zram_size_percent": 75
+    },
+    "battery_saver": {
+        "name": "Battery Saver",
+        "description": "Low power mode for laptops - extended battery life",
+        "cpu_governor": "powersave",
+        "gpu_power_profile": "powersave",
+        "gpu_fan_mode": "quiet",
+        "memory_optimization": "conservative",
+        "network_optimization": "standard",
+        "compositor": True,
+        "fsr_enabled": True,
+        "fsr_sharpness": 0.6,
+        "vrr_enabled": False,
+        "frame_limit": 30,
+        "raw_input": False,
+        "gamemode_enabled": False,
+        "swappiness": 80,
+        "zram_enabled": True,
+        "zram_size_percent": 25
+    },
+    "stream_mode": {
+        "name": "Stream Mode",
+        "description": "Optimized for OBS/streaming - balanced encoding priority",
+        "cpu_governor": "schedutil",
+        "gpu_power_profile": "balanced",
+        "gpu_fan_mode": "auto",
+        "memory_optimization": "moderate",
+        "network_optimization": "streaming",
+        "compositor": True,
+        "fsr_enabled": False,
+        "fsr_sharpness": 0.5,
+        "vrr_enabled": True,
+        "frame_limit": 60,
+        "raw_input": False,
+        "gamemode_enabled": True,
+        "swappiness": 30,
+        "zram_enabled": True,
+        "zram_size_percent": 50,
+        "encoder_priority": "nvenc_high"
+    },
+    "esports": {
+        "name": "Esports",
+        "description": "Minimum latency, maximum frames - competitive gaming",
+        "cpu_governor": "performance",
+        "gpu_power_profile": "turbo",
+        "gpu_fan_mode": "max",
+        "memory_optimization": "aggressive",
+        "network_optimization": "esports",
+        "compositor": False,
+        "fsr_enabled": False,
+        "fsr_sharpness": 0.5,
+        "vrr_enabled": False,
+        "frame_limit": 0,
+        "raw_input": True,
+        "gamemode_enabled": True,
+        "swappiness": 1,
+        "zram_enabled": False,
+        "zram_size_percent": 0,
+        "disable_power_management": True,
+        "network_low_latency": True
+    }
+}
+
+PROTON_VERSIONS = {
+    "GE-Proton9-15": {
+        "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton9-15/GE-Proton9-15.tar.gz",
+        "description": "Latest GE-Proton with improved game compatibility"
+    },
+    "GE-Proton9-10": {
+        "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton9-10/GE-Proton9-10.tar.gz",
+        "description": "Stable GE-Proton release"
+    },
+    "GE-Proton8-32": {
+        "url": "https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton8-32/GE-Proton8-32.tar.gz",
+        "description": "Legacy GE-Proton for older games"
+    }
+}
+
+class AegisGamerPerformance:
+    def __init__(self):
+        self.config = {}
+        self.current_preset = "balanced"
+        self.gpu_type = None
+        self.setup_logging()
+        self.detect_hardware()
+        self.load_config()
+        
+    def setup_logging(self):
+        log_dir = Path(LOG_FILE).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("aegis-gamer-performance")
+        
+    def detect_hardware(self):
+        try:
+            lspci = subprocess.run(["lspci"], capture_output=True, text=True)
+            output = lspci.stdout.lower()
+            
+            if "nvidia" in output:
+                self.gpu_type = "nvidia"
+            elif "amd" in output or "radeon" in output:
+                self.gpu_type = "amd"
+            elif "intel" in output:
+                self.gpu_type = "intel"
+            else:
+                self.gpu_type = "unknown"
+                
+            self.logger.info(f"Detected GPU: {self.gpu_type}")
+        except Exception as e:
+            self.gpu_type = "unknown"
+            self.logger.warning(f"GPU detection failed: {e}")
+            
+    def load_config(self):
+        default_config = {
+            "active_preset": "balanced",
+            "custom_settings": {},
+            "proton_versions": [],
+            "wine_prefixes": [],
+            "gamemode_presets": {},
+            "gpu_custom_curves": {},
+            "last_applied": None
+        }
+        
+        try:
+            config_path = Path(CONFIG_FILE)
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    self.config = {**default_config, **json.load(f)}
+            else:
+                self.config = default_config
+                self.save_config()
+        except Exception as e:
+            self.logger.error(f"Failed to load config: {e}")
+            self.config = default_config
+            
+        self.current_preset = self.config.get("active_preset", "balanced")
+        
+    def save_config(self):
+        try:
+            config_path = Path(CONFIG_FILE)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            self.logger.info("Configuration saved")
+        except Exception as e:
+            self.logger.error(f"Failed to save config: {e}")
+            
+    def check_tier_access(self, feature: str) -> bool:
+        premium_features = [
+            "gpu_fan_curve_editor",
+            "memory_clock_tweaks",
+            "custom_gamemode_presets",
+            "advanced_network_tuning",
+            "per_game_profiles"
+        ]
+        
+        if feature in premium_features and TIER_LIMIT == "freemium":
+            self.logger.warning(f"Feature '{feature}' requires Gamer edition")
+            return False
+        return True
+        
+    def set_cpu_governor(self, governor: str) -> bool:
+        if governor not in ["performance", "powersave", "schedutil", "ondemand", "conservative"]:
+            self.logger.error(f"Invalid CPU governor: {governor}")
+            return False
+            
+        try:
+            cpus = [d for d in os.listdir("/sys/devices/system/cpu/") 
+                    if d.startswith("cpu") and d[3:].isdigit()]
+            
+            for cpu in cpus:
+                governor_path = f"/sys/devices/system/cpu/{cpu}/cpufreq/scaling_governor"
+                if os.path.exists(governor_path):
+                    with open(governor_path, 'w') as f:
+                        f.write(governor)
+                        
+            self.logger.info(f"CPU governor set to: {governor}")
+            return True
+        except PermissionError:
+            self.logger.error("Root privileges required for CPU governor control")
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to set CPU governor: {e}")
+            return False
+            
+    def set_gpu_power_profile(self, profile: str) -> bool:
+        profiles = {
+            "powersave": {"nvidia": "0", "amd": "low"},
+            "balanced": {"nvidia": "1", "amd": "auto"},
+            "performance": {"nvidia": "2", "amd": "high"},
+            "turbo": {"nvidia": "3", "amd": "manual"}
+        }
+        
+        if profile not in profiles:
+            self.logger.error(f"Invalid GPU power profile: {profile}")
+            return False
+            
+        try:
+            if self.gpu_type == "nvidia":
+                level = profiles[profile]["nvidia"]
+                subprocess.run([
+                    "nvidia-settings", "-a", 
+                    f"[gpu:0]/GPUPowerMizerMode={level}"
+                ], check=True, capture_output=True)
+                self.logger.info(f"NVIDIA power profile set to: {profile}")
+                
+            elif self.gpu_type == "amd":
+                mode = profiles[profile]["amd"]
+                amd_pp_path = "/sys/class/drm/card0/device/power_dpm_force_performance_level"
+                if os.path.exists(amd_pp_path):
+                    with open(amd_pp_path, 'w') as f:
+                        f.write(mode)
+                self.logger.info(f"AMD power profile set to: {profile}")
+                
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set GPU power profile: {e}")
+            return False
+            
+    def set_gpu_fan_mode(self, mode: str) -> bool:
+        if not self.check_tier_access("gpu_fan_curve_editor") and mode == "custom":
+            print("⚠️ Custom fan curves require Gamer edition")
+            return False
+            
+        try:
+            if self.gpu_type == "nvidia":
+                if mode == "auto":
+                    subprocess.run([
+                        "nvidia-settings", "-a",
+                        "[gpu:0]/GPUFanControlState=0"
+                    ], capture_output=True)
+                elif mode == "aggressive":
+                    subprocess.run([
+                        "nvidia-settings", "-a",
+                        "[gpu:0]/GPUFanControlState=1",
+                        "-a", "[fan:0]/GPUTargetFanSpeed=70"
+                    ], capture_output=True)
+                elif mode == "max":
+                    subprocess.run([
+                        "nvidia-settings", "-a",
+                        "[gpu:0]/GPUFanControlState=1",
+                        "-a", "[fan:0]/GPUTargetFanSpeed=100"
+                    ], capture_output=True)
+                elif mode == "quiet":
+                    subprocess.run([
+                        "nvidia-settings", "-a",
+                        "[gpu:0]/GPUFanControlState=1",
+                        "-a", "[fan:0]/GPUTargetFanSpeed=40"
+                    ], capture_output=True)
+                    
+            elif self.gpu_type == "amd":
+                hwmon_path = "/sys/class/drm/card0/device/hwmon/"
+                if os.path.exists(hwmon_path):
+                    hwmons = os.listdir(hwmon_path)
+                    if hwmons:
+                        fan_path = f"{hwmon_path}{hwmons[0]}/pwm1_enable"
+                        if mode == "auto":
+                            with open(fan_path, 'w') as f:
+                                f.write("2")
+                        else:
+                            with open(fan_path, 'w') as f:
+                                f.write("1")
+                                
+            self.logger.info(f"GPU fan mode set to: {mode}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set GPU fan mode: {e}")
+            return False
+            
+    def get_gpu_temperature(self) -> Optional[float]:
+        try:
+            if self.gpu_type == "nvidia":
+                result = subprocess.run([
+                    "nvidia-smi", "--query-gpu=temperature.gpu",
+                    "--format=csv,noheader,nounits"
+                ], capture_output=True, text=True)
+                return float(result.stdout.strip())
+                
+            elif self.gpu_type == "amd":
+                hwmon_path = "/sys/class/drm/card0/device/hwmon/"
+                if os.path.exists(hwmon_path):
+                    hwmons = os.listdir(hwmon_path)
+                    if hwmons:
+                        temp_path = f"{hwmon_path}{hwmons[0]}/temp1_input"
+                        with open(temp_path, 'r') as f:
+                            return float(f.read().strip()) / 1000.0
+                            
+            return None
+        except Exception as e:
+            self.logger.warning(f"Failed to read GPU temperature: {e}")
+            return None
+            
+    def set_memory_clock(self, offset: int) -> bool:
+        if not self.check_tier_access("memory_clock_tweaks"):
+            print("⚠️ Memory clock tweaks require Gamer edition")
+            return False
+            
+        try:
+            if self.gpu_type == "nvidia":
+                subprocess.run([
+                    "nvidia-settings", "-a",
+                    f"[gpu:0]/GPUMemoryTransferRateOffset[3]={offset}"
+                ], check=True, capture_output=True)
+                self.logger.info(f"GPU memory clock offset set to: {offset}")
+                return True
+        except Exception as e:
+            self.logger.error(f"Failed to set memory clock: {e}")
+            return False
+            
+    def enable_fsr(self, enabled: bool, sharpness: float = 0.5) -> bool:
+        try:
+            profile_path = Path.home() / ".profile"
+            
+            lines = []
+            if profile_path.exists():
+                with open(profile_path, 'r') as f:
+                    lines = [l for l in f.readlines() 
+                             if "WINE_FULLSCREEN_FSR" not in l and 
+                                "WINE_FULLSCREEN_FSR_STRENGTH" not in l]
+                                
+            if enabled:
+                lines.append(f"\nexport WINE_FULLSCREEN_FSR=1\n")
+                lines.append(f"export WINE_FULLSCREEN_FSR_STRENGTH={sharpness}\n")
+                
+            with open(profile_path, 'w') as f:
+                f.writelines(lines)
+                
+            self.logger.info(f"FSR {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to configure FSR: {e}")
+            return False
+            
+    def enable_vrr(self, enabled: bool) -> bool:
+        try:
+            if self.gpu_type == "nvidia":
+                mode = "1" if enabled else "0"
+                subprocess.run([
+                    "nvidia-settings", "-a",
+                    f"CurrentMetaMode=nvidia-auto-select +0+0 {{ AllowGSYNCCompatible = {'On' if enabled else 'Off'} }}"
+                ], capture_output=True)
+                
+            elif self.gpu_type == "amd":
+                vrr_path = "/sys/class/drm/card0/device/freesync_enabled"
+                if os.path.exists(vrr_path):
+                    with open(vrr_path, 'w') as f:
+                        f.write("1" if enabled else "0")
+                        
+            self.logger.info(f"VRR {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to configure VRR: {e}")
+            return False
+            
+    def set_frame_limit(self, limit: int) -> bool:
+        try:
+            profile_path = Path.home() / ".profile"
+            
+            lines = []
+            if profile_path.exists():
+                with open(profile_path, 'r') as f:
+                    lines = [l for l in f.readlines() 
+                             if "MANGOHUD_CONFIG" not in l]
+                             
+            if limit > 0:
+                lines.append(f"\nexport MANGOHUD_CONFIG=fps_limit={limit}\n")
+                
+            with open(profile_path, 'w') as f:
+                f.writelines(lines)
+                
+            self.logger.info(f"Frame limit set to: {limit if limit > 0 else 'unlimited'}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to set frame limit: {e}")
+            return False
+            
+    def enable_raw_input(self, enabled: bool) -> bool:
+        try:
+            if enabled:
+                subprocess.run([
+                    "xinput", "set-prop", "pointer:*",
+                    "libinput Accel Speed", "0"
+                ], capture_output=True)
+                subprocess.run([
+                    "xinput", "set-prop", "pointer:*",
+                    "libinput Accel Profile Enabled", "0", "1"
+                ], capture_output=True)
+                
+            self.logger.info(f"Raw input {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to configure raw input: {e}")
+            return False
+            
+    def toggle_compositor(self, enabled: bool) -> bool:
+        try:
+            if enabled:
+                subprocess.run(["kwin_x11", "--replace"], capture_output=True, timeout=5)
+            else:
+                subprocess.Popen(["qdbus", "org.kde.KWin", "/Compositor", "suspend"])
+                
+            self.logger.info(f"Compositor {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            self.logger.warning(f"Failed to toggle compositor: {e}")
+            return False
+            
+    def optimize_memory(self, level: str) -> bool:
+        settings = {
+            "conservative": {"swappiness": 80, "vfs_cache_pressure": 100, "drop_caches": False},
+            "moderate": {"swappiness": 60, "vfs_cache_pressure": 50, "drop_caches": False},
+            "aggressive": {"swappiness": 10, "vfs_cache_pressure": 50, "drop_caches": True}
+        }
+        
+        if level not in settings:
+            level = "moderate"
+            
+        try:
+            s = settings[level]
+            
+            with open("/proc/sys/vm/swappiness", 'w') as f:
+                f.write(str(s["swappiness"]))
+                
+            with open("/proc/sys/vm/vfs_cache_pressure", 'w') as f:
+                f.write(str(s["vfs_cache_pressure"]))
+                
+            if s["drop_caches"]:
+                subprocess.run(["sync"], check=True)
+                with open("/proc/sys/vm/drop_caches", 'w') as f:
+                    f.write("3")
+                    
+            self.logger.info(f"Memory optimization level: {level}")
+            return True
+        except PermissionError:
+            self.logger.error("Root privileges required for memory optimization")
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to optimize memory: {e}")
+            return False
+            
+    def configure_zram(self, enabled: bool, size_percent: int) -> bool:
+        try:
+            if enabled:
+                total_mem = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES')
+                zram_size = int(total_mem * (size_percent / 100))
+                
+                subprocess.run(["modprobe", "zram"], check=True, capture_output=True)
+                
+                zram_path = "/sys/block/zram0"
+                if os.path.exists(zram_path):
+                    with open(f"{zram_path}/disksize", 'w') as f:
+                        f.write(str(zram_size))
+                    subprocess.run(["mkswap", "/dev/zram0"], capture_output=True)
+                    subprocess.run(["swapon", "-p", "100", "/dev/zram0"], capture_output=True)
+                    
+            else:
+                subprocess.run(["swapoff", "/dev/zram0"], capture_output=True)
+                
+            self.logger.info(f"ZRAM {'enabled' if enabled else 'disabled'}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to configure ZRAM: {e}")
+            return False
+            
+    def optimize_network(self, profile: str) -> bool:
+        settings = {
+            "standard": {
+                "tcp_congestion": "cubic",
+                "tcp_fastopen": "1",
+                "rmem_max": "16777216",
+                "wmem_max": "16777216"
+            },
+            "gaming": {
+                "tcp_congestion": "bbr",
+                "tcp_fastopen": "3",
+                "rmem_max": "33554432",
+                "wmem_max": "33554432",
+                "tcp_low_latency": "1"
+            },
+            "streaming": {
+                "tcp_congestion": "bbr",
+                "tcp_fastopen": "3",
+                "rmem_max": "67108864",
+                "wmem_max": "67108864"
+            },
+            "esports": {
+                "tcp_congestion": "bbr",
+                "tcp_fastopen": "3",
+                "rmem_max": "16777216",
+                "wmem_max": "16777216",
+                "tcp_low_latency": "1",
+                "tcp_timestamps": "0"
+            }
+        }
+        
+        if profile not in settings:
+            profile = "standard"
+            
+        try:
+            s = settings[profile]
+            
+            subprocess.run([
+                "sysctl", "-w", 
+                f"net.ipv4.tcp_congestion_control={s['tcp_congestion']}"
+            ], capture_output=True)
+            
+            with open("/proc/sys/net/ipv4/tcp_fastopen", 'w') as f:
+                f.write(s["tcp_fastopen"])
+                
+            with open("/proc/sys/net/core/rmem_max", 'w') as f:
+                f.write(s["rmem_max"])
+                
+            with open("/proc/sys/net/core/wmem_max", 'w') as f:
+                f.write(s["wmem_max"])
+                
+            if "tcp_low_latency" in s:
+                with open("/proc/sys/net/ipv4/tcp_low_latency", 'w') as f:
+                    f.write(s["tcp_low_latency"])
+                    
+            self.logger.info(f"Network optimization profile: {profile}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to optimize network: {e}")
+            return False
+            
+    def enable_gamemode(self, enabled: bool) -> bool:
+        try:
+            if enabled:
+                if subprocess.run(["which", "gamemoded"], capture_output=True).returncode == 0:
+                    subprocess.run(["systemctl", "--user", "start", "gamemoded"], 
+                                   capture_output=True)
+                    self.logger.info("GameMode enabled")
+                else:
+                    self.logger.warning("GameMode not installed")
+                    return False
+            else:
+                subprocess.run(["systemctl", "--user", "stop", "gamemoded"], 
+                               capture_output=True)
+                self.logger.info("GameMode disabled")
+                
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to configure GameMode: {e}")
+            return False
+            
+    def install_proton_version(self, version: str) -> bool:
+        if version not in PROTON_VERSIONS:
+            self.logger.error(f"Unknown Proton version: {version}")
+            return False
+            
+        try:
+            proton_path = Path(PROTON_DIR)
+            proton_path.mkdir(parents=True, exist_ok=True)
+            
+            url = PROTON_VERSIONS[version]["url"]
+            tar_file = f"/tmp/{version}.tar.gz"
+            
+            print(f"Downloading {version}...")
+            subprocess.run(["wget", "-O", tar_file, url], check=True)
+            
+            print(f"Extracting {version}...")
+            subprocess.run(["tar", "-xzf", tar_file, "-C", str(proton_path)], check=True)
+            
+            os.remove(tar_file)
+            
+            if version not in self.config["proton_versions"]:
+                self.config["proton_versions"].append(version)
+                self.save_config()
+                
+            self.logger.info(f"Installed Proton version: {version}")
+            print(f"✅ {version} installed successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to install Proton: {e}")
+            print(f"❌ Failed to install {version}: {e}")
+            return False
+            
+    def list_installed_proton(self) -> List[str]:
+        installed = []
+        proton_path = Path(PROTON_DIR)
+        
+        if proton_path.exists():
+            for d in proton_path.iterdir():
+                if d.is_dir() and "proton" in d.name.lower():
+                    installed.append(d.name)
+                    
+        return installed
+        
+    def apply_preset(self, preset_name: str) -> bool:
+        if preset_name not in PRESETS:
+            self.logger.error(f"Unknown preset: {preset_name}")
+            return False
+            
+        preset = PRESETS[preset_name]
+        self.logger.info(f"Applying preset: {preset['name']}")
+        print(f"🎮 Applying '{preset['name']}' preset...")
+        
+        success = True
+        
+        success &= self.set_cpu_governor(preset["cpu_governor"])
+        success &= self.set_gpu_power_profile(preset["gpu_power_profile"])
+        success &= self.set_gpu_fan_mode(preset["gpu_fan_mode"])
+        success &= self.optimize_memory(preset["memory_optimization"])
+        success &= self.optimize_network(preset["network_optimization"])
+        success &= self.toggle_compositor(preset["compositor"])
+        success &= self.enable_fsr(preset["fsr_enabled"], preset.get("fsr_sharpness", 0.5))
+        success &= self.enable_vrr(preset["vrr_enabled"])
+        success &= self.set_frame_limit(preset["frame_limit"])
+        success &= self.enable_raw_input(preset["raw_input"])
+        success &= self.enable_gamemode(preset["gamemode_enabled"])
+        
+        if preset.get("zram_enabled", False):
+            success &= self.configure_zram(True, preset.get("zram_size_percent", 50))
+            
+        self.config["active_preset"] = preset_name
+        self.config["last_applied"] = datetime.now().isoformat()
+        self.save_config()
+        
+        if success:
+            print(f"✅ Preset '{preset['name']}' applied successfully")
+        else:
+            print(f"⚠️ Preset '{preset['name']}' applied with some warnings")
+            
+        return success
+        
+    def get_system_status(self) -> Dict[str, Any]:
+        status = {
+            "gpu_type": self.gpu_type,
+            "gpu_temperature": self.get_gpu_temperature(),
+            "active_preset": self.config.get("active_preset", "balanced"),
+            "installed_proton": self.list_installed_proton(),
+            "gamemode_running": False,
+            "compositor_running": True
+        }
+        
+        try:
+            result = subprocess.run(["pgrep", "gamemoded"], capture_output=True)
+            status["gamemode_running"] = result.returncode == 0
+        except:
+            pass
+            
+        try:
+            result = subprocess.run(["pgrep", "-f", "kwin|picom|compton"], capture_output=True)
+            status["compositor_running"] = result.returncode == 0
+        except:
+            pass
+            
+        return status
+        
+    def print_status(self):
+        status = self.get_system_status()
+        
+        print("\n" + "=" * 50)
+        print("🎮 Aegis Gamer Performance Status")
+        print("=" * 50)
+        print(f"Version: {VERSION}")
+        print(f"Edition: {TIER_LIMIT.upper()}")
+        print("-" * 50)
+        print(f"GPU Type: {status['gpu_type'].upper()}")
+        if status['gpu_temperature']:
+            print(f"GPU Temperature: {status['gpu_temperature']}°C")
+        print(f"Active Preset: {status['active_preset'].upper()}")
+        print(f"GameMode: {'Running' if status['gamemode_running'] else 'Stopped'}")
+        print(f"Compositor: {'Running' if status['compositor_running'] else 'Disabled'}")
+        print("-" * 50)
+        print(f"Installed Proton Versions: {len(status['installed_proton'])}")
+        for pv in status['installed_proton']:
+            print(f"  • {pv}")
+        print("=" * 50 + "\n")
+
+
+class AegisGamerPerformanceGUI:
+    def __init__(self, core: AegisGamerPerformance):
+        self.core = core
+        self.root = None
+        
+    def run(self):
+        try:
+            import tkinter as tk
+            from tkinter import ttk, messagebox
+        except ImportError:
+            print("❌ tkinter not available. Please install python3-tk")
+            print("   Falling back to CLI mode...")
+            return False
+            
+        self.root = tk.Tk()
+        self.root.title(f"Aegis Gamer Performance v{VERSION}")
+        self.root.geometry("800x600")
+        self.root.configure(bg='#1e1e2e')
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('TNotebook', background='#1e1e2e')
+        style.configure('TNotebook.Tab', background='#313244', foreground='#cdd6f4',
+                       padding=[20, 10])
+        style.map('TNotebook.Tab', background=[('selected', '#45475a')])
+        style.configure('TFrame', background='#1e1e2e')
+        style.configure('TLabel', background='#1e1e2e', foreground='#cdd6f4')
+        style.configure('TButton', background='#89b4fa', foreground='#1e1e2e')
+        style.configure('TScale', background='#1e1e2e')
+        
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        self.create_presets_tab(notebook)
+        self.create_gpu_tab(notebook)
+        self.create_cpu_tab(notebook)
+        self.create_proton_tab(notebook)
+        self.create_advanced_tab(notebook)
+        self.create_status_bar()
+        
+        self.update_status()
+        
+        self.root.mainloop()
+        return True
+        
+    def create_presets_tab(self, notebook):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text="⚡ Presets")
+        
+        title = tk.Label(frame, text="Performance Presets", 
+                        font=('Helvetica', 16, 'bold'),
+                        bg='#1e1e2e', fg='#f5c2e7')
+        title.pack(pady=20)
+        
+        presets_frame = ttk.Frame(frame)
+        presets_frame.pack(fill='both', expand=True, padx=20)
+        
+        preset_icons = {
+            "balanced": "⚖️",
+            "performance": "🚀",
+            "battery_saver": "🔋",
+            "stream_mode": "📺",
+            "esports": "🎯"
+        }
+        
+        for i, (key, preset) in enumerate(PRESETS.items()):
+            btn_frame = ttk.Frame(presets_frame)
+            btn_frame.pack(fill='x', pady=5)
+            
+            btn = tk.Button(btn_frame, 
+                           text=f"{preset_icons.get(key, '🎮')} {preset['name']}",
+                           font=('Helvetica', 12),
+                           bg='#45475a', fg='#cdd6f4',
+                           activebackground='#89b4fa',
+                           width=20, height=2,
+                           command=lambda k=key: self.apply_preset_gui(k))
+            btn.pack(side='left', padx=5)
+            
+            desc = tk.Label(btn_frame, text=preset['description'],
+                           bg='#1e1e2e', fg='#a6adc8',
+                           font=('Helvetica', 10))
+            desc.pack(side='left', padx=10)
+            
+    def create_gpu_tab(self, notebook):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text="🎨 GPU")
+        
+        title = tk.Label(frame, text=f"GPU Control ({self.core.gpu_type.upper()})", 
+                        font=('Helvetica', 16, 'bold'),
+                        bg='#1e1e2e', fg='#f5c2e7')
+        title.pack(pady=20)
+        
+        temp_frame = ttk.Frame(frame)
+        temp_frame.pack(fill='x', padx=20, pady=10)
+        
+        temp = self.core.get_gpu_temperature()
+        self.temp_label = tk.Label(temp_frame, 
+                                   text=f"🌡️ Temperature: {temp if temp else 'N/A'}°C",
+                                   font=('Helvetica', 14),
+                                   bg='#1e1e2e', fg='#fab387')
+        self.temp_label.pack()
+        
+        power_frame = ttk.Frame(frame)
+        power_frame.pack(fill='x', padx=20, pady=10)
+        
+        tk.Label(power_frame, text="Power Profile:",
+                bg='#1e1e2e', fg='#cdd6f4').pack(side='left')
+        
+        self.power_var = tk.StringVar(value="balanced")
+        for profile in ["powersave", "balanced", "performance", "turbo"]:
+            rb = tk.Radiobutton(power_frame, text=profile.capitalize(),
+                               variable=self.power_var, value=profile,
+                               bg='#1e1e2e', fg='#cdd6f4',
+                               selectcolor='#45475a',
+                               command=self.apply_gpu_power)
+            rb.pack(side='left', padx=5)
+            
+        fan_frame = ttk.Frame(frame)
+        fan_frame.pack(fill='x', padx=20, pady=10)
+        
+        tk.Label(fan_frame, text="Fan Mode:",
+                bg='#1e1e2e', fg='#cdd6f4').pack(side='left')
+        
+        self.fan_var = tk.StringVar(value="auto")
+        for mode in ["quiet", "auto", "aggressive", "max"]:
+            rb = tk.Radiobutton(fan_frame, text=mode.capitalize(),
+                               variable=self.fan_var, value=mode,
+                               bg='#1e1e2e', fg='#cdd6f4',
+                               selectcolor='#45475a',
+                               command=self.apply_fan_mode)
+            rb.pack(side='left', padx=5)
+            
+    def create_cpu_tab(self, notebook):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text="⚙️ CPU")
+        
+        title = tk.Label(frame, text="CPU Governor Control", 
+                        font=('Helvetica', 16, 'bold'),
+                        bg='#1e1e2e', fg='#f5c2e7')
+        title.pack(pady=20)
+        
+        gov_frame = ttk.Frame(frame)
+        gov_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.gov_var = tk.StringVar(value="schedutil")
+        
+        governors = [
+            ("🐢 Powersave", "powersave", "Minimum power consumption"),
+            ("⚡ Schedutil", "schedutil", "Dynamic frequency scaling"),
+            ("🚀 Performance", "performance", "Maximum clock speed"),
+            ("📊 Ondemand", "ondemand", "Scale based on load")
+        ]
+        
+        for icon_name, value, desc in governors:
+            btn_frame = ttk.Frame(gov_frame)
+            btn_frame.pack(fill='x', pady=5)
+            
+            rb = tk.Radiobutton(btn_frame, text=icon_name,
+                               variable=self.gov_var, value=value,
+                               bg='#1e1e2e', fg='#cdd6f4',
+                               selectcolor='#45475a',
+                               font=('Helvetica', 12),
+                               command=self.apply_cpu_governor)
+            rb.pack(side='left')
+            
+            tk.Label(btn_frame, text=desc,
+                    bg='#1e1e2e', fg='#a6adc8',
+                    font=('Helvetica', 10)).pack(side='left', padx=10)
+                    
+    def create_proton_tab(self, notebook):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text="🍷 Proton/Wine")
+        
+        title = tk.Label(frame, text="Proton Version Manager", 
+                        font=('Helvetica', 16, 'bold'),
+                        bg='#1e1e2e', fg='#f5c2e7')
+        title.pack(pady=20)
+        
+        installed_frame = ttk.Frame(frame)
+        installed_frame.pack(fill='x', padx=20, pady=10)
+        
+        tk.Label(installed_frame, text="Installed Versions:",
+                font=('Helvetica', 12, 'bold'),
+                bg='#1e1e2e', fg='#cdd6f4').pack(anchor='w')
+        
+        installed = self.core.list_installed_proton()
+        if installed:
+            for pv in installed:
+                tk.Label(installed_frame, text=f"  ✅ {pv}",
+                        bg='#1e1e2e', fg='#a6e3a1').pack(anchor='w')
+        else:
+            tk.Label(installed_frame, text="  No custom Proton versions installed",
+                    bg='#1e1e2e', fg='#a6adc8').pack(anchor='w')
+                    
+        available_frame = ttk.Frame(frame)
+        available_frame.pack(fill='x', padx=20, pady=20)
+        
+        tk.Label(available_frame, text="Available for Download:",
+                font=('Helvetica', 12, 'bold'),
+                bg='#1e1e2e', fg='#cdd6f4').pack(anchor='w')
+        
+        for version, info in PROTON_VERSIONS.items():
+            btn_frame = ttk.Frame(available_frame)
+            btn_frame.pack(fill='x', pady=3)
+            
+            btn = tk.Button(btn_frame, text=f"📥 Install {version}",
+                           bg='#45475a', fg='#cdd6f4',
+                           command=lambda v=version: self.install_proton_gui(v))
+            btn.pack(side='left')
+            
+            tk.Label(btn_frame, text=info['description'],
+                    bg='#1e1e2e', fg='#a6adc8').pack(side='left', padx=10)
+                    
+    def create_advanced_tab(self, notebook):
+        import tkinter as tk
+        from tkinter import ttk
+        
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text="🔧 Advanced")
+        
+        title = tk.Label(frame, text="Advanced Settings", 
+                        font=('Helvetica', 16, 'bold'),
+                        bg='#1e1e2e', fg='#f5c2e7')
+        title.pack(pady=20)
+        
+        toggles_frame = ttk.Frame(frame)
+        toggles_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.fsr_var = tk.BooleanVar(value=False)
+        self.vrr_var = tk.BooleanVar(value=True)
+        self.raw_input_var = tk.BooleanVar(value=False)
+        self.compositor_var = tk.BooleanVar(value=True)
+        self.gamemode_var = tk.BooleanVar(value=True)
+        
+        toggles = [
+            ("FSR (FidelityFX Super Resolution)", self.fsr_var, self.toggle_fsr),
+            ("VRR (Variable Refresh Rate)", self.vrr_var, self.toggle_vrr),
+            ("Raw Input Mode", self.raw_input_var, self.toggle_raw_input),
+            ("Desktop Compositor", self.compositor_var, self.toggle_compositor),
+            ("GameMode Integration", self.gamemode_var, self.toggle_gamemode)
+        ]
+        
+        for text, var, cmd in toggles:
+            cb = tk.Checkbutton(toggles_frame, text=text,
+                               variable=var, command=cmd,
+                               bg='#1e1e2e', fg='#cdd6f4',
+                               selectcolor='#45475a',
+                               font=('Helvetica', 11))
+            cb.pack(anchor='w', pady=3)
+            
+        memory_frame = ttk.Frame(frame)
+        memory_frame.pack(fill='x', padx=20, pady=20)
+        
+        tk.Label(memory_frame, text="Memory Optimization:",
+                bg='#1e1e2e', fg='#cdd6f4',
+                font=('Helvetica', 12, 'bold')).pack(anchor='w')
+        
+        btn_frame = ttk.Frame(memory_frame)
+        btn_frame.pack(fill='x', pady=5)
+        
+        tk.Button(btn_frame, text="🧹 Drop Caches",
+                 bg='#f38ba8', fg='#1e1e2e',
+                 command=self.drop_caches).pack(side='left', padx=5)
+                 
+        tk.Button(btn_frame, text="💾 Configure ZRAM",
+                 bg='#89b4fa', fg='#1e1e2e',
+                 command=self.configure_zram_gui).pack(side='left', padx=5)
+                 
+    def create_status_bar(self):
+        import tkinter as tk
+        
+        self.status_bar = tk.Frame(self.root, bg='#313244', height=30)
+        self.status_bar.pack(fill='x', side='bottom')
+        
+        self.status_label = tk.Label(self.status_bar, text="Ready",
+                                     bg='#313244', fg='#cdd6f4')
+        self.status_label.pack(side='left', padx=10)
+        
+        self.preset_label = tk.Label(self.status_bar, 
+                                     text=f"Preset: {self.core.current_preset.upper()}",
+                                     bg='#313244', fg='#f5c2e7')
+        self.preset_label.pack(side='right', padx=10)
+        
+    def update_status(self):
+        if self.root:
+            temp = self.core.get_gpu_temperature()
+            if hasattr(self, 'temp_label') and temp:
+                self.temp_label.config(text=f"🌡️ Temperature: {temp}°C")
+            self.root.after(5000, self.update_status)
+            
+    def apply_preset_gui(self, preset_name):
+        import tkinter.messagebox as messagebox
+        self.status_label.config(text=f"Applying {preset_name} preset...")
+        self.root.update()
+        
+        if self.core.apply_preset(preset_name):
+            self.preset_label.config(text=f"Preset: {preset_name.upper()}")
+            self.status_label.config(text=f"✅ {preset_name} preset applied")
+        else:
+            self.status_label.config(text=f"⚠️ {preset_name} preset applied with warnings")
+            
+    def apply_gpu_power(self):
+        self.core.set_gpu_power_profile(self.power_var.get())
+        self.status_label.config(text=f"GPU power profile: {self.power_var.get()}")
+        
+    def apply_fan_mode(self):
+        self.core.set_gpu_fan_mode(self.fan_var.get())
+        self.status_label.config(text=f"Fan mode: {self.fan_var.get()}")
+        
+    def apply_cpu_governor(self):
+        self.core.set_cpu_governor(self.gov_var.get())
+        self.status_label.config(text=f"CPU governor: {self.gov_var.get()}")
+        
+    def install_proton_gui(self, version):
+        import tkinter.messagebox as messagebox
+        self.status_label.config(text=f"Installing {version}...")
+        self.root.update()
+        
+        if self.core.install_proton_version(version):
+            messagebox.showinfo("Success", f"{version} installed successfully!")
+        else:
+            messagebox.showerror("Error", f"Failed to install {version}")
+            
+    def toggle_fsr(self):
+        self.core.enable_fsr(self.fsr_var.get())
+        
+    def toggle_vrr(self):
+        self.core.enable_vrr(self.vrr_var.get())
+        
+    def toggle_raw_input(self):
+        self.core.enable_raw_input(self.raw_input_var.get())
+        
+    def toggle_compositor(self):
+        self.core.toggle_compositor(self.compositor_var.get())
+        
+    def toggle_gamemode(self):
+        self.core.enable_gamemode(self.gamemode_var.get())
+        
+    def drop_caches(self):
+        self.core.optimize_memory("aggressive")
+        self.status_label.config(text="Memory caches dropped")
+        
+    def configure_zram_gui(self):
+        import tkinter.simpledialog as simpledialog
+        size = simpledialog.askinteger("ZRAM Size", 
+                                        "Enter ZRAM size (% of RAM):",
+                                        minvalue=10, maxvalue=100,
+                                        initialvalue=50)
+        if size:
+            self.core.configure_zram(True, size)
+            self.status_label.config(text=f"ZRAM configured at {size}%")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Aegis Gamer Performance - Gaming Performance Optimization Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Presets:
+  balanced      Default - good battery/performance balance
+  performance   Full power - maximum FPS
+  battery_saver Low power mode for laptops
+  stream_mode   Optimized for OBS/streaming
+  esports       Minimum latency - competitive gaming
+
+Examples:
+  aegis-gamer-performance --gui
+  aegis-gamer-performance --preset performance
+  aegis-gamer-performance --status
+  aegis-gamer-performance --install-proton GE-Proton9-15
+        """
+    )
+    
+    parser.add_argument('--gui', action='store_true',
+                        help='Launch graphical interface')
+    parser.add_argument('--preset', '-p', choices=list(PRESETS.keys()),
+                        help='Apply a performance preset')
+    parser.add_argument('--status', '-s', action='store_true',
+                        help='Show current system status')
+    parser.add_argument('--cpu-governor', choices=['performance', 'powersave', 'schedutil', 'ondemand'],
+                        help='Set CPU governor')
+    parser.add_argument('--gpu-power', choices=['powersave', 'balanced', 'performance', 'turbo'],
+                        help='Set GPU power profile')
+    parser.add_argument('--fsr', choices=['on', 'off'],
+                        help='Enable/disable FSR')
+    parser.add_argument('--vrr', choices=['on', 'off'],
+                        help='Enable/disable VRR')
+    parser.add_argument('--gamemode', choices=['on', 'off'],
+                        help='Enable/disable GameMode')
+    parser.add_argument('--install-proton', metavar='VERSION',
+                        help='Install Proton version')
+    parser.add_argument('--list-proton', action='store_true',
+                        help='List installed Proton versions')
+    parser.add_argument('--apply-saved', action='store_true',
+                        help='Apply saved preset (for systemd service)')
+    parser.add_argument('--version', '-v', action='version',
+                        version=f'Aegis Gamer Performance v{VERSION}')
+    
+    args = parser.parse_args()
+    
+    core = AegisGamerPerformance()
+    
+    if args.gui:
+        gui = AegisGamerPerformanceGUI(core)
+        if not gui.run():
+            core.print_status()
+    elif args.preset:
+        core.apply_preset(args.preset)
+    elif args.status:
+        core.print_status()
+    elif args.cpu_governor:
+        core.set_cpu_governor(args.cpu_governor)
+    elif args.gpu_power:
+        core.set_gpu_power_profile(args.gpu_power)
+    elif args.fsr:
+        core.enable_fsr(args.fsr == 'on')
+    elif args.vrr:
+        core.enable_vrr(args.vrr == 'on')
+    elif args.gamemode:
+        core.enable_gamemode(args.gamemode == 'on')
+    elif args.install_proton:
+        core.install_proton_version(args.install_proton)
+    elif args.list_proton:
+        installed = core.list_installed_proton()
+        print("Installed Proton versions:")
+        for pv in installed:
+            print(f"  • {pv}")
+    elif args.apply_saved:
+        saved_preset = core.config.get("active_preset", "balanced")
+        core.apply_preset(saved_preset)
+    else:
+        gui = AegisGamerPerformanceGUI(core)
+        if not gui.run():
+            parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
