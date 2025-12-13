@@ -1,15 +1,31 @@
-name: Aegis OS CI
+name: Build Aegis OS ISOs
 
 on:
   push:
-    branches: [main, 'preview/*']
+    branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      edition:
+        description: 'Edition to build'
+        required: true
+        default: 'freemium'
+        type: choice
+        options:
+          - freemium
+          - basic
+          - gamer
+          - workplace
+          - aidev
+          - gamer-ai
+          - server
+          - all
 
 jobs:
-  test:
-    name: Test Build System
+  validate:
+    name: Validate Build System
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,28 +34,203 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Check files
+      - name: Validate Python files
         run: |
-          echo "=== Repository contents ==="
-          ls -la
-          echo ""
-          if [ -d "build-system" ]; then
-            echo "=== Build system found ==="
-            ls -la build-system/
-          fi
-          if [ -d "usr" ]; then
-            echo "=== Tools found ==="
-            ls -la usr/local/bin/ 2>/dev/null || true
-          fi
-      
-      - name: Validate Python
-        run: |
-          find . -name "*.py" -type f | head -20 | while read f; do
-            python3 -m py_compile "$f" && echo "OK: $f" || echo "FAIL: $f"
+          echo "=== Validating Python syntax ==="
+          find . -name "*.py" -type f | while read f; do
+            python3 -m py_compile "$f" && echo "✓ $f" || echo "✗ $f"
           done
       
-      - name: Run simulation
-        if: hashFiles('build-system/build-aegis.py') != ''
+      - name: Run simulation test
         run: |
           cd build-system
           python3 build-aegis.py --edition freemium --simulate --verbose
+
+  build-iso:
+    name: Build ${{ matrix.edition }} ISO
+    needs: validate
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
+    
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            git \
+            python \
+            archiso \
+            squashfs-tools \
+            libisoburn \
+            dosfstools \
+            e2fsprogs \
+            mtools \
+            grub \
+            efibootmgr \
+            rsync \
+            wget \
+            curl \
+            gnupg
+      
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup archiso profile
+        run: |
+          echo "=== Setting up ${{ matrix.edition }} profile ==="
+          EDITION="${{ matrix.edition }}"
+          PROFILE_DIR="/tmp/aegis-${EDITION}"
+          REPO_DIR="${GITHUB_WORKSPACE}"
+          
+          cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
+          
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
+          echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
+          echo "{\"edition\": \"${EDITION}\", \"version\": \"3.0.0\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
+          
+          if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
+            echo "Copying common overlays..."
+            cp -r "${REPO_DIR}/build-system/overlays/common"/* "${PROFILE_DIR}/airootfs/" 2>/dev/null || true
+          fi
+          
+          if [ -d "${REPO_DIR}/build-system/overlays/${EDITION}" ]; then
+            echo "Copying ${EDITION} overlays..."
+            cp -r "${REPO_DIR}/build-system/overlays/${EDITION}"/* "${PROFILE_DIR}/airootfs/" 2>/dev/null || true
+          fi
+          
+          ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
+          ls -la "${PROFILE_DIR}/airootfs/etc/aegis/" 2>/dev/null || echo "No aegis config"
+          
+          cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          firefox
+          vlc
+          libreoffice-fresh
+          ttf-dejavu
+          ttf-liberation
+          networkmanager
+          network-manager-applet
+          pulseaudio
+          pavucontrol
+          gvfs
+          gvfs-mtp
+          thunar-volman
+          xdg-user-dirs
+          EOF
+          
+          case "$EDITION" in
+            gamer|gamer-ai)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+          steam
+          lutris
+          gamemode
+          lib32-gamemode
+          mangohud
+          lib32-mangohud
+          wine
+          wine-gecko
+          wine-mono
+          winetricks
+          EOF
+              ;;
+            aidev|gamer-ai)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+          python
+          python-pip
+          python-virtualenv
+          jupyterlab
+          docker
+          podman
+          nvidia-utils
+          cuda
+          cudnn
+          EOF
+              ;;
+            workplace)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+          remmina
+          freerdp
+          libreoffice-fresh
+          thunderbird
+          evolution
+          EOF
+              ;;
+            server)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+          docker
+          podman
+          nginx
+          mariadb
+          postgresql
+          redis
+          EOF
+              ;;
+          esac
+          
+          echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
+
+      - name: Build ISO
+        run: |
+          echo "=== Building ${{ matrix.edition }} ISO ==="
+          EDITION="${{ matrix.edition }}"
+          OUTPUT_DIR="/tmp/aegis-output"
+          mkdir -p "${OUTPUT_DIR}"
+          
+          mkarchiso -v -w /tmp/work-${EDITION} -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
+          
+          ISO_FILE=$(ls ${OUTPUT_DIR}/*.iso 2>/dev/null | head -1)
+          if [ -n "$ISO_FILE" ]; then
+            FINAL_NAME="aegis-os-${EDITION}-3.0.0-x86_64.iso"
+            mv "$ISO_FILE" "${OUTPUT_DIR}/${FINAL_NAME}"
+            echo "ISO_PATH=${OUTPUT_DIR}/${FINAL_NAME}" >> $GITHUB_ENV
+            
+            sha256sum "${OUTPUT_DIR}/${FINAL_NAME}" > "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
+            echo "SHA256_PATH=${OUTPUT_DIR}/${FINAL_NAME}.sha256" >> $GITHUB_ENV
+          fi
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-os-${{ matrix.edition }}-iso
+          path: |
+            /tmp/aegis-output/*.iso
+            /tmp/aegis-output/*.sha256
+          retention-days: 30
+          compression-level: 0
+
+  release:
+    name: Create Release
+    needs: build-iso
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*.iso
+            artifacts/**/*.sha256
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

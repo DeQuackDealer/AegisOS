@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""
+Aegis OS License Activation System
+First-boot activation for paid editions
+"""
+
+import os
+import sys
+import json
+import hashlib
+import urllib.request
+import urllib.error
+import ssl
+import socket
+from pathlib import Path
+
+AEGIS_CONFIG_DIR = Path("/etc/aegis")
+LICENSE_FILE = AEGIS_CONFIG_DIR / "license.json"
+ACTIVATION_MARKER = AEGIS_CONFIG_DIR / ".activated"
+OFFLINE_QUEUE_FILE = AEGIS_CONFIG_DIR / ".pending_activation"
+API_URL = os.environ.get('AEGIS_API_URL', "https://aegis-os.replit.app/api/v1/license/activate")
+MAX_OFFLINE_RETRIES = 3
+
+COLORS = {
+    'blue': '\033[94m',
+    'green': '\033[92m',
+    'yellow': '\033[93m',
+    'red': '\033[91m',
+    'bold': '\033[1m',
+    'end': '\033[0m'
+}
+
+def print_banner():
+    print(f"""
+{COLORS['blue']}{COLORS['bold']}
+    ╔═══════════════════════════════════════════════════════════╗
+    ║                                                           ║
+    ║     ▄▄▄      ▓█████   ▄████  ██▓  ██████                  ║
+    ║    ▒████▄    ▓█   ▀  ██▒ ▀█▒▓██▒▒██    ▒                  ║
+    ║    ▒██  ▀█▄  ▒███   ▒██░▄▄▄░▒██▒░ ▓██▄                    ║
+    ║    ░██▄▄▄▄██ ▒▓█  ▄ ░▓█  ██▓░██░  ▒   ██▒                 ║
+    ║     ▓█   ▓██▒░▒████▒░▒▓███▀▒░██░▒██████▒▒                 ║
+    ║     ▒▒   ▓▒█░░░ ▒░ ░ ░▒   ▒ ░▓  ▒ ▒▓▒ ▒ ░                 ║
+    ║      ▒   ▒▒ ░ ░ ░  ░  ░   ░  ▒ ░░ ░▒  ░ ░                 ║
+    ║      ░   ▒      ░   ░ ░   ░  ▒ ░░  ░  ░                   ║
+    ║          ░  ░   ░  ░      ░  ░        ░                   ║
+    ║                                                           ║
+    ║           LICENSE ACTIVATION SYSTEM                       ║
+    ╚═══════════════════════════════════════════════════════════╝
+{COLORS['end']}
+""")
+
+def get_edition():
+    """Get current edition from config"""
+    edition_file = AEGIS_CONFIG_DIR / "edition.json"
+    if edition_file.exists():
+        with open(edition_file) as f:
+            data = json.load(f)
+            return data.get('edition', 'freemium')
+    return 'freemium'
+
+def get_machine_id():
+    """Get unique machine identifier"""
+    machine_id_file = Path("/etc/machine-id")
+    if machine_id_file.exists():
+        with open(machine_id_file) as f:
+            return f.read().strip()
+    return hashlib.sha256(socket.gethostname().encode()).hexdigest()[:32]
+
+def is_activated():
+    """Check if already activated"""
+    return ACTIVATION_MARKER.exists()
+
+def activate_license(license_key):
+    """Activate license with server"""
+    edition = get_edition()
+    machine_id = get_machine_id()
+    
+    data = json.dumps({
+        'license_key': license_key,
+        'edition': edition,
+        'machine_id': machine_id,
+        'hostname': socket.gethostname()
+    }).encode('utf-8')
+    
+    try:
+        ctx = ssl.create_default_context()
+        req = urllib.request.Request(
+            API_URL,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            
+            if result.get('success'):
+                license_data = {
+                    'license_key': license_key,
+                    'edition': edition,
+                    'activated_at': result.get('activated_at'),
+                    'expires_at': result.get('expires_at'),
+                    'machine_id': machine_id,
+                    'features': result.get('features', [])
+                }
+                
+                AEGIS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                with open(LICENSE_FILE, 'w') as f:
+                    json.dump(license_data, f, indent=2)
+                
+                ACTIVATION_MARKER.touch()
+                
+                return True, result.get('message', 'Activation successful!')
+            else:
+                return False, result.get('error', 'Activation failed')
+                
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        try:
+            error_data = json.loads(error_body)
+            return False, error_data.get('error', f'Server error: {e.code}')
+        except:
+            return False, f'Server error: {e.code}'
+    except urllib.error.URLError as e:
+        return False, f'Network error: {str(e.reason)}'
+    except Exception as e:
+        return False, f'Error: {str(e)}'
+
+def skip_activation():
+    """Skip activation (freemium mode)"""
+    edition_file = AEGIS_CONFIG_DIR / "edition.json"
+    AEGIS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    with open(edition_file, 'w') as f:
+        json.dump({'edition': 'freemium', 'mode': 'trial'}, f)
+    
+    ACTIVATION_MARKER.touch()
+    
+    print(f"\n{COLORS['yellow']}Running in Freemium mode.{COLORS['end']}")
+    print("You can upgrade anytime at https://aegis-os.com\n")
+
+def main():
+    print_banner()
+    
+    edition = get_edition()
+    
+    if is_activated():
+        print(f"{COLORS['green']}Already activated!{COLORS['end']}")
+        if LICENSE_FILE.exists():
+            with open(LICENSE_FILE) as f:
+                data = json.load(f)
+                print(f"Edition: {data.get('edition', 'Unknown')}")
+                print(f"Activated: {data.get('activated_at', 'Unknown')}")
+        return 0
+    
+    if edition == 'freemium':
+        print(f"Welcome to {COLORS['bold']}Aegis OS Freemium{COLORS['end']}!")
+        print("No license key required for this edition.\n")
+        skip_activation()
+        return 0
+    
+    print(f"Welcome to {COLORS['bold']}Aegis OS {edition.title()}{COLORS['end']}!")
+    print("This edition requires license activation.\n")
+    
+    while True:
+        print(f"{COLORS['bold']}Enter your license key:{COLORS['end']}")
+        print("(Format: XXXX-XXXX-XXXX-XXXX or type 'skip' for freemium mode)")
+        print()
+        
+        try:
+            license_key = input(f"{COLORS['blue']}License Key > {COLORS['end']}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n\nActivation cancelled.")
+            return 1
+        
+        if not license_key:
+            print(f"\n{COLORS['yellow']}Please enter a license key.{COLORS['end']}\n")
+            continue
+        
+        if license_key.lower() == 'skip':
+            skip_activation()
+            return 0
+        
+        license_key = license_key.upper().replace(' ', '')
+        
+        print(f"\n{COLORS['blue']}Activating...{COLORS['end']}")
+        
+        success, message = activate_license(license_key)
+        
+        if success:
+            print(f"\n{COLORS['green']}{COLORS['bold']}SUCCESS!{COLORS['end']}")
+            print(f"{COLORS['green']}{message}{COLORS['end']}")
+            print(f"\nYour {edition.title()} edition is now activated.")
+            print("Enjoy Aegis OS!\n")
+            return 0
+        else:
+            print(f"\n{COLORS['red']}Activation failed: {message}{COLORS['end']}")
+            print("Please check your license key and try again.\n")
+
+if __name__ == '__main__':
+    sys.exit(main())

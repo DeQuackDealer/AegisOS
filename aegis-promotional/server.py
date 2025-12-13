@@ -413,6 +413,58 @@ def status():
         'timestamp': datetime.now().isoformat()
     }), 200
 
+# ============= ROUTES: DOWNLOADS =============
+
+GITHUB_RELEASES_URL = "https://github.com/DeQuackDealer/AegisOS/releases/latest/download"
+
+@app.route('/api/download/<edition>')
+@rate_limit(limit=100)
+def download_iso(edition):
+    """Download ISO - Freemium is direct, paid editions require license"""
+    edition = sanitize_input(edition).lower()
+    
+    valid_editions = ['freemium', 'basic', 'gamer', 'workplace', 'aidev', 'gamer-ai', 'server']
+    if edition not in valid_editions:
+        return jsonify({'error': 'Invalid edition', 'code': 'INVALID_EDITION'}), 404
+    
+    tamper_protected_audit_log("DOWNLOAD_REQUEST", {"edition": edition})
+    
+    if edition == 'freemium':
+        iso_url = f"{GITHUB_RELEASES_URL}/aegis-os-freemium-3.0.0-x86_64.iso"
+        return redirect(iso_url)
+    else:
+        return redirect(f'/{edition}.html?action=purchase')
+
+@app.route('/api/download/verify-license', methods=['POST'])
+@rate_limit(limit=50)
+def verify_license_for_download():
+    """Verify license key and provide download link for paid editions"""
+    data = sanitize_input(request.json or {})
+    license_key = str(data.get('license_key', '')).strip()
+    
+    if not license_key:
+        return jsonify({'error': 'License key required', 'code': 'NO_LICENSE'}), 400
+    
+    license_record = License.query.filter_by(license_key=license_key).first()
+    if not license_record:
+        tamper_protected_audit_log("INVALID_LICENSE_DOWNLOAD", {"key_prefix": license_key[:8]}, "HIGH")
+        return jsonify({'error': 'Invalid license key', 'code': 'INVALID_LICENSE'}), 401
+    
+    if license_record.status != 'active':
+        return jsonify({'error': 'License not active', 'code': 'LICENSE_INACTIVE'}), 403
+    
+    edition = license_record.edition
+    iso_url = f"{GITHUB_RELEASES_URL}/aegis-os-{edition}-3.0.0-x86_64.iso"
+    
+    tamper_protected_audit_log("LICENSE_DOWNLOAD_APPROVED", {"edition": edition, "key_prefix": license_key[:8]})
+    
+    return jsonify({
+        'success': True,
+        'edition': edition,
+        'download_url': iso_url,
+        'sha256_url': f"{iso_url}.sha256"
+    }), 200
+
 # ============= ROUTES: TIERS =============
 
 @app.route('/api/v1/tiers')
@@ -3615,17 +3667,10 @@ def get_iso_info():
 
 @app.route('/api/v1/iso/download', methods=['GET'])
 @rate_limit(limit=100)
-def download_iso():
-    """Download ISO file"""
+def legacy_download_iso():
+    """Legacy download endpoint - redirects to new download system"""
     tamper_protected_audit_log("ISO_DOWNLOAD_REQUESTED", {'ip': request.remote_addr})
-    # In production, this would serve the actual ISO file
-    return jsonify({
-        'message': 'Download coming soon - Aegis OS is in premium beta',
-        'version': 'v4.2.1 LTS',
-        'size': '2.1 GB',
-        'estimated_download_time': '5-10 minutes (broadband)',
-        'verification_required': True
-    }), 200
+    return redirect('/api/download/freemium')
 
 @app.route('/api/v1/iso/checksums', methods=['GET'])
 @rate_limit(limit=500)

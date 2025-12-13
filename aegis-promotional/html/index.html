@@ -1,11 +1,13 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aegis OS - Professional Linux Distribution</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>Aegis OS - The Alternative to Windows</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -14,36 +16,48 @@
         }
 
         :root {
-            --primary: #2563eb;
-            --primary-dark: #1d4ed8;
-            --secondary: #6366f1;
-            --accent: #8b5cf6;
-            --text-primary: #0f172a;
-            --text-secondary: #475569;
-            --text-light: #64748b;
-            --bg-white: #ffffff;
-            --bg-gray: #f8fafc;
-            --bg-dark: #0f172a;
-            --border: #e2e8f0;
-            --border-light: #f1f5f9;
+            --primary: #123354;
+            --accent: #15A6F0;
+            --accent-hover: #0d8fd4;
+            --background: #F5F7FA;
+            --text-primary: #123354;
+            --text-secondary: #5a6a7a;
+            --white: #ffffff;
+            --border: #dee3e9;
+            --card-shadow: 0 2px 12px rgba(18, 51, 84, 0.08);
+            --card-shadow-hover: 0 8px 30px rgba(18, 51, 84, 0.12);
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
             color: var(--text-primary);
-            background: var(--bg-white);
+            background: var(--white);
+            font-size: 16px;
+        }
+
+        a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
         }
 
         /* Navigation */
         .navbar {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            position: sticky;
+            position: fixed;
             top: 0;
-            z-index: 100;
-            padding: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 1000;
+            border-bottom: 1px solid var(--border);
         }
 
         .nav-container {
@@ -52,33 +66,35 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1rem 2rem;
+            padding: 16px 24px;
         }
 
         .logo {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--primary);
-            text-decoration: none;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 1.4rem;
+            color: var(--primary);
+        }
+
+        .logo img {
+            height: 40px;
+            width: 40px;
         }
 
         .nav-menu {
             display: flex;
             list-style: none;
-            gap: 2rem;
-            margin: 0;
-            padding: 0;
+            gap: 32px;
+            align-items: center;
         }
 
         .nav-menu a {
             color: var(--text-secondary);
-            text-decoration: none;
             font-weight: 500;
             font-size: 0.95rem;
-            transition: color 0.2s ease;
+            transition: color 0.2s;
         }
 
         .nav-menu a:hover {
@@ -86,132 +102,200 @@
         }
 
         .nav-cta {
-            background: var(--primary);
-            color: white;
-            padding: 0.6rem 1.5rem;
-            border-radius: 6px;
-            text-decoration: none;
+            background: var(--accent);
+            color: var(--white);
+            padding: 10px 24px;
+            border-radius: 999px;
             font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.2s ease;
+            font-size: 0.95rem;
+            transition: all 0.2s;
         }
 
         .nav-cta:hover {
-            background: var(--primary-dark);
+            background: var(--accent-hover);
             transform: translateY(-1px);
         }
 
         /* Hero Section */
         .hero {
-            background: linear-gradient(180deg, var(--bg-white) 0%, var(--bg-gray) 100%);
-            padding: 8rem 2rem 6rem;
+            background: linear-gradient(180deg, var(--background) 0%, var(--white) 100%);
+            padding: 160px 24px 100px;
             text-align: center;
-            position: relative;
-            overflow: hidden;
         }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%236366f1' fill-opacity='0.03'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-            pointer-events: none;
-        }
-
-        .hero-content {
-            max-width: 800px;
-            margin: 0 auto;
-            position: relative;
-            z-index: 1;
+        .hero-badge {
+            display: inline-block;
+            background: rgba(21, 166, 240, 0.1);
+            color: var(--accent);
+            padding: 8px 20px;
+            border-radius: 999px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 24px;
         }
 
         .hero h1 {
-            font-size: 3.5rem;
+            font-size: 4rem;
             font-weight: 800;
             line-height: 1.1;
-            margin-bottom: 1.5rem;
-            color: var(--text-primary);
-            letter-spacing: -0.02em;
+            margin-bottom: 24px;
+            color: var(--primary);
+            letter-spacing: -0.03em;
+        }
+
+        .hero h1 span {
+            color: var(--accent);
         }
 
         .hero .subtitle {
-            font-size: 1.3rem;
+            font-size: 1.35rem;
             color: var(--text-secondary);
-            margin-bottom: 2.5rem;
-            font-weight: 400;
-            max-width: 600px;
+            margin-bottom: 40px;
+            max-width: 700px;
             margin-left: auto;
             margin-right: auto;
+            font-weight: 400;
+            line-height: 1.7;
         }
 
         .hero-buttons {
             display: flex;
-            gap: 1rem;
+            gap: 16px;
             justify-content: center;
             flex-wrap: wrap;
+            margin-bottom: 60px;
         }
 
         .btn {
-            display: inline-block;
-            padding: 1rem 2rem;
-            border-radius: 8px;
-            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 16px 32px;
+            border-radius: 10px;
             font-weight: 600;
-            transition: all 0.2s ease;
-            border: 2px solid transparent;
+            font-size: 1.05rem;
+            transition: all 0.25s;
+            border: none;
             cursor: pointer;
-            font-size: 1rem;
         }
 
         .btn-primary {
-            background: var(--primary);
-            color: white;
+            background: var(--accent);
+            color: var(--white);
+            box-shadow: 0 4px 20px rgba(21, 166, 240, 0.3);
         }
 
         .btn-primary:hover {
-            background: var(--primary-dark);
+            background: var(--accent-hover);
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.25);
+            box-shadow: 0 8px 30px rgba(21, 166, 240, 0.4);
         }
 
         .btn-secondary {
-            background: transparent;
+            background: var(--border);
             color: var(--primary);
-            border-color: var(--border);
         }
 
         .btn-secondary:hover {
-            border-color: var(--primary);
-            background: var(--bg-gray);
+            background: #d1d8e0;
+            transform: translateY(-2px);
+        }
+
+        .hero-image {
+            max-width: 1000px;
+            margin: 0 auto;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--card-shadow-hover);
+        }
+
+        .hero-image img {
+            width: 100%;
+            display: block;
+        }
+
+        .hero-screenshot {
+            background: linear-gradient(135deg, var(--primary) 0%, #1a4a70 100%);
+            padding: 40px;
+            border-radius: 16px;
+            position: relative;
+        }
+
+        .desktop-mockup {
+            background: #1a1a2e;
+            border-radius: 12px;
+            padding: 8px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .desktop-screen {
+            background: linear-gradient(180deg, #2d2d44 0%, #1a1a2e 100%);
+            border-radius: 8px;
+            aspect-ratio: 16/10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255,255,255,0.8);
+            font-size: 1.2rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .desktop-screen::before {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0,0,0,0.5);
+        }
+
+        .desktop-taskbar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 8px;
+        }
+
+        .taskbar-icon {
+            width: 32px;
+            height: 32px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 6px;
         }
 
         /* Features Section */
         .section {
-            padding: 6rem 2rem;
+            padding: 100px 24px;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+        .section-alt {
+            background: var(--background);
         }
 
         .section-header {
             text-align: center;
-            margin-bottom: 4rem;
+            margin-bottom: 60px;
         }
 
         .section-header h2 {
-            font-size: 2.5rem;
+            font-size: 2.8rem;
             font-weight: 700;
-            margin-bottom: 1rem;
-            color: var(--text-primary);
+            margin-bottom: 16px;
+            color: var(--primary);
+            letter-spacing: -0.02em;
         }
 
         .section-header p {
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             color: var(--text-secondary);
             max-width: 600px;
             margin: 0 auto;
@@ -219,362 +303,356 @@
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 2rem;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 32px;
         }
 
         .feature-card {
-            background: var(--bg-white);
+            background: var(--white);
+            padding: 40px 32px;
+            border-radius: 16px;
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            transition: all 0.2s ease;
+            transition: all 0.3s;
         }
 
         .feature-card:hover {
-            border-color: var(--primary);
-            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.1);
-            transform: translateY(-2px);
+            transform: translateY(-4px);
+            box-shadow: var(--card-shadow-hover);
+            border-color: var(--accent);
         }
 
         .feature-icon {
-            width: 48px;
-            height: 48px;
-            background: var(--primary);
-            border-radius: 8px;
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, var(--accent) 0%, #0d8fd4 100%);
+            border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
-            margin-bottom: 1.5rem;
-            color: white;
-            font-size: 1.5rem;
+            margin-bottom: 24px;
+            font-size: 1.8rem;
         }
 
         .feature-card h3 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: 0.75rem;
-            color: var(--text-primary);
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: var(--primary);
         }
 
         .feature-card p {
             color: var(--text-secondary);
-            line-height: 1.6;
+            font-size: 1rem;
+            line-height: 1.7;
         }
 
-        /* Pricing Section */
-        .pricing {
-            background: var(--bg-gray);
-        }
-
-        .pricing-grid {
+        /* Editions Section */
+        .editions-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.5rem;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 28px;
         }
 
-        @media (max-width: 1200px) {
-            .pricing-grid {
-                grid-template-columns: repeat(3, 1fr);
-            }
-        }
-
-        @media (max-width: 768px) {
-            .pricing-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .pricing-card {
-            background: var(--bg-white);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
-            position: relative;
-            transition: all 0.2s ease;
-        }
-
-        .pricing-card.featured {
-            border-color: var(--primary);
-            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.15);
-            transform: scale(1.02);
-        }
-
-        .pricing-card.featured::before {
-            content: 'Most Popular';
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--primary);
-            color: white;
-            padding: 0.4rem 1rem;
+        .edition-card {
+            background: var(--white);
             border-radius: 20px;
+            border: 2px solid var(--border);
+            overflow: hidden;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .edition-card:hover {
+            transform: translateY(-6px);
+            box-shadow: var(--card-shadow-hover);
+            border-color: var(--accent);
+        }
+
+        .edition-card.featured {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(21, 166, 240, 0.1);
+        }
+
+        .edition-badge {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: var(--accent);
+            color: var(--white);
+            padding: 6px 14px;
+            border-radius: 999px;
             font-size: 0.8rem;
             font-weight: 600;
         }
 
-        .pricing-card:hover {
-            border-color: var(--primary);
-            box-shadow: 0 8px 25px rgba(37, 99, 235, 0.1);
-        }
-
-        .pricing-header {
+        .edition-header {
+            padding: 36px 28px 20px;
             text-align: center;
-            margin-bottom: 2rem;
         }
 
-        .pricing-header h3 {
+        .edition-icon {
+            font-size: 3rem;
+            margin-bottom: 16px;
+        }
+
+        .edition-header h3 {
             font-size: 1.5rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .pricing-price {
-            font-size: 3rem;
-            font-weight: 800;
+            margin-bottom: 8px;
             color: var(--primary);
-            margin-bottom: 0.5rem;
         }
 
-        .pricing-price span {
+        .edition-header .price {
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: var(--accent);
+        }
+
+        .edition-header .price span {
             font-size: 1rem;
-            color: var(--text-light);
             font-weight: 500;
-        }
-
-        .pricing-features {
-            list-style: none;
-            margin-bottom: 2rem;
-        }
-
-        .pricing-features li {
-            padding: 0.5rem 0;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
             color: var(--text-secondary);
         }
 
-        .pricing-features li::before {
-            content: '✓';
-            color: #10b981;
-            font-weight: 600;
-            width: 16px;
-            height: 16px;
+        .edition-features {
+            padding: 20px 28px 28px;
+            border-top: 1px solid var(--border);
+        }
+
+        .edition-features ul {
+            list-style: none;
+        }
+
+        .edition-features li {
+            padding: 10px 0;
             display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .pricing-cta {
-            width: 100%;
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 1rem;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .pricing-cta:hover {
-            background: var(--primary-dark);
-        }
-
-        .pricing-cta.secondary {
-            background: transparent;
-            color: var(--primary);
-            border: 2px solid var(--border);
-        }
-
-        .pricing-cta.secondary:hover {
-            border-color: var(--primary);
-            background: var(--bg-gray);
-        }
-
-        /* Free Period Banner */
-        .free-banner {
-            display: none;
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white;
-            padding: 1.5rem 2rem;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-            animation: pulse-glow 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse-glow {
-            0%, 100% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
-            50% { box-shadow: 0 0 40px rgba(16, 185, 129, 0.5); }
-        }
-
-        .free-banner.active {
-            display: block;
-        }
-
-        .free-banner h2 {
-            font-size: 1.8rem;
-            font-weight: 800;
-            margin-bottom: 0.5rem;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-        }
-
-        .free-banner p {
-            font-size: 1.1rem;
-            opacity: 0.95;
-            margin-bottom: 1rem;
-        }
-
-        .free-edition-buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-top: 1rem;
-        }
-
-        .free-edition-btn {
-            background: white;
-            color: #059669;
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 700;
+            align-items: flex-start;
+            gap: 12px;
+            color: var(--text-secondary);
             font-size: 0.95rem;
-            transition: all 0.2s ease;
-            border: none;
-            cursor: pointer;
         }
 
-        .free-edition-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-
-        .free-edition-btn.disabled {
-            background: #ccc;
-            color: #666;
-            cursor: not-allowed;
-        }
-
-        .free-banner .claimed-message {
-            background: rgba(255,255,255,0.2);
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            display: inline-block;
-            font-weight: 600;
-        }
-
-        /* Stats Section */
-        .stats {
-            background: var(--bg-dark);
-            color: white;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 3rem;
-            text-align: center;
-        }
-
-        .stat h3 {
-            font-size: 3rem;
-            font-weight: 800;
-            color: var(--secondary);
-            margin-bottom: 0.5rem;
-        }
-
-        .stat p {
-            color: #94a3b8;
-            font-size: 1.1rem;
-        }
-
-        /* CTA Section */
-        .cta-section {
-            background: var(--primary);
-            color: white;
-            text-align: center;
-        }
-
-        .cta-section h2 {
-            font-size: 2.5rem;
+        .edition-features li::before {
+            content: "✓";
+            color: var(--accent);
             font-weight: 700;
-            margin-bottom: 1rem;
+            flex-shrink: 0;
         }
 
-        .cta-section p {
-            font-size: 1.1rem;
-            margin-bottom: 2rem;
-            opacity: 0.9;
+        .edition-cta {
+            padding: 0 28px 28px;
+        }
+
+        .edition-cta .btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* Comparison Section */
+        .comparison-table {
+            background: var(--white);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: var(--card-shadow);
+            border: 1px solid var(--border);
+        }
+
+        .comparison-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 20px 24px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            background: var(--background);
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .comparison-table .check {
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        /* Download Section */
+        .download-section {
+            background: linear-gradient(135deg, var(--primary) 0%, #1a4a70 100%);
+            color: var(--white);
+            text-align: center;
+        }
+
+        .download-section h2 {
+            color: var(--white);
+            margin-bottom: 20px;
+        }
+
+        .download-section p {
+            color: rgba(255,255,255,0.8);
+            margin-bottom: 40px;
+        }
+
+        .download-cards {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .download-card {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 32px;
+            border: 1px solid rgba(255,255,255,0.2);
+            transition: all 0.3s;
+        }
+
+        .download-card:hover {
+            background: rgba(255,255,255,0.15);
+            transform: translateY(-4px);
+        }
+
+        .download-card h3 {
+            font-size: 1.4rem;
+            margin-bottom: 12px;
+        }
+
+        .download-card p {
+            font-size: 0.95rem;
+            margin-bottom: 24px;
+            color: rgba(255,255,255,0.7);
+        }
+
+        .download-card .btn {
+            width: 100%;
+            justify-content: center;
+            background: var(--white);
+            color: var(--primary);
+        }
+
+        .download-card .btn:hover {
+            background: var(--background);
         }
 
         /* Footer */
         .footer {
-            background: var(--bg-dark);
-            color: #94a3b8;
-            padding: 3rem 2rem 2rem;
+            background: var(--primary);
+            color: rgba(255,255,255,0.8);
+            padding: 80px 24px 40px;
         }
 
-        .footer-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            text-align: center;
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 48px;
+            margin-bottom: 48px;
         }
 
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
+        .footer-brand img {
+            height: 48px;
+            margin-bottom: 20px;
+        }
+
+        .footer-brand p {
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        .footer-links h4 {
+            color: var(--white);
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .footer-links ul {
+            list-style: none;
+        }
+
+        .footer-links li {
+            margin-bottom: 12px;
         }
 
         .footer-links a {
-            color: #94a3b8;
-            text-decoration: none;
-            transition: color 0.2s ease;
+            color: rgba(255,255,255,0.7);
+            font-size: 0.9rem;
+            transition: color 0.2s;
         }
 
         .footer-links a:hover {
-            color: white;
+            color: var(--white);
         }
 
         .footer-bottom {
-            border-top: 1px solid #1e293b;
-            padding-top: 2rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding-top: 32px;
+            text-align: center;
             font-size: 0.9rem;
         }
 
-        /* Mobile Responsiveness */
+        /* Mobile Responsive */
+        @media (max-width: 1024px) {
+            .features-grid,
+            .editions-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .footer-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
         @media (max-width: 768px) {
+            .nav-menu {
+                display: none;
+            }
+
             .hero h1 {
                 font-size: 2.5rem;
             }
-            
+
+            .hero .subtitle {
+                font-size: 1.1rem;
+            }
+
+            .section-header h2 {
+                font-size: 2rem;
+            }
+
+            .features-grid,
+            .editions-grid,
+            .download-cards {
+                grid-template-columns: 1fr;
+            }
+
+            .footer-grid {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+
             .hero-buttons {
                 flex-direction: column;
                 align-items: center;
             }
-            
+
             .btn {
                 width: 100%;
                 max-width: 300px;
             }
-            
-            .nav-menu {
-                display: none;
-            }
-            
-            .section {
-                padding: 4rem 1rem;
-            }
         }
 
-        /* Smooth animations */
+        /* Animations */
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -586,297 +664,257 @@
             }
         }
 
-        .hero-content {
-            animation: fadeInUp 0.8s ease-out;
+        .animate-in {
+            animation: fadeInUp 0.6s ease-out forwards;
         }
     </style>
 </head>
 <body>
-    <!-- Free Period Banner (hidden by default, shown via JS when active) -->
-    <div id="free-banner" class="free-banner">
-        <h2>FREE EDITION GIVEAWAY!</h2>
-        <p id="free-banner-message">Choose ONE edition to download for FREE - this is a limited-time offer!</p>
-        <div id="free-edition-buttons" class="free-edition-buttons">
-            <!-- Buttons populated by JavaScript -->
-        </div>
-    </div>
-
     <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
-            <a href="/" class="logo">🛡️ Aegis OS</a>
+            <a href="/" class="logo">
+                <img src="/static/logo.svg" alt="Aegis OS">
+                <span>Aegis OS</span>
+            </a>
             <ul class="nav-menu">
                 <li><a href="#features">Features</a></li>
-                <li><a href="#pricing">Editions</a></li>
+                <li><a href="#editions">Editions</a></li>
+                <li><a href="/pricing.html">Pricing</a></li>
+                <li><a href="/install-guide.html">Install Guide</a></li>
+                <li><a href="https://github.com/DeQuackDealer/AegisOS" target="_blank">GitHub</a></li>
             </ul>
-            <a href="#pricing" class="nav-cta">Get Started</a>
+            <a href="#download" class="nav-cta">Download</a>
         </div>
     </nav>
 
     <!-- Hero Section -->
     <section class="hero">
-        <div class="hero-content">
-            <h1>Professional Linux for Enterprise</h1>
-            <p class="hero-badge" style="color: #64b5f6; font-size: 1.1rem; margin: 0.5rem 0 1rem 0; font-weight: 500;">🐧 Built on Arch Linux • Rolling Release • SteamOS-inspired</p>
-            <p class="subtitle">Secure, fast, and reliable Linux distribution designed for professionals and organizations who demand the best.</p>
+        <div class="container">
+            <span class="hero-badge">Now Available - Version 3.0</span>
+            <h1>The alternative to <span>Windows</span> and macOS</h1>
+            <p class="subtitle">
+                Designed to make your computer faster, more powerful, secure, and privacy-respecting. 
+                Experience Linux the way it should be.
+            </p>
             <div class="hero-buttons">
-                <a href="#pricing" class="btn btn-primary">Choose Your Edition</a>
-                
+                <a href="#download" class="btn btn-primary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Download Free
+                </a>
+                <a href="#editions" class="btn btn-secondary">View Editions</a>
+            </div>
+            <div class="hero-screenshot">
+                <div class="desktop-mockup">
+                    <div class="desktop-screen">
+                        <div style="text-align: center; padding: 40px;">
+                            <div style="font-size: 3rem; margin-bottom: 16px;">
+                                <img src="/static/logo.svg" alt="Aegis" style="height: 80px;">
+                            </div>
+                            <div style="font-size: 1.5rem; font-weight: 600;">Welcome to Aegis OS</div>
+                            <div style="font-size: 0.95rem; opacity: 0.7; margin-top: 8px;">A beautiful, secure Linux experience</div>
+                        </div>
+                        <div class="desktop-taskbar">
+                            <div class="taskbar-icon" style="background: var(--accent);"></div>
+                            <div class="taskbar-icon"></div>
+                            <div class="taskbar-icon"></div>
+                            <div class="taskbar-icon"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
 
     <!-- Features Section -->
-    <section class="section" id="features">
+    <section class="section section-alt" id="features">
         <div class="container">
             <div class="section-header">
-                <h2>Built for Professionals</h2>
-                <p>Everything you need for secure, high-performance computing in a modern Linux environment.</p>
+                <h2>Why choose Aegis OS?</h2>
+                <p>Built for performance, security, and simplicity. Everything you need, nothing you don't.</p>
             </div>
             <div class="features-grid">
                 <div class="feature-card">
-                    <div class="feature-icon">🔒</div>
-                    <h3>Enterprise Security</h3>
-                    <p>Military-grade encryption, advanced threat detection, firewall protection, VPN support, and comprehensive security frameworks built-in.</p>
+                    <div class="feature-icon">🚀</div>
+                    <h3>Lightning Fast</h3>
+                    <p>Optimized for speed from the ground up. Boot in seconds, launch apps instantly, and multitask without slowdowns.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">⚡</div>
-                    <h3>Optimized Performance</h3>
-                    <p>Custom kernel optimizations, low-latency configurations, SSD optimization, and performance tuning for professional workloads.</p>
+                    <div class="feature-icon">🛡️</div>
+                    <h3>Secure by Design</h3>
+                    <p>Built-in security features protect your data. No telemetry, no tracking, just pure privacy-focused computing.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <h3>Beautiful Interface</h3>
+                    <p>A polished, intuitive desktop that feels familiar. Windows 10-inspired design with modern Linux power underneath.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">🎮</div>
                     <h3>Gaming Ready</h3>
-                    <p>Native Wine & Proton support, 98%+ game compatibility, ultra-low latency &lt;1ms, with OBS streaming and game recording built-in.</p>
+                    <p>Steam, Proton, and Wine pre-configured. Play thousands of Windows games with excellent performance.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🤖</div>
-                    <h3>AI & Development</h3>
-                    <p>Pre-configured ML frameworks, 25+ programming languages, Docker/Podman support, and complete development environment.</p>
+                    <div class="feature-icon">💻</div>
+                    <h3>Developer Friendly</h3>
+                    <p>Docker, VS Code, and development tools ready to go. Perfect for coding, AI/ML, and server workloads.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🏢</div>
-                    <h3>Enterprise Ready</h3>
-                    <p>Active Directory integration, centralized management, 20+ database systems, virtualization tools, and infrastructure support.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📦</div>
-                    <h3>500+ Professional Apps</h3>
-                    <p>Pre-installed with creative suites (video/audio/3D editing), office tools, design software, and productivity applications.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🖱️</div>
-                    <h3>Aegis DeskLink</h3>
-                    <p>Control multiple computers with one mouse and keyboard. Share files, clipboard, and seamlessly switch between PCs with encrypted connection.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📱</div>
-                    <h3>Mobile Link Pro</h3>
-                    <p>Connect your Android or iPhone to your PC. SMS, file transfer, notifications, screen mirroring, and remote control all from your desktop.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">✍️</div>
-                    <h3>Productivity Suite</h3>
-                    <p>Note-taking, task management, calendar, email client, and reminders. Cloud sync and collaboration features included.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🎨</div>
-                    <h3>Creative Suite</h3>
-                    <p>Professional-grade video editing (DaVinci Resolve, Kdenlive), 3D modeling (Blender), image editing (GIMP), and audio production tools.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🪟</div>
-                    <h3>Windows Compatibility</h3>
-                    <p>Run Windows applications seamlessly with Wine, Proton, Bottles, and CrossOver. Play Windows games at native speeds with full GPU support.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">⚙️</div>
-                    <h3>System Utilities</h3>
-                    <p>Advanced system monitor, disk manager, backup & recovery, driver manager, boot management, and automatic system optimization.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🔧</div>
-                    <h3>Developer Tools</h3>
-                    <p>VS Code, IntelliJ, Docker, Kubernetes, Git, virtualization (VirtualBox, KVM), and debugging tools for every language.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🛡️</div>
-                    <h3>Flexible Support Options</h3>
-                    <p>Community forums available for all users. Priority support available for purchase. No vendor lock-in - you own your license.</p>
+                    <div class="feature-icon">🔄</div>
+                    <h3>Easy Migration</h3>
+                    <p>Switching from Windows? Our migration tools help you bring your files, settings, and apps with you.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Stats Section -->
-    <section class="section stats">
-        <div class="container">
-            <div class="stats-grid">
-                <div class="stat">
-                    <h3>500+</h3>
-                    <p>Professional Applications</p>
-                </div>
-                <div class="stat">
-                    <h3>99.9%</h3>
-                    <p>Uptime SLA</p>
-                </div>
-                <div class="stat">
-                    <h3>100/100</h3>
-                    <p>Security Score</p>
-                </div>
-                <div class="stat">
-                    <h3>24/7</h3>
-                    <p>Enterprise Support</p>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Pricing Section -->
-    <section class="section pricing" id="pricing">
+    <!-- Editions Section -->
+    <section class="section" id="editions">
         <div class="container">
             <div class="section-header">
                 <h2>Choose Your Edition</h2>
-                <p>Professional Linux distributions tailored for different use cases and requirements.</p>
+                <p>From free to professional, we have an edition for everyone.</p>
             </div>
-            <div class="pricing-grid">
-                <!-- Freemium -->
-                <div class="pricing-card">
-                    <div class="pricing-header">
-                        <h3>🆓 Freemium</h3>
-                        <div class="pricing-price">Free</div>
-                        <p>Perfect for evaluation</p>
+            <div class="editions-grid">
+                <div class="edition-card">
+                    <div class="edition-header">
+                        <div class="edition-icon">🆓</div>
+                        <h3>Freemium</h3>
+                        <div class="price">Free</div>
                     </div>
-                    <ul class="pricing-features">
-                        <li>XFCE Desktop</li>
-                        <li>Wine & Proton</li>
-                        <li>DeskLink (2 PCs)</li>
-                        <li>Community Support</li>
-                        <li>50+ Open Source Apps</li>
-                    </ul>
-                    <button class="pricing-cta secondary" onclick="window.location.href='/freemium'">Learn More</button>
-                </div>
-
-                <!-- Basic -->
-                <div class="pricing-card featured">
-                    <div class="pricing-header">
-                        <h3>🔒 Basic</h3>
-                        <div class="pricing-price">$69<span> lifetime</span></div>
-                        <p>Complete professional suite</p>
+                    <div class="edition-features">
+                        <ul>
+                            <li>XFCE Desktop Environment</li>
+                            <li>Firefox & LibreOffice</li>
+                            <li>Basic Security Tools</li>
+                            <li>Community Support</li>
+                            <li>30-day Premium Trial</li>
+                        </ul>
                     </div>
-                    <ul class="pricing-features">
-                        <li>500+ Professional Apps</li>
-                        <li>DeskLink Unlimited</li>
-                        <li>Mobile Link Pro</li>
-                        <li>System Utilities</li>
-                        <li>Priority Support</li>
-                    </ul>
-                    <button class="pricing-cta" onclick="checkout('basic', 'lifetime')">Get Started</button>
-                </div>
-
-                <!-- Gamer -->
-                <div class="pricing-card">
-                    <div class="pricing-header">
-                        <h3>🎮 Gamer</h3>
-                        <div class="pricing-price">$89<span> lifetime</span></div>
-                        <p>Optimized for gaming</p>
+                    <div class="edition-cta">
+                        <a href="/api/download/freemium" class="btn btn-primary">Download Now</a>
                     </div>
-                    <ul class="pricing-features">
-                        <li>All Basic Features</li>
-                        <li>98%+ Game Compatibility</li>
-                        <li>Ultra-low Latency &lt;1ms</li>
-                        <li>OBS & Streaming</li>
-                        <li>Game Recording</li>
-                    </ul>
-                    <button class="pricing-cta secondary" onclick="window.location.href='/gamer'">Learn More</button>
                 </div>
-
-                <!-- AI Developer -->
-                <div class="pricing-card">
-                    <div class="pricing-header">
-                        <h3>🧠 AI Developer</h3>
-                        <div class="pricing-price">$109<span> lifetime</span></div>
-                        <p>ML/AI powerhouse</p>
+                <div class="edition-card featured">
+                    <span class="edition-badge">Most Popular</span>
+                    <div class="edition-header">
+                        <div class="edition-icon">🎮</div>
+                        <h3>Gamer</h3>
+                        <div class="price">$89 <span>one-time</span></div>
                     </div>
-                    <ul class="pricing-features">
-                        <li>All Basic Features</li>
-                        <li>CUDA & GPU Acceleration</li>
-                        <li>TensorFlow & PyTorch</li>
-                        <li>Jupyter & VS Code</li>
-                        <li>Docker & Kubernetes</li>
-                    </ul>
-                    <button class="pricing-cta secondary" onclick="window.location.href='/ai'">Learn More</button>
-                </div>
-
-                <!-- Gamer + AI -->
-                <div class="pricing-card featured">
-                    <div class="pricing-header">
-                        <h3>⚡ Gamer + AI</h3>
-                        <div class="pricing-price">$149<span> lifetime</span></div>
-                        <p>Ultimate combination</p>
+                    <div class="edition-features">
+                        <ul>
+                            <li>Steam & Lutris Pre-installed</li>
+                            <li>Proton-GE & Wine Support</li>
+                            <li>MangoHUD & GameScope</li>
+                            <li>NVIDIA/AMD Optimized</li>
+                            <li>Priority Updates</li>
+                        </ul>
                     </div>
-                    <ul class="pricing-features">
-                        <li>All Gamer Features</li>
-                        <li>All AI Dev Features</li>
-                        <li>98%+ Game Compatibility</li>
-                        <li>ML Training & Inference</li>
-                        <li>Ultimate Performance</li>
-                    </ul>
-                    <button class="pricing-cta" onclick="checkout('gamer-ai', 'lifetime')">Get Started</button>
-                </div>
-
-                <!-- Server -->
-                <div class="pricing-card">
-                    <div class="pricing-header">
-                        <h3>🚀 Server</h3>
-                        <div class="pricing-price">Custom</div>
-                        <p>Enterprise infrastructure</p>
+                    <div class="edition-cta">
+                        <a href="/gamer.html" class="btn btn-primary">Get Gamer Edition</a>
                     </div>
-                    <ul class="pricing-features">
-                        <li>All Basic Features</li>
-                        <li>Kubernetes Ready</li>
-                        <li>Container Orchestration</li>
-                        <li>24/7 Support + SLA</li>
-                        <li>Volume Licensing</li>
-                    </ul>
-                    <button class="pricing-cta secondary" onclick="window.location.href='mailto:riley.liang@hotmail.com?subject=Server%20Edition%20Inquiry'">Contact Sales</button>
                 </div>
+                <div class="edition-card">
+                    <div class="edition-header">
+                        <div class="edition-icon">🤖</div>
+                        <h3>AI Developer</h3>
+                        <div class="price">$109 <span>one-time</span></div>
+                    </div>
+                    <div class="edition-features">
+                        <ul>
+                            <li>CUDA & cuDNN Ready</li>
+                            <li>JupyterLab & VS Code</li>
+                            <li>PyTorch & TensorFlow</li>
+                            <li>Docker & Kubernetes</li>
+                            <li>GPU Monitoring Tools</li>
+                        </ul>
+                    </div>
+                    <div class="edition-cta">
+                        <a href="/ai.html" class="btn btn-primary">Get AI Edition</a>
+                    </div>
+                </div>
+            </div>
+            <div style="text-align: center; margin-top: 40px;">
+                <a href="/pricing.html" class="btn btn-secondary">View All Editions & Pricing</a>
             </div>
         </div>
     </section>
 
-    <!-- CTA Section -->
-    <section class="section cta-section">
+    <!-- Download Section -->
+    <section class="section download-section" id="download">
         <div class="container">
-            <h2>Ready to Get Started?</h2>
-            <p>Join professionals worldwide who trust Aegis OS for their critical workloads.</p>
-            <a href="#pricing" class="btn btn-primary" style="background: white; color: var(--primary);">Choose Your Edition</a>
+            <div class="section-header">
+                <h2>Ready to Get Started?</h2>
+                <p>Download Aegis OS for free or choose a premium edition for advanced features.</p>
+            </div>
+            <div class="download-cards">
+                <div class="download-card">
+                    <h3>Freemium Edition</h3>
+                    <p>Try Aegis OS for free with all essential features. Perfect for everyday use.</p>
+                    <a href="/api/download/freemium" class="btn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Download ISO (3.5 GB)
+                    </a>
+                </div>
+                <div class="download-card">
+                    <h3>Premium Editions</h3>
+                    <p>Get advanced features, priority support, and lifetime updates with our paid editions.</p>
+                    <a href="/pricing.html" class="btn">View Premium Options</a>
+                </div>
+            </div>
         </div>
     </section>
 
     <!-- Footer -->
     <footer class="footer">
-        <div class="footer-content">
-            <div class="footer-links">
-                <a href="/">Home</a>
-                <a href="#features">Features</a>
-                <a href="#pricing">Pricing</a>
-                <a href="/">Download</a>
-                <a href="/terms">Terms</a>
-                <a href="/privacy">Privacy</a>
-                <a href="mailto:riley.liang@hotmail.com">Contact</a>
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <img src="/static/logo.svg" alt="Aegis OS">
+                    <p>Aegis OS is a professional Linux distribution designed to make computing faster, more secure, and privacy-respecting.</p>
+                </div>
+                <div class="footer-links">
+                    <h4>Product</h4>
+                    <ul>
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#editions">Editions</a></li>
+                        <li><a href="/pricing.html">Pricing</a></li>
+                        <li><a href="/install-guide.html">Install Guide</a></li>
+                    </ul>
+                </div>
+                <div class="footer-links">
+                    <h4>Resources</h4>
+                    <ul>
+                        <li><a href="https://github.com/DeQuackDealer/AegisOS" target="_blank">GitHub</a></li>
+                        <li><a href="/system-requirements.html">Requirements</a></li>
+                        <li><a href="/gaming-compatibility.html">Game Compatibility</a></li>
+                        <li><a href="/attributions.html">Attributions</a></li>
+                    </ul>
+                </div>
+                <div class="footer-links">
+                    <h4>Legal</h4>
+                    <ul>
+                        <li><a href="/terms.html">Terms of Service</a></li>
+                        <li><a href="/privacy.html">Privacy Policy</a></li>
+                    </ul>
+                </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2024 Aegis OS. All rights reserved. Professional Linux distribution for enterprise use.</p>
-                <p style="margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.7;">
-                    Aegis OS is sold as-is without implied warranties. Liability limited to purchase price. Based on Arch Linux (GPL). Support available separately.
-                </p>
+                <p>&copy; 2024 Aegis OS. All rights reserved.</p>
             </div>
         </div>
     </footer>
 
     <script>
-        // Smooth scrolling for anchor links
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
                 e.preventDefault();
@@ -886,87 +924,6 @@
                 }
             });
         });
-
-        // Checkout function for pricing
-        async function checkout(tier, type = 'lifetime') {
-            try {
-                const response = await fetch('/api/checkout', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tier, type })
-                });
-                
-                const data = await response.json();
-                if (data.url) {
-                    window.location.href = data.url;
-                } else if (data.error) {
-                    alert(data.error);
-                }
-            } catch (error) {
-                alert('Payment processing unavailable. Please contact riley.liang@hotmail.com');
-            }
-        }
-
-        // Check for free period and show banner
-        async function checkFreePeriod() {
-            try {
-                const response = await fetch('/api/public/free-period');
-                const data = await response.json();
-                
-                if (data.free_period_active) {
-                    const banner = document.getElementById('free-banner');
-                    const messageEl = document.getElementById('free-banner-message');
-                    const buttonsEl = document.getElementById('free-edition-buttons');
-                    
-                    banner.classList.add('active');
-                    
-                    if (data.already_claimed) {
-                        // User already claimed an edition
-                        messageEl.textContent = `You already claimed the ${data.already_claimed.replace('_', ' ').toUpperCase()} edition. Thank you!`;
-                        buttonsEl.innerHTML = '<span class="claimed-message">Your free edition has been claimed. Enjoy Aegis OS!</span>';
-                    } else {
-                        // Show edition buttons
-                        messageEl.textContent = data.message || 'Choose ONE edition to download for FREE!';
-                        buttonsEl.innerHTML = '';
-                        
-                        const editionLabels = {
-                            'basic': 'Basic',
-                            'workplace': 'Workplace',
-                            'gamer': 'Gamer',
-                            'ai_developer': 'AI Developer',
-                            'gamer_ai': 'Gamer + AI'
-                        };
-                        
-                        data.editions.forEach(ed => {
-                            const btn = document.createElement('button');
-                            btn.className = 'free-edition-btn';
-                            btn.textContent = 'Get ' + (editionLabels[ed.edition] || ed.name) + ' FREE';
-                            btn.onclick = () => claimFreeEdition(ed.edition);
-                            buttonsEl.appendChild(btn);
-                        });
-                    }
-                }
-            } catch (error) {
-                console.log('Free period check failed:', error);
-            }
-        }
-
-        // Claim a free edition
-        async function claimFreeEdition(edition) {
-            if (!confirm('Are you sure you want to claim the ' + edition.replace('_', ' ').toUpperCase() + ' edition? You can only claim ONE free edition!')) {
-                return;
-            }
-            
-            try {
-                // Direct download - the server will record the claim
-                window.location.href = '/api/free/download/' + edition;
-            } catch (error) {
-                alert('Download failed. Please try again.');
-            }
-        }
-
-        // Check free period on page load
-        document.addEventListener('DOMContentLoaded', checkFreePeriod);
     </script>
 </body>
 </html>

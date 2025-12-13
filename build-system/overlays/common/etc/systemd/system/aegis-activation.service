@@ -1,0 +1,20 @@
+[Unit]
+Description=Aegis OS License Activation
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/etc/aegis/.activated
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aegis-activate
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
