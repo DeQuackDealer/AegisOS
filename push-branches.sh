@@ -1,9 +1,13 @@
 #!/bin/bash
 # Aegis OS Branch Push Script
-# Replace YOUR_TOKEN with your GitHub Personal Access Token
+# Uses GITHUB_PAT environment variable (already stored as secret)
 
-TOKEN="YOUR_TOKEN"
-REPO="https://${TOKEN}@github.com/DeQuackDealer/AegisOSRepo.git"
+if [ -z "$GITHUB_PAT" ]; then
+    echo "Error: GITHUB_PAT environment variable not set"
+    exit 1
+fi
+
+REPO="https://${GITHUB_PAT}@github.com/DeQuackDealer/AegisOSRepo.git"
 
 echo "=== Step 1: Push main branch ==="
 git add .
@@ -45,12 +49,7 @@ git branch -D temp-aidev
 
 echo ""
 echo "=== Step 5: Delete old freemium branch ==="
-git push $REPO --delete preview/freemium 2>/dev/null || echo "freemium already deleted or doesn't exist"
+git push $REPO --delete preview/freemium 2>/dev/null || echo "freemium already deleted"
 
 echo ""
 echo "=== Done! ==="
-echo "Branches created:"
-echo "  - main (full repo)"
-echo "  - preview/base-os (core OS tools)"
-echo "  - preview/gamer (gaming tools only)"
-echo "  - preview/aidev (AI tools only)"
