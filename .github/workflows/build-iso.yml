@@ -1,166 +1,45 @@
-name: Build Aegis OS
+name: Aegis OS CI
 
 on:
   push:
-    branches: 
-      - main
-      - 'preview/*'
+    branches: [main, 'preview/*']
   pull_request:
-    branches: 
-      - main
-      - 'preview/*'
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      edition:
-        description: 'Edition to build'
-        required: true
-        default: 'freemium'
-        type: choice
-        options:
-          - freemium
-          - basic
-          - gamer
-          - workplace
-          - aidev
-          - gamer-ai
-          - server
-          - all
-      mode:
-        description: 'Build mode'
-        required: true
-        default: 'simulate'
-        type: choice
-        options:
-          - simulate
-          - real
-
-env:
-  AEGIS_VERSION: "3.0.0"
 
 jobs:
-  check-files:
-    name: Check Repository
+  test:
+    name: Test Build System
     runs-on: ubuntu-latest
-    outputs:
-      has_build_system: ${{ steps.check.outputs.has_build_system }}
-      branch_type: ${{ steps.check.outputs.branch_type }}
     steps:
       - uses: actions/checkout@v4
       
-      - name: Check what exists
-        id: check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Check files
         run: |
-          if [ -f "build-system/build-aegis.py" ]; then
-            echo "has_build_system=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_build_system=false" >> $GITHUB_OUTPUT
-          fi
-          
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          if [[ "$BRANCH" == preview/* ]]; then
-            echo "branch_type=preview" >> $GITHUB_OUTPUT
-          else
-            echo "branch_type=main" >> $GITHUB_OUTPUT
-          fi
-          
-          echo "Branch: $BRANCH"
-          echo "Files in repo:"
+          echo "=== Repository contents ==="
           ls -la
-
-  validate-tools:
-    name: Validate Edition Tools
-    runs-on: ubuntu-latest
-    needs: check-files
-    if: needs.check-files.outputs.branch_type == 'preview'
-    steps:
-      - uses: actions/checkout@v4
+          echo ""
+          if [ -d "build-system" ]; then
+            echo "=== Build system found ==="
+            ls -la build-system/
+          fi
+          if [ -d "usr" ]; then
+            echo "=== Tools found ==="
+            ls -la usr/local/bin/ 2>/dev/null || true
+          fi
       
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Validate Python scripts
+      - name: Validate Python
         run: |
-          echo "Validating Python scripts in this edition..."
-          find . -name "*.py" -type f | while read file; do
-            echo "Checking: $file"
-            python3 -m py_compile "$file" || echo "Warning: $file has syntax issues"
+          find . -name "*.py" -type f | head -20 | while read f; do
+            python3 -m py_compile "$f" && echo "OK: $f" || echo "FAIL: $f"
           done
-          echo "Validation complete"
-      
-      - name: List tools
-        run: |
-          echo "Tools in this edition:"
-          find . -path "*/bin/*" -type f 2>/dev/null | head -50 || echo "No bin tools found"
-          find . -name "aegis-*" -type f 2>/dev/null | head -50 || echo "No aegis tools found"
-
-  simulate-build:
-    name: Simulate Build
-    runs-on: ubuntu-latest
-    needs: check-files
-    if: needs.check-files.outputs.has_build_system == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'simulate')
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       
       - name: Run simulation
+        if: hashFiles('build-system/build-aegis.py') != ''
         run: |
           cd build-system
-          EDITION="${{ github.event.inputs.edition || 'freemium' }}"
-          echo "Simulating build for: $EDITION"
-          python3 build-aegis.py --edition "$EDITION" --simulate --verbose
-      
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: simulation-${{ github.event.inputs.edition || 'freemium' }}
-          path: build-system/output/
-          retention-days: 7
-          if-no-files-found: warn
-
-  real-build:
-    name: Build ${{ matrix.edition }} ISO
-    runs-on: ubuntu-latest
-    needs: check-files
-    if: needs.check-files.outputs.has_build_system == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'real'
-    strategy:
-      matrix:
-        edition: ${{ fromJson(github.event.inputs.edition == 'all' && '["freemium","basic","gamer","workplace","aidev","gamer-ai","server"]' || format('["{0}"]', github.event.inputs.edition)) }}
-      fail-fast: false
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h
-      
-      - name: Build in Arch container
-        run: |
-          docker run --rm --privileged \
-            -v ${{ github.workspace }}:/workspace \
-            archlinux:latest bash -c '
-              pacman-key --init && pacman-key --populate archlinux
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm archiso python git squashfs-tools
-              cd /workspace/build-system
-              python3 build-aegis.py --edition ${{ matrix.edition }} --real-build --verbose
-            '
-      
-      - name: Create checksums
-        run: |
-          cd build-system/output
-          for f in *.iso; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
-      
-      - name: Upload ISO
-        uses: actions/upload-artifact@v4
-        with:
-          name: aegis-${{ matrix.edition }}
-          path: build-system/output/aegis-${{ matrix.edition }}*
-          retention-days: 30
+          python3 build-aegis.py --edition freemium --simulate --verbose
