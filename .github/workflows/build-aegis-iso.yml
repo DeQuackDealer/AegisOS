@@ -20,6 +20,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: archlinux
+      options: --privileged
     
     steps:
       - name: Checkout repository
@@ -28,10 +31,11 @@ jobs:
       - name: Create Aegis profile
         run: |
           mkdir -p profile/airootfs/etc
+          mkdir -p profile/syslinux
           
           cat > profile/profiledef.sh << 'EOF'
           #!/usr/bin/env bash
-          iso_name="aegis-os-${{ github.event.inputs.edition }}"
+          iso_name="aegis-os"
           iso_label="AEGIS_$(date +%Y%m)"
           iso_publisher="Aegis OS Project"
           iso_application="Aegis OS Live Medium"
@@ -80,15 +84,11 @@ jobs:
           HOME_URL="https://aegis-os.com"
           EOF
           
-          mkdir -p profile/syslinux
-          
           echo "Profile created:"
           find profile -type f
 
-      - name: Build ISO with mkarchiso action
+      - name: Build ISO
         uses: coderadu/actions-mkarchiso@v1
-        with:
-          profile-path: profile
 
       - name: Rename ISO
         run: |
@@ -101,7 +101,7 @@ jobs:
             echo "Built: $FINAL"
             ls -lh
           else
-            echo "No ISO found in out/"
+            echo "No ISO found"
             ls -la
           fi
 
