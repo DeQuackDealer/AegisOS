@@ -34,225 +34,98 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Update system and install dependencies
+      - name: Install archiso and dependencies
         run: |
           pacman-key --init
           pacman-key --populate archlinux
           pacman -Syu --noconfirm
-          pacman -S --noconfirm \
-            archiso \
-            base-devel \
-            git \
-            python \
-            squashfs-tools \
-            libisoburn \
-            dosfstools \
-            e2fsprogs \
-            mtools \
-            libarchive \
-            grub \
-            syslinux
+          pacman -S --noconfirm archiso
 
-      - name: Verify tools installed
+      - name: Copy baseline profile and customize
         run: |
-          echo "Checking mkarchiso..."
-          command -v mkarchiso && mkarchiso -h | head -5
-          echo "Checking mksquashfs..."
-          command -v mksquashfs
-          echo "Checking xorriso..."
-          command -v xorriso
-          echo "All tools verified!"
-
-      - name: Create profile from releng template
-        run: |
-          echo "Copying official releng profile as base..."
-          cp -r /usr/share/archiso/configs/releng /tmp/aegis-profile
+          cp -r /usr/share/archiso/configs/baseline /tmp/aegis-profile
           
-          echo "Customizing profile for ${{ matrix.edition }}..."
-          
-          # Update profiledef.sh with Aegis branding
-          cat > /tmp/aegis-profile/profiledef.sh << 'PROFILEDEF'
+          cat > /tmp/aegis-profile/profiledef.sh << 'EOF'
           #!/usr/bin/env bash
-          iso_name="aegis-os-${{ matrix.edition }}"
+          iso_name="aegis-os"
           iso_label="AEGIS_$(date +%Y%m)"
           iso_publisher="Aegis OS Project"
-          iso_application="Aegis OS Live/Install Medium"
+          iso_application="Aegis OS Live Medium"
           iso_version="$(date +%Y.%m.%d)"
           install_dir="arch"
           buildmodes=('iso')
-          bootmodes=('bios.syslinux' 'uefi-x64.grub.esp')
+          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito')
           arch="x86_64"
           pacman_conf="pacman.conf"
           airootfs_image_type="squashfs"
           airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
           file_permissions=(
             ["/etc/shadow"]="0:0:400"
-            ["/root"]="0:0:750"
-            ["/usr/local/bin/aegis-info"]="0:0:755"
           )
-          PROFILEDEF
+          EOF
           
-          # Add edition-specific packages
-          echo "" >> /tmp/aegis-profile/packages.x86_64
-          echo "# Aegis OS Additions" >> /tmp/aegis-profile/packages.x86_64
-          
-          # Common packages for all editions
-          cat >> /tmp/aegis-profile/packages.x86_64 << 'COMMON'
-          firefox
+          cat >> /tmp/aegis-profile/packages.x86_64 << 'PACKAGES'
+          base
+          linux
+          linux-firmware
+          syslinux
+          mkinitcpio
+          mkinitcpio-archiso
           vim
           nano
           htop
           neofetch
-          git
+          networkmanager
           wget
           curl
-          networkmanager
-          pipewire
-          pipewire-pulse
-          COMMON
+          git
+          PACKAGES
           
-          # Desktop packages (skip for server)
-          if [ "${{ matrix.edition }}" != "server" ]; then
-            cat >> /tmp/aegis-profile/packages.x86_64 << 'DESKTOP'
-          xorg-server
-          xorg-xinit
-          xfce4
-          xfce4-goodies
-          lightdm
-          lightdm-gtk-greeter
-          thunar
-          DESKTOP
-          fi
-          
-          # Edition-specific packages
-          case "${{ matrix.edition }}" in
-            gamer|gamer-ai)
-              cat >> /tmp/aegis-profile/packages.x86_64 << 'GAMER'
-          steam
-          lutris
-          wine
-          gamemode
-          lib32-gamemode
-          mangohud
-          lib32-mangohud
-          GAMER
-              ;;
-            aidev|gamer-ai)
-              cat >> /tmp/aegis-profile/packages.x86_64 << 'AIDEV'
-          python-pytorch
-          python-numpy
-          python-pandas
-          jupyter-notebook
-          docker
-          AIDEV
-              ;;
-            workplace)
-              cat >> /tmp/aegis-profile/packages.x86_64 << 'WORKPLACE'
-          libreoffice-fresh
-          thunderbird
-          remmina
-          freerdp
-          WORKPLACE
-              ;;
-            server)
-              cat >> /tmp/aegis-profile/packages.x86_64 << 'SERVER'
-          docker
-          podman
-          nginx
-          openssh
-          fail2ban
-          SERVER
-              ;;
-          esac
-          
-          echo "Profile created successfully!"
-          ls -la /tmp/aegis-profile/
-
-      - name: Create Aegis branding
-        run: |
           mkdir -p /tmp/aegis-profile/airootfs/etc
-          mkdir -p /tmp/aegis-profile/airootfs/usr/local/bin
+          cat > /tmp/aegis-profile/airootfs/etc/hostname << 'HOSTNAME'
+          aegis
+          HOSTNAME
           
-          # os-release
           cat > /tmp/aegis-profile/airootfs/etc/os-release << EOF
           NAME="Aegis OS"
           PRETTY_NAME="Aegis OS ${{ matrix.edition }}"
           ID=aegis
           ID_LIKE=arch
           VERSION="3.0.0"
-          VERSION_ID="3.0.0"
-          VERSION_CODENAME="${{ matrix.edition }}"
           HOME_URL="https://aegis-os.com"
           EOF
           
-          # aegis-info tool
-          cat > /tmp/aegis-profile/airootfs/usr/local/bin/aegis-info << 'SCRIPT'
-          #!/bin/bash
-          echo "================================"
-          echo "     Aegis OS Information"
-          echo "================================"
-          cat /etc/os-release
-          echo ""
-          echo "Kernel: $(uname -r)"
-          echo "Uptime: $(uptime -p)"
-          SCRIPT
-          chmod +x /tmp/aegis-profile/airootfs/usr/local/bin/aegis-info
+          echo "Profile ready:"
+          ls -la /tmp/aegis-profile/
 
       - name: Build ISO
         run: |
-          echo "Starting ISO build for ${{ matrix.edition }}..."
-          mkdir -p /tmp/aegis-work /tmp/aegis-output
+          mkdir -p /tmp/work /tmp/out
+          mkarchiso -v -w /tmp/work -o /tmp/out /tmp/aegis-profile
           
-          mkarchiso -v -w /tmp/aegis-work -o /tmp/aegis-output /tmp/aegis-profile
-          
-          echo "Build complete!"
-          ls -lh /tmp/aegis-output/
+          echo "Build complete. Output:"
+          ls -lh /tmp/out/
 
-      - name: Rename and checksum ISO
+      - name: Rename and generate checksum
         run: |
-          cd /tmp/aegis-output
-          
-          # Find the built ISO
-          ISO_FILE=$(ls *.iso 2>/dev/null | head -1)
-          
-          if [ -z "$ISO_FILE" ]; then
-            echo "ERROR: No ISO file found!"
-            ls -la
-            exit 1
-          fi
-          
-          # Rename to standard format
-          FINAL_NAME="aegis-os-${{ matrix.edition }}-$(date +%Y%m%d).iso"
-          mv "$ISO_FILE" "$FINAL_NAME"
-          
-          # Generate checksum
-          sha256sum "$FINAL_NAME" > "$FINAL_NAME.sha256"
-          
-          echo "Final ISO: $FINAL_NAME"
-          echo "Size: $(du -h $FINAL_NAME | cut -f1)"
-          echo "SHA256:"
-          cat "$FINAL_NAME.sha256"
+          cd /tmp/out
+          ISO=$(ls *.iso | head -1)
+          FINAL="aegis-os-${{ matrix.edition }}-$(date +%Y%m%d).iso"
+          mv "$ISO" "$FINAL"
+          sha256sum "$FINAL" > "$FINAL.sha256"
+          echo "ISO: $FINAL"
+          cat "$FINAL.sha256"
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
           name: aegis-os-${{ matrix.edition }}-iso
-          path: |
-            /tmp/aegis-output/*.iso
-            /tmp/aegis-output/*.sha256
+          path: /tmp/out/*.iso
           retention-days: 30
-          if-no-files-found: error
 
-  summary:
-    needs: build
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-      - name: Build Summary
-        run: |
-          echo "# Aegis OS Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Build completed at: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Download the ISO artifacts from the Actions tab." >> $GITHUB_STEP_SUMMARY
+      - name: Upload checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-os-${{ matrix.edition }}-checksum
+          path: /tmp/out/*.sha256
+          retention-days: 30
