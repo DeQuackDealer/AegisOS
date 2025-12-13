@@ -16,107 +16,400 @@ on:
           - aidev
           - gamer-ai
           - server
+          - all
+      debug:
+        description: 'Enable debug output'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  AEGIS_VERSION: "3.0.0"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: archlinux
-      options: --privileged
     
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: ${{ github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create Aegis profile
+      - name: Set up Docker
         run: |
-          mkdir -p profile/airootfs/etc
-          mkdir -p profile/syslinux
-          
-          cat > profile/profiledef.sh << 'EOF'
+          echo "Setting up Docker for Arch Linux build..."
+          docker pull archlinux:latest
+
+      - name: Build ISO in Arch container
+        run: |
+          docker run --rm --privileged \
+            -v ${{ github.workspace }}:/workspace \
+            -v /dev:/dev \
+            -e EDITION="${{ matrix.edition }}" \
+            -e AEGIS_VERSION="${{ env.AEGIS_VERSION }}" \
+            -e DEBUG="${{ github.event.inputs.debug }}" \
+            archlinux:latest \
+            bash -c '
+              set -e
+              
+              echo "=========================================="
+              echo "Building Aegis OS $EDITION Edition"
+              echo "=========================================="
+              
+              # Initialize pacman
+              echo "[1/8] Initializing pacman..."
+              pacman-key --init
+              pacman-key --populate archlinux
+              
+              # Update system
+              echo "[2/8] Updating system..."
+              pacman -Syu --noconfirm
+              
+              # Install archiso
+              echo "[3/8] Installing archiso..."
+              pacman -S --noconfirm archiso git
+              
+              # Copy baseline profile
+              echo "[4/8] Setting up profile..."
+              cp -r /usr/share/archiso/configs/baseline /tmp/aegis-profile
+              
+              # Customize profiledef.sh
+              cat > /tmp/aegis-profile/profiledef.sh << PROFILE
           #!/usr/bin/env bash
-          iso_name="aegis-os"
-          iso_label="AEGIS_$(date +%Y%m)"
-          iso_publisher="Aegis OS Project"
-          iso_application="Aegis OS Live Medium"
-          iso_version="$(date +%Y.%m.%d)"
+          iso_name="aegis-os-${EDITION}"
+          iso_label="AEGIS_\$(date +%Y%m)"
+          iso_publisher="Aegis OS Project <https://aegis-os.com>"
+          iso_application="Aegis OS ${EDITION^} Edition"
+          iso_version="${AEGIS_VERSION}"
           install_dir="arch"
-          buildmodes=('iso')
-          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito')
+          buildmodes=("iso")
+          bootmodes=("bios.syslinux.mbr" "bios.syslinux.eltorito")
           arch="x86_64"
           pacman_conf="pacman.conf"
           airootfs_image_type="squashfs"
-          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
+          airootfs_image_tool_options=("-comp" "xz" "-Xbcj" "x86" "-b" "1M" "-Xdict-size" "1M")
           file_permissions=(
             ["/etc/shadow"]="0:0:400"
+            ["/usr/local/bin/aegis-info"]="0:0:755"
           )
-          EOF
-          
-          cat > profile/pacman.conf << 'EOF'
-          [options]
-          Architecture = x86_64
-          SigLevel = Required DatabaseOptional
-          [core]
-          Include = /etc/pacman.d/mirrorlist
-          [extra]
-          Include = /etc/pacman.d/mirrorlist
-          EOF
-          
-          cat > profile/packages.x86_64 << 'EOF'
+          PROFILE
+              
+              # Create packages list based on edition
+              echo "[5/8] Creating package list for $EDITION..."
+              cat > /tmp/aegis-profile/packages.x86_64 << PACKAGES
+          # Base system
           base
           linux
           linux-firmware
           syslinux
           mkinitcpio
           mkinitcpio-archiso
-          EOF
           
-          cat > profile/airootfs/etc/hostname << 'EOF'
-          aegis
-          EOF
+          # Essential utilities
+          sudo
+          nano
+          vim
+          less
+          which
+          man-db
+          man-pages
           
-          cat > profile/airootfs/etc/os-release << EOF
+          # Network
+          networkmanager
+          iwd
+          dhcpcd
+          openssh
+          wget
+          curl
+          
+          # System tools
+          htop
+          neofetch
+          git
+          base-devel
+          PACKAGES
+              
+              # Add edition-specific packages
+              case "$EDITION" in
+                freemium|basic)
+                  cat >> /tmp/aegis-profile/packages.x86_64 << DESKTOP
+          
+          # Desktop
+          xorg-server
+          xorg-xinit
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          
+          # Applications
+          firefox
+          libreoffice-still
+          vlc
+          thunar
+          file-roller
+          
+          # Audio
+          pipewire
+          pipewire-pulse
+          pipewire-alsa
+          wireplumber
+          
+          # Wine basics
+          wine
+          wine-mono
+          wine-gecko
+          winetricks
+          DESKTOP
+                  ;;
+                  
+                gamer|gamer-ai)
+                  cat >> /tmp/aegis-profile/packages.x86_64 << GAMING
+          
+          # Desktop
+          xorg-server
+          xorg-xinit
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          
+          # Gaming kernel
+          linux-zen
+          linux-zen-headers
+          
+          # Graphics
+          mesa
+          lib32-mesa
+          vulkan-icd-loader
+          lib32-vulkan-icd-loader
+          
+          # Wine/Proton
+          wine-staging
+          wine-mono
+          wine-gecko
+          winetricks
+          lib32-gnutls
+          lib32-libpulse
+          
+          # Gaming tools
+          steam
+          lutris
+          gamemode
+          lib32-gamemode
+          mangohud
+          lib32-mangohud
+          
+          # Audio
+          pipewire
+          pipewire-pulse
+          pipewire-alsa
+          wireplumber
+          
+          # Applications
+          firefox
+          vlc
+          GAMING
+                  ;;
+                  
+                aidev)
+                  cat >> /tmp/aegis-profile/packages.x86_64 << AIDEV
+          
+          # Desktop
+          xorg-server
+          xorg-xinit
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          
+          # Development
+          python
+          python-pip
+          python-virtualenv
+          python-numpy
+          python-pandas
+          python-matplotlib
+          python-scikit-learn
+          jupyterlab
+          
+          # Containers
+          docker
+          docker-compose
+          
+          # Tools
+          firefox
+          vlc
+          git
+          tmux
+          
+          # Audio
+          pipewire
+          pipewire-pulse
+          AIDEV
+                  ;;
+                  
+                workplace)
+                  cat >> /tmp/aegis-profile/packages.x86_64 << WORKPLACE
+          
+          # Desktop
+          xorg-server
+          xorg-xinit
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          
+          # Office
+          libreoffice-fresh
+          firefox
+          thunderbird
+          
+          # Remote access
+          remmina
+          freerdp
+          
+          # Network tools
+          openvpn
+          networkmanager-openvpn
+          
+          # Audio
+          pipewire
+          pipewire-pulse
+          WORKPLACE
+                  ;;
+                  
+                server)
+                  cat >> /tmp/aegis-profile/packages.x86_64 << SERVER
+          
+          # Server kernel
+          linux-lts
+          linux-lts-headers
+          
+          # Containers
+          docker
+          docker-compose
+          
+          # Monitoring
+          prometheus
+          
+          # Security
+          fail2ban
+          ufw
+          
+          # Web server
+          nginx
+          SERVER
+                  ;;
+              esac
+              
+              # Create branding files
+              echo "[6/8] Creating branding..."
+              mkdir -p /tmp/aegis-profile/airootfs/etc
+              mkdir -p /tmp/aegis-profile/airootfs/usr/local/bin
+              
+              cat > /tmp/aegis-profile/airootfs/etc/os-release << OSRELEASE
           NAME="Aegis OS"
-          PRETTY_NAME="Aegis OS ${{ github.event.inputs.edition }}"
+          PRETTY_NAME="Aegis OS ${EDITION^} Edition"
           ID=aegis
           ID_LIKE=arch
-          VERSION="3.0.0"
+          VERSION="${AEGIS_VERSION}"
+          VERSION_ID="${AEGIS_VERSION}"
+          VERSION_CODENAME="${EDITION}"
+          BUILD_ID="$(date +%Y%m%d)"
           HOME_URL="https://aegis-os.com"
-          EOF
+          DOCUMENTATION_URL="https://docs.aegis-os.com"
+          SUPPORT_URL="https://support.aegis-os.com"
+          OSRELEASE
+              
+              echo "aegis" > /tmp/aegis-profile/airootfs/etc/hostname
+              
+              cat > /tmp/aegis-profile/airootfs/usr/local/bin/aegis-info << SCRIPT
+          #!/bin/bash
+          echo "================================"
+          echo "     Aegis OS Information"
+          echo "================================"
+          echo ""
+          echo "Edition: ${EDITION^}"
+          echo "Version: ${AEGIS_VERSION}"
+          echo "Base: Arch Linux"
+          echo "Kernel: \$(uname -r)"
+          echo "Uptime: \$(uptime -p)"
+          echo ""
+          neofetch 2>/dev/null || cat /etc/os-release
+          SCRIPT
+              chmod +x /tmp/aegis-profile/airootfs/usr/local/bin/aegis-info
+              
+              # Build ISO
+              echo "[7/8] Building ISO (this takes 10-30 minutes)..."
+              mkdir -p /tmp/work /tmp/out
+              
+              cd /tmp/aegis-profile
+              mkarchiso -v -w /tmp/work -o /tmp/out .
+              
+              # Copy output
+              echo "[8/8] Copying output..."
+              mkdir -p /workspace/output
+              
+              ISO_FILE=$(ls /tmp/out/*.iso 2>/dev/null | head -1)
+              if [ -n "$ISO_FILE" ]; then
+                FINAL_NAME="aegis-os-${EDITION}-${AEGIS_VERSION}-$(date +%Y%m%d).iso"
+                cp "$ISO_FILE" "/workspace/output/$FINAL_NAME"
+                
+                cd /workspace/output
+                sha256sum "$FINAL_NAME" > "$FINAL_NAME.sha256"
+                
+                echo ""
+                echo "=========================================="
+                echo "BUILD SUCCESSFUL!"
+                echo "=========================================="
+                echo "ISO: $FINAL_NAME"
+                echo "Size: $(du -h $FINAL_NAME | cut -f1)"
+                echo "SHA256: $(cat $FINAL_NAME.sha256)"
+              else
+                echo "ERROR: No ISO file produced!"
+                ls -la /tmp/out/
+                exit 1
+              fi
+            '
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-os-${{ matrix.edition }}-iso
+          path: output/*.iso
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-os-${{ matrix.edition }}-sha256
+          path: output/*.sha256
+          retention-days: 30
+          if-no-files-found: error
+
+  update-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    
+    steps:
+      - name: Download all checksums
+        uses: actions/download-artifact@v4
+        with:
+          path: checksums
+          pattern: '*-sha256'
           
-          echo "Profile created:"
-          find profile -type f
-
-      - name: Build ISO
-        uses: coderadu/actions-mkarchiso@v1
-
-      - name: Rename ISO
+      - name: Display checksums
         run: |
-          cd out
-          ISO=$(ls *.iso 2>/dev/null | head -1)
-          if [ -n "$ISO" ]; then
-            FINAL="aegis-os-${{ github.event.inputs.edition }}-$(date +%Y%m%d).iso"
-            mv "$ISO" "$FINAL"
-            sha256sum "$FINAL" > "$FINAL.sha256"
-            echo "Built: $FINAL"
-            ls -lh
-          else
-            echo "No ISO found"
-            ls -la
-          fi
-
-      - name: Upload ISO
-        uses: actions/upload-artifact@v4
-        with:
-          name: aegis-os-${{ github.event.inputs.edition }}-iso
-          path: out/*.iso
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload checksum
-        uses: actions/upload-artifact@v4
-        with:
-          name: aegis-os-${{ github.event.inputs.edition }}-checksum  
-          path: out/*.sha256
-          retention-days: 30
-          if-no-files-found: warn
+          echo "=========================================="
+          echo "Built ISO Checksums"
+          echo "=========================================="
+          find checksums -name "*.sha256" -exec cat {} \;
+          echo ""
+          echo "Update manifest.json with these checksums!"

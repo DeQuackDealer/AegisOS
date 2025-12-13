@@ -1,0 +1,123 @@
+name: Build Windows Installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'build-system/installers/**'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller cryptography certifi requests
+
+      - name: Build Media Creation Tool
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --windowed --name "AegisMediaTool" --icon=icon.ico aegis-media-tool.py --add-data "manifest.json;." 2>$null || pyinstaller --onefile --windowed --name "AegisMediaTool" aegis-media-tool.py --add-data "manifest.json;."
+        shell: pwsh
+
+      - name: Build Freemium Installer
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --windowed --name "AegisInstallerFreemium" aegis-installer-freemium.py --add-data "manifest.json;." 2>$null || pyinstaller --onefile --windowed --name "AegisInstallerFreemium" aegis-installer-freemium.py --add-data "manifest.json;."
+        shell: pwsh
+
+      - name: Build Licensed Installer
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --windowed --name "AegisInstallerLicensed" aegis-installer-licensed.py --add-data "manifest.json;." 2>$null || pyinstaller --onefile --windowed --name "AegisInstallerLicensed" aegis-installer-licensed.py --add-data "manifest.json;."
+        shell: pwsh
+
+      - name: Collect executables
+        run: |
+          mkdir -p artifacts
+          cp build-system/installers/dist/*.exe artifacts/ 2>$null || true
+          ls artifacts/
+        shell: bash
+
+      - name: Upload Media Tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisMediaTool-Windows
+          path: artifacts/AegisMediaTool.exe
+          if-no-files-found: warn
+
+      - name: Upload Freemium Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisInstallerFreemium-Windows
+          path: artifacts/AegisInstallerFreemium.exe
+          if-no-files-found: warn
+
+      - name: Upload Licensed Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisInstallerLicensed-Windows
+          path: artifacts/AegisInstallerLicensed.exe
+          if-no-files-found: warn
+
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller cryptography certifi requests
+
+      - name: Build Media Creation Tool
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --name "aegis-media-tool" aegis-media-tool.py --add-data "manifest.json:."
+
+      - name: Build Freemium Installer
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --name "aegis-installer-freemium" aegis-installer-freemium.py --add-data "manifest.json:."
+
+      - name: Build Licensed Installer
+        run: |
+          cd build-system/installers
+          pyinstaller --onefile --name "aegis-installer-licensed" aegis-installer-licensed.py --add-data "manifest.json:."
+
+      - name: Collect executables
+        run: |
+          mkdir -p artifacts
+          cp build-system/installers/dist/aegis-* artifacts/
+          ls -la artifacts/
+
+      - name: Upload Linux Installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: AegisInstallers-Linux
+          path: artifacts/aegis-*
+          if-no-files-found: warn
