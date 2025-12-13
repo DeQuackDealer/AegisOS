@@ -16,38 +16,22 @@ on:
           - aidev
           - gamer-ai
           - server
-          - all
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-
-    strategy:
-      fail-fast: false
-      matrix:
-        edition: ${{ github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
-
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install archiso and dependencies
+      - name: Create Aegis profile
         run: |
-          pacman-key --init
-          pacman-key --populate archlinux
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm archiso
-
-      - name: Copy baseline profile and customize
-        run: |
-          cp -r /usr/share/archiso/configs/baseline /tmp/aegis-profile
+          mkdir -p profile/airootfs/etc
           
-          cat > /tmp/aegis-profile/profiledef.sh << 'EOF'
+          cat > profile/profiledef.sh << 'EOF'
           #!/usr/bin/env bash
-          iso_name="aegis-os"
+          iso_name="aegis-os-${{ github.event.inputs.edition }}"
           iso_label="AEGIS_$(date +%Y%m)"
           iso_publisher="Aegis OS Project"
           iso_application="Aegis OS Live Medium"
@@ -64,68 +48,75 @@ jobs:
           )
           EOF
           
-          cat >> /tmp/aegis-profile/packages.x86_64 << 'PACKAGES'
+          cat > profile/pacman.conf << 'EOF'
+          [options]
+          Architecture = x86_64
+          SigLevel = Required DatabaseOptional
+          [core]
+          Include = /etc/pacman.d/mirrorlist
+          [extra]
+          Include = /etc/pacman.d/mirrorlist
+          EOF
+          
+          cat > profile/packages.x86_64 << 'EOF'
           base
           linux
           linux-firmware
           syslinux
           mkinitcpio
           mkinitcpio-archiso
-          vim
-          nano
-          htop
-          neofetch
-          networkmanager
-          wget
-          curl
-          git
-          PACKAGES
+          EOF
           
-          mkdir -p /tmp/aegis-profile/airootfs/etc
-          cat > /tmp/aegis-profile/airootfs/etc/hostname << 'HOSTNAME'
+          cat > profile/airootfs/etc/hostname << 'EOF'
           aegis
-          HOSTNAME
+          EOF
           
-          cat > /tmp/aegis-profile/airootfs/etc/os-release << EOF
+          cat > profile/airootfs/etc/os-release << EOF
           NAME="Aegis OS"
-          PRETTY_NAME="Aegis OS ${{ matrix.edition }}"
+          PRETTY_NAME="Aegis OS ${{ github.event.inputs.edition }}"
           ID=aegis
           ID_LIKE=arch
           VERSION="3.0.0"
           HOME_URL="https://aegis-os.com"
           EOF
           
-          echo "Profile ready:"
-          ls -la /tmp/aegis-profile/
-
-      - name: Build ISO
-        run: |
-          mkdir -p /tmp/work /tmp/out
-          mkarchiso -v -w /tmp/work -o /tmp/out /tmp/aegis-profile
+          mkdir -p profile/syslinux
           
-          echo "Build complete. Output:"
-          ls -lh /tmp/out/
+          echo "Profile created:"
+          find profile -type f
 
-      - name: Rename and generate checksum
+      - name: Build ISO with mkarchiso action
+        uses: coderadu/actions-mkarchiso@v1
+        with:
+          profile-path: profile
+
+      - name: Rename ISO
         run: |
-          cd /tmp/out
-          ISO=$(ls *.iso | head -1)
-          FINAL="aegis-os-${{ matrix.edition }}-$(date +%Y%m%d).iso"
-          mv "$ISO" "$FINAL"
-          sha256sum "$FINAL" > "$FINAL.sha256"
-          echo "ISO: $FINAL"
-          cat "$FINAL.sha256"
+          cd out
+          ISO=$(ls *.iso 2>/dev/null | head -1)
+          if [ -n "$ISO" ]; then
+            FINAL="aegis-os-${{ github.event.inputs.edition }}-$(date +%Y%m%d).iso"
+            mv "$ISO" "$FINAL"
+            sha256sum "$FINAL" > "$FINAL.sha256"
+            echo "Built: $FINAL"
+            ls -lh
+          else
+            echo "No ISO found in out/"
+            ls -la
+          fi
 
-      - name: Upload ISO artifact
+      - name: Upload ISO
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-os-${{ matrix.edition }}-iso
-          path: /tmp/out/*.iso
+          name: aegis-os-${{ github.event.inputs.edition }}-iso
+          path: out/*.iso
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload checksum
         uses: actions/upload-artifact@v4
         with:
-          name: aegis-os-${{ matrix.edition }}-checksum
-          path: /tmp/out/*.sha256
+          name: aegis-os-${{ github.event.inputs.edition }}-checksum  
+          path: out/*.sha256
           retention-days: 30
+          if-no-files-found: warn
