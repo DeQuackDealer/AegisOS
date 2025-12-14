@@ -24,6 +24,23 @@ on:
           - all
 
 jobs:
+  determine-matrix:
+    name: Determine Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.edition }}" = "all" ]; then
+            echo 'matrix=["freemium","basic","gamer","workplace","aidev","gamer-ai","server"]' >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo 'matrix=["${{ github.event.inputs.edition }}"]' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=["freemium"]' >> $GITHUB_OUTPUT
+          fi
+
   validate:
     name: Validate Build System
     runs-on: ubuntu-latest
@@ -38,14 +55,14 @@ jobs:
         run: |
           echo "=== Validating Python syntax ==="
           errors=0
-          while IFS= read -r f; do
+          for f in $(find . -name "*.py" -type f -not -path "./.cache/*" -not -path "./.pythonlibs/*"); do
             if python3 -m py_compile "$f" 2>/dev/null; then
               echo "OK: $f"
             else
               echo "ERROR: $f"
               errors=$((errors + 1))
             fi
-          done < <(find . -name "*.py" -type f -not -path "./.cache/*" -not -path "./.pythonlibs/*")
+          done
           if [ "$errors" -gt 0 ]; then
             echo "Found $errors Python syntax errors"
             exit 1
@@ -58,7 +75,7 @@ jobs:
 
   build-iso:
     name: Build ${{ matrix.edition }} ISO
-    needs: validate
+    needs: [determine-matrix, validate]
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -66,7 +83,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        edition: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
+        edition: ${{ fromJson(needs.determine-matrix.outputs.matrix) }}
     
     steps:
       - name: Initialize pacman and enable multilib
@@ -92,21 +109,7 @@ jobs:
         run: |
           set -e
           echo "=== Installing build dependencies ==="
-          pacman -S --needed --noconfirm \
-            git \
-            python \
-            archiso \
-            squashfs-tools \
-            libisoburn \
-            dosfstools \
-            e2fsprogs \
-            mtools \
-            grub \
-            efibootmgr \
-            rsync \
-            wget \
-            curl \
-            gnupg
+          pacman -S --needed --noconfirm git python archiso squashfs-tools libisoburn dosfstools e2fsprogs mtools grub efibootmgr rsync wget curl gnupg
       
       - uses: actions/checkout@v4
         with:
@@ -135,12 +138,10 @@ jobs:
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/common/" "${PROFILE_DIR}/airootfs/"
-          else
-            echo "WARNING: No common overlays found"
           fi
           
           if [ "$EDITION" != "freemium" ] && [ -d "${REPO_DIR}/build-system/overlays/pro" ]; then
-            echo "Copying pro overlays for paid edition..."
+            echo "Copying pro overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/pro/" "${PROFILE_DIR}/airootfs/"
           fi
           
@@ -154,103 +155,107 @@ jobs:
           if [ -d "${REPO_DIR}/build-system/overlays/${EDITION}" ]; then
             echo "Copying ${EDITION} overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/${EDITION}/" "${PROFILE_DIR}/airootfs/"
-          else
-            echo "WARNING: No ${EDITION}-specific overlays found"
           fi
           
           find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
           
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
-          ls -la "${PROFILE_DIR}/airootfs/etc/aegis/" 2>/dev/null || echo "No aegis config"
           
-          # Add base packages using printf (avoids heredoc YAML issues)
-          {
-            printf '%s\n' "xfce4"
-            printf '%s\n' "xfce4-goodies"
-            printf '%s\n' "lightdm"
-            printf '%s\n' "lightdm-gtk-greeter"
-            printf '%s\n' "firefox"
-            printf '%s\n' "vlc"
-            printf '%s\n' "libreoffice-fresh"
-            printf '%s\n' "ttf-dejavu"
-            printf '%s\n' "ttf-liberation"
-            printf '%s\n' "networkmanager"
-            printf '%s\n' "network-manager-applet"
-            printf '%s\n' "pipewire"
-            printf '%s\n' "pipewire-pulse"
-            printf '%s\n' "pipewire-alsa"
-            printf '%s\n' "wireplumber"
-            printf '%s\n' "pavucontrol"
-            printf '%s\n' "gvfs"
-            printf '%s\n' "gvfs-mtp"
-            printf '%s\n' "thunar-volman"
-            printf '%s\n' "xdg-user-dirs"
-            printf '%s\n' "fastfetch"
-          } >> "${PROFILE_DIR}/packages.x86_64"
+          echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
+
+      - name: Create package list
+        run: |
+          set -e
+          EDITION="${{ matrix.edition }}"
+          PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
-          # Add gamer packages
+          # Base packages for all editions
+          cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          firefox
+          vlc
+          libreoffice-fresh
+          ttf-dejavu
+          ttf-liberation
+          networkmanager
+          network-manager-applet
+          pipewire
+          pipewire-pulse
+          pipewire-alsa
+          wireplumber
+          pavucontrol
+          gvfs
+          gvfs-mtp
+          thunar-volman
+          xdg-user-dirs
+          fastfetch
+          PKGEOF
+          
+          # Gamer packages
           if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
-            {
-              printf '%s\n' "steam"
-              printf '%s\n' "lutris"
-              printf '%s\n' "gamemode"
-              printf '%s\n' "lib32-gamemode"
-              printf '%s\n' "mangohud"
-              printf '%s\n' "lib32-mangohud"
-              printf '%s\n' "lib32-mesa"
-              printf '%s\n' "lib32-vulkan-icd-loader"
-              printf '%s\n' "lib32-gnutls"
-              printf '%s\n' "lib32-libpulse"
-              printf '%s\n' "wine"
-              printf '%s\n' "wine-gecko"
-              printf '%s\n' "wine-mono"
-              printf '%s\n' "winetricks"
-            } >> "${PROFILE_DIR}/packages.x86_64"
+            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
+          steam
+          lutris
+          gamemode
+          lib32-gamemode
+          mangohud
+          lib32-mangohud
+          lib32-mesa
+          lib32-vulkan-icd-loader
+          lib32-gnutls
+          lib32-libpulse
+          wine
+          wine-gecko
+          wine-mono
+          winetricks
+          PKGEOF
           fi
           
-          # Add AI dev packages
+          # AI dev packages
           if [ "$EDITION" = "aidev" ] || [ "$EDITION" = "gamer-ai" ]; then
-            {
-              printf '%s\n' "python"
-              printf '%s\n' "python-pip"
-              printf '%s\n' "python-virtualenv"
-              printf '%s\n' "jupyterlab"
-              printf '%s\n' "docker"
-              printf '%s\n' "podman"
-            } >> "${PROFILE_DIR}/packages.x86_64"
+            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
+          python
+          python-pip
+          python-virtualenv
+          jupyterlab
+          docker
+          podman
+          PKGEOF
           fi
           
-          # Add workplace packages
+          # Workplace packages
           if [ "$EDITION" = "workplace" ]; then
-            {
-              printf '%s\n' "remmina"
-              printf '%s\n' "freerdp"
-              printf '%s\n' "thunderbird"
-              printf '%s\n' "evolution"
-            } >> "${PROFILE_DIR}/packages.x86_64"
+            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
+          remmina
+          freerdp
+          thunderbird
+          evolution
+          PKGEOF
           fi
           
-          # Add server packages
+          # Server packages
           if [ "$EDITION" = "server" ]; then
-            {
-              printf '%s\n' "docker"
-              printf '%s\n' "podman"
-              printf '%s\n' "nginx"
-              printf '%s\n' "mariadb"
-              printf '%s\n' "postgresql"
-              printf '%s\n' "redis"
-            } >> "${PROFILE_DIR}/packages.x86_64"
+            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
+          docker
+          podman
+          nginx
+          mariadb
+          postgresql
+          redis
+          PKGEOF
           fi
           
-          # Remove duplicate packages and blank lines
+          # Clean up: remove leading whitespace, blank lines, duplicates
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/packages.x86_64"
           grep -v '^$' "${PROFILE_DIR}/packages.x86_64" | sort -u > "${PROFILE_DIR}/packages.x86_64.tmp"
           mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
           
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
           cat "${PROFILE_DIR}/packages.x86_64"
-          
-          echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
 
       - name: Validate packages exist
         run: |
@@ -260,9 +265,10 @@ jobs:
           missing_pkgs=()
           
           while IFS= read -r pkg; do
-            [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
+            [ -z "$pkg" ] && continue
+            [[ "$pkg" =~ ^# ]] && continue
             
-            if ! pacman -Si "$pkg" &>/dev/null; then
+            if ! pacman -Si "$pkg" > /dev/null 2>&1; then
               echo "WARNING: Package not found: $pkg"
               missing_pkgs+=("$pkg")
             fi
@@ -315,9 +321,7 @@ jobs:
             cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
           else
             echo "ERROR: No ISO file was produced!"
-            echo "=== Work directory contents ==="
             ls -la "${WORK_DIR}/" || true
-            echo "=== Output directory contents ==="
             ls -la "${OUTPUT_DIR}/" || true
             exit 1
           fi
