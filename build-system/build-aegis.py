@@ -398,11 +398,14 @@ class AegisBuilder:
         
         log(f"Package list created with {len(packages)} packages", "success")
         
-        shutil.copy(ARCHISO_DIR / "profiledef.sh", self.profile_dir / "profiledef.sh")
-        shutil.copy(ARCHISO_DIR / "pacman.conf", self.profile_dir / "pacman.conf")
-        
-        if AIROOTFS_DIR.exists():
-            shutil.copytree(AIROOTFS_DIR, profile_airootfs, dirs_exist_ok=True)
+        if not self.simulate:
+            shutil.copy(ARCHISO_DIR / "profiledef.sh", self.profile_dir / "profiledef.sh")
+            shutil.copy(ARCHISO_DIR / "pacman.conf", self.profile_dir / "pacman.conf")
+            
+            if AIROOTFS_DIR.exists():
+                shutil.copytree(AIROOTFS_DIR, profile_airootfs, dirs_exist_ok=True)
+        else:
+            log("Simulation mode: skipping archiso file copy", "info")
         
         self._create_branding()
         self._create_aegis_tools()

@@ -17,6 +17,12 @@ fi
 echo "GitHub token found (${#GITHUB_PAT} characters)"
 echo ""
 
+# Remove duplicate workflow file if it exists
+if [ -f ".github/workflows/build-aegis-iso.yml" ]; then
+    echo "Removing duplicate workflow file..."
+    rm -f .github/workflows/build-aegis-iso.yml
+fi
+
 # Repository URLs
 MAIN_REPO="https://${GITHUB_PAT}@github.com/DeQuackDealer/AegisOS.git"
 PREVIEW_REPO="https://${GITHUB_PAT}@github.com/DeQuackDealer/AegisOSRepo.git"
