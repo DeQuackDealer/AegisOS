@@ -76,22 +76,15 @@ jobs:
           pacman-key --init
           pacman-key --populate archlinux
           
-          # Update keyring first
           pacman -Sy --noconfirm archlinux-keyring
           
-          # Enable multilib repository in container's pacman.conf
-          # This is needed so mkarchiso can find lib32-* packages
           echo "=== Enabling multilib repository ==="
           cp /etc/pacman.conf /etc/pacman.conf.orig
-          
-          # Uncomment [multilib] section
           sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
           
-          # Verify multilib is enabled
           echo "=== Verifying multilib is enabled ==="
           grep -A1 "\[multilib\]" /etc/pacman.conf || echo "WARNING: multilib section not found"
           
-          # Full system upgrade with new repos
           echo "=== Syncing package databases ==="
           pacman -Syy --noconfirm
           
@@ -127,24 +120,18 @@ jobs:
           PROFILE_DIR="/tmp/aegis-${EDITION}"
           REPO_DIR="${GITHUB_WORKSPACE}"
           
-          # Copy base releng profile from archiso
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           
-          # CRITICAL: Copy the container's pacman.conf (with multilib enabled) to the profile
-          # This ensures mkarchiso uses the same repos when installing packages into airootfs
           echo "=== Copying pacman.conf with multilib to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
           
-          # Also ensure mirrorlist is available
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           
-          # Create Aegis directories
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
           echo "{\"edition\": \"${EDITION}\", \"version\": \"1.0.0\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
           
-          # Copy common overlays using rsync
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/common/" "${PROFILE_DIR}/airootfs/"
@@ -152,13 +139,11 @@ jobs:
             echo "WARNING: No common overlays found"
           fi
           
-          # Copy pro overlays for paid editions
           if [ "$EDITION" != "freemium" ] && [ -d "${REPO_DIR}/build-system/overlays/pro" ]; then
             echo "Copying pro overlays for paid edition..."
             rsync -av "${REPO_DIR}/build-system/overlays/pro/" "${PROFILE_DIR}/airootfs/"
           fi
           
-          # Copy pro-productivity overlays for appropriate editions
           if [ "$EDITION" = "basic" ] || [ "$EDITION" = "workplace" ]; then
             if [ -d "${REPO_DIR}/build-system/overlays/pro-productivity" ]; then
               echo "Copying pro-productivity overlays..."
@@ -166,7 +151,6 @@ jobs:
             fi
           fi
           
-          # Copy edition-specific overlays
           if [ -d "${REPO_DIR}/build-system/overlays/${EDITION}" ]; then
             echo "Copying ${EDITION} overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/${EDITION}/" "${PROFILE_DIR}/airootfs/"
@@ -174,97 +158,90 @@ jobs:
             echo "WARNING: No ${EDITION}-specific overlays found"
           fi
           
-          # Set executable permissions on all scripts
           find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
           
-          # Debug: show what was copied
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
           ls -la "${PROFILE_DIR}/airootfs/etc/aegis/" 2>/dev/null || echo "No aegis config"
           
-          # Add base packages - these are available in standard repos
-          cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-xfce4
-xfce4-goodies
-lightdm
-lightdm-gtk-greeter
-firefox
-vlc
-libreoffice-fresh
-ttf-dejavu
-ttf-liberation
-networkmanager
-network-manager-applet
-pipewire
-pipewire-pulse
-pipewire-alsa
-wireplumber
-pavucontrol
-gvfs
-gvfs-mtp
-thunar-volman
-xdg-user-dirs
-fastfetch
-EOF
+          # Add base packages using printf (avoids heredoc YAML issues)
+          {
+            printf '%s\n' "xfce4"
+            printf '%s\n' "xfce4-goodies"
+            printf '%s\n' "lightdm"
+            printf '%s\n' "lightdm-gtk-greeter"
+            printf '%s\n' "firefox"
+            printf '%s\n' "vlc"
+            printf '%s\n' "libreoffice-fresh"
+            printf '%s\n' "ttf-dejavu"
+            printf '%s\n' "ttf-liberation"
+            printf '%s\n' "networkmanager"
+            printf '%s\n' "network-manager-applet"
+            printf '%s\n' "pipewire"
+            printf '%s\n' "pipewire-pulse"
+            printf '%s\n' "pipewire-alsa"
+            printf '%s\n' "wireplumber"
+            printf '%s\n' "pavucontrol"
+            printf '%s\n' "gvfs"
+            printf '%s\n' "gvfs-mtp"
+            printf '%s\n' "thunar-volman"
+            printf '%s\n' "xdg-user-dirs"
+            printf '%s\n' "fastfetch"
+          } >> "${PROFILE_DIR}/packages.x86_64"
           
-          # Add edition-specific packages
-          case "$EDITION" in
-            gamer|gamer-ai)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-steam
-lutris
-gamemode
-lib32-gamemode
-mangohud
-lib32-mangohud
-lib32-mesa
-lib32-vulkan-icd-loader
-lib32-gnutls
-lib32-libpulse
-wine
-wine-gecko
-wine-mono
-winetricks
-EOF
-              ;;
-          esac
+          # Add gamer packages
+          if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
+            {
+              printf '%s\n' "steam"
+              printf '%s\n' "lutris"
+              printf '%s\n' "gamemode"
+              printf '%s\n' "lib32-gamemode"
+              printf '%s\n' "mangohud"
+              printf '%s\n' "lib32-mangohud"
+              printf '%s\n' "lib32-mesa"
+              printf '%s\n' "lib32-vulkan-icd-loader"
+              printf '%s\n' "lib32-gnutls"
+              printf '%s\n' "lib32-libpulse"
+              printf '%s\n' "wine"
+              printf '%s\n' "wine-gecko"
+              printf '%s\n' "wine-mono"
+              printf '%s\n' "winetricks"
+            } >> "${PROFILE_DIR}/packages.x86_64"
+          fi
           
-          case "$EDITION" in
-            aidev|gamer-ai)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-python
-python-pip
-python-virtualenv
-jupyterlab
-docker
-podman
-EOF
-              ;;
-          esac
+          # Add AI dev packages
+          if [ "$EDITION" = "aidev" ] || [ "$EDITION" = "gamer-ai" ]; then
+            {
+              printf '%s\n' "python"
+              printf '%s\n' "python-pip"
+              printf '%s\n' "python-virtualenv"
+              printf '%s\n' "jupyterlab"
+              printf '%s\n' "docker"
+              printf '%s\n' "podman"
+            } >> "${PROFILE_DIR}/packages.x86_64"
+          fi
           
-          case "$EDITION" in
-            workplace)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-remmina
-freerdp
-thunderbird
-evolution
-EOF
-              ;;
-          esac
+          # Add workplace packages
+          if [ "$EDITION" = "workplace" ]; then
+            {
+              printf '%s\n' "remmina"
+              printf '%s\n' "freerdp"
+              printf '%s\n' "thunderbird"
+              printf '%s\n' "evolution"
+            } >> "${PROFILE_DIR}/packages.x86_64"
+          fi
           
-          case "$EDITION" in
-            server)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-docker
-podman
-nginx
-mariadb
-postgresql
-redis
-EOF
-              ;;
-          esac
+          # Add server packages
+          if [ "$EDITION" = "server" ]; then
+            {
+              printf '%s\n' "docker"
+              printf '%s\n' "podman"
+              printf '%s\n' "nginx"
+              printf '%s\n' "mariadb"
+              printf '%s\n' "postgresql"
+              printf '%s\n' "redis"
+            } >> "${PROFILE_DIR}/packages.x86_64"
+          fi
           
           # Remove duplicate packages and blank lines
           grep -v '^$' "${PROFILE_DIR}/packages.x86_64" | sort -u > "${PROFILE_DIR}/packages.x86_64.tmp"
@@ -283,10 +260,8 @@ EOF
           missing_pkgs=()
           
           while IFS= read -r pkg; do
-            # Skip empty lines and comments
             [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
             
-            # Check if package exists
             if ! pacman -Si "$pkg" &>/dev/null; then
               echo "WARNING: Package not found: $pkg"
               missing_pkgs+=("$pkg")
@@ -317,8 +292,6 @@ EOF
           WORK_DIR="/tmp/work-${EDITION}"
           
           mkdir -p "${OUTPUT_DIR}" "${WORK_DIR}"
-          
-          # Clean any previous work directory
           rm -rf "${WORK_DIR:?}"/*
           
           echo "=== Starting mkarchiso ==="
@@ -326,10 +299,8 @@ EOF
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
-          # Build the ISO
           mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
           
-          # Rename and create checksum
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
             FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
