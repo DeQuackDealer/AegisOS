@@ -59,6 +59,15 @@ jobs:
         edition: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
     
     steps:
+      - name: Initialize pacman keyring and enable multilib
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          
+          # Enable multilib repository for 32-bit packages (gaming)
+          sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
+          
       - name: Install build dependencies
         run: |
           pacman -Syu --noconfirm
@@ -90,6 +99,9 @@ jobs:
           REPO_DIR="${GITHUB_WORKSPACE}"
           
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
+          
+          # Enable multilib in the profile's pacman.conf for 32-bit packages
+          sed -i '/\[multilib\]/,/Include/s/^#//' "${PROFILE_DIR}/pacman.conf"
           
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
