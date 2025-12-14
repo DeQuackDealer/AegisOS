@@ -1,5 +1,5 @@
 #!/bin/bash
-# Aegis OS Push Script - Pushes to both GitHub repositories
+# Aegis OS Push Script - Pushes to main GitHub repository
 # Usage: GITHUB_PAT=your_token ./push-branches.sh
 
 # Check for token
@@ -23,9 +23,8 @@ if [ -f ".github/workflows/build-aegis-iso.yml" ]; then
     rm -f .github/workflows/build-aegis-iso.yml
 fi
 
-# Repository URLs
+# Repository URL
 MAIN_REPO="https://${GITHUB_PAT}@github.com/DeQuackDealer/AegisOS.git"
-PREVIEW_REPO="https://${GITHUB_PAT}@github.com/DeQuackDealer/AegisOSRepo.git"
 
 # Make sure we're on main branch
 git checkout main 2>/dev/null || git checkout -b main
@@ -42,50 +41,18 @@ echo "=========================================="
 echo ""
 echo "Pushing to: https://github.com/DeQuackDealer/AegisOS"
 if git push "${MAIN_REPO}" main --force; then
-    echo "Main repository push: SUCCESS"
+    echo "Push: SUCCESS"
 else
-    echo "Main repository push: FAILED"
+    echo "Push: FAILED"
+    exit 1
 fi
-
-echo ""
-echo "=========================================="
-echo "Pushing to Preview Repository (AegisOSRepo)"
-echo "=========================================="
-
-# Create and push preview branches
-for edition in freemium basic gamer workplace aidev gamer-ai server; do
-    echo ""
-    echo "Creating preview branch: preview-${edition}"
-    git checkout -B "preview-${edition}" main
-    
-    echo "Pushing preview-${edition} to AegisOSRepo..."
-    if git push "${PREVIEW_REPO}" "preview-${edition}" --force; then
-        echo "  preview-${edition}: SUCCESS"
-    else
-        echo "  preview-${edition}: FAILED"
-    fi
-done
-
-# Return to main branch
-git checkout main
 
 echo ""
 echo "=========================================="
 echo "COMPLETE!"
 echo "=========================================="
 echo ""
-echo "Repositories updated:"
-echo "  Main:    https://github.com/DeQuackDealer/AegisOS"
-echo "  Preview: https://github.com/DeQuackDealer/AegisOSRepo"
-echo ""
-echo "Preview branches created in AegisOSRepo:"
-echo "  - preview-freemium"
-echo "  - preview-basic"
-echo "  - preview-gamer"
-echo "  - preview-workplace"
-echo "  - preview-aidev"
-echo "  - preview-gamer-ai"
-echo "  - preview-server"
+echo "Repository updated: https://github.com/DeQuackDealer/AegisOS"
 echo ""
 echo "To build ISOs:"
 echo "  1. Go to: https://github.com/DeQuackDealer/AegisOS/actions"
