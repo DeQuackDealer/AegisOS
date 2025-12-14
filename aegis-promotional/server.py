@@ -1606,6 +1606,7 @@ def serve_html(filename):
         return Response('Server error', status=500)
 
 @app.route('/freemium')
+@app.route('/freemium.html')
 @rate_limit(limit=500)
 def page_freemium():
     try:
@@ -1617,6 +1618,7 @@ def page_freemium():
         return jsonify({'error': 'Page not found', 'debug': str(e)}), 404
 
 @app.route('/basic')
+@app.route('/basic.html')
 def page_basic():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'basic.html')
@@ -1626,6 +1628,7 @@ def page_basic():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/workplace')
+@app.route('/workplace.html')
 def page_workplace():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'workplace.html')
@@ -1635,6 +1638,7 @@ def page_workplace():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/gamer')
+@app.route('/gamer.html')
 def page_gamer():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'gamer.html')
@@ -1644,6 +1648,7 @@ def page_gamer():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/ai')
+@app.route('/ai.html')
 def page_ai():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'ai.html')
@@ -1663,6 +1668,7 @@ def page_gamer_ai():
         return jsonify({'error': 'Page not found'}), 404
 
 @app.route('/server')
+@app.route('/server.html')
 def page_server():
     try:
         filepath = os.path.join(BASE_DIR, 'html', 'server.html')
