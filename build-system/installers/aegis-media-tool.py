@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aegis OS Media Creation Tool v3.0.0
+Aegis OS Media Creation Tool v1.0.0
 Like Windows Media Creation Tool - downloads official Aegis OS ISOs
 
 Usage:
@@ -55,7 +55,7 @@ try:
 except ImportError:
     pass
 
-VERSION = "3.0.0"
+VERSION = "1.0.0"
 APP_NAME = "Aegis OS Media Creation Tool"
 
 EDITIONS = {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aegis OS Build System v3.0.0 - Arch Linux Based
+Aegis OS Build System v1.0.0 - Arch Linux Based
 Generates bootable ISO images for all Aegis OS editions using archiso
 
 Based on SteamOS architecture - Arch Linux with custom packages and configuration.
@@ -32,7 +32,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, List, Tuple, Any
 
-VERSION = "3.0.0"
+VERSION = "1.0.0"
 KERNEL_VERSION = "6.12"
 ARCH_RELEASE = "2024.12.01"
 BUILD_TIMESTAMP = datetime.now(timezone.utc).isoformat()
@@ -700,7 +700,7 @@ def generate_master_manifest() -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Aegis OS Build System v3.0.0 - Arch Linux Based",
+        description="Aegis OS Build System v1.0.0 - Arch Linux Based",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -730,7 +730,7 @@ Examples:
     
     args = parser.parse_args()
     
-    log("Aegis OS Build System v3.0.0 - Arch Linux Based", "header")
+    log("Aegis OS Build System v1.0.0 - Arch Linux Based", "header")
     log(f"Build timestamp: {BUILD_TIMESTAMP}", "info")
     
     if args.check_deps:

@@ -121,7 +121,7 @@ def clean_build_artifacts():
 def main():
     print("""
     ╔═══════════════════════════════════════════════════════════╗
-    ║           AEGIS OS INSTALLER PACKAGER v3.0.0              ║
+    ║           AEGIS OS INSTALLER PACKAGER v1.0.0              ║
     ║         Creates Standalone Double-Click Executables       ║
     ╚═══════════════════════════════════════════════════════════╝
     """)

@@ -23,7 +23,7 @@ echo "=========================================="
 echo "STEP 1: Push main branch to AegisOS repo"
 echo "=========================================="
 git add .
-git commit -m "Aegis OS v3.0.0 - Full distribution" || true
+git commit -m "Aegis OS v1.0.0 - Full distribution" || true
 git push $MAIN_REPO main --force
 echo "Main branch pushed to: https://github.com/DeQuackDealer/AegisOS"
 
