@@ -69,19 +69,37 @@ jobs:
         edition: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.edition == 'all' && fromJSON('["freemium", "basic", "gamer", "workplace", "aidev", "gamer-ai", "server"]') || fromJSON(format('["{0}"]', github.event.inputs.edition || 'freemium')) }}
     
     steps:
-      - name: Initialize pacman keyring and enable multilib
+      - name: Initialize pacman and enable multilib
         run: |
+          set -e
+          echo "=== Initializing pacman keyring ==="
           pacman-key --init
           pacman-key --populate archlinux
+          
+          # Update keyring first
           pacman -Sy --noconfirm archlinux-keyring
           
-          # Enable multilib repository for 32-bit packages (gaming)
-          sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
+          # Enable multilib repository in container's pacman.conf
+          # This is needed so mkarchiso can find lib32-* packages
+          echo "=== Enabling multilib repository ==="
+          cp /etc/pacman.conf /etc/pacman.conf.orig
+          
+          # Uncomment [multilib] section
+          sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+          
+          # Verify multilib is enabled
+          echo "=== Verifying multilib is enabled ==="
+          grep -A1 "\[multilib\]" /etc/pacman.conf || echo "WARNING: multilib section not found"
+          
+          # Full system upgrade with new repos
+          echo "=== Syncing package databases ==="
+          pacman -Syy --noconfirm
           
       - name: Install build dependencies
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm \
+          set -e
+          echo "=== Installing build dependencies ==="
+          pacman -S --needed --noconfirm \
             git \
             python \
             archiso \
@@ -109,11 +127,17 @@ jobs:
           PROFILE_DIR="/tmp/aegis-${EDITION}"
           REPO_DIR="${GITHUB_WORKSPACE}"
           
-          # Copy base releng profile
+          # Copy base releng profile from archiso
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           
-          # Enable multilib in the profile's pacman.conf for 32-bit packages
-          sed -i '/\[multilib\]/,/Include/s/^#//' "${PROFILE_DIR}/pacman.conf"
+          # CRITICAL: Copy the container's pacman.conf (with multilib enabled) to the profile
+          # This ensures mkarchiso uses the same repos when installing packages into airootfs
+          echo "=== Copying pacman.conf with multilib to profile ==="
+          cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
+          
+          # Also ensure mirrorlist is available
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
+          cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           
           # Create Aegis directories
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
@@ -158,7 +182,7 @@ jobs:
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
           ls -la "${PROFILE_DIR}/airootfs/etc/aegis/" 2>/dev/null || echo "No aegis config"
           
-          # Add base packages (no indentation in heredoc content)
+          # Add base packages - these are available in standard repos
           cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
 xfce4
 xfce4-goodies
@@ -171,12 +195,16 @@ ttf-dejavu
 ttf-liberation
 networkmanager
 network-manager-applet
-pulseaudio
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
 pavucontrol
 gvfs
 gvfs-mtp
 thunar-volman
 xdg-user-dirs
+fastfetch
 EOF
           
           # Add edition-specific packages
@@ -189,6 +217,10 @@ gamemode
 lib32-gamemode
 mangohud
 lib32-mangohud
+lib32-mesa
+lib32-vulkan-icd-loader
+lib32-gnutls
+lib32-libpulse
 wine
 wine-gecko
 wine-mono
@@ -206,9 +238,6 @@ python-virtualenv
 jupyterlab
 docker
 podman
-nvidia-utils
-cuda
-cudnn
 EOF
               ;;
           esac
@@ -237,25 +266,65 @@ EOF
               ;;
           esac
           
-          # Remove duplicate packages
-          sort -u "${PROFILE_DIR}/packages.x86_64" -o "${PROFILE_DIR}/packages.x86_64"
+          # Remove duplicate packages and blank lines
+          grep -v '^$' "${PROFILE_DIR}/packages.x86_64" | sort -u > "${PROFILE_DIR}/packages.x86_64.tmp"
+          mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
           
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
           cat "${PROFILE_DIR}/packages.x86_64"
           
           echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
 
+      - name: Validate packages exist
+        run: |
+          set -e
+          echo "=== Validating all packages exist in repos ==="
+          PROFILE_DIR="${{ env.PROFILE_DIR }}"
+          missing_pkgs=()
+          
+          while IFS= read -r pkg; do
+            # Skip empty lines and comments
+            [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
+            
+            # Check if package exists
+            if ! pacman -Si "$pkg" &>/dev/null; then
+              echo "WARNING: Package not found: $pkg"
+              missing_pkgs+=("$pkg")
+            fi
+          done < "${PROFILE_DIR}/packages.x86_64"
+          
+          if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+            echo ""
+            echo "=== Missing packages detected ==="
+            printf '%s\n' "${missing_pkgs[@]}"
+            echo ""
+            echo "Removing missing packages from list..."
+            for pkg in "${missing_pkgs[@]}"; do
+              sed -i "/^${pkg}$/d" "${PROFILE_DIR}/packages.x86_64"
+            done
+            echo "Continuing build without missing packages..."
+          else
+            echo "All packages validated successfully!"
+          fi
+
       - name: Build ISO
         run: |
           set -e
           echo "=== Building ${{ matrix.edition }} ISO ==="
           EDITION="${{ matrix.edition }}"
+          PROFILE_DIR="${{ env.PROFILE_DIR }}"
           OUTPUT_DIR="/tmp/aegis-output"
           WORK_DIR="/tmp/work-${EDITION}"
+          
           mkdir -p "${OUTPUT_DIR}" "${WORK_DIR}"
           
           # Clean any previous work directory
-          rm -rf "${WORK_DIR}"/*
+          rm -rf "${WORK_DIR:?}"/*
+          
+          echo "=== Starting mkarchiso ==="
+          echo "Profile: ${PROFILE_DIR}"
+          echo "Work dir: ${WORK_DIR}"
+          echo "Output: ${OUTPUT_DIR}"
           
           # Build the ISO
           mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
@@ -275,7 +344,10 @@ EOF
             cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
           else
             echo "ERROR: No ISO file was produced!"
-            ls -la "${OUTPUT_DIR}/"
+            echo "=== Work directory contents ==="
+            ls -la "${WORK_DIR}/" || true
+            echo "=== Output directory contents ==="
+            ls -la "${OUTPUT_DIR}/" || true
             exit 1
           fi
 

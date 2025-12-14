@@ -1,0 +1,122 @@
+Summary (root cause)
+
+mkarchiso failed while installing packages into the airootfs because pacman could not find several targets:
+neofetch, lib32-mesa, lib32-vulkan-icd-loader, lib32-gnutls, lib32-libpulse, steam, lib32-gamemode, lib32-mangohud
+Those packages live in repositories that were not enabled in the build environment (community and multilib), so pacman returned “error: target not found”.
+mkarchiso installs packages into the new root using the profile’s pacman.conf. Because your workflow did not provide a profile pacman.conf with multilib/community enabled, the chroot used by mkarchiso could not see those repos.
+What to change (high level)
+
+Enable the [multilib] (and ensure [community] if needed) repository in the container before building.
+Copy an enabled pacman.conf and mirrorlist into the archiso profile so mkarchiso uses the same repo configuration when installing packages into the airootfs.
+Refresh package DBs (pacman -Syy) and use safe install flags (--needed) and fail-safe checks (verify package availability and optionally remove or warn about unavailable optional packages).
+(Optional) Add retries for network/package-download steps and a small sanity check that all requested packages exist via pacman -Ss before launching mkarchiso.
+Patch (where to insert) Insert the following code into the Docker-run build script in .github/workflows/build-aegis-iso.yml (ref: 902a1ab04714aff9dab56a19d8dac2618d5c1ed8). Place it after pacman-key --populate archlinux and after installing archiso/git but BEFORE creating the profile and before mkarchiso is called.
+
+Suggested patch to add (shell fragment to insert):
+
+bash
+# Ensure pacman keys and population already done
+pacman-key --init
+pacman-key --populate archlinux
+
+# --- Enable community and multilib in the running container ---
+# Make a safe copy of /etc/pacman.conf and enable the repos we need
+cp /etc/pacman.conf /etc/pacman.conf.bak
+# Uncomment [multilib] and its Include line if present
+sed -i 's/^#\\[multilib\\]/[multilib]/' /etc/pacman.conf || true
+sed -i 's/^#Include = \\/etc\\/pacman.d\\/mirrorlist/Include = \\/etc\\/pacman.d\\/mirrorlist/' /etc/pacman.conf || true
+# Ensure [community] is enabled (rarely commented, but do it defensively)
+sed -i 's/^#\\[community\\]/[community]/' /etc/pacman.conf || true
+sed -i 's/^#Include = \\/etc\\/pacman.d\\/mirrorlist/Include = \\/etc\\/pacman.d\\/mirrorlist/' /etc/pacman.conf || true
+
+# Refresh DBs
+pacman -Syy --noconfirm
+
+# Install archiso etc. (use --needed so pacman won't force reinstall)
+pacman -S --needed --noconfirm archiso git
+
+# --- Prepare profile pacman configuration so mkarchiso uses same repos ---
+mkdir -p /tmp/aegis-profile/pacman.d
+# copy the container's mirrorlist and pacman.conf into the profile
+cp /etc/pacman.d/mirrorlist /tmp/aegis-profile/pacman.d/mirrorlist
+cp /etc/pacman.conf /tmp/aegis-profile/pacman.conf
+# Ensure the profile pacman.conf explicitly points to the profile's mirrorlist (optional)
+# This keeps mkarchiso deterministic: the profile will include /etc/pacman.d/mirrorlist inside the built root.
+# (If /tmp/aegis-profile/pacman.conf includes "Include = /etc/pacman.d/mirrorlist" that's ok.)
+Additional robustness (optional, recommended)
+
+Before calling mkarchiso, validate that all packages listed in /tmp/aegis-profile/packages.x86_64 exist in synced repos:
+bash
+missing_pkgs=()
+while read -r pkg; do
+  # skip blank and comment lines
+  [[ -z "$pkg" || "$pkg" =~ ^# ]] && continue
+  # check availability
+  if ! pacman -Si "$pkg" &>/dev/null; then
+    missing_pkgs+=("$pkg")
+  fi
+done < /tmp/aegis-profile/packages.x86_64
+
+if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+  echo "ERROR: The following packages are not in the enabled repos:"
+  printf '%s\n' "${missing_pkgs[@]}"
+  echo "Options: remove them from packages.x86_64, add alternate package names, or enable additional repos"
+  exit 1
+fi
+Use mkarchiso as you currently do after these steps. Because /tmp/aegis-profile/pacman.conf and mirrorlist are present and have multilib/community enabled, mkarchiso’s package installation to airootfs will be able to find lib32/* and other packages.
+Minimal one-block replacement you can paste into the workflow where appropriate (Place immediately after pacman-key population and before the profile copy):
+
+bash
+# enable multilib & community, copy pacman config into the profile for mkarchiso
+cp /etc/pacman.conf /etc/pacman.conf.orig
+sed -i 's/^#\\[multilib\\]/[multilib]/' /etc/pacman.conf || true
+sed -i 's/^#Include = \\/etc\\/pacman.d\\/mirrorlist/Include = \\/etc\\/pacman.d\\/mirrorlist/' /etc/pacman.conf || true
+# refresh DBs
+pacman -Syy --noconfirm
+# make profile pacman config + mirrorlist so mkarchiso uses same repos
+mkdir -p /tmp/aegis-profile/pacman.d
+cp /etc/pacman.conf /tmp/aegis-profile/pacman.conf
+cp /etc/pacman.d/mirrorlist /tmp/aegis-profile/pacman.d/mirrorlist
+Why this resolves the failure
+
+mkarchiso uses the profile pacman.conf / mirrorlist to install packages into /tmp/work/x86_64/airootfs. If those files do not enable multilib/community, pacman inside mkarchiso’s install step won’t find lib32/steam/etc. Adding them to the profile ensures the chroot sees the same repos as the build container and can install the requested targets.
+Small follow-ups you should consider
+
+Double-check package names periodically; some packages move or rename. The verification step above will surface renames.
+If you intend to install AUR-only packages, mkarchiso/pacman cannot handle AUR automatically; either pre-build those packages into a local repo or avoid AUR packages in packages.x86_64.
+If builds still fail intermittently due to network mirrors, add retry logic to pacman downloads or pin a known-good mirrorlist.
+Reference to workflow file
+
+The workflow to edit: .github/workflows/build-aegis-iso.yml (ref: 902a1ab04714aff9dab56a19d8dac2618d5c1ed8)
+URL: https://github.com/DeQuackDealer/AegisOS/blob/902a1ab04714aff9dab56a19d8dac2618d5c1ed8/.github/workflows/build-aegis-iso.yml
+Prompt to give to Claude to implement the fix (use this exact prompt when asking Claude to open a PR / modify the repo):
+
+Code
+You are an experienced DevOps engineer with GitHub Actions and Arch Linux packaging experience.
+
+Repository: DeQuackDealer/AegisOS
+Ref/commit to change: 902a1ab04714aff9dab56a19d8dac2618d5c1ed8
+Failing job: Actions run 20202620769 job 57996619431 — mkarchiso fails installing packages into airootfs with "error: target not found" for packages such as neofetch, lib32-mesa, lib32-vulkan-icd-loader, lib32-gnutls, lib32-libpulse, steam, lib32-gamemode, lib32-mangohud.
+
+Goal: Make the GitHub Actions workflow build-aegis-iso.yml succeed by ensuring mkarchiso's package installation can find multilib and community packages.
+
+Tasks:
+1. Edit .github/workflows/build-aegis-iso.yml (ref: 902a1ab04714aff9dab56a19d8dac2618d5c1ed8) to:
+   - After pacman-key population and before creating the archiso profile (before mkarchiso), enable the [multilib] and [community] repositories in /etc/pacman.conf in the build container.
+   - Copy /etc/pacman.conf and /etc/pacman.d/mirrorlist into the archiso profile directory (/tmp/aegis-profile/pacman.conf and /tmp/aegis-profile/pacman.d/mirrorlist) so mkarchiso uses them while installing packages into /tmp/work/x86_64/airootfs.
+   - Refresh package DBs (pacman -Syy) and install archiso/git with --needed and --noconfirm.
+   - Add a verification step that reads /tmp/aegis-profile/packages.x86_64 and fails early listing missing packages (using pacman -Si checks) so it's easier to debug missing package names.
+2. Keep changes minimal and confined to the Docker-run bash fragment of the workflow. Add comments documenting why the pacman.conf copy is necessary.
+3. Run static checks: ensure the new script is POSIX/sh compatible inside the container, does not leak sensitive data, and exits non-zero on failures.
+4. Provide the exact git patch or create a branch/PR against the repo with the change, with a commit message: "ci(actions): enable multilib/community and supply profile pacman.conf for mkarchiso".
+
+Deliverables:
+- A small patch/PR changing only the workflow file. Include code in the PR that:
+  - Enables multilib/community in the build environment
+  - Copies pacman.conf and mirrorlist into /tmp/aegis-profile
+  - Validates availability of packages before mkarchiso
+- Brief description in PR about why the change fixes the build failure and what follow-ups are recommended.
+
+Do the work and return:
+- The exact diff/patch you applied, or
+- If you cannot push a PR, return the modified contents of .
