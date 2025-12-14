@@ -92,16 +92,12 @@ jobs:
           echo "=== Initializing pacman keyring ==="
           pacman-key --init
           pacman-key --populate archlinux
-          
           pacman -Sy --noconfirm archlinux-keyring
-          
           echo "=== Enabling multilib repository ==="
           cp /etc/pacman.conf /etc/pacman.conf.orig
           sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
-          
           echo "=== Verifying multilib is enabled ==="
           grep -A1 "\[multilib\]" /etc/pacman.conf || echo "WARNING: multilib section not found"
-          
           echo "=== Syncing package databases ==="
           pacman -Syy --noconfirm
           
@@ -122,46 +118,35 @@ jobs:
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="/tmp/aegis-${EDITION}"
           REPO_DIR="${GITHUB_WORKSPACE}"
-          
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
-          
           echo "=== Copying pacman.conf with multilib to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
-          
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
-          
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
           echo "{\"edition\": \"${EDITION}\", \"version\": \"1.0.0\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
-          
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/common/" "${PROFILE_DIR}/airootfs/"
           fi
-          
           if [ "$EDITION" != "freemium" ] && [ -d "${REPO_DIR}/build-system/overlays/pro" ]; then
             echo "Copying pro overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/pro/" "${PROFILE_DIR}/airootfs/"
           fi
-          
           if [ "$EDITION" = "basic" ] || [ "$EDITION" = "workplace" ]; then
             if [ -d "${REPO_DIR}/build-system/overlays/pro-productivity" ]; then
               echo "Copying pro-productivity overlays..."
               rsync -av "${REPO_DIR}/build-system/overlays/pro-productivity/" "${PROFILE_DIR}/airootfs/"
             fi
           fi
-          
           if [ -d "${REPO_DIR}/build-system/overlays/${EDITION}" ]; then
             echo "Copying ${EDITION} overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/${EDITION}/" "${PROFILE_DIR}/airootfs/"
           fi
-          
           find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
-          
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
-          
           echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
 
       - name: Create package list
@@ -169,91 +154,67 @@ jobs:
           set -e
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
-          
-          # Base packages for all editions
-          cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
-          xfce4
-          xfce4-goodies
-          lightdm
-          lightdm-gtk-greeter
-          firefox
-          vlc
-          libreoffice-fresh
-          ttf-dejavu
-          ttf-liberation
-          networkmanager
-          network-manager-applet
-          pipewire
-          pipewire-pulse
-          pipewire-alsa
-          wireplumber
-          pavucontrol
-          gvfs
-          gvfs-mtp
-          thunar-volman
-          xdg-user-dirs
-          fastfetch
-          PKGEOF
-          
-          # Gamer packages
+          echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "xfce4-goodies" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "lightdm" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "lightdm-gtk-greeter" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "firefox" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "vlc" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "libreoffice-fresh" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "ttf-dejavu" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "ttf-liberation" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "networkmanager" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "network-manager-applet" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "pipewire" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "pipewire-pulse" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "pipewire-alsa" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "wireplumber" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "pavucontrol" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "gvfs" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "gvfs-mtp" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "thunar-volman" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "xdg-user-dirs" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "fastfetch" >> "${PROFILE_DIR}/packages.x86_64"
           if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
-            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
-          steam
-          lutris
-          gamemode
-          lib32-gamemode
-          mangohud
-          lib32-mangohud
-          lib32-mesa
-          lib32-vulkan-icd-loader
-          lib32-gnutls
-          lib32-libpulse
-          wine
-          wine-gecko
-          wine-mono
-          winetricks
-          PKGEOF
+            echo "steam" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lutris" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "gamemode" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-gamemode" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "mangohud" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-mangohud" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-mesa" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-vulkan-icd-loader" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-gnutls" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libpulse" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "wine" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "wine-gecko" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "wine-mono" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "winetricks" >> "${PROFILE_DIR}/packages.x86_64"
           fi
-          
-          # AI dev packages
           if [ "$EDITION" = "aidev" ] || [ "$EDITION" = "gamer-ai" ]; then
-            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
-          python
-          python-pip
-          python-virtualenv
-          jupyterlab
-          docker
-          podman
-          PKGEOF
+            echo "python" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "python-pip" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "python-virtualenv" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "jupyterlab" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
           fi
-          
-          # Workplace packages
           if [ "$EDITION" = "workplace" ]; then
-            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
-          remmina
-          freerdp
-          thunderbird
-          evolution
-          PKGEOF
+            echo "remmina" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "freerdp" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "thunderbird" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "evolution" >> "${PROFILE_DIR}/packages.x86_64"
           fi
-          
-          # Server packages
           if [ "$EDITION" = "server" ]; then
-            cat >> "${PROFILE_DIR}/packages.x86_64" << PKGEOF
-          docker
-          podman
-          nginx
-          mariadb
-          postgresql
-          redis
-          PKGEOF
+            echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "nginx" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "mariadb" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "postgresql" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "redis" >> "${PROFILE_DIR}/packages.x86_64"
           fi
-          
-          # Clean up: remove leading whitespace, blank lines, duplicates
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/packages.x86_64"
-          grep -v '^$' "${PROFILE_DIR}/packages.x86_64" | sort -u > "${PROFILE_DIR}/packages.x86_64.tmp"
+          sort -u "${PROFILE_DIR}/packages.x86_64" > "${PROFILE_DIR}/packages.x86_64.tmp"
           mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
-          
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
           cat "${PROFILE_DIR}/packages.x86_64"
 
@@ -263,17 +224,13 @@ jobs:
           echo "=== Validating all packages exist in repos ==="
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           missing_pkgs=()
-          
           while IFS= read -r pkg; do
             [ -z "$pkg" ] && continue
-            [[ "$pkg" =~ ^# ]] && continue
-            
             if ! pacman -Si "$pkg" > /dev/null 2>&1; then
               echo "WARNING: Package not found: $pkg"
               missing_pkgs+=("$pkg")
             fi
           done < "${PROFILE_DIR}/packages.x86_64"
-          
           if [ "${#missing_pkgs[@]}" -gt 0 ]; then
             echo ""
             echo "=== Missing packages detected ==="
@@ -296,26 +253,20 @@ jobs:
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           OUTPUT_DIR="/tmp/aegis-output"
           WORK_DIR="/tmp/work-${EDITION}"
-          
           mkdir -p "${OUTPUT_DIR}" "${WORK_DIR}"
           rm -rf "${WORK_DIR:?}"/*
-          
           echo "=== Starting mkarchiso ==="
           echo "Profile: ${PROFILE_DIR}"
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
-          
           mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
-          
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
             FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
             mv "$ISO_FILE" "${OUTPUT_DIR}/${FINAL_NAME}"
             echo "ISO_PATH=${OUTPUT_DIR}/${FINAL_NAME}" >> $GITHUB_ENV
-            
             sha256sum "${OUTPUT_DIR}/${FINAL_NAME}" > "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
             echo "SHA256_PATH=${OUTPUT_DIR}/${FINAL_NAME}.sha256" >> $GITHUB_ENV
-            
             echo "=== ISO Build Complete ==="
             ls -lh "${OUTPUT_DIR}/${FINAL_NAME}"
             cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
