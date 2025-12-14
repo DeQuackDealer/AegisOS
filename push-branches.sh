@@ -3,12 +3,10 @@
 # - Main branch -> AegisOS repo (new)
 # - Preview branches -> AegisOSRepo (tools only, not full repo)
 
-if [ -z "$GITHUB_PAT" ]; then
-    export GITHUB_PAT=$(printenv GITHUB_PAT)
-fi
+set -e
 
-if [ -z "$GITHUB_PAT" ]; then
-    echo "ERROR: GITHUB_PAT is empty."
+if [ -z "${GITHUB_PAT:-}" ]; then
+    echo "ERROR: GITHUB_PAT environment variable is not set."
     echo "Run with: GITHUB_PAT=your_token ./push-branches.sh"
     exit 1
 fi
@@ -23,63 +21,69 @@ echo "=========================================="
 echo "STEP 1: Push main branch to AegisOS repo"
 echo "=========================================="
 git add .
-git commit -m "Aegis OS v1.0.0 - Full distribution" || true
-git push $MAIN_REPO main --force
+git commit -m "Aegis OS v1.0.0 - Full distribution" || echo "Nothing to commit"
+git push "${MAIN_REPO}" main --force
 echo "Main branch pushed to: https://github.com/DeQuackDealer/AegisOS"
 
 echo ""
 echo "=========================================="
 echo "STEP 2: Delete main from AegisOSRepo"
 echo "=========================================="
-git push $PREVIEW_REPO --delete main 2>/dev/null || echo "main already deleted or doesn't exist in AegisOSRepo"
+git push "${PREVIEW_REPO}" --delete main 2>/dev/null || echo "main already deleted or doesn't exist in AegisOSRepo"
 
-echo ""
-echo "=========================================="
-echo "STEP 3: Push base-os (tools only)"
-echo "=========================================="
-git checkout --orphan temp-base
-git rm -rf . 2>/dev/null || true
-cp -r preview-branches/base-os/* .
-git add .
-git commit -m "Base OS Tools - Core desktop, themes, license system"
-git push $PREVIEW_REPO temp-base:preview/base-os --force
-git checkout main
-git branch -D temp-base 2>/dev/null || true
-echo "preview/base-os pushed (tools only)"
+push_preview_branch() {
+    local branch_name="$1"
+    local source_dir="$2"
+    local commit_msg="$3"
+    
+    echo ""
+    echo "=========================================="
+    echo "Pushing ${branch_name} (tools only)"
+    echo "=========================================="
+    
+    if [ ! -d "${source_dir}" ]; then
+        echo "WARNING: ${source_dir} does not exist, skipping"
+        return 0
+    fi
+    
+    git checkout --orphan "temp-${branch_name}" || {
+        echo "ERROR: Failed to create orphan branch"
+        git checkout main
+        return 1
+    }
+    
+    git rm -rf . 2>/dev/null || true
+    
+    if ! cp -r "${source_dir}"/* . 2>/dev/null; then
+        echo "WARNING: No files to copy from ${source_dir}"
+        git checkout main
+        git branch -D "temp-${branch_name}" 2>/dev/null || true
+        return 0
+    fi
+    
+    git add .
+    git commit -m "${commit_msg}" || {
+        echo "Nothing to commit for ${branch_name}"
+        git checkout main
+        git branch -D "temp-${branch_name}" 2>/dev/null || true
+        return 0
+    }
+    
+    git push "${PREVIEW_REPO}" "temp-${branch_name}:preview/${branch_name}" --force
+    git checkout main
+    git branch -D "temp-${branch_name}" 2>/dev/null || true
+    echo "preview/${branch_name} pushed (tools only)"
+}
 
-echo ""
-echo "=========================================="
-echo "STEP 4: Push gamer (tools only)"
-echo "=========================================="
-git checkout --orphan temp-gamer
-git rm -rf . 2>/dev/null || true
-cp -r preview-branches/gamer/* .
-git add .
-git commit -m "Gamer Tools - Upscalers, launchers, streaming, performance"
-git push $PREVIEW_REPO temp-gamer:preview/gamer --force
-git checkout main
-git branch -D temp-gamer 2>/dev/null || true
-echo "preview/gamer pushed (tools only)"
-
-echo ""
-echo "=========================================="
-echo "STEP 5: Push aidev (tools only)"
-echo "=========================================="
-git checkout --orphan temp-aidev
-git rm -rf . 2>/dev/null || true
-cp -r preview-branches/aidev/* .
-git add .
-git commit -m "AI Developer Tools - ML studio, GPU tools, inference"
-git push $PREVIEW_REPO temp-aidev:preview/aidev --force
-git checkout main
-git branch -D temp-aidev 2>/dev/null || true
-echo "preview/aidev pushed (tools only)"
+push_preview_branch "base-os" "preview-branches/base-os" "Base OS Tools - Core desktop, themes, license system"
+push_preview_branch "gamer" "preview-branches/gamer" "Gamer Tools - Upscalers, launchers, streaming, performance"
+push_preview_branch "aidev" "preview-branches/aidev" "AI Developer Tools - ML studio, GPU tools, inference"
 
 echo ""
 echo "=========================================="
 echo "STEP 6: Cleanup old branches"
 echo "=========================================="
-git push $PREVIEW_REPO --delete preview/freemium 2>/dev/null || echo "freemium already gone"
+git push "${PREVIEW_REPO}" --delete preview/freemium 2>/dev/null || echo "freemium already gone"
 
 echo ""
 echo "=========================================="

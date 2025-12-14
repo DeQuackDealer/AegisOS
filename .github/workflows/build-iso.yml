@@ -37,9 +37,19 @@ jobs:
       - name: Validate Python files
         run: |
           echo "=== Validating Python syntax ==="
-          find . -name "*.py" -type f | while read f; do
-            python3 -m py_compile "$f" && echo "✓ $f" || echo "✗ $f"
-          done
+          errors=0
+          while IFS= read -r f; do
+            if python3 -m py_compile "$f" 2>/dev/null; then
+              echo "OK: $f"
+            else
+              echo "ERROR: $f"
+              errors=$((errors + 1))
+            fi
+          done < <(find . -name "*.py" -type f -not -path "./.cache/*" -not -path "./.pythonlibs/*")
+          if [ "$errors" -gt 0 ]; then
+            echo "Found $errors Python syntax errors"
+            exit 1
+          fi
       
       - name: Run simulation test
         run: |
@@ -93,114 +103,165 @@ jobs:
       
       - name: Setup archiso profile
         run: |
+          set -e
           echo "=== Setting up ${{ matrix.edition }} profile ==="
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="/tmp/aegis-${EDITION}"
           REPO_DIR="${GITHUB_WORKSPACE}"
           
+          # Copy base releng profile
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           
           # Enable multilib in the profile's pacman.conf for 32-bit packages
           sed -i '/\[multilib\]/,/Include/s/^#//' "${PROFILE_DIR}/pacman.conf"
           
+          # Create Aegis directories
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
           echo "{\"edition\": \"${EDITION}\", \"version\": \"1.0.0\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
           
+          # Copy common overlays using rsync
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
-            cp -r "${REPO_DIR}/build-system/overlays/common"/* "${PROFILE_DIR}/airootfs/" 2>/dev/null || true
+            rsync -av "${REPO_DIR}/build-system/overlays/common/" "${PROFILE_DIR}/airootfs/"
+          else
+            echo "WARNING: No common overlays found"
           fi
           
+          # Copy pro overlays for paid editions
+          if [ "$EDITION" != "freemium" ] && [ -d "${REPO_DIR}/build-system/overlays/pro" ]; then
+            echo "Copying pro overlays for paid edition..."
+            rsync -av "${REPO_DIR}/build-system/overlays/pro/" "${PROFILE_DIR}/airootfs/"
+          fi
+          
+          # Copy pro-productivity overlays for appropriate editions
+          if [ "$EDITION" = "basic" ] || [ "$EDITION" = "workplace" ]; then
+            if [ -d "${REPO_DIR}/build-system/overlays/pro-productivity" ]; then
+              echo "Copying pro-productivity overlays..."
+              rsync -av "${REPO_DIR}/build-system/overlays/pro-productivity/" "${PROFILE_DIR}/airootfs/"
+            fi
+          fi
+          
+          # Copy edition-specific overlays
           if [ -d "${REPO_DIR}/build-system/overlays/${EDITION}" ]; then
             echo "Copying ${EDITION} overlays..."
-            cp -r "${REPO_DIR}/build-system/overlays/${EDITION}"/* "${PROFILE_DIR}/airootfs/" 2>/dev/null || true
+            rsync -av "${REPO_DIR}/build-system/overlays/${EDITION}/" "${PROFILE_DIR}/airootfs/"
+          else
+            echo "WARNING: No ${EDITION}-specific overlays found"
           fi
           
+          # Set executable permissions on all scripts
+          find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
+          
+          # Debug: show what was copied
+          echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
           ls -la "${PROFILE_DIR}/airootfs/etc/aegis/" 2>/dev/null || echo "No aegis config"
           
+          # Add base packages (no indentation in heredoc content)
           cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-          xfce4
-          xfce4-goodies
-          lightdm
-          lightdm-gtk-greeter
-          firefox
-          vlc
-          libreoffice-fresh
-          ttf-dejavu
-          ttf-liberation
-          networkmanager
-          network-manager-applet
-          pulseaudio
-          pavucontrol
-          gvfs
-          gvfs-mtp
-          thunar-volman
-          xdg-user-dirs
-          EOF
+xfce4
+xfce4-goodies
+lightdm
+lightdm-gtk-greeter
+firefox
+vlc
+libreoffice-fresh
+ttf-dejavu
+ttf-liberation
+networkmanager
+network-manager-applet
+pulseaudio
+pavucontrol
+gvfs
+gvfs-mtp
+thunar-volman
+xdg-user-dirs
+EOF
           
+          # Add edition-specific packages
           case "$EDITION" in
             gamer|gamer-ai)
               cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-          steam
-          lutris
-          gamemode
-          lib32-gamemode
-          mangohud
-          lib32-mangohud
-          wine
-          wine-gecko
-          wine-mono
-          winetricks
-          EOF
-              ;;
-            aidev|gamer-ai)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-          python
-          python-pip
-          python-virtualenv
-          jupyterlab
-          docker
-          podman
-          nvidia-utils
-          cuda
-          cudnn
-          EOF
-              ;;
-            workplace)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-          remmina
-          freerdp
-          libreoffice-fresh
-          thunderbird
-          evolution
-          EOF
-              ;;
-            server)
-              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
-          docker
-          podman
-          nginx
-          mariadb
-          postgresql
-          redis
-          EOF
+steam
+lutris
+gamemode
+lib32-gamemode
+mangohud
+lib32-mangohud
+wine
+wine-gecko
+wine-mono
+winetricks
+EOF
               ;;
           esac
+          
+          case "$EDITION" in
+            aidev|gamer-ai)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+python
+python-pip
+python-virtualenv
+jupyterlab
+docker
+podman
+nvidia-utils
+cuda
+cudnn
+EOF
+              ;;
+          esac
+          
+          case "$EDITION" in
+            workplace)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+remmina
+freerdp
+thunderbird
+evolution
+EOF
+              ;;
+          esac
+          
+          case "$EDITION" in
+            server)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'EOF'
+docker
+podman
+nginx
+mariadb
+postgresql
+redis
+EOF
+              ;;
+          esac
+          
+          # Remove duplicate packages
+          sort -u "${PROFILE_DIR}/packages.x86_64" -o "${PROFILE_DIR}/packages.x86_64"
+          
+          echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
+          cat "${PROFILE_DIR}/packages.x86_64"
           
           echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
 
       - name: Build ISO
         run: |
+          set -e
           echo "=== Building ${{ matrix.edition }} ISO ==="
           EDITION="${{ matrix.edition }}"
           OUTPUT_DIR="/tmp/aegis-output"
-          mkdir -p "${OUTPUT_DIR}"
+          WORK_DIR="/tmp/work-${EDITION}"
+          mkdir -p "${OUTPUT_DIR}" "${WORK_DIR}"
           
-          mkarchiso -v -w /tmp/work-${EDITION} -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
+          # Clean any previous work directory
+          rm -rf "${WORK_DIR}"/*
           
-          ISO_FILE=$(ls ${OUTPUT_DIR}/*.iso 2>/dev/null | head -1)
+          # Build the ISO
+          mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
+          
+          # Rename and create checksum
+          ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
             FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
             mv "$ISO_FILE" "${OUTPUT_DIR}/${FINAL_NAME}"
@@ -208,6 +269,14 @@ jobs:
             
             sha256sum "${OUTPUT_DIR}/${FINAL_NAME}" > "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
             echo "SHA256_PATH=${OUTPUT_DIR}/${FINAL_NAME}.sha256" >> $GITHUB_ENV
+            
+            echo "=== ISO Build Complete ==="
+            ls -lh "${OUTPUT_DIR}/${FINAL_NAME}"
+            cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
+          else
+            echo "ERROR: No ISO file was produced!"
+            ls -la "${OUTPUT_DIR}/"
+            exit 1
           fi
 
       - name: Upload ISO artifact
