@@ -160,14 +160,14 @@ def set_security_headers(response):
     # HSTS with preload
     response.headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains; preload'
 
-    # CSP with strict policy
+    # CSP with strict policy (allows Google Fonts)
     response.headers['Content-Security-Policy'] = (
         "default-src 'none'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; "
-        "font-src 'self'; "
-        "connect-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://js.stripe.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' https://api.stripe.com; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'; "
