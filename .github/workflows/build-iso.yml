@@ -153,30 +153,30 @@ jobs:
           
           echo "=== Creating custom profiledef.sh with Aegis branding ==="
           cat > "${PROFILE_DIR}/profiledef.sh" << 'PROFILEDEF'
-#!/usr/bin/env bash
-# shellcheck disable=SC2034
-
-iso_name="aegis-os-EDITION_PLACEHOLDER"
-iso_label="AEGIS_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
-iso_publisher="Aegis OS <https://aegis-os.com>"
-iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
-iso_version="VERSION_PLACEHOLDER"
-install_dir="aegis"
-buildmodes=('iso')
-bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
-arch="x86_64"
-pacman_conf="pacman.conf"
-airootfs_image_type="squashfs"
-airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
-bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
-file_permissions=(
-  ["/etc/shadow"]="0:0:400"
-  ["/etc/gshadow"]="0:0:400"
-  ["/etc/sudoers.d/aegis"]="0:0:440"
-  ["/usr/local/bin/*"]="0:0:755"
-  ["/home/aegis"]="1000:1000:755"
-)
-PROFILEDEF
+          #!/usr/bin/env bash
+          # shellcheck disable=SC2034
+          
+          iso_name="aegis-os-EDITION_PLACEHOLDER"
+          iso_label="AEGIS_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
+          iso_publisher="Aegis OS <https://aegis-os.com>"
+          iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
+          iso_version="VERSION_PLACEHOLDER"
+          install_dir="aegis"
+          buildmodes=('iso')
+          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
+          arch="x86_64"
+          pacman_conf="pacman.conf"
+          airootfs_image_type="squashfs"
+          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
+          bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
+          file_permissions=(
+            ["/etc/shadow"]="0:0:400"
+            ["/etc/gshadow"]="0:0:400"
+            ["/etc/sudoers.d/aegis"]="0:0:440"
+            ["/usr/local/bin/*"]="0:0:755"
+            ["/home/aegis"]="1000:1000:755"
+          )
+          PROFILEDEF
           
           EDITION_NAME=$(echo "$EDITION" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
           sed -i "s/EDITION_PLACEHOLDER/${EDITION}/g" "${PROFILE_DIR}/profiledef.sh"
@@ -467,139 +467,139 @@ PROFILEDEF
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
-          # Base packages for all editions (single heredoc instead of 68+ echo commands)
+          # Base packages for all editions
           cat > "${PROFILE_DIR}/packages.x86_64" << 'BASEPKGS'
-base
-linux
-linux-firmware
-syslinux
-mkinitcpio
-mkinitcpio-archiso
-efibootmgr
-grub
-bash
-libglvnd
-iptables-nft
-pipewire-jack
-xdg-desktop-portal-gtk
-lib32-libglvnd
-chaotic-keyring
-chaotic-mirrorlist
-xfce4
-xfce4-goodies
-lightdm
-lightdm-gtk-greeter
-firefox
-vlc
-libreoffice-fresh
-ttf-dejavu
-ttf-liberation
-noto-fonts
-papirus-icon-theme
-plymouth
-networkmanager
-network-manager-applet
-pipewire
-pipewire-pulse
-pipewire-alsa
-wireplumber
-pavucontrol
-gvfs
-gvfs-mtp
-thunar-volman
-xdg-user-dirs
-fastfetch
-sudo
-bash-completion
-BASEPKGS
+          base
+          linux
+          linux-firmware
+          syslinux
+          mkinitcpio
+          mkinitcpio-archiso
+          efibootmgr
+          grub
+          bash
+          libglvnd
+          iptables-nft
+          pipewire-jack
+          xdg-desktop-portal-gtk
+          lib32-libglvnd
+          chaotic-keyring
+          chaotic-mirrorlist
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          firefox
+          vlc
+          libreoffice-fresh
+          ttf-dejavu
+          ttf-liberation
+          noto-fonts
+          papirus-icon-theme
+          plymouth
+          networkmanager
+          network-manager-applet
+          pipewire
+          pipewire-pulse
+          pipewire-alsa
+          wireplumber
+          pavucontrol
+          gvfs
+          gvfs-mtp
+          thunar-volman
+          xdg-user-dirs
+          fastfetch
+          sudo
+          bash-completion
+          BASEPKGS
           
           # Edition-specific packages
           case "$EDITION" in
             gamer|gamer-ai)
               cat >> "${PROFILE_DIR}/packages.x86_64" << 'GAMERPKGS'
-steam
-lutris
-heroic-games-launcher-bin
-gamemode
-lib32-gamemode
-mangohud
-lib32-mangohud
-gamescope
-vulkan-tools
-lib32-pipewire-jack
-lib32-mesa
-lib32-vulkan-icd-loader
-lib32-gnutls
-lib32-libpulse
-lib32-openal
-lib32-vkd3d
-lib32-libva
-lib32-speex
-lib32-libtheora
-lib32-libvdpau
-lib32-gst-plugins-base-libs
-lib32-libjpeg-turbo
-lib32-libgudev
-lib32-mpg123
-lib32-openssl
-lib32-libusb
-lib32-alsa-lib
-lib32-alsa-plugins
-lib32-libxcomposite
-lib32-libxinerama
-lib32-ncurses
-lib32-ocl-icd
-lib32-libxslt
-lib32-libpng
-lib32-sdl2
-wine
-wine-gecko
-wine-mono
-winetricks
-vkd3d
-wireguard-tools
-obs-studio
-xdotool
-ffmpeg
-game-devices-udev
-retroarch
-mpv
-python-pillow
-GAMERPKGS
+          steam
+          lutris
+          heroic-games-launcher-bin
+          gamemode
+          lib32-gamemode
+          mangohud
+          lib32-mangohud
+          gamescope
+          vulkan-tools
+          lib32-pipewire-jack
+          lib32-mesa
+          lib32-vulkan-icd-loader
+          lib32-gnutls
+          lib32-libpulse
+          lib32-openal
+          lib32-vkd3d
+          lib32-libva
+          lib32-speex
+          lib32-libtheora
+          lib32-libvdpau
+          lib32-gst-plugins-base-libs
+          lib32-libjpeg-turbo
+          lib32-libgudev
+          lib32-mpg123
+          lib32-openssl
+          lib32-libusb
+          lib32-alsa-lib
+          lib32-alsa-plugins
+          lib32-libxcomposite
+          lib32-libxinerama
+          lib32-ncurses
+          lib32-ocl-icd
+          lib32-libxslt
+          lib32-libpng
+          lib32-sdl2
+          wine
+          wine-gecko
+          wine-mono
+          winetricks
+          vkd3d
+          wireguard-tools
+          obs-studio
+          xdotool
+          ffmpeg
+          game-devices-udev
+          retroarch
+          mpv
+          python-pillow
+          GAMERPKGS
               ;;
           esac
           
           case "$EDITION" in
             aidev|gamer-ai)
               cat >> "${PROFILE_DIR}/packages.x86_64" << 'AIDEVPKGS'
-python
-python-pip
-python-virtualenv
-jupyterlab
-docker
-podman
-AIDEVPKGS
+          python
+          python-pip
+          python-virtualenv
+          jupyterlab
+          docker
+          podman
+          AIDEVPKGS
               ;;
           esac
           
           [ "$EDITION" = "workplace" ] && cat >> "${PROFILE_DIR}/packages.x86_64" << 'WORKPKGS'
-remmina
-freerdp
-thunderbird
-evolution
-WORKPKGS
+          remmina
+          freerdp
+          thunderbird
+          evolution
+          WORKPKGS
           
           [ "$EDITION" = "server" ] && cat >> "${PROFILE_DIR}/packages.x86_64" << 'SERVERPKGS'
-docker
-podman
-nginx
-mariadb
-postgresql
-redis
-SERVERPKGS
+          docker
+          podman
+          nginx
+          mariadb
+          postgresql
+          redis
+          SERVERPKGS
           
-          # Sort, dedupe, remove empty lines
-          sort -u "${PROFILE_DIR}/packages.x86_64" | grep -v '^$' > "${PROFILE_DIR}/packages.x86_64.tmp"
+          # Sort, dedupe, strip whitespace, remove empty lines
+          sed 's/^[[:space:]]*//' "${PROFILE_DIR}/packages.x86_64" | sort -u | grep -v '^$' > "${PROFILE_DIR}/packages.x86_64.tmp"
           mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
           cat "${PROFILE_DIR}/packages.x86_64"
