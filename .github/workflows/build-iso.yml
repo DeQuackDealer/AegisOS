@@ -153,28 +153,30 @@ jobs:
           
           echo "=== Creating custom profiledef.sh with Aegis branding ==="
           cat > "${PROFILE_DIR}/profiledef.sh" << 'PROFILEDEF'
-          #!/usr/bin/env bash
-          iso_name="aegis-os-EDITION_PLACEHOLDER"
-          iso_label="AEGIS_$(date +%Y%m)"
-          iso_publisher="Aegis OS <https://aegis-os.com>"
-          iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
-          iso_version="VERSION_PLACEHOLDER"
-          install_dir="aegis"
-          buildmodes=('iso')
-          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.grub.esp' 'uefi-x64.grub.eltorito')
-          arch="x86_64"
-          pacman_conf="pacman.conf"
-          airootfs_image_type="squashfs"
-          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
-          pacstrap_args=('--noconfirm' '--needed' '--overwrite' '*')
-          file_permissions=(
-            ["/etc/shadow"]="0:0:400"
-            ["/etc/gshadow"]="0:0:400"
-            ["/etc/sudoers.d/aegis"]="0:0:440"
-            ["/usr/local/bin/*"]="0:0:755"
-            ["/home/aegis"]="1000:1000:755"
-          )
-          PROFILEDEF
+#!/usr/bin/env bash
+# shellcheck disable=SC2034
+
+iso_name="aegis-os-EDITION_PLACEHOLDER"
+iso_label="AEGIS_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
+iso_publisher="Aegis OS <https://aegis-os.com>"
+iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
+iso_version="VERSION_PLACEHOLDER"
+install_dir="aegis"
+buildmodes=('iso')
+bootmodes=('bios.syslinux' 'uefi.systemd-boot')
+arch="x86_64"
+pacman_conf="pacman.conf"
+airootfs_image_type="squashfs"
+airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
+bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
+file_permissions=(
+  ["/etc/shadow"]="0:0:400"
+  ["/etc/gshadow"]="0:0:400"
+  ["/etc/sudoers.d/aegis"]="0:0:440"
+  ["/usr/local/bin/*"]="0:0:755"
+  ["/home/aegis"]="1000:1000:755"
+)
+PROFILEDEF
           
           EDITION_NAME=$(echo "$EDITION" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
           sed -i "s/EDITION_PLACEHOLDER/${EDITION}/g" "${PROFILE_DIR}/profiledef.sh"
