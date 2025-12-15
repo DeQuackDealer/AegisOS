@@ -138,11 +138,8 @@ jobs:
           echo "=== Copying pacman.conf with multilib and Chaotic-AUR to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
           
-          echo "=== Configuring pacman for non-interactive use ==="
-          sed -i 's/#NoConfirm/NoConfirm/' "${PROFILE_DIR}/pacman.conf"
-          if ! grep -q "^NoConfirm" "${PROFILE_DIR}/pacman.conf"; then
-            sed -i '/\[options\]/a NoConfirm' "${PROFILE_DIR}/pacman.conf"
-          fi
+          echo "=== Configuring pacman to ignore Chaotic-AUR provider conflicts ==="
+          sed -i '/\[options\]/a IgnorePkg = dashbinsh nvidia-340xx-utils' "${PROFILE_DIR}/pacman.conf"
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           cp /etc/pacman.d/chaotic-mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/chaotic-mirrorlist" 2>/dev/null || true
@@ -443,7 +440,6 @@ jobs:
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
           # Explicit provider packages to avoid interactive prompts
-          # These MUST be listed first to prevent Chaotic-AUR alternatives from being offered
           echo "bash" >> "${PROFILE_DIR}/packages.x86_64"
           echo "libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           echo "iptables-nft" >> "${PROFILE_DIR}/packages.x86_64"
@@ -451,6 +447,10 @@ jobs:
           echo "xdg-desktop-portal-gtk" >> "${PROFILE_DIR}/packages.x86_64"
           echo "jack2" >> "${PROFILE_DIR}/packages.x86_64"
           echo "lib32-libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Build tools required for DKMS modules
+          echo "base-devel" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "linux-headers" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Desktop environment
           echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
@@ -647,13 +647,16 @@ jobs:
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
-          # Ensure pacman.conf in profile is non-interactive
-          echo "=== Ensuring non-interactive pacman ==="
-          sed -i 's/#NoConfirm/NoConfirm/' "${PROFILE_DIR}/pacman.conf" 2>/dev/null || true
-          grep -q "^NoConfirm" "${PROFILE_DIR}/pacman.conf" || sed -i '/\[options\]/a NoConfirm' "${PROFILE_DIR}/pacman.conf"
+          # Patch mkarchiso to use --noconfirm for pacstrap
+          echo "=== Patching mkarchiso for non-interactive operation ==="
+          MKARCHISO_BIN=$(which mkarchiso)
+          cp "$MKARCHISO_BIN" /tmp/mkarchiso-patched
+          sed -i "s/pacstrap -C/pacstrap --noconfirm -C/g" /tmp/mkarchiso-patched
+          sed -i "s/pacstrap -G/pacstrap --noconfirm -G/g" /tmp/mkarchiso-patched
+          chmod +x /tmp/mkarchiso-patched
           
-          # Run mkarchiso - use yes to auto-accept any provider prompts (defaults to 1)
-          yes "1" | mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}" || true
+          # Run patched mkarchiso with non-interactive pacstrap
+          /tmp/mkarchiso-patched -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
           
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
