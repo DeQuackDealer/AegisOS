@@ -20,7 +20,16 @@ Preferred communication style: Simple, everyday language.
 ## System Architecture
 
 ### Build System
-The core build system utilizes `archiso` for creating bootable ISOs, supporting 7 editions with different Linux kernels (`linux`, `linux-zen`, `linux-lts`). Edition-specific package lists and configurations (`profiledef.sh`, `pacman.conf`) define the software included in each ISO.
+The core build system utilizes `archiso` for creating bootable ISOs, supporting 7 editions with different Linux kernels (`linux`, `linux-zen`, `linux-lts`). Edition-specific package lists and configurations define the software included in each ISO.
+
+**Custom Branding (Fully Aegis-branded, not renamed Arch):**
+- Custom `profiledef.sh` with Aegis ISO naming (`aegis-os-{edition}-x.x.x-x86_64.iso`), volume label (`AEGIS_YYYYMM`), and publisher info
+- Custom `/etc/os-release` identifying as "Aegis OS" with edition-specific codenames
+- LightDM greeter configuration with Aegis-Win10 theme and autologin to `aegis` user
+- Custom Plymouth boot splash theme with Aegis branding colors
+- Fastfetch configuration displaying Aegis OS info
+- Pre-configured `aegis` user with passwordless sudo and group memberships
+- First-boot service for post-install user setup
 
 ### Promotional Website
 A Flask-based marketing website with a static, Windows 10-inspired HTML frontend. It features robust security (rate limiting, JWT, CSRF, audit logging) and showcases OS editions, features, and pricing data from `TIER_FEATURES.json`. It provides RESTful APIs for license management, monitoring, analytics, and user authentication.
