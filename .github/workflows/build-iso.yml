@@ -118,6 +118,9 @@ jobs:
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="/tmp/aegis-${EDITION}"
           REPO_DIR="${GITHUB_WORKSPACE}"
+          VERSION="1.0.0"
+          BUILD_DATE=$(date +%Y.%m.%d)
+          
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           echo "=== Copying pacman.conf with multilib to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
@@ -125,7 +128,267 @@ jobs:
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
-          echo "{\"edition\": \"${EDITION}\", \"version\": \"1.0.0\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
+          echo "{\"edition\": \"${EDITION}\", \"version\": \"${VERSION}\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
+          
+          echo "=== Creating custom profiledef.sh with Aegis branding ==="
+          cat > "${PROFILE_DIR}/profiledef.sh" << 'PROFILEDEF'
+          #!/usr/bin/env bash
+          iso_name="aegis-os-EDITION_PLACEHOLDER"
+          iso_label="AEGIS_$(date +%Y%m)"
+          iso_publisher="Aegis OS <https://aegis-os.com>"
+          iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
+          iso_version="VERSION_PLACEHOLDER"
+          install_dir="aegis"
+          buildmodes=('iso')
+          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-ia32.grub.esp' 'uefi-x64.grub.esp')
+          arch="x86_64"
+          pacman_conf="pacman.conf"
+          airootfs_image_type="squashfs"
+          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
+          file_permissions=(
+            ["/etc/shadow"]="0:0:400"
+            ["/etc/gshadow"]="0:0:400"
+            ["/etc/sudoers.d/aegis"]="0:0:440"
+            ["/usr/local/bin/*"]="0:0:755"
+            ["/home/aegis"]="1000:1000:755"
+          )
+          PROFILEDEF
+          
+          EDITION_NAME=$(echo "$EDITION" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
+          sed -i "s/EDITION_PLACEHOLDER/${EDITION}/g" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/EDITION_NAME_PLACEHOLDER/${EDITION_NAME}/g" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROFILE_DIR}/profiledef.sh"
+          chmod +x "${PROFILE_DIR}/profiledef.sh"
+          
+          echo "=== Creating custom /etc/os-release ==="
+          cat > "${PROFILE_DIR}/airootfs/etc/os-release" << OSRELEASE
+          NAME="Aegis OS"
+          PRETTY_NAME="Aegis OS ${VERSION} (${EDITION_NAME})"
+          ID=aegis
+          ID_LIKE=arch
+          VERSION="${VERSION}"
+          VERSION_ID="${VERSION}"
+          VERSION_CODENAME="${EDITION}"
+          BUILD_ID="${BUILD_DATE}"
+          HOME_URL="https://aegis-os.com/"
+          DOCUMENTATION_URL="https://aegis-os.com/docs/"
+          SUPPORT_URL="https://aegis-os.com/support/"
+          BUG_REPORT_URL="https://github.com/aegis-os/aegis-os/issues"
+          LOGO=aegis-logo
+          ANSI_COLOR="0;36"
+          OSRELEASE
+          
+          echo "=== Creating LightDM configuration ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/lightdm"
+          cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+          [Seat:*]
+          greeter-session=lightdm-gtk-greeter
+          user-session=xfce
+          autologin-user=aegis
+          autologin-session=xfce
+          LIGHTDM
+          
+          cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" << 'GREETER'
+          [greeter]
+          theme-name=Aegis-Win10
+          icon-theme-name=Papirus
+          font-name=Noto Sans 10
+          background=/usr/share/backgrounds/aegis/default.jpg
+          user-background=false
+          position=50%,center 50%,center
+          indicators=~host;~spacer;~clock;~spacer;~session;~a11y;~power
+          clock-format=%A, %B %d  %H:%M
+          GREETER
+          
+          echo "=== Creating Plymouth configuration ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/plymouth"
+          cat > "${PROFILE_DIR}/airootfs/etc/plymouth/plymouthd.conf" << 'PLYMOUTH'
+          [Daemon]
+          Theme=spinner
+          ShowDelay=0
+          DeviceTimeout=8
+          PLYMOUTH
+          
+          echo "=== Creating custom Aegis Plymouth theme with spinner fallback ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis"
+          cat > "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.plymouth" << 'AEGISPLYMOUTH'
+          [Plymouth Theme]
+          Name=Aegis OS
+          Description=Aegis OS boot splash with spinner animation
+          ModuleName=script
+          
+          [script]
+          ImageDir=/usr/share/plymouth/themes/aegis
+          ScriptFile=/usr/share/plymouth/themes/aegis/aegis.script
+          AEGISPLYMOUTH
+          
+          cat > "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.script" << 'AEGISSCRIPT'
+          Window.SetBackgroundTopColor(0.10, 0.10, 0.18);
+          Window.SetBackgroundBottomColor(0.09, 0.13, 0.24);
+          
+          message_sprite = Sprite();
+          message_sprite.SetPosition(Window.GetWidth() * 0.5 - 100, Window.GetHeight() * 0.7, 1);
+          
+          fun message_callback(text) {
+              my_image = Image.Text(text, 1, 1, 1);
+              message_sprite.SetImage(my_image);
+          }
+          
+          Plymouth.SetMessageFunction(message_callback);
+          
+          fun display_normal_callback() {
+              global.status = "normal";
+          }
+          
+          fun display_password_callback(prompt, bullets) {
+              global.status = "password";
+          }
+          
+          Plymouth.SetDisplayNormalFunction(display_normal_callback);
+          Plymouth.SetDisplayPasswordFunction(display_password_callback);
+          AEGISSCRIPT
+          
+          echo "=== Creating default user configuration ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/skel/.config"
+          
+          echo "=== Creating custom fastfetch configuration ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/skel/.config/fastfetch"
+          cat > "${PROFILE_DIR}/airootfs/etc/skel/.config/fastfetch/config.jsonc" << 'FASTFETCH'
+          {
+            "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+            "logo": {
+              "type": "builtin",
+              "source": "arch"
+            },
+            "display": {
+              "separator": "  "
+            },
+            "modules": [
+              {
+                "type": "title",
+                "format": "{user-name}@{host-name}"
+              },
+              "break",
+              {
+                "type": "os",
+                "key": "OS",
+                "format": "Aegis OS {version} ({codename})"
+              },
+              {
+                "type": "kernel",
+                "key": "Kernel"
+              },
+              {
+                "type": "uptime",
+                "key": "Uptime"
+              },
+              {
+                "type": "packages",
+                "key": "Packages"
+              },
+              {
+                "type": "shell",
+                "key": "Shell"
+              },
+              {
+                "type": "de",
+                "key": "Desktop"
+              },
+              {
+                "type": "wm",
+                "key": "WM"
+              },
+              {
+                "type": "terminal",
+                "key": "Terminal"
+              },
+              {
+                "type": "cpu",
+                "key": "CPU"
+              },
+              {
+                "type": "gpu",
+                "key": "GPU"
+              },
+              {
+                "type": "memory",
+                "key": "Memory"
+              },
+              "break",
+              "colors"
+            ]
+          }
+          FASTFETCH
+          
+          echo "=== Creating aegis user for autologin ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc"
+          
+          cat >> "${PROFILE_DIR}/airootfs/etc/passwd" << 'PASSWD'
+          aegis:x:1000:1000:Aegis User:/home/aegis:/bin/bash
+          PASSWD
+          
+          cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
+          aegis:$6$rounds=656000$aegis$8iJnYLuJuq5pGQ6xGDZY6NqQ4aVXX.yQQ9dYcR0DfHZJZNvZ3ZZcW0ZZZoZZZcZZZJZZpZZZmZZZnZZZvZZZsZZZxZZZ:19000:0:99999:7:::
+          SHADOW
+          
+          cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
+          aegis:x:1000:
+          GROUP
+          
+          cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
+          aegis:!::
+          GSHADOW
+          
+          mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
+          mkdir -p "${PROFILE_DIR}/airootfs/home/aegis/.config"
+          
+          echo "=== Copying skel to aegis home ==="
+          cp -r "${PROFILE_DIR}/airootfs/etc/skel/." "${PROFILE_DIR}/airootfs/home/aegis/" 2>/dev/null || true
+          
+          echo "=== Setting ownership via file_permissions in profiledef ==="
+          
+          echo "=== Configuring sudo for aegis user ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/sudoers.d"
+          echo "aegis ALL=(ALL) NOPASSWD: ALL" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+          chmod 440 "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+          
+          echo "=== Creating user setup script ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/usr/lib/systemd/system"
+          cat > "${PROFILE_DIR}/airootfs/usr/lib/systemd/system/aegis-setup.service" << 'SETUPSVC'
+          [Unit]
+          Description=Aegis OS First Boot Setup
+          After=network.target
+          ConditionPathExists=!/var/lib/aegis/setup-complete
+          
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/aegis-first-boot
+          RemainAfterExit=yes
+          
+          [Install]
+          WantedBy=multi-user.target
+          SETUPSVC
+          
+          cat > "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot" << 'FIRSTBOOT'
+          #!/bin/bash
+          mkdir -p /var/lib/aegis
+          chown -R aegis:aegis /home/aegis
+          usermod -aG wheel,audio,video,storage,optical,network,power aegis 2>/dev/null || true
+          touch /var/lib/aegis/setup-complete
+          FIRSTBOOT
+          chmod +x "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot"
+          
+          echo "=== Setting up systemd services ==="
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants"
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants"
+          
+          ln -sf /usr/lib/systemd/system/NetworkManager.service \
+            "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service" 2>/dev/null || true
+          ln -sf /usr/lib/systemd/system/lightdm.service \
+            "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants/lightdm.service" 2>/dev/null || true
+          ln -sf /usr/lib/systemd/system/aegis-setup.service \
+            "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/aegis-setup.service" 2>/dev/null || true
+          
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
             rsync -av "${REPO_DIR}/build-system/overlays/common/" "${PROFILE_DIR}/airootfs/"
@@ -147,6 +410,10 @@ jobs:
           find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
+          echo "=== Profiledef contents ==="
+          cat "${PROFILE_DIR}/profiledef.sh"
+          echo "=== OS-Release contents ==="
+          cat "${PROFILE_DIR}/airootfs/etc/os-release"
           echo "PROFILE_DIR=${PROFILE_DIR}" >> $GITHUB_ENV
 
       - name: Create package list
@@ -174,6 +441,13 @@ jobs:
           # Fonts
           echo "ttf-dejavu" >> "${PROFILE_DIR}/packages.x86_64"
           echo "ttf-liberation" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "noto-fonts" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Icons
+          echo "papirus-icon-theme" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Boot splash
+          echo "plymouth" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Networking
           echo "networkmanager" >> "${PROFILE_DIR}/packages.x86_64"
@@ -194,6 +468,10 @@ jobs:
           
           # System info
           echo "fastfetch" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # System utilities
+          echo "sudo" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "bash-completion" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Gamer edition packages
           if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
