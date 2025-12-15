@@ -154,27 +154,48 @@ jobs:
           set -e
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
+          
+          # Explicit provider packages to avoid interactive prompts
+          echo "iptables-nft" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "xdg-desktop-portal-gtk" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Desktop environment
           echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
           echo "xfce4-goodies" >> "${PROFILE_DIR}/packages.x86_64"
           echo "lightdm" >> "${PROFILE_DIR}/packages.x86_64"
           echo "lightdm-gtk-greeter" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Core apps
           echo "firefox" >> "${PROFILE_DIR}/packages.x86_64"
           echo "vlc" >> "${PROFILE_DIR}/packages.x86_64"
           echo "libreoffice-fresh" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Fonts
           echo "ttf-dejavu" >> "${PROFILE_DIR}/packages.x86_64"
           echo "ttf-liberation" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Networking
           echo "networkmanager" >> "${PROFILE_DIR}/packages.x86_64"
           echo "network-manager-applet" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Audio (PipeWire stack)
           echo "pipewire" >> "${PROFILE_DIR}/packages.x86_64"
           echo "pipewire-pulse" >> "${PROFILE_DIR}/packages.x86_64"
           echo "pipewire-alsa" >> "${PROFILE_DIR}/packages.x86_64"
           echo "wireplumber" >> "${PROFILE_DIR}/packages.x86_64"
           echo "pavucontrol" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # File management
           echo "gvfs" >> "${PROFILE_DIR}/packages.x86_64"
           echo "gvfs-mtp" >> "${PROFILE_DIR}/packages.x86_64"
           echo "thunar-volman" >> "${PROFILE_DIR}/packages.x86_64"
           echo "xdg-user-dirs" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # System info
           echo "fastfetch" >> "${PROFILE_DIR}/packages.x86_64"
+          
+          # Gamer edition packages
           if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
             echo "steam" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lutris" >> "${PROFILE_DIR}/packages.x86_64"
@@ -191,6 +212,8 @@ jobs:
             echo "wine-mono" >> "${PROFILE_DIR}/packages.x86_64"
             echo "winetricks" >> "${PROFILE_DIR}/packages.x86_64"
           fi
+          
+          # AI Developer edition packages
           if [ "$EDITION" = "aidev" ] || [ "$EDITION" = "gamer-ai" ]; then
             echo "python" >> "${PROFILE_DIR}/packages.x86_64"
             echo "python-pip" >> "${PROFILE_DIR}/packages.x86_64"
@@ -199,12 +222,16 @@ jobs:
             echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
             echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
           fi
+          
+          # Workplace edition packages
           if [ "$EDITION" = "workplace" ]; then
             echo "remmina" >> "${PROFILE_DIR}/packages.x86_64"
             echo "freerdp" >> "${PROFILE_DIR}/packages.x86_64"
             echo "thunderbird" >> "${PROFILE_DIR}/packages.x86_64"
             echo "evolution" >> "${PROFILE_DIR}/packages.x86_64"
           fi
+          
+          # Server edition packages
           if [ "$EDITION" = "server" ]; then
             echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
             echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
@@ -213,6 +240,8 @@ jobs:
             echo "postgresql" >> "${PROFILE_DIR}/packages.x86_64"
             echo "redis" >> "${PROFILE_DIR}/packages.x86_64"
           fi
+          
+          # Sort and dedupe
           sort -u "${PROFILE_DIR}/packages.x86_64" > "${PROFILE_DIR}/packages.x86_64.tmp"
           mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
@@ -259,7 +288,10 @@ jobs:
           echo "Profile: ${PROFILE_DIR}"
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
-          mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
+          
+          # Run mkarchiso with yes to auto-accept any remaining prompts
+          yes "" | mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}" || true
+          
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
             FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
@@ -272,7 +304,9 @@ jobs:
             cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
           else
             echo "ERROR: No ISO file was produced!"
+            echo "=== Checking work directory ==="
             ls -la "${WORK_DIR}/" || true
+            echo "=== Checking output directory ==="
             ls -la "${OUTPUT_DIR}/" || true
             exit 1
           fi
