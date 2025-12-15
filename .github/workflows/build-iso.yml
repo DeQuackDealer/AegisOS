@@ -605,26 +605,31 @@ jobs:
 
       - name: Validate packages exist
         run: |
-          set -e
           echo "=== Validating all packages exist in repos ==="
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           missing_pkgs=()
-          while IFS= read -r pkg; do
+          
+          while IFS= read -r pkg || [ -n "$pkg" ]; do
             [ -z "$pkg" ] && continue
-            if ! pacman -Si "$pkg" > /dev/null 2>&1; then
+            # Use pacman -Sp to check if package exists (captures stderr for missing pkg errors)
+            if ! pacman -Sp "$pkg" >/dev/null 2>&1; then
               echo "WARNING: Package not found: $pkg"
               missing_pkgs+=("$pkg")
+            else
+              echo "OK: $pkg"
             fi
           done < "${PROFILE_DIR}/packages.x86_64"
+          
           if [ "${#missing_pkgs[@]}" -gt 0 ]; then
             echo ""
-            echo "=== Missing packages detected ==="
+            echo "=== Missing packages detected (${#missing_pkgs[@]}) ==="
             printf '%s\n' "${missing_pkgs[@]}"
             echo ""
             echo "Removing missing packages from list..."
             for pkg in "${missing_pkgs[@]}"; do
               sed -i "/^${pkg}$/d" "${PROFILE_DIR}/packages.x86_64"
             done
+            echo "=== Updated package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
             echo "Continuing build without missing packages..."
           else
             echo "All packages validated successfully!"
