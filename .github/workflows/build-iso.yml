@@ -692,13 +692,17 @@ jobs:
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
             FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
-            mv "$ISO_FILE" "${OUTPUT_DIR}/${FINAL_NAME}"
-            echo "ISO_PATH=${OUTPUT_DIR}/${FINAL_NAME}" >> $GITHUB_ENV
-            sha256sum "${OUTPUT_DIR}/${FINAL_NAME}" > "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
-            echo "SHA256_PATH=${OUTPUT_DIR}/${FINAL_NAME}.sha256" >> $GITHUB_ENV
+            FINAL_PATH="${OUTPUT_DIR}/${FINAL_NAME}"
+            # Only rename if the file doesn't already have the correct name
+            if [ "$ISO_FILE" != "$FINAL_PATH" ]; then
+              mv "$ISO_FILE" "$FINAL_PATH"
+            fi
+            echo "ISO_PATH=${FINAL_PATH}" >> $GITHUB_ENV
+            sha256sum "${FINAL_PATH}" > "${FINAL_PATH}.sha256"
+            echo "SHA256_PATH=${FINAL_PATH}.sha256" >> $GITHUB_ENV
             echo "=== ISO Build Complete ==="
-            ls -lh "${OUTPUT_DIR}/${FINAL_NAME}"
-            cat "${OUTPUT_DIR}/${FINAL_NAME}.sha256"
+            ls -lh "${FINAL_PATH}"
+            cat "${FINAL_PATH}.sha256"
           else
             echo "ERROR: No ISO file was produced!"
             echo "=== Checking work directory ==="
