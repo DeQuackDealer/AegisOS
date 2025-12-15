@@ -87,6 +87,8 @@ jobs:
     
     steps:
       - name: Initialize pacman and enable multilib + Chaotic-AUR
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           set -e
           echo "=== Initializing pacman keyring ==="
@@ -135,6 +137,12 @@ jobs:
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           echo "=== Copying pacman.conf with multilib and Chaotic-AUR to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
+          
+          echo "=== Configuring pacman for non-interactive use ==="
+          sed -i 's/#NoConfirm/NoConfirm/' "${PROFILE_DIR}/pacman.conf"
+          if ! grep -q "^NoConfirm" "${PROFILE_DIR}/pacman.conf"; then
+            sed -i '/\[options\]/a NoConfirm' "${PROFILE_DIR}/pacman.conf"
+          fi
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           cp /etc/pacman.d/chaotic-mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/chaotic-mirrorlist" 2>/dev/null || true
@@ -152,7 +160,7 @@ jobs:
           iso_version="VERSION_PLACEHOLDER"
           install_dir="aegis"
           buildmodes=('iso')
-          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-ia32.grub.esp' 'uefi-x64.grub.esp')
+          bootmodes=('bios.syslinux' 'uefi-x64.grub.esp')
           arch="x86_64"
           pacman_conf="pacman.conf"
           airootfs_image_type="squashfs"
@@ -435,9 +443,14 @@ jobs:
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
           # Explicit provider packages to avoid interactive prompts
+          # These MUST be listed first to prevent Chaotic-AUR alternatives from being offered
+          echo "bash" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           echo "iptables-nft" >> "${PROFILE_DIR}/packages.x86_64"
           echo "pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
           echo "xdg-desktop-portal-gtk" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "jack2" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "lib32-libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Desktop environment
           echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
@@ -499,20 +512,41 @@ jobs:
             echo "lib32-mangohud" >> "${PROFILE_DIR}/packages.x86_64"
             echo "gamescope" >> "${PROFILE_DIR}/packages.x86_64"
             
-            # Graphics libraries
+            # Graphics libraries (64-bit)
+            echo "vulkan-tools" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # lib32 libraries for Wine/Proton compatibility
             echo "lib32-mesa" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-vulkan-icd-loader" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-gnutls" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-libpulse" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "vulkan-tools" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-openal" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-vkd3d" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libva" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-speex" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libtheora" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libvdpau" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-gst-plugins-base-libs" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libjpeg-turbo" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libgudev" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-mpg123" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-openssl" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libusb" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-alsa-lib" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-alsa-plugins" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libxcomposite" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libxinerama" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-ncurses" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-ocl-icd" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libxslt" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-libpng" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "lib32-sdl2" >> "${PROFILE_DIR}/packages.x86_64"
             
             # Wine/Proton
             echo "wine" >> "${PROFILE_DIR}/packages.x86_64"
             echo "wine-gecko" >> "${PROFILE_DIR}/packages.x86_64"
             echo "wine-mono" >> "${PROFILE_DIR}/packages.x86_64"
             echo "winetricks" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "proton-ge-custom-bin" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "dxvk-bin" >> "${PROFILE_DIR}/packages.x86_64"
             echo "vkd3d" >> "${PROFILE_DIR}/packages.x86_64"
             
             # VPN for gaming privacy
@@ -613,8 +647,13 @@ jobs:
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
-          # Run mkarchiso with yes to auto-accept any remaining prompts
-          yes "" | mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}" || true
+          # Ensure pacman.conf in profile is non-interactive
+          echo "=== Ensuring non-interactive pacman ==="
+          sed -i 's/#NoConfirm/NoConfirm/' "${PROFILE_DIR}/pacman.conf" 2>/dev/null || true
+          grep -q "^NoConfirm" "${PROFILE_DIR}/pacman.conf" || sed -i '/\[options\]/a NoConfirm' "${PROFILE_DIR}/pacman.conf"
+          
+          # Run mkarchiso - use yes to auto-accept any provider prompts (defaults to 1)
+          yes "1" | mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}" || true
           
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
