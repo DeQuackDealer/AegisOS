@@ -122,7 +122,7 @@ jobs:
       
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       
       - name: Setup archiso profile
         run: |
@@ -435,20 +435,23 @@ PROFILEDEF
           
           echo "=== Stripping heredoc indentation from generated files ==="
           # CRITICAL: YAML heredocs preserve leading whitespace - must strip it
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/profiledef.sh"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/os-release"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/plymouth/plymouthd.conf"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.plymouth"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.script"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/skel/.config/fastfetch/config.jsonc"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/passwd"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/shadow"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/group"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/gshadow"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/lib/systemd/system/aegis-setup.service"
-          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot"
+          for f in \
+            "${PROFILE_DIR}/profiledef.sh" \
+            "${PROFILE_DIR}/airootfs/etc/os-release" \
+            "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" \
+            "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" \
+            "${PROFILE_DIR}/airootfs/etc/plymouth/plymouthd.conf" \
+            "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.plymouth" \
+            "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.script" \
+            "${PROFILE_DIR}/airootfs/etc/skel/.config/fastfetch/config.jsonc" \
+            "${PROFILE_DIR}/airootfs/etc/passwd" \
+            "${PROFILE_DIR}/airootfs/etc/shadow" \
+            "${PROFILE_DIR}/airootfs/etc/group" \
+            "${PROFILE_DIR}/airootfs/etc/gshadow" \
+            "${PROFILE_DIR}/airootfs/usr/lib/systemd/system/aegis-setup.service" \
+            "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot"; do
+            [ -f "$f" ] && sed -i 's/^[[:space:]]*//' "$f"
+          done
           
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
@@ -464,213 +467,169 @@ PROFILEDEF
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
-          # IMPORTANT: Start fresh - REPLACE releng's packages.x86_64, don't append to it
-          # This prevents conflicts between releng base packages and our custom selection
+          # Base packages for all editions (single heredoc instead of 68+ echo commands)
+          cat > "${PROFILE_DIR}/packages.x86_64" << 'BASEPKGS'
+base
+linux
+linux-firmware
+syslinux
+mkinitcpio
+mkinitcpio-archiso
+efibootmgr
+grub
+bash
+libglvnd
+iptables-nft
+pipewire-jack
+xdg-desktop-portal-gtk
+lib32-libglvnd
+chaotic-keyring
+chaotic-mirrorlist
+xfce4
+xfce4-goodies
+lightdm
+lightdm-gtk-greeter
+firefox
+vlc
+libreoffice-fresh
+ttf-dejavu
+ttf-liberation
+noto-fonts
+papirus-icon-theme
+plymouth
+networkmanager
+network-manager-applet
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+pavucontrol
+gvfs
+gvfs-mtp
+thunar-volman
+xdg-user-dirs
+fastfetch
+sudo
+bash-completion
+BASEPKGS
           
-          # Base system packages (required for bootable system) - NO leading whitespace!
-          echo "base" > "${PROFILE_DIR}/packages.x86_64"
-          echo "linux" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "linux-firmware" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "syslinux" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "mkinitcpio" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "mkinitcpio-archiso" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "efibootmgr" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "grub" >> "${PROFILE_DIR}/packages.x86_64"
+          # Edition-specific packages
+          case "$EDITION" in
+            gamer|gamer-ai)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'GAMERPKGS'
+steam
+lutris
+heroic-games-launcher-bin
+gamemode
+lib32-gamemode
+mangohud
+lib32-mangohud
+gamescope
+vulkan-tools
+lib32-pipewire-jack
+lib32-mesa
+lib32-vulkan-icd-loader
+lib32-gnutls
+lib32-libpulse
+lib32-openal
+lib32-vkd3d
+lib32-libva
+lib32-speex
+lib32-libtheora
+lib32-libvdpau
+lib32-gst-plugins-base-libs
+lib32-libjpeg-turbo
+lib32-libgudev
+lib32-mpg123
+lib32-openssl
+lib32-libusb
+lib32-alsa-lib
+lib32-alsa-plugins
+lib32-libxcomposite
+lib32-libxinerama
+lib32-ncurses
+lib32-ocl-icd
+lib32-libxslt
+lib32-libpng
+lib32-sdl2
+wine
+wine-gecko
+wine-mono
+winetricks
+vkd3d
+wireguard-tools
+obs-studio
+xdotool
+ffmpeg
+game-devices-udev
+retroarch
+mpv
+python-pillow
+GAMERPKGS
+              ;;
+          esac
           
-          # Explicit provider packages to avoid interactive prompts
-          # Note: pipewire-jack provides JACK - do NOT add jack2 (they conflict)
-          echo "bash" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "iptables-nft" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "xdg-desktop-portal-gtk" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "lib32-libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
+          case "$EDITION" in
+            aidev|gamer-ai)
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'AIDEVPKGS'
+python
+python-pip
+python-virtualenv
+jupyterlab
+docker
+podman
+AIDEVPKGS
+              ;;
+          esac
           
-          # Chaotic-AUR keyring for the installed system
-          echo "chaotic-keyring" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "chaotic-mirrorlist" >> "${PROFILE_DIR}/packages.x86_64"
+          [ "$EDITION" = "workplace" ] && cat >> "${PROFILE_DIR}/packages.x86_64" << 'WORKPKGS'
+remmina
+freerdp
+thunderbird
+evolution
+WORKPKGS
           
-          # Desktop environment
-          echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "xfce4-goodies" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "lightdm" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "lightdm-gtk-greeter" >> "${PROFILE_DIR}/packages.x86_64"
+          [ "$EDITION" = "server" ] && cat >> "${PROFILE_DIR}/packages.x86_64" << 'SERVERPKGS'
+docker
+podman
+nginx
+mariadb
+postgresql
+redis
+SERVERPKGS
           
-          # Core apps
-          echo "firefox" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "vlc" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "libreoffice-fresh" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Fonts
-          echo "ttf-dejavu" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "ttf-liberation" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "noto-fonts" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Icons
-          echo "papirus-icon-theme" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Boot splash
-          echo "plymouth" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Networking
-          echo "networkmanager" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "network-manager-applet" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Audio (PipeWire stack)
-          echo "pipewire" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "pipewire-pulse" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "pipewire-alsa" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "wireplumber" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "pavucontrol" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # File management
-          echo "gvfs" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "gvfs-mtp" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "thunar-volman" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "xdg-user-dirs" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # System info
-          echo "fastfetch" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # System utilities
-          echo "sudo" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "bash-completion" >> "${PROFILE_DIR}/packages.x86_64"
-          
-          # Gamer edition packages
-          if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
-            # Gaming platforms
-            echo "steam" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lutris" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "heroic-games-launcher-bin" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Performance tools
-            echo "gamemode" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-gamemode" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "mangohud" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-mangohud" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "gamescope" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Graphics libraries (64-bit)
-            echo "vulkan-tools" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # lib32 libraries for Wine/Proton compatibility
-            echo "lib32-pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-mesa" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-vulkan-icd-loader" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-gnutls" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libpulse" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-openal" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-vkd3d" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libva" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-speex" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libtheora" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libvdpau" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-gst-plugins-base-libs" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libjpeg-turbo" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libgudev" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-mpg123" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-openssl" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libusb" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-alsa-lib" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-alsa-plugins" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libxcomposite" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libxinerama" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-ncurses" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-ocl-icd" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libxslt" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-libpng" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "lib32-sdl2" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Wine/Proton
-            echo "wine" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "wine-gecko" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "wine-mono" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "winetricks" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "vkd3d" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # VPN for gaming privacy
-            echo "wireguard-tools" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Streaming tools
-            echo "obs-studio" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "xdotool" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "ffmpeg" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Controller support (game-devices-udev only, DKMS modules deferred to post-install)
-            echo "game-devices-udev" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Retro gaming
-            echo "retroarch" >> "${PROFILE_DIR}/packages.x86_64"
-            
-            # Wallpaper engine deps
-            echo "mpv" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "python-pillow" >> "${PROFILE_DIR}/packages.x86_64"
-          fi
-          
-          # AI Developer edition packages
-          if [ "$EDITION" = "aidev" ] || [ "$EDITION" = "gamer-ai" ]; then
-            echo "python" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "python-pip" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "python-virtualenv" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "jupyterlab" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
-          fi
-          
-          # Workplace edition packages
-          if [ "$EDITION" = "workplace" ]; then
-            echo "remmina" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "freerdp" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "thunderbird" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "evolution" >> "${PROFILE_DIR}/packages.x86_64"
-          fi
-          
-          # Server edition packages
-          if [ "$EDITION" = "server" ]; then
-            echo "docker" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "podman" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "nginx" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "mariadb" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "postgresql" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "redis" >> "${PROFILE_DIR}/packages.x86_64"
-          fi
-          
-          # Sort and dedupe
-          sort -u "${PROFILE_DIR}/packages.x86_64" > "${PROFILE_DIR}/packages.x86_64.tmp"
+          # Sort, dedupe, remove empty lines
+          sort -u "${PROFILE_DIR}/packages.x86_64" | grep -v '^$' > "${PROFILE_DIR}/packages.x86_64.tmp"
           mv "${PROFILE_DIR}/packages.x86_64.tmp" "${PROFILE_DIR}/packages.x86_64"
           echo "=== Final package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
           cat "${PROFILE_DIR}/packages.x86_64"
 
       - name: Validate packages exist
         run: |
-          echo "=== Validating all packages exist in repos ==="
+          echo "=== Validating packages exist in repos ==="
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
-          missing_pkgs=()
           
-          while IFS= read -r pkg || [ -n "$pkg" ]; do
-            [ -z "$pkg" ] && continue
-            # Use pacman -Sp to check if package exists (captures stderr for missing pkg errors)
-            if ! pacman -Sp "$pkg" >/dev/null 2>&1; then
-              echo "WARNING: Package not found: $pkg"
-              missing_pkgs+=("$pkg")
-            else
-              echo "OK: $pkg"
-            fi
-          done < "${PROFILE_DIR}/packages.x86_64"
-          
-          if [ "${#missing_pkgs[@]}" -gt 0 ]; then
-            echo ""
-            echo "=== Missing packages detected (${#missing_pkgs[@]}) ==="
-            printf '%s\n' "${missing_pkgs[@]}"
-            echo ""
-            echo "Removing missing packages from list..."
-            for pkg in "${missing_pkgs[@]}"; do
-              sed -i "/^${pkg}$/d" "${PROFILE_DIR}/packages.x86_64"
-            done
-            echo "=== Updated package list ($(wc -l < "${PROFILE_DIR}/packages.x86_64") packages) ==="
-            echo "Continuing build without missing packages..."
+          # Batch validate: pacman -Sp with all packages at once, capture stderr for missing ones
+          if pacman -Sp $(cat "${PROFILE_DIR}/packages.x86_64" | tr '\n' ' ') >/dev/null 2>/tmp/pkg_errors.txt; then
+            echo "All $(wc -l < "${PROFILE_DIR}/packages.x86_64") packages validated successfully!"
           else
-            echo "All packages validated successfully!"
+            echo "=== Some packages not found, identifying... ==="
+            missing_pkgs=()
+            while IFS= read -r pkg; do
+              [ -z "$pkg" ] && continue
+              if ! pacman -Sp "$pkg" >/dev/null 2>&1; then
+                echo "WARNING: $pkg not found"
+                missing_pkgs+=("$pkg")
+              fi
+            done < "${PROFILE_DIR}/packages.x86_64"
+            
+            if [ "${#missing_pkgs[@]}" -gt 0 ]; then
+              echo "Removing ${#missing_pkgs[@]} missing packages..."
+              for pkg in "${missing_pkgs[@]}"; do
+                sed -i "/^${pkg}$/d" "${PROFILE_DIR}/packages.x86_64"
+              done
+              echo "Updated: $(wc -l < "${PROFILE_DIR}/packages.x86_64") packages remaining"
+            fi
           fi
 
       - name: Build ISO
