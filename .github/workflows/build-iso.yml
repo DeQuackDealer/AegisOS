@@ -141,6 +141,10 @@ jobs:
           echo "=== Configuring pacman to ignore Chaotic-AUR provider conflicts ==="
           sed -i '/\[options\]/a IgnorePkg = dashbinsh nvidia-340xx-utils' "${PROFILE_DIR}/pacman.conf"
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
+          
+          # CRITICAL: Copy pacman.conf to airootfs/etc/ for the installed system
+          cp "${PROFILE_DIR}/pacman.conf" "${PROFILE_DIR}/airootfs/etc/pacman.conf"
+          
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
           cp /etc/pacman.d/chaotic-mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/chaotic-mirrorlist" 2>/dev/null || true
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
