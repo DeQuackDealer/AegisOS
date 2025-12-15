@@ -677,37 +677,30 @@ jobs:
           echo "=== Building ${{ matrix.edition }} ISO ==="
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
-          OUTPUT_DIR="/tmp/aegis-output"
+          OUTPUT_DIR="${GITHUB_WORKSPACE}/output"
           WORK_DIR="/tmp/work-${EDITION}"
+          
+          # Clean output folder - delete any existing ISOs
+          rm -rf "${OUTPUT_DIR}"
           mkdir -p "${OUTPUT_DIR}" "${WORK_DIR}"
-          rm -rf "${WORK_DIR:?}"/*
+          
           echo "=== Starting mkarchiso ==="
           echo "Profile: ${PROFILE_DIR}"
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
-          # Run mkarchiso (pacstrap_args in profiledef.sh handles --noconfirm)
+          # Run mkarchiso
           mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
           
+          # Find and checksum the ISO
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
-            FINAL_NAME="aegis-os-${EDITION}-1.0.0-x86_64.iso"
-            FINAL_PATH="${OUTPUT_DIR}/${FINAL_NAME}"
-            # Only rename if the file doesn't already have the correct name
-            if [ "$ISO_FILE" != "$FINAL_PATH" ]; then
-              mv "$ISO_FILE" "$FINAL_PATH"
-            fi
-            echo "ISO_PATH=${FINAL_PATH}" >> $GITHUB_ENV
-            sha256sum "${FINAL_PATH}" > "${FINAL_PATH}.sha256"
-            echo "SHA256_PATH=${FINAL_PATH}.sha256" >> $GITHUB_ENV
+            sha256sum "${ISO_FILE}" > "${ISO_FILE}.sha256"
             echo "=== ISO Build Complete ==="
-            ls -lh "${FINAL_PATH}"
-            cat "${FINAL_PATH}.sha256"
+            ls -lh "${OUTPUT_DIR}/"
+            cat "${ISO_FILE}.sha256"
           else
             echo "ERROR: No ISO file was produced!"
-            echo "=== Checking work directory ==="
-            ls -la "${WORK_DIR}/" || true
-            echo "=== Checking output directory ==="
             ls -la "${OUTPUT_DIR}/" || true
             exit 1
           fi
@@ -717,8 +710,8 @@ jobs:
         with:
           name: aegis-os-${{ matrix.edition }}-iso
           path: |
-            /tmp/aegis-output/*.iso
-            /tmp/aegis-output/*.sha256
+            output/*.iso
+            output/*.sha256
           retention-days: 30
           compression-level: 0
 
