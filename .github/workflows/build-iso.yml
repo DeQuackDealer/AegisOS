@@ -440,6 +440,21 @@ jobs:
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
+          # IMPORTANT: Start fresh - REPLACE releng's packages.x86_64, don't append to it
+          # This prevents conflicts between releng base packages and our custom selection
+          
+          # Base system packages (required for bootable system)
+          cat > "${PROFILE_DIR}/packages.x86_64" << 'BASEPKGS'
+          base
+          linux
+          linux-firmware
+          syslinux
+          mkinitcpio
+          mkinitcpio-archiso
+          efibootmgr
+          grub
+          BASEPKGS
+          
           # Explicit provider packages to avoid interactive prompts
           # Note: pipewire-jack provides JACK - do NOT add jack2 (they conflict)
           echo "bash" >> "${PROFILE_DIR}/packages.x86_64"
