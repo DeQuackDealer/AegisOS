@@ -162,6 +162,7 @@ jobs:
           pacman_conf="pacman.conf"
           airootfs_image_type="squashfs"
           airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
+          pacstrap_args=('--noconfirm' '--needed')
           file_permissions=(
             ["/etc/shadow"]="0:0:400"
             ["/etc/gshadow"]="0:0:400"
@@ -448,9 +449,9 @@ jobs:
           echo "jack2" >> "${PROFILE_DIR}/packages.x86_64"
           echo "lib32-libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           
-          # Build tools required for DKMS modules
-          echo "base-devel" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "linux-headers" >> "${PROFILE_DIR}/packages.x86_64"
+          # Chaotic-AUR keyring for the installed system
+          echo "chaotic-keyring" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "chaotic-mirrorlist" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Desktop environment
           echo "xfce4" >> "${PROFILE_DIR}/packages.x86_64"
@@ -551,16 +552,13 @@ jobs:
             
             # VPN for gaming privacy
             echo "wireguard-tools" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "protonvpn-cli" >> "${PROFILE_DIR}/packages.x86_64"
             
             # Streaming tools
             echo "obs-studio" >> "${PROFILE_DIR}/packages.x86_64"
-            echo "v4l2loopback-dkms" >> "${PROFILE_DIR}/packages.x86_64"
             echo "xdotool" >> "${PROFILE_DIR}/packages.x86_64"
             echo "ffmpeg" >> "${PROFILE_DIR}/packages.x86_64"
             
-            # Controller support
-            echo "xpadneo-dkms" >> "${PROFILE_DIR}/packages.x86_64"
+            # Controller support (game-devices-udev only, DKMS modules deferred to post-install)
             echo "game-devices-udev" >> "${PROFILE_DIR}/packages.x86_64"
             
             # Retro gaming
@@ -647,16 +645,8 @@ jobs:
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
-          # Patch mkarchiso to use --noconfirm for pacstrap
-          echo "=== Patching mkarchiso for non-interactive operation ==="
-          MKARCHISO_BIN=$(which mkarchiso)
-          cp "$MKARCHISO_BIN" /tmp/mkarchiso-patched
-          sed -i "s/pacstrap -C/pacstrap --noconfirm -C/g" /tmp/mkarchiso-patched
-          sed -i "s/pacstrap -G/pacstrap --noconfirm -G/g" /tmp/mkarchiso-patched
-          chmod +x /tmp/mkarchiso-patched
-          
-          # Run patched mkarchiso with non-interactive pacstrap
-          /tmp/mkarchiso-patched -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
+          # Run mkarchiso (pacstrap_args in profiledef.sh handles --noconfirm)
+          mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
           
           ISO_FILE=$(ls "${OUTPUT_DIR}"/*.iso 2>/dev/null | head -1)
           if [ -n "$ISO_FILE" ]; then
