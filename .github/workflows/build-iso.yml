@@ -443,17 +443,15 @@ jobs:
           # IMPORTANT: Start fresh - REPLACE releng's packages.x86_64, don't append to it
           # This prevents conflicts between releng base packages and our custom selection
           
-          # Base system packages (required for bootable system)
-          cat > "${PROFILE_DIR}/packages.x86_64" << 'BASEPKGS'
-          base
-          linux
-          linux-firmware
-          syslinux
-          mkinitcpio
-          mkinitcpio-archiso
-          efibootmgr
-          grub
-          BASEPKGS
+          # Base system packages (required for bootable system) - NO leading whitespace!
+          echo "base" > "${PROFILE_DIR}/packages.x86_64"
+          echo "linux" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "linux-firmware" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "syslinux" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "mkinitcpio" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "mkinitcpio-archiso" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "efibootmgr" >> "${PROFILE_DIR}/packages.x86_64"
+          echo "grub" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Explicit provider packages to avoid interactive prompts
           # Note: pipewire-jack provides JACK - do NOT add jack2 (they conflict)
