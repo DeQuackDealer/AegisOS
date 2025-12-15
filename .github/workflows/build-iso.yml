@@ -441,12 +441,12 @@ jobs:
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
           # Explicit provider packages to avoid interactive prompts
+          # Note: pipewire-jack provides JACK - do NOT add jack2 (they conflict)
           echo "bash" >> "${PROFILE_DIR}/packages.x86_64"
           echo "libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           echo "iptables-nft" >> "${PROFILE_DIR}/packages.x86_64"
           echo "pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
           echo "xdg-desktop-portal-gtk" >> "${PROFILE_DIR}/packages.x86_64"
-          echo "jack2" >> "${PROFILE_DIR}/packages.x86_64"
           echo "lib32-libglvnd" >> "${PROFILE_DIR}/packages.x86_64"
           
           # Chaotic-AUR keyring for the installed system
@@ -517,6 +517,7 @@ jobs:
             echo "vulkan-tools" >> "${PROFILE_DIR}/packages.x86_64"
             
             # lib32 libraries for Wine/Proton compatibility
+            echo "lib32-pipewire-jack" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-mesa" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-vulkan-icd-loader" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-gnutls" >> "${PROFILE_DIR}/packages.x86_64"
