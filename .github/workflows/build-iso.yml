@@ -86,7 +86,7 @@ jobs:
         edition: ${{ fromJson(needs.determine-matrix.outputs.matrix) }}
     
     steps:
-      - name: Initialize pacman and enable multilib
+      - name: Initialize pacman and enable multilib + Chaotic-AUR
         run: |
           set -e
           echo "=== Initializing pacman keyring ==="
@@ -98,6 +98,17 @@ jobs:
           sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
           echo "=== Verifying multilib is enabled ==="
           grep -A1 "\[multilib\]" /etc/pacman.conf || echo "WARNING: multilib section not found"
+          
+          echo "=== Adding Chaotic-AUR repository for AUR packages ==="
+          pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
+          pacman-key --lsign-key 3056513887B78AEB
+          pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst'
+          pacman -U --noconfirm 'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'
+          
+          echo "" >> /etc/pacman.conf
+          echo "[chaotic-aur]" >> /etc/pacman.conf
+          echo "Include = /etc/pacman.d/chaotic-mirrorlist" >> /etc/pacman.conf
+          
           echo "=== Syncing package databases ==="
           pacman -Syy --noconfirm
           
@@ -122,10 +133,11 @@ jobs:
           BUILD_DATE=$(date +%Y.%m.%d)
           
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
-          echo "=== Copying pacman.conf with multilib to profile ==="
+          echo "=== Copying pacman.conf with multilib and Chaotic-AUR to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
           mkdir -p "${PROFILE_DIR}/airootfs/etc/pacman.d"
           cp /etc/pacman.d/mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/mirrorlist"
+          cp /etc/pacman.d/chaotic-mirrorlist "${PROFILE_DIR}/airootfs/etc/pacman.d/chaotic-mirrorlist" 2>/dev/null || true
           mkdir -p "${PROFILE_DIR}/airootfs/etc/aegis"
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
           echo "{\"edition\": \"${EDITION}\", \"version\": \"${VERSION}\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
@@ -475,20 +487,54 @@ jobs:
           
           # Gamer edition packages
           if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
+            # Gaming platforms
             echo "steam" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lutris" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "heroic-games-launcher-bin" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Performance tools
             echo "gamemode" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-gamemode" >> "${PROFILE_DIR}/packages.x86_64"
             echo "mangohud" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-mangohud" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "gamescope" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Graphics libraries
             echo "lib32-mesa" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-vulkan-icd-loader" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-gnutls" >> "${PROFILE_DIR}/packages.x86_64"
             echo "lib32-libpulse" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "vulkan-tools" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Wine/Proton
             echo "wine" >> "${PROFILE_DIR}/packages.x86_64"
             echo "wine-gecko" >> "${PROFILE_DIR}/packages.x86_64"
             echo "wine-mono" >> "${PROFILE_DIR}/packages.x86_64"
             echo "winetricks" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "proton-ge-custom-bin" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "dxvk-bin" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "vkd3d" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # VPN for gaming privacy
+            echo "wireguard-tools" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "protonvpn-cli" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Streaming tools
+            echo "obs-studio" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "v4l2loopback-dkms" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "xdotool" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "ffmpeg" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Controller support
+            echo "xpadneo-dkms" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "game-devices-udev" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Retro gaming
+            echo "retroarch" >> "${PROFILE_DIR}/packages.x86_64"
+            
+            # Wallpaper engine deps
+            echo "mpv" >> "${PROFILE_DIR}/packages.x86_64"
+            echo "python-pillow" >> "${PROFILE_DIR}/packages.x86_64"
           fi
           
           # AI Developer edition packages

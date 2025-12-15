@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+"""
+Aegis VPN Manager - WireGuard and ProtonVPN integration for gaming privacy
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List, Optional
+
+VPN_PROVIDERS = {
+    "protonvpn": {"name": "ProtonVPN", "pkg": "protonvpn-cli", "icon": "protonvpn"},
+    "mullvad": {"name": "Mullvad VPN", "pkg": "mullvad-vpn", "icon": "mullvad"},
+    "wireguard": {"name": "WireGuard (Manual)", "pkg": "wireguard-tools", "icon": "network-vpn"},
+    "nordvpn": {"name": "NordVPN", "pkg": "nordvpn-bin", "icon": "nordvpn"},
+}
+
+GAMING_SERVERS = [
+    {"name": "Fastest", "desc": "Auto-select fastest server", "region": "auto"},
+    {"name": "US West", "desc": "Los Angeles, Seattle", "region": "us-west"},
+    {"name": "US East", "desc": "New York, Miami", "region": "us-east"},
+    {"name": "EU West", "desc": "London, Paris, Amsterdam", "region": "eu-west"},
+    {"name": "EU Central", "desc": "Frankfurt, Zurich", "region": "eu-central"},
+    {"name": "Asia Pacific", "desc": "Tokyo, Singapore, Sydney", "region": "asia"},
+]
+
+class AegisVPNManager(Gtk.Window):
+    CSS = """
+    window { background: #0d1117; }
+    .header { background: linear-gradient(135deg, #1a1f36 0%, #0d1117 100%); padding: 24px; }
+    .title { color: #6e40c9; font-size: 28px; font-weight: bold; }
+    .subtitle { color: #8b949e; font-size: 14px; }
+    .card { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; margin-bottom: 12px; }
+    .provider-btn { background: rgba(255,255,255,0.08); border: 2px solid transparent;
+                   border-radius: 10px; padding: 16px; color: #fff; margin: 6px; }
+    .provider-btn:hover { background: rgba(110,64,201,0.2); }
+    .provider-btn:checked { border-color: #6e40c9; background: rgba(110,64,201,0.3); }
+    .server-row { background: rgba(255,255,255,0.04); border-radius: 8px; padding: 12px; margin: 4px 0; }
+    .server-name { color: #fff; font-size: 14px; font-weight: bold; }
+    .server-desc { color: #8b949e; font-size: 12px; }
+    .connect-btn { background: #238636; color: #fff; font-weight: bold; padding: 14px 40px; 
+                   border-radius: 8px; font-size: 16px; }
+    .connect-btn:hover { background: #2ea043; }
+    .disconnect-btn { background: #da3633; color: #fff; }
+    .disconnect-btn:hover { background: #f85149; }
+    .status-connected { color: #3fb950; font-weight: bold; }
+    .status-disconnected { color: #f85149; }
+    .stat-value { color: #6e40c9; font-size: 22px; font-weight: bold; }
+    .stat-label { color: #8b949e; font-size: 11px; }
+    .gaming-mode { background: rgba(110,64,201,0.15); border: 1px solid #6e40c9; 
+                   border-radius: 8px; padding: 16px; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis VPN Manager")
+        self.set_default_size(900, 700)
+        self.config_path = Path.home() / ".config/aegis/vpn.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.connected = False
+        self.current_provider = "protonvpn"
+        self.current_server = "auto"
+        self.gaming_mode = True
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_config()
+        self._create_ui()
+        self._check_status()
+    
+    def _load_config(self):
+        try:
+            if self.config_path.exists():
+                with open(self.config_path) as f:
+                    cfg = json.load(f)
+                    self.current_provider = cfg.get("provider", "protonvpn")
+                    self.current_server = cfg.get("server", "auto")
+                    self.gaming_mode = cfg.get("gaming_mode", True)
+        except: pass
+    
+    def _save_config(self):
+        try:
+            with open(self.config_path, "w") as f:
+                json.dump({
+                    "provider": self.current_provider,
+                    "server": self.current_server,
+                    "gaming_mode": self.gaming_mode
+                }, f, indent=2)
+        except: pass
+    
+    def _check_status(self):
+        try:
+            if self.current_provider == "protonvpn":
+                result = subprocess.run(["protonvpn-cli", "status"], capture_output=True, text=True, timeout=5)
+                self.connected = "Connected" in result.stdout
+            elif self.current_provider == "wireguard":
+                result = subprocess.run(["wg", "show"], capture_output=True, text=True, timeout=5)
+                self.connected = result.returncode == 0 and result.stdout.strip() != ""
+            self._update_status_ui()
+        except:
+            self.connected = False
+    
+    def _update_status_ui(self):
+        if hasattr(self, 'status_label'):
+            if self.connected:
+                self.status_label.set_text("CONNECTED")
+                self.status_label.get_style_context().remove_class("status-disconnected")
+                self.status_label.get_style_context().add_class("status-connected")
+                self.connect_btn.set_label("Disconnect")
+                self.connect_btn.get_style_context().add_class("disconnect-btn")
+            else:
+                self.status_label.set_text("DISCONNECTED")
+                self.status_label.get_style_context().remove_class("status-connected")
+                self.status_label.get_style_context().add_class("status-disconnected")
+                self.connect_btn.set_label("Connect")
+                self.connect_btn.get_style_context().remove_class("disconnect-btn")
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        title_row = Gtk.Box(spacing=16)
+        title = Gtk.Label(label="Aegis VPN Manager")
+        title.get_style_context().add_class("title")
+        title_row.pack_start(title, False, False, 0)
+        
+        self.status_label = Gtk.Label(label="CHECKING...")
+        self.status_label.get_style_context().add_class("status-disconnected")
+        title_row.pack_end(self.status_label, False, False, 0)
+        
+        header.pack_start(title_row, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Secure gaming with low-latency VPN connections")
+        subtitle.get_style_context().add_class("subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        header.pack_start(subtitle, False, False, 4)
+        
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        main.pack_start(scroll, True, True, 0)
+        
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        scroll.add(content)
+        
+        providers_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        providers_card.get_style_context().add_class("card")
+        
+        providers_title = Gtk.Label(label="VPN Provider")
+        providers_title.get_style_context().add_class("card-title")
+        providers_title.set_halign(Gtk.Align.START)
+        providers_card.pack_start(providers_title, False, False, 0)
+        
+        providers_grid = Gtk.FlowBox()
+        providers_grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        providers_grid.set_max_children_per_line(4)
+        providers_grid.set_homogeneous(True)
+        
+        self.provider_buttons = {}
+        for pid, pinfo in VPN_PROVIDERS.items():
+            btn = Gtk.ToggleButton(label=pinfo["name"])
+            btn.get_style_context().add_class("provider-btn")
+            btn.set_active(pid == self.current_provider)
+            btn.connect("toggled", self._on_provider_selected, pid)
+            self.provider_buttons[pid] = btn
+            providers_grid.add(btn)
+        
+        providers_card.pack_start(providers_grid, False, False, 12)
+        content.pack_start(providers_card, False, False, 0)
+        
+        gaming_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        gaming_card.get_style_context().add_class("card")
+        gaming_card.get_style_context().add_class("gaming-mode")
+        
+        gaming_row = Gtk.Box(spacing=16)
+        gaming_info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        gaming_title = Gtk.Label(label="Gaming Mode")
+        gaming_title.get_style_context().add_class("card-title")
+        gaming_title.set_halign(Gtk.Align.START)
+        gaming_info.pack_start(gaming_title, False, False, 0)
+        
+        gaming_desc = Gtk.Label(label="Optimizes for low latency: UDP protocol, fastest servers, split tunneling for game traffic")
+        gaming_desc.get_style_context().add_class("subtitle")
+        gaming_desc.set_halign(Gtk.Align.START)
+        gaming_desc.set_line_wrap(True)
+        gaming_info.pack_start(gaming_desc, False, False, 4)
+        
+        gaming_row.pack_start(gaming_info, True, True, 0)
+        
+        self.gaming_switch = Gtk.Switch()
+        self.gaming_switch.set_active(self.gaming_mode)
+        self.gaming_switch.set_valign(Gtk.Align.CENTER)
+        self.gaming_switch.connect("notify::active", self._on_gaming_mode_toggle)
+        gaming_row.pack_end(self.gaming_switch, False, False, 0)
+        
+        gaming_card.pack_start(gaming_row, False, False, 0)
+        content.pack_start(gaming_card, False, False, 0)
+        
+        servers_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        servers_card.get_style_context().add_class("card")
+        
+        servers_title = Gtk.Label(label="Gaming Servers")
+        servers_title.get_style_context().add_class("card-title")
+        servers_title.set_halign(Gtk.Align.START)
+        servers_card.pack_start(servers_title, False, False, 0)
+        
+        for server in GAMING_SERVERS:
+            row = Gtk.Box(spacing=12)
+            row.get_style_context().add_class("server-row")
+            
+            radio = Gtk.RadioButton.new_with_label_from_widget(
+                None if server == GAMING_SERVERS[0] else self.server_radios[0] if hasattr(self, 'server_radios') else None,
+                ""
+            )
+            if not hasattr(self, 'server_radios'):
+                self.server_radios = []
+            self.server_radios.append(radio)
+            radio.set_active(server["region"] == self.current_server)
+            radio.connect("toggled", self._on_server_selected, server["region"])
+            row.pack_start(radio, False, False, 0)
+            
+            info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            name = Gtk.Label(label=server["name"])
+            name.get_style_context().add_class("server-name")
+            name.set_halign(Gtk.Align.START)
+            info.pack_start(name, False, False, 0)
+            
+            desc = Gtk.Label(label=server["desc"])
+            desc.get_style_context().add_class("server-desc")
+            desc.set_halign(Gtk.Align.START)
+            info.pack_start(desc, False, False, 0)
+            
+            row.pack_start(info, True, True, 0)
+            servers_card.pack_start(row, False, False, 4)
+        
+        content.pack_start(servers_card, False, False, 0)
+        
+        action_box = Gtk.Box(spacing=16)
+        action_box.set_halign(Gtk.Align.CENTER)
+        action_box.set_margin_top(20)
+        action_box.set_margin_bottom(20)
+        
+        self.connect_btn = Gtk.Button(label="Connect")
+        self.connect_btn.get_style_context().add_class("connect-btn")
+        self.connect_btn.connect("clicked", self._toggle_connection)
+        action_box.pack_start(self.connect_btn, False, False, 0)
+        
+        content.pack_start(action_box, False, False, 0)
+    
+    def _on_provider_selected(self, btn, provider_id):
+        if btn.get_active():
+            self.current_provider = provider_id
+            for pid, pbtn in self.provider_buttons.items():
+                if pid != provider_id:
+                    pbtn.set_active(False)
+            self._save_config()
+    
+    def _on_server_selected(self, btn, region):
+        if btn.get_active():
+            self.current_server = region
+            self._save_config()
+    
+    def _on_gaming_mode_toggle(self, switch, param):
+        self.gaming_mode = switch.get_active()
+        self._save_config()
+    
+    def _toggle_connection(self, btn):
+        if self.connected:
+            self._disconnect()
+        else:
+            self._connect()
+    
+    def _connect(self):
+        try:
+            if self.current_provider == "protonvpn":
+                cmd = ["pkexec", "protonvpn-cli", "connect"]
+                if self.current_server != "auto":
+                    cmd.extend(["--cc", self.current_server.split("-")[0].upper()])
+                if self.gaming_mode:
+                    cmd.extend(["--protocol", "udp"])
+                subprocess.Popen(cmd)
+            elif self.current_provider == "wireguard":
+                subprocess.Popen(["pkexec", "wg-quick", "up", "wg0"])
+            
+            GLib.timeout_add(3000, self._check_status)
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK, text=f"Connection failed: {e}"
+            )
+            dialog.run()
+            dialog.destroy()
+    
+    def _disconnect(self):
+        try:
+            if self.current_provider == "protonvpn":
+                subprocess.Popen(["pkexec", "protonvpn-cli", "disconnect"])
+            elif self.current_provider == "wireguard":
+                subprocess.Popen(["pkexec", "wg-quick", "down", "wg0"])
+            
+            GLib.timeout_add(2000, self._check_status)
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK, text=f"Disconnect failed: {e}"
+            )
+            dialog.run()
+            dialog.destroy()
+
+def main():
+    win = AegisVPNManager()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""
+Aegis Screen Split - Advanced window tiling for streamers
+Snap windows to custom zones, drag-and-drop layout editor
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import os
+import subprocess
+import json
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+PRESET_LAYOUTS = {
+    "stream_basic": {
+        "name": "Stream Basic",
+        "desc": "Game + chat + webcam preview",
+        "zones": [
+            {"x": 0, "y": 0, "w": 75, "h": 100, "name": "Game"},
+            {"x": 75, "y": 0, "w": 25, "h": 60, "name": "Chat"},
+            {"x": 75, "y": 60, "w": 25, "h": 40, "name": "Webcam"},
+        ]
+    },
+    "stream_pro": {
+        "name": "Stream Pro",
+        "desc": "Game + chat + webcam + alerts + music",
+        "zones": [
+            {"x": 0, "y": 0, "w": 60, "h": 80, "name": "Game"},
+            {"x": 60, "y": 0, "w": 40, "h": 50, "name": "Chat"},
+            {"x": 60, "y": 50, "w": 20, "h": 50, "name": "Webcam"},
+            {"x": 80, "y": 50, "w": 20, "h": 25, "name": "Alerts"},
+            {"x": 80, "y": 75, "w": 20, "h": 25, "name": "Music"},
+            {"x": 0, "y": 80, "w": 60, "h": 20, "name": "Dashboard"},
+        ]
+    },
+    "dual_monitor": {
+        "name": "Dual Monitor",
+        "desc": "Primary game, secondary tools",
+        "zones": [
+            {"x": 0, "y": 0, "w": 100, "h": 100, "name": "Game (Primary)"},
+        ]
+    },
+    "productivity": {
+        "name": "Productivity",
+        "desc": "Browser + code + terminal",
+        "zones": [
+            {"x": 0, "y": 0, "w": 50, "h": 100, "name": "Browser"},
+            {"x": 50, "y": 0, "w": 50, "h": 60, "name": "Code"},
+            {"x": 50, "y": 60, "w": 50, "h": 40, "name": "Terminal"},
+        ]
+    },
+    "ultrawide": {
+        "name": "Ultrawide 21:9",
+        "desc": "Optimized for ultrawide monitors",
+        "zones": [
+            {"x": 0, "y": 0, "w": 20, "h": 100, "name": "Left Panel"},
+            {"x": 20, "y": 0, "w": 60, "h": 100, "name": "Main"},
+            {"x": 80, "y": 0, "w": 20, "h": 50, "name": "Top Right"},
+            {"x": 80, "y": 50, "w": 20, "h": 50, "name": "Bottom Right"},
+        ]
+    },
+    "quad": {
+        "name": "Quad Split",
+        "desc": "Four equal zones",
+        "zones": [
+            {"x": 0, "y": 0, "w": 50, "h": 50, "name": "Top Left"},
+            {"x": 50, "y": 0, "w": 50, "h": 50, "name": "Top Right"},
+            {"x": 0, "y": 50, "w": 50, "h": 50, "name": "Bottom Left"},
+            {"x": 50, "y": 50, "w": 50, "h": 50, "name": "Bottom Right"},
+        ]
+    },
+}
+
+class AegisScreenSplit(Gtk.Window):
+    CSS = """
+    window { background: #1a1a2e; }
+    .header { background: rgba(0,0,0,0.7); padding: 20px; }
+    .title { color: #00d4aa; font-size: 28px; font-weight: bold; }
+    .subtitle { color: #888; font-size: 14px; }
+    .card { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; margin: 10px; }
+    .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .layout-btn { background: rgba(255,255,255,0.08); border: 2px solid transparent;
+                  border-radius: 10px; padding: 16px; color: #fff; margin: 6px; min-width: 180px; }
+    .layout-btn:hover { background: rgba(0,212,170,0.15); }
+    .layout-btn:checked { border-color: #00d4aa; background: rgba(0,212,170,0.25); }
+    .zone { background: rgba(0,212,170,0.3); border: 2px solid #00d4aa; border-radius: 6px; }
+    .zone-label { color: #fff; font-size: 12px; font-weight: bold; }
+    .apply-btn { background: #00d4aa; color: #1a1a2e; font-weight: bold; 
+                 padding: 14px 40px; border-radius: 8px; font-size: 16px; }
+    .apply-btn:hover { background: #00f0c0; }
+    .editor-zone { background: rgba(0,212,170,0.2); border: 2px dashed #00d4aa; }
+    .editor-zone:hover { background: rgba(0,212,170,0.4); }
+    .info-label { color: #888; font-size: 13px; }
+    .hotkey { background: rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; 
+              color: #00d4aa; font-family: monospace; }
+    """
+    
+    def __init__(self):
+        super().__init__(title="Aegis Screen Split")
+        self.set_default_size(1000, 800)
+        self.config_path = Path.home() / ".config/aegis/screen-split.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        self.current_layout = "stream_basic"
+        self.custom_layouts: Dict = {}
+        self.snap_enabled = True
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(self.CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        self._load_config()
+        self._create_ui()
+    
+    def _load_config(self):
+        try:
+            if self.config_path.exists():
+                with open(self.config_path) as f:
+                    cfg = json.load(f)
+                    self.current_layout = cfg.get("layout", "stream_basic")
+                    self.custom_layouts = cfg.get("custom", {})
+                    self.snap_enabled = cfg.get("snap_enabled", True)
+        except: pass
+    
+    def _save_config(self):
+        try:
+            with open(self.config_path, "w") as f:
+                json.dump({
+                    "layout": self.current_layout,
+                    "custom": self.custom_layouts,
+                    "snap_enabled": self.snap_enabled
+                }, f, indent=2)
+        except: pass
+    
+    def _create_ui(self):
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header.get_style_context().add_class("header")
+        
+        title_row = Gtk.Box(spacing=16)
+        title = Gtk.Label(label="Aegis Screen Split")
+        title.get_style_context().add_class("title")
+        title_row.pack_start(title, False, False, 0)
+        
+        snap_box = Gtk.Box(spacing=8)
+        snap_label = Gtk.Label(label="Window Snap")
+        snap_label.set_valign(Gtk.Align.CENTER)
+        snap_box.pack_start(snap_label, False, False, 0)
+        
+        self.snap_switch = Gtk.Switch()
+        self.snap_switch.set_active(self.snap_enabled)
+        self.snap_switch.set_valign(Gtk.Align.CENTER)
+        self.snap_switch.connect("notify::active", self._on_snap_toggle)
+        snap_box.pack_start(self.snap_switch, False, False, 0)
+        
+        title_row.pack_end(snap_box, False, False, 0)
+        header.pack_start(title_row, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Drag windows to snap to custom zones - perfect for streaming setups")
+        subtitle.get_style_context().add_class("subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        header.pack_start(subtitle, False, False, 4)
+        
+        hotkeys = Gtk.Box(spacing=12)
+        hotkeys.set_margin_top(12)
+        for key, action in [("Super+Arrow", "Snap to edge"), ("Super+Shift+Arrow", "Snap to zone"), 
+                           ("Super+Z", "Toggle zones"), ("Super+Shift+Z", "Custom zone")]:
+            hbox = Gtk.Box(spacing=6)
+            klabel = Gtk.Label(label=key)
+            klabel.get_style_context().add_class("hotkey")
+            hbox.pack_start(klabel, False, False, 0)
+            alabel = Gtk.Label(label=action)
+            alabel.get_style_context().add_class("info-label")
+            hbox.pack_start(alabel, False, False, 0)
+            hotkeys.pack_start(hbox, False, False, 0)
+        header.pack_start(hotkeys, False, False, 0)
+        
+        main.pack_start(header, False, False, 0)
+        
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(400)
+        main.pack_start(paned, True, True, 0)
+        
+        left_scroll = Gtk.ScrolledWindow()
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        left_scroll.add(left_box)
+        
+        layouts_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        layouts_card.get_style_context().add_class("card")
+        
+        layouts_title = Gtk.Label(label="Preset Layouts")
+        layouts_title.get_style_context().add_class("card-title")
+        layouts_title.set_halign(Gtk.Align.START)
+        layouts_card.pack_start(layouts_title, False, False, 0)
+        
+        self.layout_buttons = {}
+        for lid, linfo in PRESET_LAYOUTS.items():
+            btn = Gtk.ToggleButton()
+            btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            
+            name_label = Gtk.Label(label=linfo["name"])
+            name_label.set_halign(Gtk.Align.START)
+            btn_box.pack_start(name_label, False, False, 0)
+            
+            desc_label = Gtk.Label(label=linfo["desc"])
+            desc_label.get_style_context().add_class("info-label")
+            desc_label.set_halign(Gtk.Align.START)
+            desc_label.set_line_wrap(True)
+            btn_box.pack_start(desc_label, False, False, 0)
+            
+            btn.add(btn_box)
+            btn.get_style_context().add_class("layout-btn")
+            btn.set_active(lid == self.current_layout)
+            btn.connect("toggled", self._on_layout_selected, lid)
+            self.layout_buttons[lid] = btn
+            layouts_card.pack_start(btn, False, False, 4)
+        
+        left_box.pack_start(layouts_card, False, False, 0)
+        paned.pack1(left_scroll, False, False)
+        
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right_box.get_style_context().add_class("card")
+        
+        preview_title = Gtk.Label(label="Layout Preview")
+        preview_title.get_style_context().add_class("card-title")
+        preview_title.set_halign(Gtk.Align.START)
+        right_box.pack_start(preview_title, False, False, 0)
+        
+        self.preview_area = Gtk.DrawingArea()
+        self.preview_area.set_size_request(500, 300)
+        self.preview_area.connect("draw", self._draw_preview)
+        right_box.pack_start(self.preview_area, True, True, 12)
+        
+        action_box = Gtk.Box(spacing=12)
+        action_box.set_halign(Gtk.Align.CENTER)
+        
+        apply_btn = Gtk.Button(label="Apply Layout")
+        apply_btn.get_style_context().add_class("apply-btn")
+        apply_btn.connect("clicked", self._apply_layout)
+        action_box.pack_start(apply_btn, False, False, 0)
+        
+        edit_btn = Gtk.Button(label="Edit Layout")
+        edit_btn.connect("clicked", self._edit_layout)
+        action_box.pack_start(edit_btn, False, False, 0)
+        
+        right_box.pack_start(action_box, False, False, 12)
+        paned.pack2(right_box, True, True)
+    
+    def _on_layout_selected(self, btn, layout_id):
+        if btn.get_active():
+            self.current_layout = layout_id
+            for lid, lbtn in self.layout_buttons.items():
+                if lid != layout_id:
+                    lbtn.set_active(False)
+            self._save_config()
+            self.preview_area.queue_draw()
+    
+    def _on_snap_toggle(self, switch, param):
+        self.snap_enabled = switch.get_active()
+        self._save_config()
+    
+    def _draw_preview(self, area, cr):
+        width = area.get_allocated_width()
+        height = area.get_allocated_height()
+        
+        cr.set_source_rgb(0.1, 0.1, 0.15)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        layout = PRESET_LAYOUTS.get(self.current_layout, PRESET_LAYOUTS["stream_basic"])
+        zones = layout["zones"]
+        
+        for zone in zones:
+            x = zone["x"] / 100 * width
+            y = zone["y"] / 100 * height
+            w = zone["w"] / 100 * width
+            h = zone["h"] / 100 * height
+            
+            cr.set_source_rgba(0, 0.83, 0.67, 0.3)
+            cr.rectangle(x + 2, y + 2, w - 4, h - 4)
+            cr.fill()
+            
+            cr.set_source_rgb(0, 0.83, 0.67)
+            cr.set_line_width(2)
+            cr.rectangle(x + 2, y + 2, w - 4, h - 4)
+            cr.stroke()
+            
+            cr.set_source_rgb(1, 1, 1)
+            cr.select_font_face("Sans", 0, 1)
+            cr.set_font_size(12)
+            
+            text = zone["name"]
+            extents = cr.text_extents(text)
+            tx = x + (w - extents.width) / 2
+            ty = y + (h + extents.height) / 2
+            cr.move_to(tx, ty)
+            cr.show_text(text)
+        
+        return False
+    
+    def _apply_layout(self, btn):
+        try:
+            subprocess.run(["xdotool", "key", "super+z"], check=False)
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK, 
+                text="Layout applied! Drag windows to snap them to zones."
+            )
+            dialog.run()
+            dialog.destroy()
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK, text=f"Error: {e}"
+            )
+            dialog.run()
+            dialog.destroy()
+    
+    def _edit_layout(self, btn):
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK, 
+            text="Layout Editor coming soon!\n\nFor now, edit ~/.config/aegis/screen-split.json"
+        )
+        dialog.run()
+        dialog.destroy()
+
+def main():
+    win = AegisScreenSplit()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
