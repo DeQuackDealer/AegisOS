@@ -118,7 +118,7 @@ jobs:
         run: |
           set -e
           echo "=== Installing build dependencies ==="
-          pacman -S --needed --noconfirm git python archiso squashfs-tools libisoburn dosfstools e2fsprogs mtools grub efibootmgr rsync wget curl gnupg
+          pacman -S --needed --noconfirm git python archiso squashfs-tools libisoburn dosfstools e2fsprogs mtools grub syslinux efibootmgr rsync wget curl gnupg
       
       - uses: actions/checkout@v4
         with:
@@ -689,6 +689,20 @@ jobs:
           echo "Work dir: ${WORK_DIR}"
           echo "Output: ${OUTPUT_DIR}"
           
+          echo "=== Verifying boot configuration files ==="
+          echo "--- profiledef.sh bootmodes ---"
+          grep -E "bootmodes|install_dir" "${PROFILE_DIR}/profiledef.sh" || echo "WARNING: Could not find bootmodes"
+          echo "--- syslinux directory ---"
+          ls -la "${PROFILE_DIR}/syslinux/" 2>/dev/null || echo "WARNING: No syslinux directory found"
+          echo "--- grub directory ---"
+          ls -la "${PROFILE_DIR}/grub/" 2>/dev/null || echo "WARNING: No grub directory found"
+          echo "--- efiboot directory ---"
+          ls -la "${PROFILE_DIR}/efiboot/" 2>/dev/null || echo "WARNING: No efiboot directory found"
+          echo "--- syslinux package installed ---"
+          pacman -Qi syslinux | head -3 || echo "WARNING: syslinux not installed"
+          echo "--- /usr/lib/syslinux/bios/ contents ---"
+          ls /usr/lib/syslinux/bios/*.bin 2>/dev/null | head -5 || echo "WARNING: No syslinux bios files found"
+          
           # Run mkarchiso
           mkarchiso -v -w "${WORK_DIR}" -o "${OUTPUT_DIR}" "${PROFILE_DIR}"
           
@@ -699,6 +713,30 @@ jobs:
             echo "=== ISO Build Complete ==="
             ls -lh "${OUTPUT_DIR}/"
             cat "${ISO_FILE}.sha256"
+            
+            echo "=== Verifying ISO boot structure ==="
+            # Check ISO has MBR boot record
+            echo "--- MBR boot signature (should show 55 AA at end) ---"
+            xxd -l 512 -c 16 "${ISO_FILE}" | tail -2
+            
+            # Mount and inspect ISO boot files
+            mkdir -p /tmp/iso-inspect
+            mount -o loop,ro "${ISO_FILE}" /tmp/iso-inspect 2>/dev/null || true
+            if [ -d /tmp/iso-inspect ]; then
+              echo "--- ISO root contents ---"
+              ls -la /tmp/iso-inspect/ 2>/dev/null || true
+              echo "--- Boot directory ---"
+              ls -la /tmp/iso-inspect/boot/ 2>/dev/null || true
+              echo "--- Syslinux directory ---"
+              ls -la /tmp/iso-inspect/boot/syslinux/ 2>/dev/null || true
+              echo "--- GRUB directory ---"
+              ls -la /tmp/iso-inspect/EFI/ 2>/dev/null || true
+              echo "--- Install directory (aegis) ---"
+              ls -la /tmp/iso-inspect/aegis/ 2>/dev/null || true
+              umount /tmp/iso-inspect 2>/dev/null || true
+            else
+              echo "Could not mount ISO for inspection (this is OK in unprivileged environments)"
+            fi
           else
             echo "ERROR: No ISO file was produced!"
             ls -la "${OUTPUT_DIR}/" || true
