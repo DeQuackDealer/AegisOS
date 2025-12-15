@@ -430,6 +430,24 @@ jobs:
             rsync -av "${REPO_DIR}/build-system/overlays/${EDITION}/" "${PROFILE_DIR}/airootfs/"
           fi
           find "${PROFILE_DIR}/airootfs/usr/local/bin/" -type f -exec chmod +x {} \; 2>/dev/null || true
+          
+          echo "=== Stripping heredoc indentation from generated files ==="
+          # CRITICAL: YAML heredocs preserve leading whitespace - must strip it
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/profiledef.sh"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/os-release"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/plymouth/plymouthd.conf"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.plymouth"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.script"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/skel/.config/fastfetch/config.jsonc"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/passwd"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/shadow"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/group"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/etc/gshadow"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/lib/systemd/system/aegis-setup.service"
+          sed -i 's/^[[:space:]]*//' "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot"
+          
           echo "=== Overlay contents ==="
           ls -la "${PROFILE_DIR}/airootfs/usr/local/bin/" 2>/dev/null || echo "No tools in usr/local/bin"
           echo "=== Profiledef contents ==="
