@@ -35,9 +35,10 @@ import uuid
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog
-    TKINTER_AVAILABLE = True
+    TK_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    TK_AVAILABLE = False
+    print("Error: Tkinter is required. Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "1.0.0"
 APP_NAME = "Aegis Document Vault"
@@ -448,7 +449,7 @@ class DocumentVaultGUI:
         self.selected_category = "general"
     
     def run(self):
-        if not TKINTER_AVAILABLE:
+        if not TK_AVAILABLE:
             print("Error: Tkinter not available")
             sys.exit(1)
         
@@ -670,6 +671,10 @@ class DocumentVaultGUI:
 
 
 def main():
+    if not TK_AVAILABLE:
+        print(f"Cannot start {APP_NAME}: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(description=f"{APP_NAME} - Secure Document Management")
     parser.add_argument("--gui", action="store_true", help="Launch GUI mode (default)")
     parser.add_argument("--cli", action="store_true", help="Show CLI info")
@@ -719,7 +724,7 @@ def main():
         for cat, info in status['categories'].items():
             print(f"  {cat}: {info['count']} documents")
     else:
-        if TKINTER_AVAILABLE:
+        if TK_AVAILABLE:
             gui = DocumentVaultGUI(service)
             gui.run()
         else:

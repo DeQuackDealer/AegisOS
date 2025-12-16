@@ -46,9 +46,10 @@ except ImportError:
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog
-    TKINTER_AVAILABLE = True
+    TK_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    TK_AVAILABLE = False
+    print("Error: Tkinter is required. Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "1.0.0"
 APP_NAME = "Aegis File Share"
@@ -782,7 +783,7 @@ class FileShareGUI:
         self.root = None
     
     def run(self):
-        if not TKINTER_AVAILABLE:
+        if not TK_AVAILABLE:
             print("Error: Tkinter not available")
             sys.exit(1)
         
@@ -979,6 +980,10 @@ class FileShareGUI:
 
 
 def main():
+    if not TK_AVAILABLE:
+        print("Cannot start Aegis File Share: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(description=f"{APP_NAME} - P2P file sharing")
     parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
     parser.add_argument('--server', action='store_true', help='Start server mode')
@@ -1070,7 +1075,7 @@ def main():
             print("No transfer history")
     elif args.gui or not any([args.status, args.send, args.discover, args.list, 
                               args.history, args.server, args.resume, args.resumable]):
-        if TKINTER_AVAILABLE:
+        if TK_AVAILABLE:
             gui = FileShareGUI(service)
             gui.run()
         else:

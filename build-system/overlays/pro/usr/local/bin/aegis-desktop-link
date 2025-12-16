@@ -47,10 +47,11 @@ from contextlib import contextmanager
 
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox, simpledialog, filedialog
-    TKINTER_AVAILABLE = True
+    from tkinter import ttk, messagebox, filedialog, simpledialog
+    TK_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    TK_AVAILABLE = False
+    print("Error: Tkinter is required. Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "2.0.0"
 APP_NAME = "Aegis Desktop Link"
@@ -2026,7 +2027,7 @@ class DesktopLinkGUI:
         self.status_refresh_job = None
         
     def run(self):
-        if not TKINTER_AVAILABLE:
+        if not TK_AVAILABLE:
             print("Error: Tkinter not available for GUI mode")
             sys.exit(1)
             
@@ -2571,6 +2572,10 @@ class DesktopLinkGUI:
 
 
 def main():
+    if not TK_AVAILABLE:
+        print("Cannot start Aegis Desktop Link: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(
         description=f"{APP_NAME} v{VERSION} - Share mouse/keyboard across computers"
     )
@@ -2658,7 +2663,7 @@ def main():
     elif args.gui or (not any([args.status, args.start, args.stop, args.discover, 
                                 args.add, args.list, args.remove, args.trust, 
                                 args.untrust, args.send_file, args.gaming, args.refresh])):
-        if TKINTER_AVAILABLE:
+        if TK_AVAILABLE:
             gui = DesktopLinkGUI(service)
             gui.run()
         else:

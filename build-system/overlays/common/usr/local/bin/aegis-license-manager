@@ -563,8 +563,8 @@ def run_gui():
         gi.require_version('Gtk', '3.0')
         from gi.repository import Gtk, GLib, Pango
     except ImportError:
-        print("GTK3 not available. Please install python3-gi package.")
-        print("Falling back to CLI mode. Use --status or --activate options.")
+        print("Error: GTK3 required. Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
+        print("Falling back to CLI mode. Use --status or --activate options.", file=sys.stderr)
         sys.exit(1)
     
     class LicenseManagerWindow(Gtk.Window):

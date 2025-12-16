@@ -58,9 +58,10 @@ from enum import Enum
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog, scrolledtext
-    TKINTER_AVAILABLE = True
+    TK_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    TK_AVAILABLE = False
+    print("Error: Tkinter is required. Install with: sudo pacman -S tk", file=sys.stderr)
 
 try:
     from zeroconf import ServiceBrowser, Zeroconf, ServiceInfo
@@ -1402,7 +1403,7 @@ class MobileLinkGUI:
         self.device_list = []
     
     def run(self):
-        if not TKINTER_AVAILABLE:
+        if not TK_AVAILABLE:
             print("Error: Tkinter not available")
             sys.exit(1)
         
@@ -2012,6 +2013,10 @@ def print_status_cli(service: MobileLinkService):
 
 
 def main():
+    if not TK_AVAILABLE:
+        print("Cannot start Aegis Mobile Link: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(
         description=f"{APP_NAME} v{VERSION} - Enhanced Smartphone Integration",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2164,7 +2169,7 @@ Features by tier:
             else:
                 print("QR generation not available")
     elif args.gui or not any(vars(args).values()):
-        if TKINTER_AVAILABLE:
+        if TK_AVAILABLE:
             gui = MobileLinkGUI(service)
             gui.run()
         else:

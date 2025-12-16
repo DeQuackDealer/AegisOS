@@ -788,8 +788,12 @@ class AegisGamerPerformanceGUI:
         return True
         
     def create_presets_tab(self, notebook):
-        import tkinter as tk
-        from tkinter import ttk
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="⚡ Presets")
@@ -829,8 +833,12 @@ class AegisGamerPerformanceGUI:
             desc.pack(side='left', padx=10)
             
     def create_gpu_tab(self, notebook):
-        import tkinter as tk
-        from tkinter import ttk
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="🎨 GPU")
@@ -881,8 +889,12 @@ class AegisGamerPerformanceGUI:
             rb.pack(side='left', padx=5)
             
     def create_cpu_tab(self, notebook):
-        import tkinter as tk
-        from tkinter import ttk
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="⚙️ CPU")
@@ -921,8 +933,12 @@ class AegisGamerPerformanceGUI:
                     font=('Helvetica', 10)).pack(side='left', padx=10)
                     
     def create_proton_tab(self, notebook):
-        import tkinter as tk
-        from tkinter import ttk
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="🍷 Proton/Wine")
@@ -968,8 +984,12 @@ class AegisGamerPerformanceGUI:
                     bg='#1e1e2e', fg='#a6adc8').pack(side='left', padx=10)
                     
     def create_advanced_tab(self, notebook):
-        import tkinter as tk
-        from tkinter import ttk
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         frame = ttk.Frame(notebook)
         notebook.add(frame, text="🔧 Advanced")
@@ -1023,7 +1043,11 @@ class AegisGamerPerformanceGUI:
                  command=self.configure_zram_gui).pack(side='left', padx=5)
                  
     def create_status_bar(self):
-        import tkinter as tk
+        try:
+            import tkinter as tk
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         
         self.status_bar = tk.Frame(self.root, bg='#313244', height=30)
         self.status_bar.pack(fill='x', side='bottom')
@@ -1045,7 +1069,11 @@ class AegisGamerPerformanceGUI:
             self.root.after(5000, self.update_status)
             
     def apply_preset_gui(self, preset_name):
-        import tkinter.messagebox as messagebox
+        try:
+            import tkinter.messagebox as messagebox
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         self.status_label.config(text=f"Applying {preset_name} preset...")
         self.root.update()
         
@@ -1068,7 +1096,11 @@ class AegisGamerPerformanceGUI:
         self.status_label.config(text=f"CPU governor: {self.gov_var.get()}")
         
     def install_proton_gui(self, version):
-        import tkinter.messagebox as messagebox
+        try:
+            import tkinter.messagebox as messagebox
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         self.status_label.config(text=f"Installing {version}...")
         self.root.update()
         
@@ -1097,7 +1129,11 @@ class AegisGamerPerformanceGUI:
         self.status_label.config(text="Memory caches dropped")
         
     def configure_zram_gui(self):
-        import tkinter.simpledialog as simpledialog
+        try:
+            import tkinter.simpledialog as simpledialog
+        except ImportError:
+            print("Error: Tkinter required for GUI. Install with: sudo pacman -S tk", file=sys.stderr)
+            return
         size = simpledialog.askinteger("ZRAM Size", 
                                         "Enter ZRAM size (% of RAM):",
                                         minvalue=10, maxvalue=100,

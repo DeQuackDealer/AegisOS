@@ -30,6 +30,7 @@ try:
     GTK_AVAILABLE = True
 except ImportError:
     GTK_AVAILABLE = False
+    print("Error: GTK3 is required. Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
 
 
 class LicenseTier:
@@ -291,6 +292,9 @@ if GTK_AVAILABLE:
 
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start GPU Tools: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
     parser = argparse.ArgumentParser(description=f"{APP_NAME}")
     parser.add_argument("--gui", action="store_true", help="Launch GUI mode")
     parser.add_argument("--cli", action="store_true", help="Run in CLI mode")

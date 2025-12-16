@@ -31,6 +31,7 @@ try:
     GTK_AVAILABLE = True
 except ImportError:
     GTK_AVAILABLE = False
+    print("Error: GTK3 is required. Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
 
 
 class LicenseTier:
@@ -173,6 +174,10 @@ class AegisGameModding:
 
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Game Modding: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(description=f"{APP_NAME}")
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--cli", action="store_true")

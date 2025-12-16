@@ -40,9 +40,10 @@ import uuid
 try:
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog, simpledialog
-    TKINTER_AVAILABLE = True
+    TK_AVAILABLE = True
 except ImportError:
-    TKINTER_AVAILABLE = False
+    TK_AVAILABLE = False
+    print("Error: Tkinter is required. Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "1.0.0"
 APP_NAME = "Aegis Meet"
@@ -660,7 +661,7 @@ class MeetGUI:
         self.root = None
     
     def run(self):
-        if not TKINTER_AVAILABLE:
+        if not TK_AVAILABLE:
             print("Error: Tkinter not available for GUI mode")
             sys.exit(1)
         
@@ -1264,6 +1265,10 @@ class MeetGUI:
 
 
 def main():
+    if not TK_AVAILABLE:
+        print("Cannot start Aegis Meet: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
+    
     parser = argparse.ArgumentParser(description=f"{APP_NAME} - Video conferencing solution")
     parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
     parser.add_argument('--status', action='store_true', help='Show status as JSON')
@@ -1335,7 +1340,7 @@ def main():
     elif args.gui or not any([args.status, args.join, args.create is not None,
                                args.list_meetings, args.list_devices, args.record,
                                args.stop_record, args.check_screen_share]):
-        if TKINTER_AVAILABLE:
+        if TK_AVAILABLE:
             gui = MeetGUI(service)
             gui.run()
         else:

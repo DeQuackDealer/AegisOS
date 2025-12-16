@@ -31,6 +31,7 @@ try:
     GTK_AVAILABLE = True
 except ImportError:
     GTK_AVAILABLE = False
+    print("Error: GTK3 is required. Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
 
 WELCOME_TEXT = """
 Welcome to Aegis OS Basic Edition!
@@ -565,6 +566,10 @@ if GTK_AVAILABLE:
 
 
 def main():
+    if not GTK_AVAILABLE:
+        print(f"Cannot start {APP_NAME}: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
+    
     import argparse
     
     parser = argparse.ArgumentParser(description=f"{APP_NAME} - Onboarding wizard")

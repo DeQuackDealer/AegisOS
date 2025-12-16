@@ -105,15 +105,28 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 - **base.txt**: Added python-psutil, python-zeroconf, gtk3, gobject-introspection, wmctrl, xdotool, xrandr, barrier
 - **gamer.txt**: Added python-evdev, python-cairo, pango for controller/screen utilities
 - **freemium.txt**: Added python-psutil for system tools
+- **basic.txt**: Added gtk3, python-gobject, gobject-introspection, python-psutil
+- **aidev.txt**: Added gtk3, python-gobject, gobject-introspection, python-psutil
+- **server.txt**: Added gtk3, python-gobject, gobject-introspection, python-psutil
+- **workplace.txt**: Added gtk3, python-gobject, gobject-introspection, python-psutil, tk
+- **gamer-ai.txt**: Added gtk3, python-gobject, gobject-introspection, python-psutil, python-evdev, python-cairo, pango
 
-**GTK Import Guards** (12 utilities fixed):
+**GTK Import Guards** (39 utilities fixed):
 - Added try/except guards around GTK imports with `GTK_AVAILABLE` flag
 - Scripts now exit gracefully instead of crashing if GTK3 is missing
-- Fixed: aegis-controller-config, aegis-screen-split, aegis-game-hub, aegis-vpn-manager, aegis-wine-optimizer, aegis-proton-manager, aegis-game-scanner, aegis-stream-studio, aegis-gpu-manager, aegis-upscaler, aegis-mangohud-config, aegis-performance-tuner
+- Gamer: aegis-controller-config, aegis-screen-split, aegis-game-hub, aegis-vpn-manager, aegis-wine-optimizer, aegis-proton-manager, aegis-game-scanner, aegis-stream-studio, aegis-gpu-manager, aegis-upscaler, aegis-mangohud-config, aegis-performance-tuner
+- Basic: aegis-system-care, aegis-security-suite, aegis-productivity, aegis-media-suite, aegis-getting-started, aegis-customization, aegis-backup-suite
+- Workplace: aegis-productivity-tools, aegis-it-management, aegis-enterprise-suite, aegis-document-management, aegis-collaboration
+- AI Developer: aegis-training-optimizer, aegis-model-hub, aegis-ml-studio, aegis-llm-tools, aegis-inference-engine, aegis-gpu-tools, aegis-dataset-manager, aegis-data-science, aegis-compute-stack, aegis-ai-monitor
+- Server: aegis-server-security, aegis-monitoring, aegis-load-balancer, aegis-container-tools, aegis-backup-enterprise
+- Gamer+AI: aegis-performance-ai, aegis-neural-upscaling, aegis-game-modding, aegis-ai-streaming, aegis-ai-gaming
 
-**Tkinter Import Guards** (5 utilities improved):
+**Tkinter Import Guards** (22 utilities improved):
 - Enhanced error handling with stderr output for missing tkinter
-- Fixed: aegis-game-launcher, aegis-stream-deck, aegis-audio-router, aegis-stream, aegis-game-center
+- Gamer: aegis-game-launcher, aegis-stream-deck, aegis-audio-router, aegis-stream, aegis-game-center
+- Workplace: aegis-workspace-hub, aegis-it-toolkit, aegis-document-vault
+- Pro: aegis-screenshot-pro, aegis-network-display, aegis-mobile-link, aegis-layout-switcher, aegis-home-nas, aegis-file-share, aegis-desktop-link, aegis-creative-suite, aegis-cloud-sync, aegis-browser-hub, aegis-audio-enhance
+- Pro-Productivity: aegis-resolve-studio, aegis-office-hub, aegis-meet
 
 ### Critical Regression Fixes for Aegis Utilities
 
