@@ -136,31 +136,12 @@ jobs:
           
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
           
-          echo "=== Checking releng boot config placeholders ==="
-          echo "--- syslinux configs use these paths: ---"
-          grep -r "INSTALL_DIR\|archisobasedir\|/arch/" "${PROFILE_DIR}/syslinux/" 2>/dev/null | head -10 || echo "No syslinux dir or configs"
-          echo "--- efiboot configs use these paths: ---"
-          grep -r "INSTALL_DIR\|archisobasedir\|/arch/" "${PROFILE_DIR}/efiboot/" 2>/dev/null | head -10 || echo "No efiboot dir or configs"
-          
-          # mkarchiso substitutes %INSTALL_DIR% with install_dir value from profiledef.sh
-          # Fix all hardcoded 'arch' paths to use placeholders
-          echo "=== Fixing hardcoded paths to use mkarchiso placeholders ==="
-          
-          # Fix archisobasedir parameter
-          find "${PROFILE_DIR}/syslinux" -name "*.cfg" -exec sed -i 's|archisobasedir=arch|archisobasedir=%INSTALL_DIR%|g' {} \; 2>/dev/null || true
-          find "${PROFILE_DIR}/efiboot" -name "*.conf" -exec sed -i 's|archisobasedir=arch|archisobasedir=%INSTALL_DIR%|g' {} \; 2>/dev/null || true
-          find "${PROFILE_DIR}/grub" -name "*.cfg" -exec sed -i 's|archisobasedir=arch|archisobasedir=%INSTALL_DIR%|g' {} \; 2>/dev/null || true
-          
-          # Fix kernel/initrd paths: /arch/ -> /%INSTALL_DIR%/
-          find "${PROFILE_DIR}/syslinux" -name "*.cfg" -exec sed -i 's|/arch/boot/|/%INSTALL_DIR%/boot/|g' {} \; 2>/dev/null || true
-          find "${PROFILE_DIR}/efiboot" -name "*.conf" -exec sed -i 's|/arch/boot/|/%INSTALL_DIR%/boot/|g' {} \; 2>/dev/null || true
-          find "${PROFILE_DIR}/grub" -name "*.cfg" -exec sed -i 's|/arch/boot/|/%INSTALL_DIR%/boot/|g' {} \; 2>/dev/null || true
-          
-          echo "=== Verifying boot config fixes ==="
-          echo "--- syslinux after fix: ---"
-          grep -r "INSTALL_DIR\|archisobasedir" "${PROFILE_DIR}/syslinux/" 2>/dev/null | head -5 || true
-          echo "--- efiboot after fix: ---"
-          grep -r "INSTALL_DIR\|archisobasedir" "${PROFILE_DIR}/efiboot/" 2>/dev/null | head -5 || true
+          # Use default install_dir to match releng boot configs - no modifications needed
+          echo "=== Using default install_dir='arch' to match releng boot configs ==="
+          echo "--- syslinux configs: ---"
+          ls -la "${PROFILE_DIR}/syslinux/" 2>/dev/null || echo "No syslinux dir"
+          echo "--- efiboot configs: ---"
+          ls -la "${PROFILE_DIR}/efiboot/" 2>/dev/null || echo "No efiboot dir"
           
           echo "=== Copying pacman.conf with multilib and Chaotic-AUR to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
@@ -188,7 +169,7 @@ jobs:
           iso_publisher="Aegis OS <https://aegis-os.com>"
           iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
           iso_version="VERSION_PLACEHOLDER"
-          install_dir="aegis"
+          install_dir="arch"
           buildmodes=('iso')
           bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
           arch="x86_64"
