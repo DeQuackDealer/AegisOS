@@ -118,7 +118,7 @@ jobs:
         run: |
           set -e
           echo "=== Installing build dependencies ==="
-          pacman -S --needed --noconfirm git python archiso squashfs-tools libisoburn dosfstools e2fsprogs mtools grub syslinux efibootmgr rsync wget curl gnupg
+          pacman -S --needed --noconfirm git python archiso squashfs-tools libisoburn dosfstools e2fsprogs mtools grub syslinux efibootmgr rsync wget curl gnupg qemu-system-x86 qemu-ui-gtk edk2-ovmf
       
       - uses: actions/checkout@v4
         with:
@@ -159,38 +159,28 @@ jobs:
           echo "aegis-${EDITION}" > "${PROFILE_DIR}/airootfs/etc/hostname"
           echo "{\"edition\": \"${EDITION}\", \"version\": \"${VERSION}\"}" > "${PROFILE_DIR}/airootfs/etc/aegis/edition.json"
           
-          echo "=== Creating custom profiledef.sh with Aegis branding ==="
-          cat > "${PROFILE_DIR}/profiledef.sh" << 'PROFILEDEF'
-          #!/usr/bin/env bash
-          # shellcheck disable=SC2034
-          
-          iso_name="aegis-os-EDITION_PLACEHOLDER"
-          iso_label="AEGIS_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
-          iso_publisher="Aegis OS <https://aegis-os.com>"
-          iso_application="Aegis OS EDITION_NAME_PLACEHOLDER Edition Live/Install"
-          iso_version="VERSION_PLACEHOLDER"
-          install_dir="arch"
-          buildmodes=('iso')
-          bootmodes=('bios.syslinux.mbr' 'bios.syslinux.eltorito' 'uefi-x64.systemd-boot.esp' 'uefi-x64.systemd-boot.eltorito')
-          arch="x86_64"
-          pacman_conf="pacman.conf"
-          airootfs_image_type="squashfs"
-          airootfs_image_tool_options=('-comp' 'xz' '-Xbcj' 'x86' '-b' '1M' '-Xdict-size' '1M')
-          bootstrap_tarball_compression=('zstd' '-c' '-T0' '--auto-threads=logical' '--long' '-19')
-          file_permissions=(
-            ["/etc/shadow"]="0:0:400"
-            ["/etc/gshadow"]="0:0:400"
-            ["/etc/sudoers.d/aegis"]="0:0:440"
-            ["/usr/local/bin/*"]="0:0:755"
-            ["/home/aegis"]="1000:1000:755"
-          )
-          PROFILEDEF
-          
+          echo "=== Patching profiledef.sh with Aegis branding (preserving original releng bootmodes) ==="
           EDITION_NAME=$(echo "$EDITION" | sed 's/-/ /g' | sed 's/\b\(.\)/\u\1/g')
-          sed -i "s/EDITION_PLACEHOLDER/${EDITION}/g" "${PROFILE_DIR}/profiledef.sh"
-          sed -i "s/EDITION_NAME_PLACEHOLDER/${EDITION_NAME}/g" "${PROFILE_DIR}/profiledef.sh"
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" "${PROFILE_DIR}/profiledef.sh"
+          
+          # Patch only specific variables in the original releng profiledef.sh
+          # This preserves bootmodes, arch, and all other archiso configurations
+          sed -i "s/^iso_name=.*/iso_name=\"aegis-os-${EDITION}\"/" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/^iso_label=.*/iso_label=\"AEGIS_\$(date --date=\"@\${SOURCE_DATE_EPOCH:-\$(date +%s)}\" +%Y%m)\"/" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/^iso_publisher=.*/iso_publisher=\"Aegis OS <https:\/\/aegis-os.com>\"/" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/^iso_application=.*/iso_application=\"Aegis OS ${EDITION_NAME} Edition Live\/Install\"/" "${PROFILE_DIR}/profiledef.sh"
+          sed -i "s/^iso_version=.*/iso_version=\"${VERSION}\"/" "${PROFILE_DIR}/profiledef.sh"
+          
+          # Add Aegis-specific file permissions to the existing file_permissions array
+          # Append before the closing parenthesis of file_permissions
+          if grep -q 'file_permissions=(' "${PROFILE_DIR}/profiledef.sh"; then
+            sed -i '/file_permissions=(/,/)/ {
+              /)/ i\  ["/etc/sudoers.d/aegis"]="0:0:440"\n  ["/usr/local/bin/*"]="0:0:755"\n  ["/home/aegis"]="1000:1000:755"
+            }' "${PROFILE_DIR}/profiledef.sh" 2>/dev/null || true
+          fi
+          
           chmod +x "${PROFILE_DIR}/profiledef.sh"
+          echo "=== Patched profiledef.sh (original bootmodes preserved) ==="
+          cat "${PROFILE_DIR}/profiledef.sh"
           
           echo "=== Creating custom /etc/os-release ==="
           cat > "${PROFILE_DIR}/airootfs/etc/os-release" << OSRELEASE
@@ -443,8 +433,8 @@ jobs:
           
           echo "=== Stripping heredoc indentation from generated files ==="
           # CRITICAL: YAML heredocs preserve leading whitespace - must strip it
+          # Note: profiledef.sh is patched via sed, not created via heredoc
           for f in \
-            "${PROFILE_DIR}/profiledef.sh" \
             "${PROFILE_DIR}/airootfs/etc/os-release" \
             "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" \
             "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" \
@@ -715,6 +705,135 @@ jobs:
             ls -la "${OUTPUT_DIR}/" || true
             exit 1
           fi
+          
+          # Store ISO path for subsequent steps
+          echo "ISO_FILE=${ISO_FILE}" >> $GITHUB_ENV
+
+      - name: Verify ISO boot capability
+        run: |
+          set -e
+          echo "=== Verifying ISO boot capability ==="
+          ISO_FILE="${{ env.ISO_FILE }}"
+          
+          if [ -z "$ISO_FILE" ] || [ ! -f "$ISO_FILE" ]; then
+            echo "ERROR: ISO file not found"
+            exit 1
+          fi
+          
+          ERRORS=0
+          
+          # Mount ISO for inspection
+          mkdir -p /tmp/iso-verify
+          mount -o loop,ro "${ISO_FILE}" /tmp/iso-verify
+          
+          # Check for required boot files
+          echo "=== Checking required boot files ==="
+          
+          # Check syslinux boot files (BIOS)
+          if [ -f /tmp/iso-verify/boot/syslinux/ldlinux.c32 ]; then
+            echo "OK: /boot/syslinux/ldlinux.c32 found"
+          else
+            echo "ERROR: /boot/syslinux/ldlinux.c32 NOT found - BIOS boot will fail"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          # Check EFI boot file
+          if [ -f /tmp/iso-verify/EFI/BOOT/BOOTX64.EFI ]; then
+            echo "OK: /EFI/BOOT/BOOTX64.EFI found"
+          else
+            echo "ERROR: /EFI/BOOT/BOOTX64.EFI NOT found - UEFI boot will fail"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          # List boot directories for debugging
+          echo "=== Boot directory structure ==="
+          find /tmp/iso-verify/boot -type f 2>/dev/null | head -30 || true
+          find /tmp/iso-verify/EFI -type f 2>/dev/null | head -20 || true
+          
+          umount /tmp/iso-verify
+          
+          # Verify MBR signature (55 AA at bytes 510-511)
+          echo "=== Checking MBR boot signature ==="
+          MBR_SIG=$(xxd -s 510 -l 2 -p "${ISO_FILE}")
+          if [ "$MBR_SIG" = "55aa" ]; then
+            echo "OK: MBR signature valid (55 AA)"
+          else
+            echo "ERROR: MBR signature invalid (got: $MBR_SIG, expected: 55aa)"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          # Fail if any critical checks failed
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "=== BOOT VERIFICATION FAILED: $ERRORS errors ==="
+            exit 1
+          fi
+          
+          echo "=== All boot verification checks passed ==="
+
+      - name: QEMU boot smoke test
+        run: |
+          echo "=== QEMU Boot Smoke Test (informational) ==="
+          ISO_FILE="${{ env.ISO_FILE }}"
+          
+          if [ -z "$ISO_FILE" ] || [ ! -f "$ISO_FILE" ]; then
+            echo "WARNING: ISO file not found, skipping smoke test"
+            exit 0
+          fi
+          
+          echo "=== Testing BIOS boot ==="
+          timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -serial mon:stdio 2>&1 | tee /tmp/qemu-bios.log || true
+          
+          echo ""
+          echo "=== Testing EFI boot ==="
+          if [ -f /usr/share/edk2-ovmf/x64/OVMF.fd ]; then
+            timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios /usr/share/edk2-ovmf/x64/OVMF.fd -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
+          else
+            echo "WARNING: OVMF not found at expected path, checking alternatives..."
+            OVMF_PATH=$(find /usr/share -name "OVMF*.fd" 2>/dev/null | head -1)
+            if [ -n "$OVMF_PATH" ]; then
+              echo "Using OVMF at: $OVMF_PATH"
+              timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios "$OVMF_PATH" -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
+            else
+              echo "WARNING: No OVMF firmware found, skipping EFI test"
+            fi
+          fi
+          
+          echo ""
+          echo "=== Analyzing boot logs ==="
+          
+          # Check BIOS boot log for kernel loading
+          echo "--- BIOS boot analysis ---"
+          if grep -qi "linux" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "OK: Kernel loading detected in BIOS boot"
+          else
+            echo "INFO: No kernel loading messages detected in BIOS boot (may need longer timeout)"
+          fi
+          
+          if grep -qi "syslinux\|isolinux" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "OK: Bootloader activity detected in BIOS boot"
+          else
+            echo "INFO: No bootloader messages in BIOS log"
+          fi
+          
+          # Check EFI boot log
+          echo "--- EFI boot analysis ---"
+          if [ -f /tmp/qemu-uefi.log ]; then
+            if grep -qi "linux\|kernel" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "OK: Kernel loading detected in EFI boot"
+            else
+              echo "INFO: No kernel loading messages detected in EFI boot"
+            fi
+            
+            if grep -qi "systemd-boot\|loader" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "OK: EFI bootloader activity detected"
+            else
+              echo "INFO: No EFI bootloader messages in log"
+            fi
+          fi
+          
+          echo ""
+          echo "=== Smoke test complete (informational only) ==="
+          echo "Note: QEMU tests run for 60 seconds max; full boot may require more time"
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
