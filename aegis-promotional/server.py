@@ -1760,6 +1760,11 @@ def page_pricing():
     except Exception as e:
         return jsonify({'error': 'Page not found'}), 404
 
+@app.route('/editions')
+def page_editions():
+    """Redirect to homepage editions section"""
+    return redirect('/#editions')
+
 @app.route('/blog')
 def page_blog():
     try:
