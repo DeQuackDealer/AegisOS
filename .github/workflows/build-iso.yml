@@ -680,7 +680,7 @@ jobs:
             echo "=== Verifying ISO boot structure ==="
             # Check ISO has MBR boot record
             echo "--- MBR boot signature (should show 55 AA at end) ---"
-            xxd -l 512 -c 16 "${ISO_FILE}" | tail -2
+            od -A x -t x1z -v "${ISO_FILE}" | head -33 | tail -2
             
             # Mount and inspect ISO boot files
             mkdir -p /tmp/iso-inspect
@@ -737,9 +737,10 @@ jobs:
             ERRORS=$((ERRORS + 1))
           fi
           
-          # Check EFI boot file
-          if [ -f /tmp/iso-verify/EFI/BOOT/BOOTX64.EFI ]; then
-            echo "OK: /EFI/BOOT/BOOTX64.EFI found"
+          # Check EFI boot file (case-insensitive - file may be BOOTx64.EFI or BOOTX64.EFI)
+          EFI_BOOT=$(find /tmp/iso-verify/EFI/BOOT -iname "bootx64.efi" 2>/dev/null | head -1)
+          if [ -n "$EFI_BOOT" ]; then
+            echo "OK: EFI boot file found at $EFI_BOOT"
           else
             echo "ERROR: /EFI/BOOT/BOOTX64.EFI NOT found - UEFI boot will fail"
             ERRORS=$((ERRORS + 1))
@@ -754,7 +755,8 @@ jobs:
           
           # Verify MBR signature (55 AA at bytes 510-511)
           echo "=== Checking MBR boot signature ==="
-          MBR_SIG=$(xxd -s 510 -l 2 -p "${ISO_FILE}")
+          # Use dd and od instead of xxd (more commonly available)
+          MBR_SIG=$(dd if="${ISO_FILE}" bs=1 skip=510 count=2 2>/dev/null | od -A n -t x1 | tr -d ' \n')
           if [ "$MBR_SIG" = "55aa" ]; then
             echo "OK: MBR signature valid (55 AA)"
           else
