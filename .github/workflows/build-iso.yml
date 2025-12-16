@@ -796,17 +796,31 @@ jobs:
           
           echo ""
           echo "=== Testing EFI boot ==="
-          if [ -f /usr/share/edk2-ovmf/x64/OVMF.fd ]; then
-            timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios /usr/share/edk2-ovmf/x64/OVMF.fd -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
-          else
-            echo "WARNING: OVMF not found at expected path, checking alternatives..."
-            OVMF_PATH=$(find /usr/share -name "OVMF*.fd" 2>/dev/null | head -1)
-            if [ -n "$OVMF_PATH" ]; then
-              echo "Using OVMF at: $OVMF_PATH"
-              timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios "$OVMF_PATH" -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
-            else
-              echo "WARNING: No OVMF firmware found, skipping EFI test"
+          # Find 64-bit OVMF firmware (must match x86_64 ISO)
+          OVMF_PATH=""
+          for path in \
+            /usr/share/edk2-ovmf/x64/OVMF.fd \
+            /usr/share/edk2/x64/OVMF.fd \
+            /usr/share/edk2/x64/OVMF.4m.fd \
+            /usr/share/OVMF/OVMF_CODE.fd \
+            /usr/share/ovmf/OVMF.fd \
+            /usr/share/qemu/OVMF.fd; do
+            if [ -f "$path" ]; then
+              OVMF_PATH="$path"
+              break
             fi
+          done
+          
+          # Fallback: search for x64 OVMF (avoid ia32)
+          if [ -z "$OVMF_PATH" ]; then
+            OVMF_PATH=$(find /usr/share -path "*x64*" -name "OVMF*.fd" 2>/dev/null | head -1)
+          fi
+          
+          if [ -n "$OVMF_PATH" ]; then
+            echo "Using OVMF at: $OVMF_PATH"
+            timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios "$OVMF_PATH" -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
+          else
+            echo "WARNING: No 64-bit OVMF firmware found, skipping EFI test"
           fi
           
           echo ""
