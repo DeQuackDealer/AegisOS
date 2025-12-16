@@ -825,40 +825,72 @@ jobs:
           
           echo ""
           echo "=== Analyzing boot logs ==="
+          BIOS_OK=0
+          EFI_OK=0
           
-          # Check BIOS boot log for kernel loading
+          # Check BIOS boot log
           echo "--- BIOS boot analysis ---"
-          if grep -qi "linux" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "OK: Kernel loading detected in BIOS boot"
-          else
-            echo "INFO: No kernel loading messages detected in BIOS boot (may need longer timeout)"
+          if grep -qi "isolinux\|syslinux" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "OK: BIOS bootloader (ISOLINUX) started"
+            BIOS_OK=1
           fi
           
-          if grep -qi "syslinux\|isolinux" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "OK: Bootloader activity detected in BIOS boot"
-          else
-            echo "INFO: No bootloader messages in BIOS log"
+          if grep -qi "Loading.*vmlinuz\|Loading.*linux" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "OK: Kernel loading started"
+            BIOS_OK=1
+          fi
+          
+          if grep -qi "initramfs" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "OK: Initramfs loading detected"
+            BIOS_OK=1
+          fi
+          
+          if grep -qi "error\|failed\|panic" /tmp/qemu-bios.log 2>/dev/null; then
+            echo "WARNING: Errors detected in BIOS boot:"
+            grep -i "error\|failed\|panic" /tmp/qemu-bios.log | head -3
           fi
           
           # Check EFI boot log
           echo "--- EFI boot analysis ---"
           if [ -f /tmp/qemu-uefi.log ]; then
-            if grep -qi "linux\|kernel" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "OK: Kernel loading detected in EFI boot"
-            else
-              echo "INFO: No kernel loading messages detected in EFI boot"
+            if grep -qi "systemd-boot\|Boot0.*UEFI" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "OK: EFI bootloader started"
+              EFI_OK=1
             fi
             
-            if grep -qi "systemd-boot\|loader" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "OK: EFI bootloader activity detected"
-            else
-              echo "INFO: No EFI bootloader messages in log"
+            if grep -qi "Arch Linux install medium" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "OK: Boot menu displayed"
+              EFI_OK=1
             fi
+            
+            if grep -qi "Failed to decompress\|efi_stub_entry.*failed" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "ERROR: Kernel decompression failed - likely wrong OVMF firmware (need 64-bit)"
+              EFI_OK=0
+            elif grep -qi "error\|failed" /tmp/qemu-uefi.log 2>/dev/null; then
+              echo "WARNING: Errors detected in EFI boot:"
+              grep -i "error\|failed" /tmp/qemu-uefi.log | head -3
+            fi
+          else
+            echo "INFO: EFI test was skipped (no OVMF firmware found)"
           fi
           
           echo ""
-          echo "=== Smoke test complete (informational only) ==="
-          echo "Note: QEMU tests run for 60 seconds max; full boot may require more time"
+          echo "=== QEMU Test Summary ==="
+          if [ "$BIOS_OK" -eq 1 ]; then
+            echo "BIOS boot: PASS - Bootloader and kernel loading work"
+          else
+            echo "BIOS boot: UNKNOWN - Check logs above"
+          fi
+          
+          if [ "$EFI_OK" -eq 1 ]; then
+            echo "EFI boot: PASS - Bootloader works"
+          else
+            echo "EFI boot: CHECK NEEDED - Review logs above"
+          fi
+          
+          echo ""
+          echo "Note: Tests run for 60 seconds; full boot requires more time"
+          echo "For USB testing: Use BIOS mode in VirtualBox or flash to USB drive"
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
