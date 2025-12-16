@@ -135,6 +135,20 @@ jobs:
           BUILD_DATE=$(date +%Y.%m.%d)
           
           cp -r /usr/share/archiso/configs/releng "${PROFILE_DIR}"
+          
+          echo "=== Fixing boot configs to use 'aegis' instead of 'arch' ==="
+          # Fix syslinux configs for BIOS boot
+          find "${PROFILE_DIR}/syslinux" -name "*.cfg" -exec sed -i 's|archisobasedir=arch|archisobasedir=aegis|g' {} \; 2>/dev/null || true
+          find "${PROFILE_DIR}/syslinux" -name "*.cfg" -exec sed -i 's|/arch/|/aegis/|g' {} \; 2>/dev/null || true
+          
+          # Fix systemd-boot/UEFI configs
+          find "${PROFILE_DIR}/efiboot" -name "*.conf" -exec sed -i 's|archisobasedir=arch|archisobasedir=aegis|g' {} \; 2>/dev/null || true
+          find "${PROFILE_DIR}/efiboot" -name "*.conf" -exec sed -i 's|/arch/|/aegis/|g' {} \; 2>/dev/null || true
+          
+          # Fix grub configs if present
+          find "${PROFILE_DIR}/grub" -name "*.cfg" -exec sed -i 's|archisobasedir=arch|archisobasedir=aegis|g' {} \; 2>/dev/null || true
+          find "${PROFILE_DIR}/grub" -name "*.cfg" -exec sed -i 's|/arch/|/aegis/|g' {} \; 2>/dev/null || true
+          
           echo "=== Copying pacman.conf with multilib and Chaotic-AUR to profile ==="
           cp /etc/pacman.conf "${PROFILE_DIR}/pacman.conf"
           
