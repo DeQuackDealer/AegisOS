@@ -1,78 +1,595 @@
 #!/usr/bin/env python3
 """
 Aegis Screen Split - Advanced window tiling for streamers
-Snap windows to custom zones, drag-and-drop layout editor
+Features: Drag-and-drop layout editor, multi-monitor support, window memory, system tray
 """
 
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
 import os
 import subprocess
 import json
+import re
+import signal
+import shutil
+import threading
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass, asdict
+from enum import Enum
+
+_tool_availability_cache: Dict[str, Optional[str]] = {}
+_tool_warning_logged: Dict[str, bool] = {}
+
+def check_tool_available(tool_name: str) -> Optional[str]:
+    """Check if a tool is available, caching the result. Returns path if found, None otherwise."""
+    if tool_name not in _tool_availability_cache:
+        _tool_availability_cache[tool_name] = shutil.which(tool_name)
+    return _tool_availability_cache[tool_name]
+
+def log_tool_warning_once(tool_name: str, message: str):
+    """Log a warning about a missing tool only once."""
+    if tool_name not in _tool_warning_logged:
+        _tool_warning_logged[tool_name] = True
+        print(f"Warning: {message}")
+
+def run_subprocess_async(cmd: List[str], callback=None, error_callback=None):
+    """Run a subprocess command asynchronously without blocking the UI."""
+    def _run_in_thread():
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if callback:
+                GLib.idle_add(callback, result)
+        except Exception as e:
+            if error_callback:
+                GLib.idle_add(error_callback, e)
+    
+    thread = threading.Thread(target=_run_in_thread, daemon=True)
+    thread.start()
+
+def run_subprocess_fire_and_forget(cmd: List[str]):
+    """Run a subprocess command without waiting for it or blocking the UI."""
+    def _run():
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+    
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
 
 PRESET_LAYOUTS = {
     "stream_basic": {
         "name": "Stream Basic",
         "desc": "Game + chat + webcam preview",
+        "category": "streaming",
         "zones": [
-            {"x": 0, "y": 0, "w": 75, "h": 100, "name": "Game"},
-            {"x": 75, "y": 0, "w": 25, "h": 60, "name": "Chat"},
-            {"x": 75, "y": 60, "w": 25, "h": 40, "name": "Webcam"},
+            {"x": 0, "y": 0, "w": 75, "h": 100, "name": "Game", "hotkey": "Super+1"},
+            {"x": 75, "y": 0, "w": 25, "h": 60, "name": "Chat", "hotkey": "Super+2"},
+            {"x": 75, "y": 60, "w": 25, "h": 40, "name": "Webcam", "hotkey": "Super+3"},
         ]
     },
     "stream_pro": {
         "name": "Stream Pro",
         "desc": "Game + chat + webcam + alerts + music",
+        "category": "streaming",
         "zones": [
-            {"x": 0, "y": 0, "w": 60, "h": 80, "name": "Game"},
-            {"x": 60, "y": 0, "w": 40, "h": 50, "name": "Chat"},
-            {"x": 60, "y": 50, "w": 20, "h": 50, "name": "Webcam"},
-            {"x": 80, "y": 50, "w": 20, "h": 25, "name": "Alerts"},
-            {"x": 80, "y": 75, "w": 20, "h": 25, "name": "Music"},
-            {"x": 0, "y": 80, "w": 60, "h": 20, "name": "Dashboard"},
+            {"x": 0, "y": 0, "w": 60, "h": 80, "name": "Game", "hotkey": "Super+1"},
+            {"x": 60, "y": 0, "w": 40, "h": 50, "name": "Chat", "hotkey": "Super+2"},
+            {"x": 60, "y": 50, "w": 20, "h": 50, "name": "Webcam", "hotkey": "Super+3"},
+            {"x": 80, "y": 50, "w": 20, "h": 25, "name": "Alerts", "hotkey": "Super+4"},
+            {"x": 80, "y": 75, "w": 20, "h": 25, "name": "Music", "hotkey": "Super+5"},
+            {"x": 0, "y": 80, "w": 60, "h": 20, "name": "Dashboard", "hotkey": "Super+6"},
         ]
     },
     "dual_monitor": {
         "name": "Dual Monitor",
         "desc": "Primary game, secondary tools",
+        "category": "multi-monitor",
         "zones": [
-            {"x": 0, "y": 0, "w": 100, "h": 100, "name": "Game (Primary)"},
+            {"x": 0, "y": 0, "w": 100, "h": 100, "name": "Game (Primary)", "hotkey": "Super+1"},
+        ]
+    },
+    "triple_monitor": {
+        "name": "Triple Monitor",
+        "desc": "Left tools, center game, right chat",
+        "category": "multi-monitor",
+        "zones": [
+            {"x": 0, "y": 0, "w": 33, "h": 100, "name": "Left Tools", "hotkey": "Super+1"},
+            {"x": 33, "y": 0, "w": 34, "h": 100, "name": "Game (Center)", "hotkey": "Super+2"},
+            {"x": 67, "y": 0, "w": 33, "h": 100, "name": "Right Chat", "hotkey": "Super+3"},
+        ]
+    },
+    "vertical_monitor": {
+        "name": "Vertical Monitor",
+        "desc": "Optimized for portrait displays",
+        "category": "special",
+        "zones": [
+            {"x": 0, "y": 0, "w": 100, "h": 40, "name": "Top Panel", "hotkey": "Super+1"},
+            {"x": 0, "y": 40, "w": 100, "h": 35, "name": "Middle Content", "hotkey": "Super+2"},
+            {"x": 0, "y": 75, "w": 100, "h": 25, "name": "Bottom Bar", "hotkey": "Super+3"},
+        ]
+    },
+    "pip_layout": {
+        "name": "Picture-in-Picture",
+        "desc": "Main content with floating PiP zones",
+        "category": "special",
+        "zones": [
+            {"x": 0, "y": 0, "w": 100, "h": 100, "name": "Main", "hotkey": "Super+1"},
+            {"x": 70, "y": 5, "w": 25, "h": 20, "name": "PiP Top", "hotkey": "Super+2"},
+            {"x": 70, "y": 75, "w": 25, "h": 20, "name": "PiP Bottom", "hotkey": "Super+3"},
+            {"x": 5, "y": 75, "w": 25, "h": 20, "name": "PiP Left", "hotkey": "Super+4"},
+        ]
+    },
+    "recording_editing": {
+        "name": "Recording/Editing",
+        "desc": "Preview + timeline + tools + media bin",
+        "category": "productivity",
+        "zones": [
+            {"x": 0, "y": 0, "w": 70, "h": 60, "name": "Preview", "hotkey": "Super+1"},
+            {"x": 70, "y": 0, "w": 30, "h": 40, "name": "Tools", "hotkey": "Super+2"},
+            {"x": 70, "y": 40, "w": 30, "h": 60, "name": "Media Bin", "hotkey": "Super+3"},
+            {"x": 0, "y": 60, "w": 70, "h": 40, "name": "Timeline", "hotkey": "Super+4"},
         ]
     },
     "productivity": {
         "name": "Productivity",
         "desc": "Browser + code + terminal",
+        "category": "productivity",
         "zones": [
-            {"x": 0, "y": 0, "w": 50, "h": 100, "name": "Browser"},
-            {"x": 50, "y": 0, "w": 50, "h": 60, "name": "Code"},
-            {"x": 50, "y": 60, "w": 50, "h": 40, "name": "Terminal"},
+            {"x": 0, "y": 0, "w": 50, "h": 100, "name": "Browser", "hotkey": "Super+1"},
+            {"x": 50, "y": 0, "w": 50, "h": 60, "name": "Code", "hotkey": "Super+2"},
+            {"x": 50, "y": 60, "w": 50, "h": 40, "name": "Terminal", "hotkey": "Super+3"},
         ]
     },
     "ultrawide": {
         "name": "Ultrawide 21:9",
         "desc": "Optimized for ultrawide monitors",
+        "category": "special",
         "zones": [
-            {"x": 0, "y": 0, "w": 20, "h": 100, "name": "Left Panel"},
-            {"x": 20, "y": 0, "w": 60, "h": 100, "name": "Main"},
-            {"x": 80, "y": 0, "w": 20, "h": 50, "name": "Top Right"},
-            {"x": 80, "y": 50, "w": 20, "h": 50, "name": "Bottom Right"},
+            {"x": 0, "y": 0, "w": 20, "h": 100, "name": "Left Panel", "hotkey": "Super+1"},
+            {"x": 20, "y": 0, "w": 60, "h": 100, "name": "Main", "hotkey": "Super+2"},
+            {"x": 80, "y": 0, "w": 20, "h": 50, "name": "Top Right", "hotkey": "Super+3"},
+            {"x": 80, "y": 50, "w": 20, "h": 50, "name": "Bottom Right", "hotkey": "Super+4"},
         ]
     },
     "quad": {
         "name": "Quad Split",
         "desc": "Four equal zones",
+        "category": "basic",
         "zones": [
-            {"x": 0, "y": 0, "w": 50, "h": 50, "name": "Top Left"},
-            {"x": 50, "y": 0, "w": 50, "h": 50, "name": "Top Right"},
-            {"x": 0, "y": 50, "w": 50, "h": 50, "name": "Bottom Left"},
-            {"x": 50, "y": 50, "w": 50, "h": 50, "name": "Bottom Right"},
+            {"x": 0, "y": 0, "w": 50, "h": 50, "name": "Top Left", "hotkey": "Super+1"},
+            {"x": 50, "y": 0, "w": 50, "h": 50, "name": "Top Right", "hotkey": "Super+2"},
+            {"x": 0, "y": 50, "w": 50, "h": 50, "name": "Bottom Left", "hotkey": "Super+3"},
+            {"x": 50, "y": 50, "w": 50, "h": 50, "name": "Bottom Right", "hotkey": "Super+4"},
+        ]
+    },
+    "gaming_focus": {
+        "name": "Gaming Focus",
+        "desc": "Full game with minimal side panel",
+        "category": "streaming",
+        "zones": [
+            {"x": 0, "y": 0, "w": 85, "h": 100, "name": "Game", "hotkey": "Super+1"},
+            {"x": 85, "y": 0, "w": 15, "h": 50, "name": "Discord", "hotkey": "Super+2"},
+            {"x": 85, "y": 50, "w": 15, "h": 50, "name": "Stats", "hotkey": "Super+3"},
+        ]
+    },
+    "content_creator": {
+        "name": "Content Creator",
+        "desc": "OBS + browser + chat + notes",
+        "category": "streaming",
+        "zones": [
+            {"x": 0, "y": 0, "w": 50, "h": 70, "name": "OBS", "hotkey": "Super+1"},
+            {"x": 50, "y": 0, "w": 50, "h": 50, "name": "Browser", "hotkey": "Super+2"},
+            {"x": 50, "y": 50, "w": 25, "h": 50, "name": "Chat", "hotkey": "Super+3"},
+            {"x": 75, "y": 50, "w": 25, "h": 50, "name": "Notes", "hotkey": "Super+4"},
+            {"x": 0, "y": 70, "w": 50, "h": 30, "name": "Music/Alerts", "hotkey": "Super+5"},
         ]
     },
 }
+
+@dataclass
+class Monitor:
+    name: str
+    width: int
+    height: int
+    x: int
+    y: int
+    primary: bool = False
+    connected: bool = True
+
+@dataclass
+class WindowMemory:
+    wm_class: str
+    zone_name: str
+    monitor: str
+
+class MonitorManager:
+    @staticmethod
+    def detect_monitors() -> List[Monitor]:
+        monitors = []
+        try:
+            result = subprocess.run(['xrandr', '--query'], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                return [Monitor("Default", 1920, 1080, 0, 0, True)]
+            
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if ' connected' in line:
+                    parts = line.split()
+                    name = parts[0]
+                    primary = 'primary' in line
+                    
+                    geo_match = re.search(r'(\d+)x(\d+)\+(\d+)\+(\d+)', line)
+                    if geo_match:
+                        width = int(geo_match.group(1))
+                        height = int(geo_match.group(2))
+                        x = int(geo_match.group(3))
+                        y = int(geo_match.group(4))
+                        monitors.append(Monitor(name, width, height, x, y, primary))
+                    else:
+                        res_match = re.search(r'(\d+)x(\d+)', line)
+                        if res_match:
+                            monitors.append(Monitor(name, int(res_match.group(1)), int(res_match.group(2)), 0, 0, primary))
+        except Exception as e:
+            print(f"Monitor detection error: {e}")
+        
+        if not monitors:
+            monitors = [Monitor("Default", 1920, 1080, 0, 0, True)]
+        
+        return sorted(monitors, key=lambda m: (not m.primary, m.x, m.y))
+    
+    @staticmethod
+    def get_monitor_info_string(monitors: List[Monitor]) -> str:
+        if not monitors:
+            return "No monitors detected"
+        info = []
+        for m in monitors:
+            primary_str = " (Primary)" if m.primary else ""
+            info.append(f"{m.name}: {m.width}x{m.height}{primary_str}")
+        return " | ".join(info)
+
+class LayoutEditorDialog(Gtk.Dialog):
+    def __init__(self, parent, layout_name: str, zones: List[Dict], on_save):
+        super().__init__(title="Layout Editor", parent=parent, flags=0)
+        self.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK)
+        self.set_default_size(900, 700)
+        
+        self.zones = [dict(z) for z in zones]
+        self.selected_zone = None
+        self.drag_start = None
+        self.resize_handle = None
+        self.on_save = on_save
+        self.layout_name = layout_name
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .editor-bg { background: #1a1a2e; }
+            .zone-selected { border: 3px solid #00f0c0; }
+            .editor-label { color: #fff; font-size: 14px; }
+            .prop-label { color: #888; font-size: 12px; }
+            .prop-entry { background: rgba(255,255,255,0.1); color: #fff; border-radius: 4px; padding: 6px; }
+            .add-btn { background: #00d4aa; color: #1a1a2e; font-weight: bold; border-radius: 6px; padding: 8px 16px; }
+            .del-btn { background: #ff4757; color: #fff; border-radius: 6px; padding: 8px 16px; }
+        """)
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        
+        content = self.get_content_area()
+        content.get_style_context().add_class("editor-bg")
+        
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        main_box.set_margin_start(12)
+        main_box.set_margin_end(12)
+        main_box.set_margin_top(12)
+        main_box.set_margin_bottom(12)
+        
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left_box.set_size_request(250, -1)
+        
+        zones_label = Gtk.Label(label="Zones")
+        zones_label.get_style_context().add_class("editor-label")
+        zones_label.set_halign(Gtk.Align.START)
+        left_box.pack_start(zones_label, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.zones_list = Gtk.ListBox()
+        self.zones_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.zones_list.connect("row-selected", self._on_zone_list_selected)
+        scroll.add(self.zones_list)
+        left_box.pack_start(scroll, True, True, 0)
+        
+        btn_box = Gtk.Box(spacing=8)
+        add_btn = Gtk.Button(label="+ Add Zone")
+        add_btn.get_style_context().add_class("add-btn")
+        add_btn.connect("clicked", self._on_add_zone)
+        btn_box.pack_start(add_btn, True, True, 0)
+        
+        del_btn = Gtk.Button(label="Delete")
+        del_btn.get_style_context().add_class("del-btn")
+        del_btn.connect("clicked", self._on_delete_zone)
+        btn_box.pack_start(del_btn, True, True, 0)
+        left_box.pack_start(btn_box, False, False, 0)
+        
+        props_frame = Gtk.Frame(label="Zone Properties")
+        props_frame.set_margin_top(12)
+        props_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        props_box.set_margin_start(8)
+        props_box.set_margin_end(8)
+        props_box.set_margin_top(8)
+        props_box.set_margin_bottom(8)
+        
+        name_box = Gtk.Box(spacing=4)
+        name_label = Gtk.Label(label="Name:")
+        name_label.get_style_context().add_class("prop-label")
+        name_label.set_size_request(60, -1)
+        name_box.pack_start(name_label, False, False, 0)
+        self.name_entry = Gtk.Entry()
+        self.name_entry.get_style_context().add_class("prop-entry")
+        self.name_entry.connect("changed", self._on_prop_changed, "name")
+        name_box.pack_start(self.name_entry, True, True, 0)
+        props_box.pack_start(name_box, False, False, 0)
+        
+        hotkey_box = Gtk.Box(spacing=4)
+        hotkey_label = Gtk.Label(label="Hotkey:")
+        hotkey_label.get_style_context().add_class("prop-label")
+        hotkey_label.set_size_request(60, -1)
+        hotkey_box.pack_start(hotkey_label, False, False, 0)
+        self.hotkey_entry = Gtk.Entry()
+        self.hotkey_entry.get_style_context().add_class("prop-entry")
+        self.hotkey_entry.set_placeholder_text("e.g. Super+1")
+        self.hotkey_entry.connect("changed", self._on_prop_changed, "hotkey")
+        hotkey_box.pack_start(self.hotkey_entry, True, True, 0)
+        props_box.pack_start(hotkey_box, False, False, 0)
+        
+        pos_box = Gtk.Box(spacing=4)
+        for prop, label_text in [("x", "X:"), ("y", "Y:"), ("w", "W:"), ("h", "H:")]:
+            lbl = Gtk.Label(label=label_text)
+            lbl.get_style_context().add_class("prop-label")
+            pos_box.pack_start(lbl, False, False, 0)
+            spin = Gtk.SpinButton.new_with_range(0, 100, 1)
+            spin.set_size_request(50, -1)
+            spin.connect("value-changed", self._on_spin_changed, prop)
+            setattr(self, f"{prop}_spin", spin)
+            pos_box.pack_start(spin, False, False, 0)
+        props_box.pack_start(pos_box, False, False, 0)
+        
+        props_frame.add(props_box)
+        left_box.pack_start(props_frame, False, False, 0)
+        
+        main_box.pack_start(left_box, False, False, 0)
+        
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        
+        preview_label = Gtk.Label(label="Drag zones to position, drag edges to resize")
+        preview_label.get_style_context().add_class("prop-label")
+        right_box.pack_start(preview_label, False, False, 0)
+        
+        self.canvas = Gtk.DrawingArea()
+        self.canvas.set_size_request(600, 400)
+        self.canvas.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | 
+                               Gdk.EventMask.BUTTON_RELEASE_MASK |
+                               Gdk.EventMask.POINTER_MOTION_MASK)
+        self.canvas.connect("draw", self._draw_canvas)
+        self.canvas.connect("button-press-event", self._on_canvas_press)
+        self.canvas.connect("button-release-event", self._on_canvas_release)
+        self.canvas.connect("motion-notify-event", self._on_canvas_motion)
+        
+        canvas_frame = Gtk.Frame()
+        canvas_frame.add(self.canvas)
+        right_box.pack_start(canvas_frame, True, True, 0)
+        
+        main_box.pack_start(right_box, True, True, 0)
+        content.pack_start(main_box, True, True, 0)
+        
+        self._refresh_zones_list()
+        self.show_all()
+    
+    def _refresh_zones_list(self):
+        for child in self.zones_list.get_children():
+            self.zones_list.remove(child)
+        
+        for i, zone in enumerate(self.zones):
+            row = Gtk.ListBoxRow()
+            label = Gtk.Label(label=f"{zone['name']} ({zone['w']}x{zone['h']})")
+            label.set_margin_start(8)
+            label.set_margin_end(8)
+            label.set_margin_top(4)
+            label.set_margin_bottom(4)
+            row.add(label)
+            row.zone_index = i
+            self.zones_list.add(row)
+        
+        self.zones_list.show_all()
+    
+    def _on_zone_list_selected(self, listbox, row):
+        if row:
+            self.selected_zone = row.zone_index
+            zone = self.zones[self.selected_zone]
+            self.name_entry.set_text(zone.get("name", ""))
+            self.hotkey_entry.set_text(zone.get("hotkey", ""))
+            self.x_spin.set_value(zone.get("x", 0))
+            self.y_spin.set_value(zone.get("y", 0))
+            self.w_spin.set_value(zone.get("w", 25))
+            self.h_spin.set_value(zone.get("h", 25))
+        else:
+            self.selected_zone = None
+        self.canvas.queue_draw()
+    
+    def _on_prop_changed(self, entry, prop):
+        if self.selected_zone is not None:
+            self.zones[self.selected_zone][prop] = entry.get_text()
+            self._refresh_zones_list()
+            self.canvas.queue_draw()
+    
+    def _on_spin_changed(self, spin, prop):
+        if self.selected_zone is not None:
+            self.zones[self.selected_zone][prop] = int(spin.get_value())
+            self._refresh_zones_list()
+            self.canvas.queue_draw()
+    
+    def _on_add_zone(self, btn):
+        new_zone = {"x": 10, "y": 10, "w": 30, "h": 30, "name": f"Zone {len(self.zones)+1}", "hotkey": f"Super+{len(self.zones)+1}"}
+        self.zones.append(new_zone)
+        self._refresh_zones_list()
+        self.canvas.queue_draw()
+    
+    def _on_delete_zone(self, btn):
+        if self.selected_zone is not None and len(self.zones) > 1:
+            del self.zones[self.selected_zone]
+            self.selected_zone = None
+            self._refresh_zones_list()
+            self.canvas.queue_draw()
+    
+    def _draw_canvas(self, widget, cr):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgb(0.1, 0.1, 0.18)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        cr.set_source_rgba(1, 1, 1, 0.05)
+        for i in range(0, 101, 10):
+            x = i / 100 * width
+            y = i / 100 * height
+            cr.move_to(x, 0)
+            cr.line_to(x, height)
+            cr.move_to(0, y)
+            cr.line_to(width, y)
+        cr.set_line_width(1)
+        cr.stroke()
+        
+        for i, zone in enumerate(self.zones):
+            x = zone["x"] / 100 * width
+            y = zone["y"] / 100 * height
+            w = zone["w"] / 100 * width
+            h = zone["h"] / 100 * height
+            
+            if i == self.selected_zone:
+                cr.set_source_rgba(0, 0.94, 0.75, 0.4)
+            else:
+                cr.set_source_rgba(0, 0.83, 0.67, 0.25)
+            cr.rectangle(x + 1, y + 1, w - 2, h - 2)
+            cr.fill()
+            
+            if i == self.selected_zone:
+                cr.set_source_rgb(0, 0.94, 0.75)
+                cr.set_line_width(3)
+            else:
+                cr.set_source_rgb(0, 0.83, 0.67)
+                cr.set_line_width(2)
+            cr.rectangle(x + 1, y + 1, w - 2, h - 2)
+            cr.stroke()
+            
+            cr.set_source_rgb(1, 1, 1)
+            cr.select_font_face("Sans", 0, 1)
+            cr.set_font_size(11)
+            text = zone["name"]
+            extents = cr.text_extents(text)
+            tx = x + (w - extents.width) / 2
+            ty = y + (h + extents.height) / 2
+            cr.move_to(tx, ty)
+            cr.show_text(text)
+            
+            if i == self.selected_zone:
+                handle_size = 8
+                cr.set_source_rgb(1, 1, 1)
+                for hx, hy in [(x + w - handle_size, y + h - handle_size)]:
+                    cr.rectangle(hx, hy, handle_size, handle_size)
+                    cr.fill()
+        
+        return False
+    
+    def _get_zone_at(self, mx, my) -> Optional[int]:
+        width = self.canvas.get_allocated_width()
+        height = self.canvas.get_allocated_height()
+        
+        for i in range(len(self.zones) - 1, -1, -1):
+            zone = self.zones[i]
+            x = zone["x"] / 100 * width
+            y = zone["y"] / 100 * height
+            w = zone["w"] / 100 * width
+            h = zone["h"] / 100 * height
+            
+            if x <= mx <= x + w and y <= my <= y + h:
+                return i
+        return None
+    
+    def _get_resize_handle(self, mx, my, zone_idx) -> Optional[str]:
+        if zone_idx is None:
+            return None
+        
+        width = self.canvas.get_allocated_width()
+        height = self.canvas.get_allocated_height()
+        zone = self.zones[zone_idx]
+        
+        x = zone["x"] / 100 * width
+        y = zone["y"] / 100 * height
+        w = zone["w"] / 100 * width
+        h = zone["h"] / 100 * height
+        
+        handle_size = 12
+        if x + w - handle_size <= mx <= x + w and y + h - handle_size <= my <= y + h:
+            return "se"
+        return None
+    
+    def _on_canvas_press(self, widget, event):
+        zone_idx = self._get_zone_at(event.x, event.y)
+        
+        if zone_idx is not None:
+            self.resize_handle = self._get_resize_handle(event.x, event.y, zone_idx)
+            self.selected_zone = zone_idx
+            self.drag_start = (event.x, event.y)
+            
+            for i, row in enumerate(self.zones_list.get_children()):
+                if i == zone_idx:
+                    self.zones_list.select_row(row)
+                    break
+        
+        self.canvas.queue_draw()
+    
+    def _on_canvas_release(self, widget, event):
+        self.drag_start = None
+        self.resize_handle = None
+    
+    def _on_canvas_motion(self, widget, event):
+        if self.drag_start is None or self.selected_zone is None:
+            return
+        
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        dx = (event.x - self.drag_start[0]) / width * 100
+        dy = (event.y - self.drag_start[1]) / height * 100
+        
+        zone = self.zones[self.selected_zone]
+        
+        if self.resize_handle == "se":
+            new_w = max(5, zone["w"] + dx)
+            new_h = max(5, zone["h"] + dy)
+            zone["w"] = min(100 - zone["x"], int(new_w))
+            zone["h"] = min(100 - zone["y"], int(new_h))
+        else:
+            new_x = max(0, min(100 - zone["w"], zone["x"] + dx))
+            new_y = max(0, min(100 - zone["h"], zone["y"] + dy))
+            zone["x"] = int(new_x)
+            zone["y"] = int(new_y)
+        
+        self.drag_start = (event.x, event.y)
+        
+        self.x_spin.set_value(zone["x"])
+        self.y_spin.set_value(zone["y"])
+        self.w_spin.set_value(zone["w"])
+        self.h_spin.set_value(zone["h"])
+        
+        self._refresh_zones_list()
+        self.canvas.queue_draw()
+    
+    def get_zones(self) -> List[Dict]:
+        return self.zones
 
 class AegisScreenSplit(Gtk.Window):
     CSS = """
@@ -80,8 +597,11 @@ class AegisScreenSplit(Gtk.Window):
     .header { background: rgba(0,0,0,0.7); padding: 20px; }
     .title { color: #00d4aa; font-size: 28px; font-weight: bold; }
     .subtitle { color: #888; font-size: 14px; }
+    .monitor-info { color: #00d4aa; font-size: 12px; background: rgba(0,212,170,0.1); 
+                    padding: 6px 12px; border-radius: 4px; }
     .card { background: rgba(255,255,255,0.06); border-radius: 12px; padding: 20px; margin: 10px; }
     .card-title { color: #fff; font-size: 18px; font-weight: bold; }
+    .category-label { color: #00d4aa; font-size: 12px; font-weight: bold; margin-top: 12px; }
     .layout-btn { background: rgba(255,255,255,0.08); border: 2px solid transparent;
                   border-radius: 10px; padding: 16px; color: #fff; margin: 6px; min-width: 180px; }
     .layout-btn:hover { background: rgba(0,212,170,0.15); }
@@ -91,29 +611,52 @@ class AegisScreenSplit(Gtk.Window):
     .apply-btn { background: #00d4aa; color: #1a1a2e; font-weight: bold; 
                  padding: 14px 40px; border-radius: 8px; font-size: 16px; }
     .apply-btn:hover { background: #00f0c0; }
-    .editor-zone { background: rgba(0,212,170,0.2); border: 2px dashed #00d4aa; }
-    .editor-zone:hover { background: rgba(0,212,170,0.4); }
+    .secondary-btn { background: rgba(255,255,255,0.1); color: #fff; 
+                     padding: 10px 20px; border-radius: 6px; }
+    .secondary-btn:hover { background: rgba(255,255,255,0.2); }
     .info-label { color: #888; font-size: 13px; }
     .hotkey { background: rgba(255,255,255,0.1); border-radius: 4px; padding: 4px 8px; 
               color: #00d4aa; font-family: monospace; }
+    .monitor-combo { background: rgba(255,255,255,0.1); color: #fff; border-radius: 4px; padding: 4px; }
+    .tab-label { color: #888; font-size: 14px; }
+    .tab-label:checked { color: #00d4aa; }
+    .memory-row { background: rgba(255,255,255,0.04); border-radius: 6px; padding: 8px; margin: 4px 0; }
+    .tray-hint { color: #666; font-size: 11px; font-style: italic; }
     """
     
-    def __init__(self):
+    def __init__(self, start_minimized=False):
         super().__init__(title="Aegis Screen Split")
-        self.set_default_size(1000, 800)
+        self.set_default_size(1100, 850)
         self.config_path = Path.home() / ".config/aegis/screen-split.json"
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.current_layout = "stream_basic"
         self.custom_layouts: Dict = {}
         self.snap_enabled = True
+        self.zones_visible = False
+        self.monitors: List[Monitor] = []
+        self.per_monitor_layouts: Dict[str, str] = {}
+        self.window_memory: Dict[str, WindowMemory] = {}
+        self.zone_hotkeys: Dict[str, str] = {}
+        self.global_toggle_hotkey = "Super+grave"
         
         css = Gtk.CssProvider()
         css.load_from_data(self.CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         
         self._load_config()
+        self._detect_monitors()
         self._create_ui()
+        self._setup_tray_icon()
+        
+        if start_minimized:
+            self.hide()
+    
+    def _detect_monitors(self):
+        self.monitors = MonitorManager.detect_monitors()
+        for m in self.monitors:
+            if m.name not in self.per_monitor_layouts:
+                self.per_monitor_layouts[m.name] = self.current_layout
     
     def _load_config(self):
         try:
@@ -123,17 +666,100 @@ class AegisScreenSplit(Gtk.Window):
                     self.current_layout = cfg.get("layout", "stream_basic")
                     self.custom_layouts = cfg.get("custom", {})
                     self.snap_enabled = cfg.get("snap_enabled", True)
-        except: pass
+                    self.per_monitor_layouts = cfg.get("per_monitor_layouts", {})
+                    self.global_toggle_hotkey = cfg.get("global_toggle_hotkey", "Super+grave")
+                    
+                    memory_data = cfg.get("window_memory", {})
+                    for wm_class, data in memory_data.items():
+                        self.window_memory[wm_class] = WindowMemory(
+                            wm_class=wm_class,
+                            zone_name=data.get("zone_name", ""),
+                            monitor=data.get("monitor", "")
+                        )
+                    
+                    self.zone_hotkeys = cfg.get("zone_hotkeys", {})
+        except Exception as e:
+            print(f"Config load error: {e}")
     
     def _save_config(self):
         try:
+            memory_data = {}
+            for wm_class, mem in self.window_memory.items():
+                memory_data[wm_class] = {"zone_name": mem.zone_name, "monitor": mem.monitor}
+            
             with open(self.config_path, "w") as f:
                 json.dump({
                     "layout": self.current_layout,
                     "custom": self.custom_layouts,
-                    "snap_enabled": self.snap_enabled
+                    "snap_enabled": self.snap_enabled,
+                    "per_monitor_layouts": self.per_monitor_layouts,
+                    "window_memory": memory_data,
+                    "zone_hotkeys": self.zone_hotkeys,
+                    "global_toggle_hotkey": self.global_toggle_hotkey,
                 }, f, indent=2)
-        except: pass
+        except Exception as e:
+            print(f"Config save error: {e}")
+    
+    def _setup_tray_icon(self):
+        try:
+            self.tray_icon = Gtk.StatusIcon()
+            self.tray_icon.set_from_icon_name("view-grid-symbolic")
+            self.tray_icon.set_tooltip_text("Aegis Screen Split")
+            self.tray_icon.connect("activate", self._on_tray_activate)
+            self.tray_icon.connect("popup-menu", self._on_tray_popup)
+            self.tray_icon.set_visible(True)
+        except Exception as e:
+            print(f"Tray icon setup failed: {e}")
+            self.tray_icon = None
+    
+    def _on_tray_activate(self, icon):
+        if self.get_visible():
+            self.hide()
+        else:
+            self.show_all()
+            self.present()
+    
+    def _on_tray_popup(self, icon, button, time):
+        menu = Gtk.Menu()
+        
+        toggle_item = Gtk.MenuItem(label="Toggle Zones" + (" ✓" if self.zones_visible else ""))
+        toggle_item.connect("activate", lambda w: self._toggle_zones())
+        menu.append(toggle_item)
+        
+        menu.append(Gtk.SeparatorMenuItem())
+        
+        for lid, linfo in list(PRESET_LAYOUTS.items())[:5]:
+            item = Gtk.MenuItem(label=linfo["name"])
+            item.connect("activate", lambda w, l=lid: self._quick_apply_layout(l))
+            menu.append(item)
+        
+        menu.append(Gtk.SeparatorMenuItem())
+        
+        show_item = Gtk.MenuItem(label="Show Window")
+        show_item.connect("activate", lambda w: (self.show_all(), self.present()))
+        menu.append(show_item)
+        
+        quit_item = Gtk.MenuItem(label="Quit")
+        quit_item.connect("activate", lambda w: Gtk.main_quit())
+        menu.append(quit_item)
+        
+        menu.show_all()
+        menu.popup(None, None, None, None, button, time)
+    
+    def _toggle_zones(self):
+        self.zones_visible = not self.zones_visible
+        try:
+            if self.zones_visible:
+                subprocess.run(["xdotool", "key", "super+z"], check=False)
+            else:
+                subprocess.run(["xdotool", "key", "super+z"], check=False)
+        except:
+            pass
+    
+    def _quick_apply_layout(self, layout_id):
+        self.current_layout = layout_id
+        self._save_config()
+        self._apply_layout(None)
     
     def _create_ui(self):
         main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -147,80 +773,136 @@ class AegisScreenSplit(Gtk.Window):
         title.get_style_context().add_class("title")
         title_row.pack_start(title, False, False, 0)
         
+        right_controls = Gtk.Box(spacing=16)
+        
+        monitor_info = Gtk.Label(label=MonitorManager.get_monitor_info_string(self.monitors))
+        monitor_info.get_style_context().add_class("monitor-info")
+        right_controls.pack_start(monitor_info, False, False, 0)
+        
+        refresh_btn = Gtk.Button(label="↻")
+        refresh_btn.set_tooltip_text("Refresh monitor detection")
+        refresh_btn.connect("clicked", self._on_refresh_monitors)
+        right_controls.pack_start(refresh_btn, False, False, 0)
+        
         snap_box = Gtk.Box(spacing=8)
-        snap_label = Gtk.Label(label="Window Snap")
+        snap_label = Gtk.Label(label="Snap")
         snap_label.set_valign(Gtk.Align.CENTER)
         snap_box.pack_start(snap_label, False, False, 0)
-        
         self.snap_switch = Gtk.Switch()
         self.snap_switch.set_active(self.snap_enabled)
         self.snap_switch.set_valign(Gtk.Align.CENTER)
         self.snap_switch.connect("notify::active", self._on_snap_toggle)
         snap_box.pack_start(self.snap_switch, False, False, 0)
+        right_controls.pack_start(snap_box, False, False, 0)
         
-        title_row.pack_end(snap_box, False, False, 0)
+        title_row.pack_end(right_controls, False, False, 0)
         header.pack_start(title_row, False, False, 0)
         
-        subtitle = Gtk.Label(label="Drag windows to snap to custom zones - perfect for streaming setups")
+        subtitle = Gtk.Label(label="Advanced window tiling for streamers and power users")
         subtitle.get_style_context().add_class("subtitle")
         subtitle.set_halign(Gtk.Align.START)
         header.pack_start(subtitle, False, False, 4)
         
-        hotkeys = Gtk.Box(spacing=12)
-        hotkeys.set_margin_top(12)
-        for key, action in [("Super+Arrow", "Snap to edge"), ("Super+Shift+Arrow", "Snap to zone"), 
-                           ("Super+Z", "Toggle zones"), ("Super+Shift+Z", "Custom zone")]:
-            hbox = Gtk.Box(spacing=6)
-            klabel = Gtk.Label(label=key)
-            klabel.get_style_context().add_class("hotkey")
-            hbox.pack_start(klabel, False, False, 0)
-            alabel = Gtk.Label(label=action)
-            alabel.get_style_context().add_class("info-label")
-            hbox.pack_start(alabel, False, False, 0)
-            hotkeys.pack_start(hbox, False, False, 0)
-        header.pack_start(hotkeys, False, False, 0)
+        tray_hint = Gtk.Label(label="Tip: Minimize to system tray for quick access. Use Super+` to toggle zones globally.")
+        tray_hint.get_style_context().add_class("tray-hint")
+        tray_hint.set_halign(Gtk.Align.START)
+        header.pack_start(tray_hint, False, False, 4)
         
         main.pack_start(header, False, False, 0)
         
+        notebook = Gtk.Notebook()
+        notebook.set_margin_start(10)
+        notebook.set_margin_end(10)
+        notebook.set_margin_top(10)
+        notebook.set_margin_bottom(10)
+        
+        layouts_page = self._create_layouts_page()
+        notebook.append_page(layouts_page, Gtk.Label(label="Layouts"))
+        
+        monitors_page = self._create_monitors_page()
+        notebook.append_page(monitors_page, Gtk.Label(label="Monitors"))
+        
+        hotkeys_page = self._create_hotkeys_page()
+        notebook.append_page(hotkeys_page, Gtk.Label(label="Hotkeys"))
+        
+        memory_page = self._create_memory_page()
+        notebook.append_page(memory_page, Gtk.Label(label="Window Memory"))
+        
+        main.pack_start(notebook, True, True, 0)
+    
+    def _create_layouts_page(self):
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_position(400)
-        main.pack_start(paned, True, True, 0)
+        paned.set_position(420)
         
         left_scroll = Gtk.ScrolledWindow()
         left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         left_scroll.add(left_box)
         
-        layouts_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        layouts_card.get_style_context().add_class("card")
+        categories = {}
+        for lid, linfo in PRESET_LAYOUTS.items():
+            cat = linfo.get("category", "other")
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append((lid, linfo))
         
-        layouts_title = Gtk.Label(label="Preset Layouts")
-        layouts_title.get_style_context().add_class("card-title")
-        layouts_title.set_halign(Gtk.Align.START)
-        layouts_card.pack_start(layouts_title, False, False, 0)
+        category_names = {
+            "streaming": "Streaming",
+            "multi-monitor": "Multi-Monitor",
+            "productivity": "Productivity",
+            "special": "Special Layouts",
+            "basic": "Basic",
+        }
         
         self.layout_buttons = {}
-        for lid, linfo in PRESET_LAYOUTS.items():
-            btn = Gtk.ToggleButton()
-            btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            
-            name_label = Gtk.Label(label=linfo["name"])
-            name_label.set_halign(Gtk.Align.START)
-            btn_box.pack_start(name_label, False, False, 0)
-            
-            desc_label = Gtk.Label(label=linfo["desc"])
-            desc_label.get_style_context().add_class("info-label")
-            desc_label.set_halign(Gtk.Align.START)
-            desc_label.set_line_wrap(True)
-            btn_box.pack_start(desc_label, False, False, 0)
-            
-            btn.add(btn_box)
-            btn.get_style_context().add_class("layout-btn")
-            btn.set_active(lid == self.current_layout)
-            btn.connect("toggled", self._on_layout_selected, lid)
-            self.layout_buttons[lid] = btn
-            layouts_card.pack_start(btn, False, False, 4)
         
-        left_box.pack_start(layouts_card, False, False, 0)
+        for cat, layouts in categories.items():
+            cat_label = Gtk.Label(label=category_names.get(cat, cat.title()))
+            cat_label.get_style_context().add_class("category-label")
+            cat_label.set_halign(Gtk.Align.START)
+            cat_label.set_margin_start(10)
+            left_box.pack_start(cat_label, False, False, 4)
+            
+            for lid, linfo in layouts:
+                btn = Gtk.ToggleButton()
+                btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                
+                name_label = Gtk.Label(label=linfo["name"])
+                name_label.set_halign(Gtk.Align.START)
+                btn_box.pack_start(name_label, False, False, 0)
+                
+                desc_label = Gtk.Label(label=linfo["desc"])
+                desc_label.get_style_context().add_class("info-label")
+                desc_label.set_halign(Gtk.Align.START)
+                desc_label.set_line_wrap(True)
+                btn_box.pack_start(desc_label, False, False, 0)
+                
+                btn.add(btn_box)
+                btn.get_style_context().add_class("layout-btn")
+                btn.set_active(lid == self.current_layout)
+                btn.connect("toggled", self._on_layout_selected, lid)
+                self.layout_buttons[lid] = btn
+                left_box.pack_start(btn, False, False, 2)
+        
+        if self.custom_layouts:
+            cat_label = Gtk.Label(label="Custom Layouts")
+            cat_label.get_style_context().add_class("category-label")
+            cat_label.set_halign(Gtk.Align.START)
+            cat_label.set_margin_start(10)
+            left_box.pack_start(cat_label, False, False, 4)
+            
+            for lid, linfo in self.custom_layouts.items():
+                btn = Gtk.ToggleButton()
+                btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+                name_label = Gtk.Label(label=linfo.get("name", lid))
+                name_label.set_halign(Gtk.Align.START)
+                btn_box.pack_start(name_label, False, False, 0)
+                btn.add(btn_box)
+                btn.get_style_context().add_class("layout-btn")
+                btn.set_active(lid == self.current_layout)
+                btn.connect("toggled", self._on_layout_selected, lid)
+                self.layout_buttons[lid] = btn
+                left_box.pack_start(btn, False, False, 2)
+        
         paned.pack1(left_scroll, False, False)
         
         right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -236,6 +918,18 @@ class AegisScreenSplit(Gtk.Window):
         self.preview_area.connect("draw", self._draw_preview)
         right_box.pack_start(self.preview_area, True, True, 12)
         
+        hotkeys_label = Gtk.Label(label="Zone Hotkeys")
+        hotkeys_label.get_style_context().add_class("info-label")
+        hotkeys_label.set_halign(Gtk.Align.START)
+        right_box.pack_start(hotkeys_label, False, False, 4)
+        
+        self.hotkeys_box = Gtk.FlowBox()
+        self.hotkeys_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.hotkeys_box.set_max_children_per_line(4)
+        self.hotkeys_box.set_min_children_per_line(2)
+        right_box.pack_start(self.hotkeys_box, False, False, 8)
+        self._update_hotkeys_display()
+        
         action_box = Gtk.Box(spacing=12)
         action_box.set_halign(Gtk.Align.CENTER)
         
@@ -245,11 +939,321 @@ class AegisScreenSplit(Gtk.Window):
         action_box.pack_start(apply_btn, False, False, 0)
         
         edit_btn = Gtk.Button(label="Edit Layout")
+        edit_btn.get_style_context().add_class("secondary-btn")
         edit_btn.connect("clicked", self._edit_layout)
         action_box.pack_start(edit_btn, False, False, 0)
         
+        new_btn = Gtk.Button(label="Create New")
+        new_btn.get_style_context().add_class("secondary-btn")
+        new_btn.connect("clicked", self._create_new_layout)
+        action_box.pack_start(new_btn, False, False, 0)
+        
         right_box.pack_start(action_box, False, False, 12)
         paned.pack2(right_box, True, True)
+        
+        return paned
+    
+    def _create_monitors_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Per-Monitor Layouts")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+        
+        desc = Gtk.Label(label="Assign different layouts to each connected monitor")
+        desc.get_style_context().add_class("info-label")
+        desc.set_halign(Gtk.Align.START)
+        box.pack_start(desc, False, False, 0)
+        
+        self.monitor_combos = {}
+        
+        for monitor in self.monitors:
+            row = Gtk.Box(spacing=12)
+            row.set_margin_top(8)
+            
+            primary_str = " (Primary)" if monitor.primary else ""
+            info = Gtk.Label(label=f"{monitor.name}: {monitor.width}x{monitor.height}{primary_str}")
+            info.set_size_request(200, -1)
+            info.set_halign(Gtk.Align.START)
+            row.pack_start(info, False, False, 0)
+            
+            combo = Gtk.ComboBoxText()
+            for lid, linfo in PRESET_LAYOUTS.items():
+                combo.append(lid, linfo["name"])
+            for lid, linfo in self.custom_layouts.items():
+                combo.append(lid, linfo.get("name", lid))
+            
+            current = self.per_monitor_layouts.get(monitor.name, self.current_layout)
+            combo.set_active_id(current)
+            combo.connect("changed", self._on_monitor_layout_changed, monitor.name)
+            row.pack_start(combo, True, True, 0)
+            
+            self.monitor_combos[monitor.name] = combo
+            box.pack_start(row, False, False, 0)
+        
+        if not self.monitors:
+            no_monitors = Gtk.Label(label="No monitors detected. Click refresh to retry.")
+            no_monitors.get_style_context().add_class("info-label")
+            box.pack_start(no_monitors, False, False, 20)
+        
+        return box
+    
+    def _create_hotkeys_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Zone Snapping Hotkeys")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+        
+        global_row = Gtk.Box(spacing=12)
+        global_row.set_margin_top(8)
+        global_label = Gtk.Label(label="Global Toggle Zones:")
+        global_label.set_size_request(150, -1)
+        global_label.set_halign(Gtk.Align.START)
+        global_row.pack_start(global_label, False, False, 0)
+        
+        self.global_hotkey_entry = Gtk.Entry()
+        self.global_hotkey_entry.set_text(self.global_toggle_hotkey)
+        self.global_hotkey_entry.connect("changed", self._on_global_hotkey_changed)
+        global_row.pack_start(self.global_hotkey_entry, True, True, 0)
+        box.pack_start(global_row, False, False, 0)
+        
+        sep = Gtk.Separator()
+        sep.set_margin_top(8)
+        sep.set_margin_bottom(8)
+        box.pack_start(sep, False, False, 0)
+        
+        zone_title = Gtk.Label(label="Current Layout Zone Hotkeys")
+        zone_title.set_halign(Gtk.Align.START)
+        box.pack_start(zone_title, False, False, 0)
+        
+        self.zone_hotkey_entries = {}
+        layout = self._get_current_layout()
+        zones = layout.get("zones", [])
+        
+        for zone in zones:
+            row = Gtk.Box(spacing=12)
+            name_label = Gtk.Label(label=zone["name"])
+            name_label.set_size_request(150, -1)
+            name_label.set_halign(Gtk.Align.START)
+            row.pack_start(name_label, False, False, 0)
+            
+            entry = Gtk.Entry()
+            entry.set_text(zone.get("hotkey", ""))
+            entry.set_placeholder_text("e.g. Super+1")
+            entry.connect("changed", self._on_zone_hotkey_changed, zone["name"])
+            row.pack_start(entry, True, True, 0)
+            
+            self.zone_hotkey_entries[zone["name"]] = entry
+            box.pack_start(row, False, False, 4)
+        
+        help_text = Gtk.Label(label="Format: Super+1, Ctrl+Alt+G, etc. Changes apply after saving.")
+        help_text.get_style_context().add_class("info-label")
+        help_text.set_halign(Gtk.Align.START)
+        help_text.set_margin_top(12)
+        box.pack_start(help_text, False, False, 0)
+        
+        save_btn = Gtk.Button(label="Save Hotkeys")
+        save_btn.get_style_context().add_class("apply-btn")
+        save_btn.connect("clicked", self._save_hotkeys)
+        save_btn.set_halign(Gtk.Align.START)
+        save_btn.set_margin_top(12)
+        box.pack_start(save_btn, False, False, 0)
+        
+        return box
+    
+    def _create_memory_page(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Window Memory")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        box.pack_start(title, False, False, 0)
+        
+        desc = Gtk.Label(label="Remember which applications belong to which zones. Windows will auto-snap when opened.")
+        desc.get_style_context().add_class("info-label")
+        desc.set_halign(Gtk.Align.START)
+        desc.set_line_wrap(True)
+        box.pack_start(desc, False, False, 0)
+        
+        btn_box = Gtk.Box(spacing=8)
+        btn_box.set_margin_top(8)
+        
+        learn_btn = Gtk.Button(label="Learn Current Windows")
+        learn_btn.get_style_context().add_class("secondary-btn")
+        learn_btn.connect("clicked", self._learn_windows)
+        btn_box.pack_start(learn_btn, False, False, 0)
+        
+        clear_btn = Gtk.Button(label="Clear All Memory")
+        clear_btn.get_style_context().add_class("secondary-btn")
+        clear_btn.connect("clicked", self._clear_memory)
+        btn_box.pack_start(clear_btn, False, False, 0)
+        
+        box.pack_start(btn_box, False, False, 0)
+        
+        sep = Gtk.Separator()
+        sep.set_margin_top(8)
+        box.pack_start(sep, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        self.memory_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        scroll.add(self.memory_list)
+        box.pack_start(scroll, True, True, 0)
+        
+        self._refresh_memory_list()
+        
+        return box
+    
+    def _refresh_memory_list(self):
+        for child in self.memory_list.get_children():
+            self.memory_list.remove(child)
+        
+        if not self.window_memory:
+            empty_label = Gtk.Label(label="No window memory saved. Click 'Learn Current Windows' to start.")
+            empty_label.get_style_context().add_class("info-label")
+            self.memory_list.pack_start(empty_label, False, False, 20)
+        else:
+            for wm_class, mem in self.window_memory.items():
+                row = Gtk.Box(spacing=12)
+                row.get_style_context().add_class("memory-row")
+                
+                app_label = Gtk.Label(label=wm_class)
+                app_label.set_size_request(200, -1)
+                app_label.set_halign(Gtk.Align.START)
+                row.pack_start(app_label, False, False, 8)
+                
+                arrow = Gtk.Label(label="→")
+                row.pack_start(arrow, False, False, 0)
+                
+                zone_label = Gtk.Label(label=f"{mem.zone_name}")
+                zone_label.get_style_context().add_class("hotkey")
+                row.pack_start(zone_label, False, False, 0)
+                
+                if mem.monitor:
+                    mon_label = Gtk.Label(label=f"on {mem.monitor}")
+                    mon_label.get_style_context().add_class("info-label")
+                    row.pack_start(mon_label, False, False, 0)
+                
+                del_btn = Gtk.Button(label="×")
+                del_btn.connect("clicked", self._delete_memory_entry, wm_class)
+                row.pack_end(del_btn, False, False, 8)
+                
+                self.memory_list.pack_start(row, False, False, 0)
+        
+        self.memory_list.show_all()
+    
+    def _learn_windows(self, btn):
+        try:
+            result = subprocess.run(['wmctrl', '-l', '-x'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                layout = self._get_current_layout()
+                zones = layout.get("zones", [])
+                
+                for line in lines:
+                    if line:
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            wm_class = parts[2].split('.')[0] if '.' in parts[2] else parts[2]
+                            
+                            if zones:
+                                zone = zones[0]
+                                self.window_memory[wm_class] = WindowMemory(
+                                    wm_class=wm_class,
+                                    zone_name=zone["name"],
+                                    monitor=self.monitors[0].name if self.monitors else ""
+                                )
+                
+                self._save_config()
+                self._refresh_memory_list()
+                
+                dialog = Gtk.MessageDialog(
+                    parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+                    buttons=Gtk.ButtonsType.OK,
+                    text=f"Learned {len(self.window_memory)} windows!"
+                )
+                dialog.run()
+                dialog.destroy()
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Error: {e}\n\nMake sure wmctrl is installed."
+            )
+            dialog.run()
+            dialog.destroy()
+    
+    def _clear_memory(self, btn):
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Clear all window memory?"
+        )
+        response = dialog.run()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.YES:
+            self.window_memory.clear()
+            self._save_config()
+            self._refresh_memory_list()
+    
+    def _delete_memory_entry(self, btn, wm_class):
+        if wm_class in self.window_memory:
+            del self.window_memory[wm_class]
+            self._save_config()
+            self._refresh_memory_list()
+    
+    def _get_current_layout(self):
+        if self.current_layout in PRESET_LAYOUTS:
+            return PRESET_LAYOUTS[self.current_layout]
+        elif self.current_layout in self.custom_layouts:
+            return self.custom_layouts[self.current_layout]
+        return PRESET_LAYOUTS["stream_basic"]
+    
+    def _update_hotkeys_display(self):
+        for child in self.hotkeys_box.get_children():
+            self.hotkeys_box.remove(child)
+        
+        layout = self._get_current_layout()
+        zones = layout.get("zones", [])
+        
+        for zone in zones:
+            hbox = Gtk.Box(spacing=4)
+            hbox.set_margin_start(4)
+            hbox.set_margin_end(4)
+            hbox.set_margin_top(2)
+            hbox.set_margin_bottom(2)
+            
+            hotkey = zone.get("hotkey", "")
+            if hotkey:
+                klabel = Gtk.Label(label=hotkey)
+                klabel.get_style_context().add_class("hotkey")
+                hbox.pack_start(klabel, False, False, 0)
+            
+            nlabel = Gtk.Label(label=zone["name"])
+            nlabel.get_style_context().add_class("info-label")
+            hbox.pack_start(nlabel, False, False, 0)
+            
+            self.hotkeys_box.add(hbox)
+        
+        self.hotkeys_box.show_all()
+    
+    def _on_refresh_monitors(self, btn):
+        self._detect_monitors()
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=f"Detected {len(self.monitors)} monitor(s):\n\n{MonitorManager.get_monitor_info_string(self.monitors)}"
+        )
+        dialog.run()
+        dialog.destroy()
     
     def _on_layout_selected(self, btn, layout_id):
         if btn.get_active():
@@ -259,10 +1263,42 @@ class AegisScreenSplit(Gtk.Window):
                     lbtn.set_active(False)
             self._save_config()
             self.preview_area.queue_draw()
+            self._update_hotkeys_display()
     
     def _on_snap_toggle(self, switch, param):
         self.snap_enabled = switch.get_active()
         self._save_config()
+    
+    def _on_monitor_layout_changed(self, combo, monitor_name):
+        layout_id = combo.get_active_id()
+        if layout_id:
+            self.per_monitor_layouts[monitor_name] = layout_id
+            self._save_config()
+    
+    def _on_global_hotkey_changed(self, entry):
+        self.global_toggle_hotkey = entry.get_text()
+    
+    def _on_zone_hotkey_changed(self, entry, zone_name):
+        self.zone_hotkeys[zone_name] = entry.get_text()
+    
+    def _save_hotkeys(self, btn):
+        layout = self._get_current_layout()
+        zones = layout.get("zones", [])
+        
+        for zone in zones:
+            if zone["name"] in self.zone_hotkeys:
+                zone["hotkey"] = self.zone_hotkeys[zone["name"]]
+        
+        self._save_config()
+        self._update_hotkeys_display()
+        
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Hotkeys saved!"
+        )
+        dialog.run()
+        dialog.destroy()
     
     def _draw_preview(self, area, cr):
         width = area.get_allocated_width()
@@ -272,10 +1308,10 @@ class AegisScreenSplit(Gtk.Window):
         cr.rectangle(0, 0, width, height)
         cr.fill()
         
-        layout = PRESET_LAYOUTS.get(self.current_layout, PRESET_LAYOUTS["stream_basic"])
-        zones = layout["zones"]
+        layout = self._get_current_layout()
+        zones = layout.get("zones", [])
         
-        for zone in zones:
+        for i, zone in enumerate(zones):
             x = zone["x"] / 100 * width
             y = zone["y"] / 100 * height
             w = zone["w"] / 100 * width
@@ -297,19 +1333,31 @@ class AegisScreenSplit(Gtk.Window):
             text = zone["name"]
             extents = cr.text_extents(text)
             tx = x + (w - extents.width) / 2
-            ty = y + (h + extents.height) / 2
+            ty = y + (h + extents.height) / 2 - 6
             cr.move_to(tx, ty)
             cr.show_text(text)
+            
+            hotkey = zone.get("hotkey", "")
+            if hotkey:
+                cr.set_font_size(10)
+                cr.set_source_rgba(0, 0.83, 0.67, 0.8)
+                extents = cr.text_extents(hotkey)
+                tx = x + (w - extents.width) / 2
+                ty = y + (h + extents.height) / 2 + 10
+                cr.move_to(tx, ty)
+                cr.show_text(hotkey)
         
         return False
     
     def _apply_layout(self, btn):
         try:
             subprocess.run(["xdotool", "key", "super+z"], check=False)
+            self.zones_visible = True
+            
             dialog = Gtk.MessageDialog(
                 parent=self, flags=0, message_type=Gtk.MessageType.INFO,
-                buttons=Gtk.ButtonsType.OK, 
-                text="Layout applied! Drag windows to snap them to zones."
+                buttons=Gtk.ButtonsType.OK,
+                text="Layout applied! Drag windows to snap them to zones.\n\nUse the system tray icon for quick access."
             )
             dialog.run()
             dialog.destroy()
@@ -322,18 +1370,98 @@ class AegisScreenSplit(Gtk.Window):
             dialog.destroy()
     
     def _edit_layout(self, btn):
-        dialog = Gtk.MessageDialog(
-            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK, 
-            text="Layout Editor coming soon!\n\nFor now, edit ~/.config/aegis/screen-split.json"
-        )
-        dialog.run()
+        layout = self._get_current_layout()
+        zones = layout.get("zones", [])
+        
+        dialog = LayoutEditorDialog(self, self.current_layout, zones, self._on_layout_edited)
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            new_zones = dialog.get_zones()
+            self._on_layout_edited(self.current_layout, new_zones)
+        
         dialog.destroy()
+    
+    def _on_layout_edited(self, layout_name, zones):
+        if layout_name in PRESET_LAYOUTS:
+            custom_name = f"custom_{layout_name}"
+            self.custom_layouts[custom_name] = {
+                "name": f"Custom {PRESET_LAYOUTS[layout_name]['name']}",
+                "desc": "Customized layout",
+                "category": "custom",
+                "zones": zones
+            }
+            self.current_layout = custom_name
+        else:
+            self.custom_layouts[layout_name] = {
+                "name": layout_name,
+                "desc": "Custom layout",
+                "category": "custom",
+                "zones": zones
+            }
+        
+        self._save_config()
+        self.preview_area.queue_draw()
+        self._update_hotkeys_display()
+    
+    def _create_new_layout(self, btn):
+        dialog = Gtk.Dialog(title="Create New Layout", parent=self, flags=0)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Create", Gtk.ResponseType.OK)
+        
+        content = dialog.get_content_area()
+        content.set_spacing(12)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(12)
+        content.set_margin_bottom(12)
+        
+        name_box = Gtk.Box(spacing=8)
+        name_label = Gtk.Label(label="Layout Name:")
+        name_entry = Gtk.Entry()
+        name_entry.set_text("My Layout")
+        name_box.pack_start(name_label, False, False, 0)
+        name_box.pack_start(name_entry, True, True, 0)
+        content.pack_start(name_box, False, False, 0)
+        
+        dialog.show_all()
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            name = name_entry.get_text().strip() or "My Layout"
+            layout_id = name.lower().replace(" ", "_")
+            
+            default_zones = [
+                {"x": 0, "y": 0, "w": 50, "h": 50, "name": "Zone 1", "hotkey": "Super+1"},
+                {"x": 50, "y": 0, "w": 50, "h": 50, "name": "Zone 2", "hotkey": "Super+2"},
+                {"x": 0, "y": 50, "w": 50, "h": 50, "name": "Zone 3", "hotkey": "Super+3"},
+                {"x": 50, "y": 50, "w": 50, "h": 50, "name": "Zone 4", "hotkey": "Super+4"},
+            ]
+            
+            self.custom_layouts[layout_id] = {
+                "name": name,
+                "desc": "Custom layout",
+                "category": "custom",
+                "zones": default_zones
+            }
+            self.current_layout = layout_id
+            self._save_config()
+            
+            dialog.destroy()
+            self._edit_layout(None)
+        else:
+            dialog.destroy()
 
 def main():
-    win = AegisScreenSplit()
-    win.connect("destroy", Gtk.main_quit)
-    win.show_all()
+    import sys
+    start_minimized = "--minimized" in sys.argv or "--tray" in sys.argv
+    
+    win = AegisScreenSplit(start_minimized=start_minimized)
+    win.connect("delete-event", lambda w, e: w.hide() or True)
+    
+    if not start_minimized:
+        win.show_all()
+    
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     Gtk.main()
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ class AegisDeskLink:
     SERVICE_TYPE = "_aegis-desklink._tcp.local."
     DEFAULT_PORT = 24800
     PROTOCOL_VERSION = "1.0"
+    MAX_CLIPBOARD_HISTORY = 50
     
     def __init__(self):
         self.version = "1.0.0"
@@ -64,6 +65,16 @@ class AegisDeskLink:
         self.browser = None
         self.clipboard_content = ""
         self.last_clipboard_sync = None
+        
+        self.peer_latencies = {}
+        self.clipboard_history = []
+        self.auto_reconnect_enabled = True
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.reconnect_delay = 3
+        self.last_server_info = None
+        self.latency_callbacks = []
+        self.mesh_devices = {}
         
         self.ensure_directories()
         self.setup_logging()
@@ -123,7 +134,20 @@ class AegisDeskLink:
             "scroll_lock_toggle": True,
             "shared_secret": self._generate_secret(),
             "allowed_peers": [],
-            "blocked_peers": []
+            "blocked_peers": [],
+            "auto_reconnect": True,
+            "max_reconnect_attempts": 5,
+            "reconnect_delay_seconds": 3,
+            "hotkeys": {
+                "switch_left": "Ctrl+Alt+Left",
+                "switch_right": "Ctrl+Alt+Right",
+                "switch_up": "Ctrl+Alt+Up",
+                "switch_down": "Ctrl+Alt+Down",
+                "toggle_lock": "Scroll_Lock",
+                "clipboard_paste": "Ctrl+Shift+V"
+            },
+            "clipboard_history_enabled": True,
+            "max_clipboard_history": 50
         }
         
         try:
@@ -446,6 +470,9 @@ class AegisDeskLink:
                 self.clipboard_thread = threading.Thread(target=self._clipboard_sync_loop, daemon=True)
                 self.clipboard_thread.start()
             
+            self.start_latency_monitor()
+            self.load_mesh_devices()
+            
             result["success"] = True
             result["message"] = f"Server started on port {self.config['port']}"
             result["ip"] = self.get_local_ip()
@@ -619,12 +646,18 @@ class AegisDeskLink:
             elif msg_type == "clipboard":
                 self._handle_clipboard(sock, client_info, message)
             elif msg_type == "ping":
-                self._send_message(sock, {"type": "pong", "timestamp": time.time()})
+                self._send_message(sock, {"type": "pong", "timestamp": message.get("timestamp", time.time())})
+            elif msg_type == "pong":
+                sent_time = message.get("timestamp", 0)
+                if sent_time:
+                    latency = (time.time() - sent_time) * 1000
+                    peer_key = str(client_info.get("address", "unknown"))
+                    self.update_peer_latency(peer_key, latency)
             elif msg_type == "screen_info":
                 self._handle_screen_info(sock, client_info, message)
             
         except json.JSONDecodeError:
-            pass
+            self.logger.debug("Received malformed JSON packet, ignoring")
         except Exception as e:
             self.logger.error(f"Handle message error: {e}")
     
@@ -669,6 +702,9 @@ class AegisDeskLink:
         content = message.get("content", "")
         self.clipboard_content = content
         self._set_system_clipboard(content)
+        
+        sender = client_info.get("hostname", "unknown")
+        self.add_clipboard_history(content, f"from:{sender}")
         
         for addr, client in self.connected_clients.items():
             if client["socket"] != sock:
@@ -747,6 +783,9 @@ class AegisDeskLink:
                     "port": server_port,
                     "hostname": auth_response.get("server_hostname", server_host)
                 }
+                
+                self.last_server_info = self.connected_server.copy()
+                self.reconnect_attempts = 0
                 
                 self.client_socket.setblocking(False)
                 
@@ -844,19 +883,40 @@ class AegisDeskLink:
                             self._handle_server_message(data)
                         else:
                             self.logger.info("Server disconnected")
-                            self.stop()
+                            self._handle_disconnect()
                             break
                     except BlockingIOError:
                         pass
                     except ConnectionResetError:
                         self.logger.info("Server connection reset")
-                        self.stop()
+                        self._handle_disconnect()
                         break
             except Exception as e:
                 if self.is_running:
                     self.logger.error(f"Client loop error: {e}")
+                    self._handle_disconnect()
+                    break
         
         selector.close()
+    
+    def _handle_disconnect(self):
+        """Handle disconnection and attempt auto-reconnect"""
+        was_running = self.is_running
+        self.stop()
+        
+        if was_running and self.config.get("auto_reconnect", True) and self.last_server_info:
+            def reconnect_thread():
+                while self.reconnect_attempts < self.max_reconnect_attempts:
+                    try:
+                        if self.attempt_auto_reconnect():
+                            self.logger.info("Auto-reconnect successful")
+                            break
+                    except Exception as e:
+                        self.logger.error(f"Reconnect attempt failed: {e}")
+                if self.reconnect_attempts >= self.max_reconnect_attempts:
+                    self.logger.warning("Max reconnection attempts reached, giving up")
+            
+            threading.Thread(target=reconnect_thread, daemon=True).start()
     
     def _handle_server_message(self, data):
         """Handle incoming message from server"""
@@ -868,11 +928,21 @@ class AegisDeskLink:
                 content = message.get("content", "")
                 self.clipboard_content = content
                 self._set_system_clipboard(content)
+                server_name = self.connected_server.get("hostname", "server") if self.connected_server else "server"
+                self.add_clipboard_history(content, f"from:{server_name}")
             elif msg_type == "pong":
-                pass
+                sent_time = message.get("timestamp", 0)
+                if sent_time:
+                    latency = (time.time() - sent_time) * 1000
+                    server_key = "server"
+                    if self.connected_server:
+                        server_key = self.connected_server.get("hostname", "server")
+                    self.update_peer_latency(server_key, latency)
+            elif msg_type == "ping":
+                self._send_message(self.client_socket, {"type": "pong", "timestamp": message.get("timestamp", time.time())})
                 
         except json.JSONDecodeError:
-            pass
+            self.logger.debug("Received malformed JSON packet from server, ignoring")
         except Exception as e:
             self.logger.error(f"Handle server message error: {e}")
     
@@ -938,6 +1008,8 @@ class AegisDeskLink:
     def _broadcast_clipboard(self, content: str):
         """Broadcast clipboard content to all connected peers"""
         message = {"type": "clipboard", "content": content}
+        
+        self.add_clipboard_history(content, "sent")
         
         if self.mode == "server":
             for addr, client in self.connected_clients.items():
@@ -1029,12 +1101,193 @@ class AegisDeskLink:
                 {
                     "address": str(addr),
                     "hostname": info["info"].get("hostname", "unknown"),
-                    "authenticated": info["info"].get("authenticated", False)
+                    "authenticated": info["info"].get("authenticated", False),
+                    "latency": self.peer_latencies.get(str(addr), -1)
                 }
                 for addr, info in self.connected_clients.items()
             ]
         
+        status["peer_latencies"] = self.peer_latencies.copy()
+        status["mesh_devices"] = self.mesh_devices.copy()
+        
         return status
+    
+    def get_pairing_code(self) -> str:
+        """Generate a human-readable pairing code from the shared secret"""
+        secret = self.config.get("shared_secret", "")
+        code_hash = hashlib.md5(secret.encode()).hexdigest()[:6].upper()
+        return f"{code_hash[:3]}-{code_hash[3:]}"
+    
+    def get_connection_quality(self, latency_ms: float) -> Tuple[str, str]:
+        """Get connection quality indicator based on latency"""
+        if latency_ms < 0:
+            return "unknown", "#888888"
+        elif latency_ms < 30:
+            return "excellent", "#00ff00"
+        elif latency_ms < 80:
+            return "good", "#88ff00"
+        elif latency_ms < 150:
+            return "fair", "#ffff00"
+        elif latency_ms < 300:
+            return "poor", "#ff8800"
+        else:
+            return "bad", "#ff0000"
+    
+    def add_clipboard_history(self, content: str, direction: str = "sync"):
+        """Add entry to clipboard history"""
+        if not self.config.get("clipboard_history_enabled", True):
+            return
+        
+        if len(content) > 500:
+            preview = content[:500] + "..."
+        else:
+            preview = content
+        
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "preview": preview,
+            "length": len(content),
+            "direction": direction
+        }
+        
+        self.clipboard_history.insert(0, entry)
+        max_history = self.config.get("max_clipboard_history", self.MAX_CLIPBOARD_HISTORY)
+        if len(self.clipboard_history) > max_history:
+            self.clipboard_history = self.clipboard_history[:max_history]
+    
+    def get_clipboard_history(self) -> List[Dict]:
+        """Get clipboard history"""
+        return self.clipboard_history.copy()
+    
+    def clear_clipboard_history(self):
+        """Clear clipboard history"""
+        self.clipboard_history.clear()
+    
+    def ping_peer(self, peer_key: str) -> float:
+        """Send ping to peer and measure latency"""
+        start_time = time.time()
+        try:
+            if self.mode == "server" and peer_key in self.connected_clients:
+                client = self.connected_clients[peer_key]
+                self._send_message(client["socket"], {"type": "ping", "timestamp": start_time})
+            elif self.mode == "client" and self.client_socket:
+                self._send_message(self.client_socket, {"type": "ping", "timestamp": start_time})
+            return -1
+        except:
+            return -1
+    
+    def update_peer_latency(self, peer_key: str, latency_ms: float):
+        """Update latency for a peer"""
+        self.peer_latencies[peer_key] = latency_ms
+        for callback in self.latency_callbacks:
+            try:
+                callback(peer_key, latency_ms)
+            except:
+                pass
+    
+    def register_latency_callback(self, callback):
+        """Register callback for latency updates"""
+        self.latency_callbacks.append(callback)
+    
+    def start_latency_monitor(self):
+        """Start background thread to monitor latencies"""
+        def monitor_loop():
+            while self.is_running:
+                try:
+                    if self.mode == "server":
+                        for addr, client in list(self.connected_clients.items()):
+                            if client["info"].get("authenticated", False):
+                                start = time.time()
+                                try:
+                                    self._send_message(client["socket"], {
+                                        "type": "ping", 
+                                        "timestamp": start
+                                    })
+                                except:
+                                    pass
+                    elif self.mode == "client" and self.client_socket:
+                        start = time.time()
+                        try:
+                            self._send_message(self.client_socket, {
+                                "type": "ping",
+                                "timestamp": start
+                            })
+                        except:
+                            pass
+                except:
+                    pass
+                time.sleep(2)
+        
+        self.latency_thread = threading.Thread(target=monitor_loop, daemon=True)
+        self.latency_thread.start()
+    
+    def add_mesh_device(self, hostname: str, ip: str, port: int, position: str = None):
+        """Add a device to the mesh network"""
+        self.mesh_devices[hostname] = {
+            "ip": ip,
+            "port": port,
+            "position": position,
+            "connected": False,
+            "latency": -1,
+            "added_at": datetime.now().isoformat()
+        }
+        self.save_mesh_devices()
+    
+    def remove_mesh_device(self, hostname: str):
+        """Remove a device from the mesh network"""
+        if hostname in self.mesh_devices:
+            del self.mesh_devices[hostname]
+            self.save_mesh_devices()
+    
+    def save_mesh_devices(self):
+        """Save mesh devices to file"""
+        mesh_file = self.data_dir / "mesh-devices.json"
+        try:
+            with open(mesh_file, 'w') as f:
+                json.dump(self.mesh_devices, f, indent=2)
+        except:
+            pass
+    
+    def load_mesh_devices(self):
+        """Load mesh devices from file"""
+        mesh_file = self.data_dir / "mesh-devices.json"
+        try:
+            with open(mesh_file, 'r') as f:
+                self.mesh_devices = json.load(f)
+        except:
+            self.mesh_devices = {}
+    
+    def attempt_auto_reconnect(self):
+        """Attempt to auto-reconnect to last known server with exponential backoff"""
+        if not self.config.get("auto_reconnect", True):
+            return False
+        
+        if not self.last_server_info:
+            return False
+        
+        if self.reconnect_attempts >= self.max_reconnect_attempts:
+            self.logger.warning("Max reconnect attempts reached")
+            return False
+        
+        self.reconnect_attempts += 1
+        max_delay = 60
+        delay = min(self.reconnect_delay * (2 ** (self.reconnect_attempts - 1)), max_delay)
+        self.logger.info(f"Auto-reconnect attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {delay}s...")
+        time.sleep(delay)
+        
+        try:
+            result = self.start_client(
+                self.last_server_info["host"],
+                self.last_server_info.get("port", self.DEFAULT_PORT)
+            )
+            
+            if result["success"]:
+                self.reconnect_attempts = 0
+                return True
+        except Exception as e:
+            self.logger.error(f"Reconnect error: {e}")
+        
+        return False
 
 
 class DeskLinkGUI:
@@ -1043,15 +1296,17 @@ class DeskLinkGUI:
     def __init__(self):
         self.desklink = AegisDeskLink()
         self.root = tk.Tk()
+        self.current_tab = "main"
         self.setup_window()
         self.create_widgets()
         self.refresh_status()
         self.start_refresh_timer()
+        self.desklink.register_latency_callback(self.on_latency_update)
     
     def setup_window(self):
         """Configure the main window"""
         self.root.title("Aegis DeskLink")
-        self.root.geometry("800x600")
+        self.root.geometry("900x700")
         self.root.configure(bg='#1a1a2e')
         
         style = ttk.Style()
@@ -1063,31 +1318,65 @@ class DeskLinkGUI:
         style.configure('Status.TLabel', font=('Arial', 11))
         style.configure('TLabelframe', background='#1a1a2e')
         style.configure('TLabelframe.Label', background='#1a1a2e', foreground='#00d4ff')
+        style.configure('TNotebook', background='#1a1a2e')
+        style.configure('TNotebook.Tab', padding=[10, 5])
     
     def create_widgets(self):
         """Create GUI widgets"""
         header = ttk.Frame(self.root)
         header.pack(fill='x', padx=20, pady=15)
         
-        title = ttk.Label(header, text="🖥️ Aegis DeskLink", style='Header.TLabel')
+        title = ttk.Label(header, text="Aegis DeskLink", style='Header.TLabel')
         title.pack(side='left')
         
         btn_frame = ttk.Frame(header)
         btn_frame.pack(side='right')
         
-        ttk.Button(btn_frame, text="🔄 Refresh", command=self.refresh_status).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text="📡 Scan", command=self.scan_network).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Refresh", command=self.refresh_status).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Scan", command=self.scan_network).pack(side='left', padx=5)
         
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=20, pady=5)
+        
+        main_tab = ttk.Frame(self.notebook)
+        self.notebook.add(main_tab, text="Main")
+        self._create_main_tab(main_tab)
+        
+        pairing_tab = ttk.Frame(self.notebook)
+        self.notebook.add(pairing_tab, text="Pairing")
+        self._create_pairing_tab(pairing_tab)
+        
+        mesh_tab = ttk.Frame(self.notebook)
+        self.notebook.add(mesh_tab, text="Mesh Devices")
+        self._create_mesh_tab(mesh_tab)
+        
+        hotkeys_tab = ttk.Frame(self.notebook)
+        self.notebook.add(hotkeys_tab, text="Hotkeys")
+        self._create_hotkeys_tab(hotkeys_tab)
+        
+        history_tab = ttk.Frame(self.notebook)
+        self.notebook.add(history_tab, text="Clipboard History")
+        self._create_history_tab(history_tab)
+        
+        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=10)
+        log_frame.pack(fill='x', padx=20, pady=10)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=5, bg='#0f0f1a', 
+                                                  fg='#00ff00', font=('Courier', 9))
+        self.log_text.pack(fill='x')
+    
+    def _create_main_tab(self, parent):
+        """Create main tab content"""
+        main_frame = ttk.Frame(parent)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
         left_panel = ttk.Frame(main_frame)
         left_panel.pack(side='left', fill='both', expand=True)
         
-        status_frame = ttk.LabelFrame(left_panel, text="Status", padding=15)
+        status_frame = ttk.LabelFrame(left_panel, text="Status & Latency", padding=15)
         status_frame.pack(fill='x', pady=5)
         
-        self.status_label = ttk.Label(status_frame, text="⚪ Not Running", style='Status.TLabel')
+        self.status_label = ttk.Label(status_frame, text="Not Running", style='Status.TLabel')
         self.status_label.pack(anchor='w')
         
         self.mode_label = ttk.Label(status_frame, text="Mode: None", style='Status.TLabel')
@@ -1099,19 +1388,31 @@ class DeskLinkGUI:
         self.clients_label = ttk.Label(status_frame, text="Connections: 0", style='Status.TLabel')
         self.clients_label.pack(anchor='w')
         
+        latency_frame = ttk.Frame(status_frame)
+        latency_frame.pack(fill='x', pady=(10, 0))
+        
+        ttk.Label(latency_frame, text="Connection Quality:", style='Status.TLabel').pack(side='left')
+        self.latency_canvas = tk.Canvas(latency_frame, bg='#1a1a2e', width=20, height=20, 
+                                        highlightthickness=0)
+        self.latency_canvas.pack(side='left', padx=5)
+        self.quality_indicator = self.latency_canvas.create_oval(2, 2, 18, 18, fill='#888888', outline='')
+        
+        self.latency_label = ttk.Label(latency_frame, text="-- ms", style='Status.TLabel')
+        self.latency_label.pack(side='left')
+        
         controls_frame = ttk.LabelFrame(left_panel, text="Controls", padding=15)
         controls_frame.pack(fill='x', pady=10)
         
         mode_frame = ttk.Frame(controls_frame)
         mode_frame.pack(fill='x', pady=5)
         
-        self.server_btn = ttk.Button(mode_frame, text="▶ Start Server", command=self.start_server)
+        self.server_btn = ttk.Button(mode_frame, text="Start Server", command=self.start_server)
         self.server_btn.pack(side='left', padx=5)
         
-        self.client_btn = ttk.Button(mode_frame, text="🔗 Connect", command=self.show_connect_dialog)
+        self.client_btn = ttk.Button(mode_frame, text="Connect", command=self.show_connect_dialog)
         self.client_btn.pack(side='left', padx=5)
         
-        self.stop_btn = ttk.Button(mode_frame, text="⏹ Stop", command=self.stop_desklink, state='disabled')
+        self.stop_btn = ttk.Button(mode_frame, text="Stop", command=self.stop_desklink, state='disabled')
         self.stop_btn.pack(side='left', padx=5)
         
         options_frame = ttk.LabelFrame(left_panel, text="Options", padding=15)
@@ -1127,13 +1428,18 @@ class DeskLinkGUI:
                                         variable=self.encryption_var, command=self.toggle_encryption)
         encryption_cb.pack(anchor='w')
         
+        self.auto_reconnect_var = tk.BooleanVar(value=self.desklink.config.get("auto_reconnect", True))
+        auto_reconnect_cb = ttk.Checkbutton(options_frame, text="Auto-Reconnect", 
+                                            variable=self.auto_reconnect_var, command=self.toggle_auto_reconnect)
+        auto_reconnect_cb.pack(anchor='w')
+        
         right_panel = ttk.Frame(main_frame)
         right_panel.pack(side='right', fill='both', expand=True, padx=(20, 0))
         
         arrangement_frame = ttk.LabelFrame(right_panel, text="Screen Arrangement", padding=15)
         arrangement_frame.pack(fill='both', expand=True, pady=5)
         
-        self.canvas = tk.Canvas(arrangement_frame, bg='#0f0f1a', width=300, height=200)
+        self.canvas = tk.Canvas(arrangement_frame, bg='#0f0f1a', width=300, height=180)
         self.canvas.pack(fill='both', expand=True, pady=10)
         self._draw_arrangement()
         
@@ -1157,16 +1463,199 @@ class DeskLinkGUI:
         peers_frame.pack(fill='both', expand=True, pady=10)
         
         self.peers_list = tk.Listbox(peers_frame, bg='#0f0f1a', fg='#00ff00', 
-                                     selectbackground='#00d4ff', height=8)
+                                     selectbackground='#00d4ff', height=6)
         self.peers_list.pack(fill='both', expand=True)
         self.peers_list.bind('<Double-1>', self.connect_to_selected)
+    
+    def _create_pairing_tab(self, parent):
+        """Create pairing tab with code display"""
+        pairing_frame = ttk.Frame(parent, padding=20)
+        pairing_frame.pack(fill='both', expand=True)
         
-        log_frame = ttk.LabelFrame(self.root, text="Activity Log", padding=10)
-        log_frame.pack(fill='x', padx=20, pady=10)
+        ttk.Label(pairing_frame, text="Easy Device Pairing", 
+                  font=('Arial', 16, 'bold'), foreground='#00d4ff').pack(pady=10)
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, bg='#0f0f1a', 
-                                                  fg='#00ff00', font=('Courier', 9))
-        self.log_text.pack(fill='x')
+        ttk.Label(pairing_frame, text="Share this pairing code with other devices:", 
+                  style='Status.TLabel').pack(pady=5)
+        
+        code_frame = ttk.Frame(pairing_frame)
+        code_frame.pack(pady=20)
+        
+        pairing_code = self.desklink.get_pairing_code()
+        self.pairing_code_label = tk.Label(code_frame, text=pairing_code, 
+                                           font=('Courier', 32, 'bold'),
+                                           bg='#0f0f1a', fg='#00ff00',
+                                           padx=30, pady=20, relief='ridge', bd=3)
+        self.pairing_code_label.pack()
+        
+        btn_frame = ttk.Frame(pairing_frame)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Copy Code", command=self.copy_pairing_code).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Regenerate", command=self.regenerate_pairing_code).pack(side='left', padx=5)
+        
+        ttk.Separator(pairing_frame, orient='horizontal').pack(fill='x', pady=20)
+        
+        ttk.Label(pairing_frame, text="Enter pairing code from another device:", 
+                  style='Status.TLabel').pack(pady=5)
+        
+        enter_frame = ttk.Frame(pairing_frame)
+        enter_frame.pack(pady=10)
+        
+        self.enter_code_entry = ttk.Entry(enter_frame, width=15, font=('Courier', 16))
+        self.enter_code_entry.pack(side='left', padx=5)
+        
+        ttk.Button(enter_frame, text="Pair", command=self.pair_with_code).pack(side='left', padx=5)
+        
+        info_text = "Both devices must use the same pairing code.\nThe code is derived from your shared secret."
+        ttk.Label(pairing_frame, text=info_text, style='Status.TLabel', 
+                  justify='center').pack(pady=20)
+    
+    def _create_mesh_tab(self, parent):
+        """Create mesh devices tab"""
+        mesh_frame = ttk.Frame(parent, padding=20)
+        mesh_frame.pack(fill='both', expand=True)
+        
+        ttk.Label(mesh_frame, text="Multi-Device Mesh Network", 
+                  font=('Arial', 16, 'bold'), foreground='#00d4ff').pack(pady=10)
+        
+        list_frame = ttk.Frame(mesh_frame)
+        list_frame.pack(fill='both', expand=True, pady=10)
+        
+        columns = ('hostname', 'ip', 'position', 'status', 'latency')
+        self.mesh_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=8)
+        
+        self.mesh_tree.heading('hostname', text='Hostname')
+        self.mesh_tree.heading('ip', text='IP Address')
+        self.mesh_tree.heading('position', text='Position')
+        self.mesh_tree.heading('status', text='Status')
+        self.mesh_tree.heading('latency', text='Latency')
+        
+        self.mesh_tree.column('hostname', width=120)
+        self.mesh_tree.column('ip', width=120)
+        self.mesh_tree.column('position', width=80)
+        self.mesh_tree.column('status', width=80)
+        self.mesh_tree.column('latency', width=80)
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.mesh_tree.yview)
+        self.mesh_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.mesh_tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        add_frame = ttk.LabelFrame(mesh_frame, text="Add Device to Mesh", padding=15)
+        add_frame.pack(fill='x', pady=10)
+        
+        row1 = ttk.Frame(add_frame)
+        row1.pack(fill='x', pady=5)
+        
+        ttk.Label(row1, text="Hostname:", style='Status.TLabel').pack(side='left')
+        self.mesh_hostname_entry = ttk.Entry(row1, width=15)
+        self.mesh_hostname_entry.pack(side='left', padx=5)
+        
+        ttk.Label(row1, text="IP:", style='Status.TLabel').pack(side='left', padx=(10, 0))
+        self.mesh_ip_entry = ttk.Entry(row1, width=15)
+        self.mesh_ip_entry.pack(side='left', padx=5)
+        
+        ttk.Label(row1, text="Position:", style='Status.TLabel').pack(side='left', padx=(10, 0))
+        self.mesh_position_var = tk.StringVar(value="right")
+        mesh_pos_combo = ttk.Combobox(row1, textvariable=self.mesh_position_var, 
+                                       values=["left", "right", "above", "below"], width=8)
+        mesh_pos_combo.pack(side='left', padx=5)
+        
+        btn_row = ttk.Frame(add_frame)
+        btn_row.pack(fill='x', pady=10)
+        
+        ttk.Button(btn_row, text="Add Device", command=self.add_mesh_device).pack(side='left', padx=5)
+        ttk.Button(btn_row, text="Remove Selected", command=self.remove_mesh_device).pack(side='left', padx=5)
+        ttk.Button(btn_row, text="Connect All", command=self.connect_all_mesh).pack(side='left', padx=5)
+        
+        self.refresh_mesh_list()
+    
+    def _create_hotkeys_tab(self, parent):
+        """Create hotkeys configuration tab"""
+        hotkeys_frame = ttk.Frame(parent, padding=20)
+        hotkeys_frame.pack(fill='both', expand=True)
+        
+        ttk.Label(hotkeys_frame, text="Keyboard Shortcut Configuration", 
+                  font=('Arial', 16, 'bold'), foreground='#00d4ff').pack(pady=10)
+        
+        ttk.Label(hotkeys_frame, text="Configure hotkeys for switching between computers:", 
+                  style='Status.TLabel').pack(pady=5)
+        
+        hotkeys_config = self.desklink.config.get("hotkeys", {})
+        self.hotkey_entries = {}
+        
+        hotkey_defs = [
+            ("switch_left", "Switch to Left Screen"),
+            ("switch_right", "Switch to Right Screen"),
+            ("switch_up", "Switch to Above Screen"),
+            ("switch_down", "Switch to Below Screen"),
+            ("toggle_lock", "Toggle Screen Lock"),
+            ("clipboard_paste", "Paste from Shared Clipboard")
+        ]
+        
+        for key, label in hotkey_defs:
+            row = ttk.Frame(hotkeys_frame)
+            row.pack(fill='x', pady=5)
+            
+            ttk.Label(row, text=f"{label}:", style='Status.TLabel', width=30).pack(side='left')
+            
+            entry = ttk.Entry(row, width=20)
+            entry.insert(0, hotkeys_config.get(key, ""))
+            entry.pack(side='left', padx=5)
+            self.hotkey_entries[key] = entry
+        
+        btn_frame = ttk.Frame(hotkeys_frame)
+        btn_frame.pack(pady=20)
+        
+        ttk.Button(btn_frame, text="Save Hotkeys", command=self.save_hotkeys).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Reset to Defaults", command=self.reset_hotkeys).pack(side='left', padx=5)
+        
+        info_label = ttk.Label(hotkeys_frame, 
+                               text="Format: Ctrl+Alt+Key, Shift+Key, etc.\nNote: Hotkeys require system integration to work.",
+                               style='Status.TLabel', justify='center')
+        info_label.pack(pady=10)
+    
+    def _create_history_tab(self, parent):
+        """Create clipboard history tab"""
+        history_frame = ttk.Frame(parent, padding=20)
+        history_frame.pack(fill='both', expand=True)
+        
+        ttk.Label(history_frame, text="Clipboard Sync History", 
+                  font=('Arial', 16, 'bold'), foreground='#00d4ff').pack(pady=10)
+        
+        columns = ('time', 'direction', 'preview')
+        self.history_tree = ttk.Treeview(history_frame, columns=columns, show='headings', height=12)
+        
+        self.history_tree.heading('time', text='Time')
+        self.history_tree.heading('direction', text='Direction')
+        self.history_tree.heading('preview', text='Content Preview')
+        
+        self.history_tree.column('time', width=100)
+        self.history_tree.column('direction', width=100)
+        self.history_tree.column('preview', width=400)
+        
+        scrollbar = ttk.Scrollbar(history_frame, orient='vertical', command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree_frame = ttk.Frame(history_frame)
+        tree_frame.pack(fill='both', expand=True)
+        
+        self.history_tree.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        btn_frame = ttk.Frame(history_frame)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Refresh", command=self.refresh_clipboard_history).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Clear History", command=self.clear_clipboard_history).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Copy Selected", command=self.copy_from_history).pack(side='left', padx=5)
+        
+        self.history_enabled_var = tk.BooleanVar(value=self.desklink.config.get("clipboard_history_enabled", True))
+        history_cb = ttk.Checkbutton(history_frame, text="Enable clipboard history", 
+                                      variable=self.history_enabled_var, command=self.toggle_history)
+        history_cb.pack(pady=5)
     
     def _draw_arrangement(self):
         """Draw the screen arrangement visualization"""
@@ -1347,6 +1836,176 @@ class DeskLinkGUI:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
+    
+    def toggle_auto_reconnect(self):
+        """Toggle auto-reconnect"""
+        self.desklink.config["auto_reconnect"] = self.auto_reconnect_var.get()
+        self.desklink.save_config()
+        state = "enabled" if self.auto_reconnect_var.get() else "disabled"
+        self.log(f"Auto-reconnect {state}")
+    
+    def on_latency_update(self, peer_key: str, latency_ms: float):
+        """Callback for latency updates"""
+        def update():
+            quality, color = self.desklink.get_connection_quality(latency_ms)
+            self.latency_canvas.itemconfig(self.quality_indicator, fill=color)
+            self.latency_label.config(text=f"{latency_ms:.1f} ms ({quality})")
+        self.root.after(0, update)
+    
+    def copy_pairing_code(self):
+        """Copy pairing code to clipboard"""
+        code = self.desklink.get_pairing_code()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(code)
+        self.log("Pairing code copied to clipboard")
+    
+    def regenerate_pairing_code(self):
+        """Regenerate the pairing code"""
+        self.desklink.config["shared_secret"] = self.desklink._generate_secret()
+        self.desklink.save_config()
+        new_code = self.desklink.get_pairing_code()
+        self.pairing_code_label.config(text=new_code)
+        self.log("New pairing code generated")
+    
+    def pair_with_code(self):
+        """Pair with another device using entered code"""
+        code = self.enter_code_entry.get().strip().upper()
+        if code:
+            self.log(f"Verifying pairing code: {code}")
+            messagebox.showinfo("Pairing", 
+                "To pair, both devices must have the same shared secret.\n"
+                "Go to Settings and set the same shared secret on both devices,\n"
+                "or use 'Copy Code' and share it manually.")
+    
+    def refresh_mesh_list(self):
+        """Refresh the mesh devices list"""
+        for item in self.mesh_tree.get_children():
+            self.mesh_tree.delete(item)
+        
+        for hostname, info in self.desklink.mesh_devices.items():
+            latency = self.desklink.peer_latencies.get(hostname, -1)
+            latency_str = f"{latency:.0f}ms" if latency >= 0 else "N/A"
+            status = "Connected" if info.get("connected", False) else "Offline"
+            
+            self.mesh_tree.insert('', 'end', values=(
+                hostname,
+                info.get('ip', ''),
+                info.get('position', 'N/A'),
+                status,
+                latency_str
+            ))
+    
+    def add_mesh_device(self):
+        """Add a device to the mesh network"""
+        hostname = self.mesh_hostname_entry.get().strip()
+        ip = self.mesh_ip_entry.get().strip()
+        position = self.mesh_position_var.get()
+        
+        if hostname and ip:
+            self.desklink.add_mesh_device(hostname, ip, self.desklink.DEFAULT_PORT, position)
+            self.log(f"Added {hostname} to mesh network")
+            self.refresh_mesh_list()
+            self.mesh_hostname_entry.delete(0, tk.END)
+            self.mesh_ip_entry.delete(0, tk.END)
+        else:
+            messagebox.showerror("Error", "Please enter hostname and IP address")
+    
+    def remove_mesh_device(self):
+        """Remove selected device from mesh"""
+        selection = self.mesh_tree.selection()
+        if selection:
+            item = self.mesh_tree.item(selection[0])
+            hostname = item['values'][0]
+            if messagebox.askyesno("Remove", f"Remove {hostname} from mesh?"):
+                self.desklink.remove_mesh_device(hostname)
+                self.log(f"Removed {hostname} from mesh")
+                self.refresh_mesh_list()
+    
+    def connect_all_mesh(self):
+        """Connect to all mesh devices"""
+        self.log("Connecting to all mesh devices...")
+        for hostname, info in self.desklink.mesh_devices.items():
+            self.desklink.set_screen_arrangement(info.get('position', 'right'), hostname)
+        self._draw_arrangement()
+        messagebox.showinfo("Mesh", "Screen arrangement updated with all mesh devices")
+    
+    def save_hotkeys(self):
+        """Save hotkey configuration"""
+        hotkeys = {}
+        for key, entry in self.hotkey_entries.items():
+            hotkeys[key] = entry.get().strip()
+        
+        self.desklink.config["hotkeys"] = hotkeys
+        self.desklink.save_config()
+        self.log("Hotkeys saved")
+        messagebox.showinfo("Hotkeys", "Keyboard shortcuts saved successfully")
+    
+    def reset_hotkeys(self):
+        """Reset hotkeys to defaults"""
+        defaults = {
+            "switch_left": "Ctrl+Alt+Left",
+            "switch_right": "Ctrl+Alt+Right",
+            "switch_up": "Ctrl+Alt+Up",
+            "switch_down": "Ctrl+Alt+Down",
+            "toggle_lock": "Scroll_Lock",
+            "clipboard_paste": "Ctrl+Shift+V"
+        }
+        
+        for key, entry in self.hotkey_entries.items():
+            entry.delete(0, tk.END)
+            entry.insert(0, defaults.get(key, ""))
+        
+        self.desklink.config["hotkeys"] = defaults
+        self.desklink.save_config()
+        self.log("Hotkeys reset to defaults")
+    
+    def refresh_clipboard_history(self):
+        """Refresh clipboard history display"""
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        for entry in self.desklink.get_clipboard_history():
+            timestamp = entry.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    timestamp = dt.strftime("%H:%M:%S")
+                except:
+                    pass
+            
+            preview = entry.get("preview", "")[:60]
+            if len(entry.get("preview", "")) > 60:
+                preview += "..."
+            
+            self.history_tree.insert('', 'end', values=(
+                timestamp,
+                entry.get("direction", ""),
+                preview
+            ))
+    
+    def clear_clipboard_history(self):
+        """Clear clipboard history"""
+        if messagebox.askyesno("Clear History", "Clear all clipboard history?"):
+            self.desklink.clear_clipboard_history()
+            self.refresh_clipboard_history()
+            self.log("Clipboard history cleared")
+    
+    def copy_from_history(self):
+        """Copy selected item from history"""
+        selection = self.history_tree.selection()
+        if selection:
+            item = self.history_tree.item(selection[0])
+            content = item['values'][2] if len(item['values']) > 2 else ""
+            self.root.clipboard_clear()
+            self.root.clipboard_append(content)
+            self.log("Copied from history")
+    
+    def toggle_history(self):
+        """Toggle clipboard history"""
+        self.desklink.config["clipboard_history_enabled"] = self.history_enabled_var.get()
+        self.desklink.save_config()
+        state = "enabled" if self.history_enabled_var.get() else "disabled"
+        self.log(f"Clipboard history {state}")
     
     def run(self):
         """Run the GUI"""

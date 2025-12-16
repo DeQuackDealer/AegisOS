@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
 """
-Aegis OS System Monitor - Freemium Edition
-Basic system monitoring without advanced features
+Aegis OS System Monitor - Enhanced Edition
+Comprehensive system monitoring with GPU, network, processes, and dashboard support
 """
 
 import os
+import sys
 import time
 import json
 import logging
+import argparse
+import csv
+import re
 from datetime import datetime
 import subprocess
+import shutil
 
-# Try to import psutil, but provide fallback if not available
 try:
     import psutil
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    print("⚠️  psutil not available, using fallback methods")
 
 class AegisSystemMonitor:
-    def __init__(self):
+    def __init__(self, dashboard_mode=False):
         self.config_file = "/etc/aegis/monitor-config.json"
         self.log_file = "/var/log/aegis-system.log"
         self.stats_file = "/var/lib/aegis/system-stats.json"
-        self.setup_logging()
+        self.csv_export_dir = "/var/lib/aegis/exports"
+        self.dashboard_mode = dashboard_mode
+        self.prev_net_io = None
+        self.prev_net_time = None
+        
+        if not dashboard_mode:
+            self.setup_logging()
         self.ensure_directories()
         
     def setup_logging(self):
-        """Setup logging configuration"""
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
@@ -39,19 +47,20 @@ class AegisSystemMonitor:
         )
         
     def ensure_directories(self):
-        """Ensure required directories exist"""
-        os.makedirs("/etc/aegis", exist_ok=True)
-        os.makedirs("/var/lib/aegis", exist_ok=True)
-        os.makedirs("/var/log", exist_ok=True)
+        for d in ["/etc/aegis", "/var/lib/aegis", "/var/log", self.csv_export_dir]:
+            try:
+                os.makedirs(d, exist_ok=True)
+            except (OSError, PermissionError):
+                pass
     
     def load_config(self):
-        """Load monitoring configuration"""
         default_config = {
             "update_interval": 30,
             "cpu_alert_threshold": 90,
             "memory_alert_threshold": 85,
             "disk_alert_threshold": 90,
             "temperature_alert_threshold": 80,
+            "gpu_alert_threshold": 85,
             "log_retention_days": 7
         }
         
@@ -60,12 +69,14 @@ class AegisSystemMonitor:
                 config = json.load(f)
                 return {**default_config, **config}
         except FileNotFoundError:
-            with open(self.config_file, 'w') as f:
-                json.dump(default_config, f, indent=2)
+            try:
+                with open(self.config_file, 'w') as f:
+                    json.dump(default_config, f, indent=2)
+            except:
+                pass
             return default_config
     
     def get_cpu_usage_fallback(self):
-        """Get CPU usage using /proc/stat"""
         try:
             with open('/proc/stat', 'r') as f:
                 line = f.readline()
@@ -89,13 +100,11 @@ class AegisSystemMonitor:
             return 0
     
     def get_memory_info_fallback(self):
-        """Get memory info from /proc/meminfo"""
         try:
             with open('/proc/meminfo', 'r') as f:
                 meminfo = f.read()
             
             mem_total = int([line.split()[1] for line in meminfo.split('\n') if 'MemTotal' in line][0]) * 1024
-            mem_free = int([line.split()[1] for line in meminfo.split('\n') if 'MemFree' in line][0]) * 1024
             mem_available = int([line.split()[1] for line in meminfo.split('\n') if 'MemAvailable' in line][0]) * 1024
             mem_used = mem_total - mem_available
             mem_percent = (mem_used / mem_total * 100) if mem_total > 0 else 0
@@ -110,7 +119,6 @@ class AegisSystemMonitor:
             return {"total": 0, "available": 0, "percent": 0, "used": 0}
     
     def get_disk_usage_fallback(self):
-        """Get disk usage using df command"""
         disk_info = {}
         try:
             result = subprocess.run(['df', '-B1'], capture_output=True, text=True)
@@ -138,21 +146,362 @@ class AegisSystemMonitor:
             pass
         return disk_info
 
+    def get_nvidia_gpu_info(self):
+        """Get NVIDIA GPU info using nvidia-smi"""
+        gpus = []
+        if not shutil.which('nvidia-smi'):
+            return gpus
+        try:
+            result = subprocess.run([
+                'nvidia-smi', 
+                '--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,fan.speed',
+                '--format=csv,noheader,nounits'
+            ], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        parts = [p.strip() for p in line.split(',')]
+                        if len(parts) >= 6:
+                            gpu = {
+                                "vendor": "NVIDIA",
+                                "index": int(parts[0]),
+                                "name": parts[1],
+                                "usage_percent": float(parts[2]) if parts[2] != '[N/A]' else 0,
+                                "memory_used_mb": float(parts[3]) if parts[3] != '[N/A]' else 0,
+                                "memory_total_mb": float(parts[4]) if parts[4] != '[N/A]' else 0,
+                                "temperature_c": float(parts[5]) if parts[5] != '[N/A]' else 0,
+                                "fan_speed_percent": float(parts[6]) if len(parts) > 6 and parts[6] != '[N/A]' else None
+                            }
+                            gpus.append(gpu)
+        except:
+            pass
+        return gpus
+    
+    def get_amd_gpu_info(self):
+        """Get AMD GPU info using radeontop or sysfs"""
+        gpus = []
+        try:
+            for i in range(10):
+                gpu_path = f"/sys/class/drm/card{i}/device"
+                if not os.path.exists(gpu_path):
+                    continue
+                    
+                vendor_path = f"{gpu_path}/vendor"
+                if os.path.exists(vendor_path):
+                    with open(vendor_path, 'r') as f:
+                        vendor = f.read().strip()
+                    if vendor != "0x1002":
+                        continue
+                
+                gpu = {
+                    "vendor": "AMD",
+                    "index": i,
+                    "name": f"AMD GPU {i}",
+                    "usage_percent": 0,
+                    "memory_used_mb": 0,
+                    "memory_total_mb": 0,
+                    "temperature_c": 0,
+                    "fan_speed_percent": None
+                }
+                
+                usage_path = f"{gpu_path}/gpu_busy_percent"
+                if os.path.exists(usage_path):
+                    with open(usage_path, 'r') as f:
+                        gpu["usage_percent"] = float(f.read().strip())
+                
+                mem_used_path = f"{gpu_path}/mem_info_vram_used"
+                if os.path.exists(mem_used_path):
+                    with open(mem_used_path, 'r') as f:
+                        gpu["memory_used_mb"] = int(f.read().strip()) / (1024 * 1024)
+                
+                mem_total_path = f"{gpu_path}/mem_info_vram_total"
+                if os.path.exists(mem_total_path):
+                    with open(mem_total_path, 'r') as f:
+                        gpu["memory_total_mb"] = int(f.read().strip()) / (1024 * 1024)
+                
+                hwmon_path = f"{gpu_path}/hwmon"
+                if os.path.exists(hwmon_path):
+                    for hwmon in os.listdir(hwmon_path):
+                        temp_path = f"{hwmon_path}/{hwmon}/temp1_input"
+                        if os.path.exists(temp_path):
+                            with open(temp_path, 'r') as f:
+                                gpu["temperature_c"] = int(f.read().strip()) / 1000
+                        
+                        fan_path = f"{hwmon_path}/{hwmon}/pwm1"
+                        fan_max_path = f"{hwmon_path}/{hwmon}/pwm1_max"
+                        if os.path.exists(fan_path) and os.path.exists(fan_max_path):
+                            with open(fan_path, 'r') as f:
+                                fan_val = int(f.read().strip())
+                            with open(fan_max_path, 'r') as f:
+                                fan_max = int(f.read().strip())
+                            if fan_max > 0:
+                                gpu["fan_speed_percent"] = round((fan_val / fan_max) * 100, 1)
+                        break
+                
+                gpus.append(gpu)
+        except:
+            pass
+        return gpus
+    
+    def get_gpu_info(self):
+        """Get all GPU information"""
+        gpus = []
+        gpus.extend(self.get_nvidia_gpu_info())
+        gpus.extend(self.get_amd_gpu_info())
+        return gpus
+    
+    def get_network_speed(self):
+        """Get network bandwidth in MB/s"""
+        net_speed = {"download_mbps": 0, "upload_mbps": 0, "interfaces": {}}
+        
+        try:
+            if PSUTIL_AVAILABLE:
+                net_io = psutil.net_io_counters(pernic=True)
+            else:
+                net_io = self._get_net_io_fallback()
+            
+            current_time = time.time()
+            
+            if self.prev_net_io and self.prev_net_time:
+                time_delta = current_time - self.prev_net_time
+                if time_delta > 0:
+                    total_recv = 0
+                    total_sent = 0
+                    
+                    for iface, counters in net_io.items():
+                        if iface in self.prev_net_io:
+                            if PSUTIL_AVAILABLE:
+                                bytes_recv = counters.bytes_recv - self.prev_net_io[iface].bytes_recv
+                                bytes_sent = counters.bytes_sent - self.prev_net_io[iface].bytes_sent
+                            else:
+                                bytes_recv = counters['bytes_recv'] - self.prev_net_io[iface]['bytes_recv']
+                                bytes_sent = counters['bytes_sent'] - self.prev_net_io[iface]['bytes_sent']
+                            
+                            recv_mbps = round((bytes_recv / time_delta) / (1024 * 1024), 2)
+                            sent_mbps = round((bytes_sent / time_delta) / (1024 * 1024), 2)
+                            
+                            net_speed["interfaces"][iface] = {
+                                "download_mbps": recv_mbps,
+                                "upload_mbps": sent_mbps
+                            }
+                            total_recv += recv_mbps
+                            total_sent += sent_mbps
+                    
+                    net_speed["download_mbps"] = round(total_recv, 2)
+                    net_speed["upload_mbps"] = round(total_sent, 2)
+            
+            self.prev_net_io = net_io
+            self.prev_net_time = current_time
+            
+        except:
+            pass
+        
+        return net_speed
+    
+    def _get_net_io_fallback(self):
+        """Fallback for network I/O using /proc/net/dev"""
+        net_io = {}
+        try:
+            with open('/proc/net/dev', 'r') as f:
+                lines = f.readlines()[2:]
+                for line in lines:
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        iface = parts[0].strip()
+                        stats = parts[1].split()
+                        net_io[iface] = {
+                            'bytes_recv': int(stats[0]),
+                            'bytes_sent': int(stats[8])
+                        }
+        except:
+            pass
+        return net_io
+    
+    def get_top_processes(self, limit=10):
+        """Get top processes by CPU and memory usage"""
+        processes = {"by_cpu": [], "by_memory": []}
+        
+        try:
+            if PSUTIL_AVAILABLE:
+                procs = []
+                for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                    try:
+                        info = proc.info
+                        procs.append({
+                            "pid": info['pid'],
+                            "name": info['name'][:30],
+                            "cpu_percent": info['cpu_percent'] or 0,
+                            "memory_percent": round(info['memory_percent'] or 0, 1)
+                        })
+                    except:
+                        continue
+                
+                processes["by_cpu"] = sorted(procs, key=lambda x: x['cpu_percent'], reverse=True)[:limit]
+                processes["by_memory"] = sorted(procs, key=lambda x: x['memory_percent'], reverse=True)[:limit]
+            else:
+                result = subprocess.run(
+                    ['ps', 'aux', '--sort=-pcpu'],
+                    capture_output=True, text=True
+                )
+                lines = result.stdout.strip().split('\n')[1:limit+1]
+                for line in lines:
+                    parts = line.split(None, 10)
+                    if len(parts) >= 11:
+                        processes["by_cpu"].append({
+                            "pid": int(parts[1]),
+                            "name": parts[10][:30],
+                            "cpu_percent": float(parts[2]),
+                            "memory_percent": float(parts[3])
+                        })
+                
+                result = subprocess.run(
+                    ['ps', 'aux', '--sort=-pmem'],
+                    capture_output=True, text=True
+                )
+                lines = result.stdout.strip().split('\n')[1:limit+1]
+                for line in lines:
+                    parts = line.split(None, 10)
+                    if len(parts) >= 11:
+                        processes["by_memory"].append({
+                            "pid": int(parts[1]),
+                            "name": parts[10][:30],
+                            "cpu_percent": float(parts[2]),
+                            "memory_percent": float(parts[3])
+                        })
+        except:
+            pass
+        
+        return processes
+    
+    def get_fan_speeds(self):
+        """Get fan speeds from /sys or sensors"""
+        fans = []
+        
+        try:
+            if PSUTIL_AVAILABLE:
+                try:
+                    fan_data = psutil.sensors_fans()
+                    for name, entries in fan_data.items():
+                        for entry in entries:
+                            fans.append({
+                                "name": f"{name}/{entry.label or 'fan'}",
+                                "rpm": entry.current
+                            })
+                except:
+                    pass
+            
+            if not fans:
+                for hwmon in os.listdir('/sys/class/hwmon'):
+                    hwmon_path = f'/sys/class/hwmon/{hwmon}'
+                    name = "unknown"
+                    name_path = f'{hwmon_path}/name'
+                    if os.path.exists(name_path):
+                        with open(name_path, 'r') as f:
+                            name = f.read().strip()
+                    
+                    for i in range(1, 10):
+                        fan_path = f'{hwmon_path}/fan{i}_input'
+                        if os.path.exists(fan_path):
+                            with open(fan_path, 'r') as f:
+                                rpm = int(f.read().strip())
+                                fans.append({
+                                    "name": f"{name}/fan{i}",
+                                    "rpm": rpm
+                                })
+        except:
+            pass
+        
+        return fans
+    
+    def get_battery_status(self):
+        """Get battery percentage and charging status"""
+        battery = {"available": False}
+        
+        try:
+            if PSUTIL_AVAILABLE:
+                bat = psutil.sensors_battery()
+                if bat:
+                    battery = {
+                        "available": True,
+                        "percent": round(bat.percent, 1),
+                        "charging": bat.power_plugged,
+                        "time_remaining_min": int(bat.secsleft / 60) if bat.secsleft > 0 else None
+                    }
+            else:
+                bat_path = '/sys/class/power_supply/BAT0'
+                if not os.path.exists(bat_path):
+                    bat_path = '/sys/class/power_supply/BAT1'
+                
+                if os.path.exists(bat_path):
+                    battery["available"] = True
+                    
+                    cap_path = f'{bat_path}/capacity'
+                    if os.path.exists(cap_path):
+                        with open(cap_path, 'r') as f:
+                            battery["percent"] = int(f.read().strip())
+                    
+                    status_path = f'{bat_path}/status'
+                    if os.path.exists(status_path):
+                        with open(status_path, 'r') as f:
+                            status = f.read().strip()
+                            battery["charging"] = status in ['Charging', 'Full']
+                            battery["status"] = status
+        except:
+            pass
+        
+        return battery
+    
+    def format_uptime(self, boot_time=None):
+        """Format uptime as days/hours/minutes"""
+        try:
+            if boot_time:
+                uptime_seconds = time.time() - boot_time
+            else:
+                with open('/proc/uptime', 'r') as f:
+                    uptime_seconds = float(f.readline().split()[0])
+            
+            days = int(uptime_seconds // 86400)
+            hours = int((uptime_seconds % 86400) // 3600)
+            minutes = int((uptime_seconds % 3600) // 60)
+            
+            parts = []
+            if days > 0:
+                parts.append(f"{days}d")
+            if hours > 0:
+                parts.append(f"{hours}h")
+            parts.append(f"{minutes}m")
+            
+            return {
+                "formatted": " ".join(parts),
+                "days": days,
+                "hours": hours,
+                "minutes": minutes,
+                "total_seconds": int(uptime_seconds)
+            }
+        except:
+            return {"formatted": "N/A", "days": 0, "hours": 0, "minutes": 0, "total_seconds": 0}
+
     def get_system_stats(self):
-        """Collect system statistics"""
+        """Collect comprehensive system statistics"""
         stats = {
             "timestamp": datetime.now().isoformat(),
             "cpu": {},
             "memory": {},
             "disk": {},
             "network": {},
-            "processes": 0,
-            "boot_time": 0,
-            "temperature": {}
+            "network_speed": {},
+            "gpu": [],
+            "processes": {},
+            "fans": [],
+            "battery": {},
+            "uptime": {},
+            "temperature": {},
+            "process_count": 0,
+            "boot_time": 0
         }
         
         if PSUTIL_AVAILABLE:
-            # Use psutil if available
             stats["cpu"] = {
                 "usage": psutil.cpu_percent(interval=1),
                 "count": psutil.cpu_count(),
@@ -165,10 +514,9 @@ class AegisSystemMonitor:
                 "used": psutil.virtual_memory().used
             }
             stats["network"] = psutil.net_io_counters()._asdict()
-            stats["processes"] = len(psutil.pids())
+            stats["process_count"] = len(psutil.pids())
             stats["boot_time"] = psutil.boot_time()
             
-            # Get disk usage for all mounted filesystems
             for partition in psutil.disk_partitions():
                 try:
                     partition_usage = psutil.disk_usage(partition.mountpoint)
@@ -180,10 +528,9 @@ class AegisSystemMonitor:
                         "free": partition_usage.free,
                         "percent": round((partition_usage.used / partition_usage.total) * 100, 2)
                     }
-                except PermissionError:
+                except:
                     continue
                     
-            # Get temperature information if available
             try:
                 temps = psutil.sensors_temperatures()
                 if temps:
@@ -196,7 +543,6 @@ class AegisSystemMonitor:
             except:
                 pass
         else:
-            # Use fallback methods
             stats["cpu"] = {
                 "usage": self.get_cpu_usage_fallback(),
                 "count": os.cpu_count() or 1,
@@ -205,19 +551,24 @@ class AegisSystemMonitor:
             stats["memory"] = self.get_memory_info_fallback()
             stats["disk"] = self.get_disk_usage_fallback()
             
-            # Get process count from /proc
             try:
-                stats["processes"] = len([d for d in os.listdir('/proc') if d.isdigit()])
+                stats["process_count"] = len([d for d in os.listdir('/proc') if d.isdigit()])
             except:
-                stats["processes"] = 0
+                stats["process_count"] = 0
             
-            # Get boot time from /proc/uptime
             try:
                 with open('/proc/uptime', 'r') as f:
                     uptime = float(f.readline().split()[0])
                     stats["boot_time"] = time.time() - uptime
             except:
                 stats["boot_time"] = 0
+        
+        stats["gpu"] = self.get_gpu_info()
+        stats["network_speed"] = self.get_network_speed()
+        stats["processes"] = self.get_top_processes()
+        stats["fans"] = self.get_fan_speeds()
+        stats["battery"] = self.get_battery_status()
+        stats["uptime"] = self.format_uptime(stats["boot_time"])
             
         return stats
     
@@ -225,52 +576,108 @@ class AegisSystemMonitor:
         """Check for system alerts"""
         alerts = []
         
-        # CPU usage alert
         if stats["cpu"]["usage"] > config["cpu_alert_threshold"]:
             alerts.append(f"High CPU usage: {stats['cpu']['usage']:.1f}%")
             
-        # Memory usage alert
         if stats["memory"]["percent"] > config["memory_alert_threshold"]:
             alerts.append(f"High memory usage: {stats['memory']['percent']:.1f}%")
             
-        # Disk usage alerts
         for device, disk_info in stats["disk"].items():
             if disk_info["percent"] > config["disk_alert_threshold"]:
                 alerts.append(f"High disk usage on {device}: {disk_info['percent']:.1f}%")
                 
-        # Temperature alerts
         if stats["temperature"]:
             for sensor_name, entries in stats["temperature"].items():
                 for entry in entries:
                     if entry["current"] > config["temperature_alert_threshold"]:
                         alerts.append(f"High temperature on {sensor_name}: {entry['current']:.1f}°C")
         
+        for gpu in stats["gpu"]:
+            if gpu["usage_percent"] > config.get("gpu_alert_threshold", 85):
+                alerts.append(f"High GPU usage on {gpu['name']}: {gpu['usage_percent']:.1f}%")
+            if gpu["temperature_c"] > config["temperature_alert_threshold"]:
+                alerts.append(f"High GPU temperature on {gpu['name']}: {gpu['temperature_c']:.1f}°C")
+        
         return alerts
     
     def save_stats(self, stats):
         """Save statistics to file"""
         try:
-            # Load existing stats
             if os.path.exists(self.stats_file):
                 with open(self.stats_file, 'r') as f:
                     all_stats = json.load(f)
             else:
                 all_stats = []
             
-            # Add new stats
             all_stats.append(stats)
             
-            # Keep only recent stats (last 24 hours worth)
-            max_entries = 24 * 60 * 60 // 30  # 30-second intervals
+            max_entries = 24 * 60 * 60 // 30
             if len(all_stats) > max_entries:
                 all_stats = all_stats[-max_entries:]
             
-            # Save updated stats
             with open(self.stats_file, 'w') as f:
                 json.dump(all_stats, f, indent=2)
                 
         except Exception as e:
-            logging.error(f"Failed to save stats: {e}")
+            if not self.dashboard_mode:
+                logging.error(f"Failed to save stats: {e}")
+    
+    def export_to_csv(self, output_file=None):
+        """Export statistics to CSV file"""
+        if output_file is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(self.csv_export_dir, f"system_stats_{timestamp}.csv")
+        
+        try:
+            if not os.path.exists(self.stats_file):
+                print("No statistics available to export")
+                return None
+            
+            with open(self.stats_file, 'r') as f:
+                all_stats = json.load(f)
+            
+            if not all_stats:
+                print("No statistics available to export")
+                return None
+            
+            with open(output_file, 'w', newline='') as csvfile:
+                fieldnames = [
+                    'timestamp', 'cpu_usage', 'cpu_count', 
+                    'memory_percent', 'memory_used_gb', 'memory_total_gb',
+                    'uptime_formatted', 'process_count',
+                    'network_download_mbps', 'network_upload_mbps',
+                    'gpu_0_usage', 'gpu_0_temp', 'gpu_0_memory_used',
+                    'battery_percent', 'battery_charging'
+                ]
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for stat in all_stats:
+                    row = {
+                        'timestamp': stat.get('timestamp', ''),
+                        'cpu_usage': stat.get('cpu', {}).get('usage', 0),
+                        'cpu_count': stat.get('cpu', {}).get('count', 0),
+                        'memory_percent': stat.get('memory', {}).get('percent', 0),
+                        'memory_used_gb': round(stat.get('memory', {}).get('used', 0) / (1024**3), 2),
+                        'memory_total_gb': round(stat.get('memory', {}).get('total', 0) / (1024**3), 2),
+                        'uptime_formatted': stat.get('uptime', {}).get('formatted', 'N/A'),
+                        'process_count': stat.get('process_count', 0),
+                        'network_download_mbps': stat.get('network_speed', {}).get('download_mbps', 0),
+                        'network_upload_mbps': stat.get('network_speed', {}).get('upload_mbps', 0),
+                        'gpu_0_usage': stat.get('gpu', [{}])[0].get('usage_percent', 0) if stat.get('gpu') else 0,
+                        'gpu_0_temp': stat.get('gpu', [{}])[0].get('temperature_c', 0) if stat.get('gpu') else 0,
+                        'gpu_0_memory_used': stat.get('gpu', [{}])[0].get('memory_used_mb', 0) if stat.get('gpu') else 0,
+                        'battery_percent': stat.get('battery', {}).get('percent', 0) if stat.get('battery', {}).get('available') else 'N/A',
+                        'battery_charging': stat.get('battery', {}).get('charging', '') if stat.get('battery', {}).get('available') else 'N/A'
+                    }
+                    writer.writerow(row)
+            
+            print(f"Statistics exported to: {output_file}")
+            return output_file
+            
+        except Exception as e:
+            print(f"Failed to export stats: {e}")
+            return None
     
     def cleanup_logs(self, retention_days):
         """Clean up old log files"""
@@ -287,36 +694,142 @@ class AegisSystemMonitor:
         except Exception as e:
             logging.error(f"Failed to cleanup logs: {e}")
     
+    def format_bytes(self, bytes_val):
+        """Format bytes to human readable"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_val < 1024:
+                return f"{bytes_val:.1f} {unit}"
+            bytes_val /= 1024
+        return f"{bytes_val:.1f} PB"
+    
+    def create_bar(self, percent, width=20):
+        """Create a progress bar string"""
+        filled = int(width * percent / 100)
+        empty = width - filled
+        bar = '█' * filled + '░' * empty
+        return f"[{bar}]"
+    
+    def clear_screen(self):
+        """Clear terminal screen"""
+        os.system('clear' if os.name == 'posix' else 'cls')
+    
+    def run_dashboard(self):
+        """Run live updating terminal dashboard"""
+        print("\n🖥️  Aegis System Monitor Dashboard")
+        print("Press Ctrl+C to exit\n")
+        time.sleep(1)
+        
+        config = self.load_config()
+        
+        while True:
+            try:
+                self.clear_screen()
+                stats = self.get_system_stats()
+                
+                print("╔══════════════════════════════════════════════════════════════════╗")
+                print("║          🛡️  AEGIS SYSTEM MONITOR - LIVE DASHBOARD               ║")
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                
+                print(f"║  📅 {stats['timestamp'][:19]}                  ⏱️  Uptime: {stats['uptime']['formatted']:>8} ║")
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                
+                cpu_bar = self.create_bar(stats['cpu']['usage'], 15)
+                mem_bar = self.create_bar(stats['memory']['percent'], 15)
+                print(f"║  🔲 CPU: {stats['cpu']['usage']:5.1f}% {cpu_bar}  Cores: {stats['cpu']['count']:>2}           ║")
+                print(f"║  💾 RAM: {stats['memory']['percent']:5.1f}% {mem_bar}  {self.format_bytes(stats['memory']['used']):>8}     ║")
+                
+                if stats['gpu']:
+                    print("╠══════════════════════════════════════════════════════════════════╣")
+                    print("║  🎮 GPU                                                          ║")
+                    for gpu in stats['gpu'][:2]:
+                        gpu_bar = self.create_bar(gpu['usage_percent'], 10)
+                        print(f"║    {gpu['vendor']}: {gpu['usage_percent']:5.1f}% {gpu_bar} Temp:{gpu['temperature_c']:4.0f}°C Mem:{gpu['memory_used_mb']:>5.0f}MB ║")
+                
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                print("║  🌐 NETWORK SPEED                                                 ║")
+                print(f"║    ⬇️  Download: {stats['network_speed']['download_mbps']:>7.2f} MB/s   ⬆️  Upload: {stats['network_speed']['upload_mbps']:>7.2f} MB/s   ║")
+                
+                if stats['disk']:
+                    print("╠══════════════════════════════════════════════════════════════════╣")
+                    print("║  💿 DISKS                                                        ║")
+                    for device, info in list(stats['disk'].items())[:3]:
+                        disk_bar = self.create_bar(info['percent'], 10)
+                        mount = info['mountpoint'][:15]
+                        print(f"║    {mount:<15} {info['percent']:5.1f}% {disk_bar} {self.format_bytes(info['free']):>10} free ║")
+                
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                print("║  📊 TOP PROCESSES BY CPU                                         ║")
+                for i, proc in enumerate(stats['processes'].get('by_cpu', [])[:5], 1):
+                    name = proc['name'][:25]
+                    print(f"║    {i}. {name:<25} CPU: {proc['cpu_percent']:5.1f}%  MEM: {proc['memory_percent']:4.1f}% ║")
+                
+                if stats['fans']:
+                    print("╠══════════════════════════════════════════════════════════════════╣")
+                    print("║  🌀 FANS                                                         ║")
+                    for fan in stats['fans'][:3]:
+                        print(f"║    {fan['name'][:30]:<30}: {fan['rpm']:>5} RPM                  ║")
+                
+                if stats['battery'].get('available'):
+                    print("╠══════════════════════════════════════════════════════════════════╣")
+                    bat_icon = "🔌" if stats['battery'].get('charging') else "🔋"
+                    bat_status = "Charging" if stats['battery'].get('charging') else "Discharging"
+                    bat_bar = self.create_bar(stats['battery']['percent'], 15)
+                    print(f"║  {bat_icon} BATTERY: {stats['battery']['percent']:5.1f}% {bat_bar} {bat_status:<12} ║")
+                
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                
+                alerts = self.check_alerts(stats, config)
+                if alerts:
+                    print("║  ⚠️  ALERTS                                                       ║")
+                    for alert in alerts[:3]:
+                        print(f"║    • {alert[:58]:<58} ║")
+                else:
+                    print("║  ✅ System status: All metrics within normal range              ║")
+                
+                print("╠══════════════════════════════════════════════════════════════════╣")
+                print(f"║  Processes: {stats['process_count']:<5}    Refresh: 2s    [Ctrl+C to exit]          ║")
+                print("╚══════════════════════════════════════════════════════════════════╝")
+                
+                self.save_stats(stats)
+                time.sleep(2)
+                
+            except KeyboardInterrupt:
+                print("\n\n👋 Dashboard stopped. Goodbye!")
+                break
+            except Exception as e:
+                print(f"\nError: {e}")
+                time.sleep(2)
+    
     def run_monitoring_loop(self):
         """Main monitoring loop"""
-        logging.info("Starting Aegis System Monitor - Freemium Edition")
+        logging.info("Starting Aegis System Monitor - Enhanced Edition")
         
         config = self.load_config()
         update_interval = config["update_interval"]
         
         while True:
             try:
-                # Collect system statistics
                 stats = self.get_system_stats()
-                
-                # Check for alerts
                 alerts = self.check_alerts(stats, config)
                 
                 if alerts:
                     for alert in alerts:
                         logging.warning(f"ALERT: {alert}")
                 
-                # Save statistics
                 self.save_stats(stats)
                 
-                # Periodic cleanup
-                if int(time.time()) % 3600 == 0:  # Every hour
+                if int(time.time()) % 3600 == 0:
                     self.cleanup_logs(config["log_retention_days"])
                 
-                # Log status
+                gpu_info = ""
+                if stats["gpu"]:
+                    gpu_info = f" GPU: {stats['gpu'][0]['usage_percent']:.1f}%"
+                
                 logging.info(f"System check complete - CPU: {stats['cpu']['usage']:.1f}% "
                            f"Memory: {stats['memory']['percent']:.1f}% "
-                           f"Processes: {stats['processes']}")
+                           f"Uptime: {stats['uptime']['formatted']}"
+                           f"{gpu_info} "
+                           f"Processes: {stats['process_count']}")
                 
                 time.sleep(update_interval)
                 
@@ -327,6 +840,75 @@ class AegisSystemMonitor:
                 logging.error(f"Error in monitoring loop: {e}")
                 time.sleep(update_interval)
 
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Aegis OS System Monitor - Enhanced Edition',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  aegis-system-monitor                  # Run in background monitoring mode
+  aegis-system-monitor --dashboard      # Run live terminal dashboard
+  aegis-system-monitor --export         # Export stats to CSV
+  aegis-system-monitor --export stats.csv  # Export to specific file
+  aegis-system-monitor --once           # Collect and display stats once
+        '''
+    )
+    
+    parser.add_argument('--dashboard', '-d', action='store_true',
+                       help='Run live updating terminal dashboard')
+    parser.add_argument('--export', '-e', nargs='?', const='', metavar='FILE',
+                       help='Export statistics to CSV file')
+    parser.add_argument('--once', '-o', action='store_true',
+                       help='Collect and display stats once, then exit')
+    parser.add_argument('--json', '-j', action='store_true',
+                       help='Output stats as JSON (use with --once)')
+    
+    args = parser.parse_args()
+    
+    if args.dashboard:
+        monitor = AegisSystemMonitor(dashboard_mode=True)
+        monitor.run_dashboard()
+    elif args.export is not None:
+        monitor = AegisSystemMonitor(dashboard_mode=True)
+        output_file = args.export if args.export else None
+        monitor.export_to_csv(output_file)
+    elif args.once:
+        monitor = AegisSystemMonitor(dashboard_mode=True)
+        stats = monitor.get_system_stats()
+        if args.json:
+            print(json.dumps(stats, indent=2))
+        else:
+            print(f"\n🛡️  Aegis System Monitor - Quick Stats")
+            print(f"{'='*50}")
+            print(f"📅 Time: {stats['timestamp'][:19]}")
+            print(f"⏱️  Uptime: {stats['uptime']['formatted']}")
+            print(f"🔲 CPU: {stats['cpu']['usage']:.1f}% ({stats['cpu']['count']} cores)")
+            print(f"💾 Memory: {stats['memory']['percent']:.1f}% ({monitor.format_bytes(stats['memory']['used'])} / {monitor.format_bytes(stats['memory']['total'])})")
+            
+            if stats['gpu']:
+                print(f"\n🎮 GPUs:")
+                for gpu in stats['gpu']:
+                    print(f"   {gpu['name']}: {gpu['usage_percent']:.1f}% usage, {gpu['temperature_c']:.0f}°C, {gpu['memory_used_mb']:.0f}MB VRAM")
+            
+            print(f"\n🌐 Network: ⬇️ {stats['network_speed']['download_mbps']:.2f} MB/s  ⬆️ {stats['network_speed']['upload_mbps']:.2f} MB/s")
+            
+            if stats['battery'].get('available'):
+                status = "Charging" if stats['battery'].get('charging') else "Discharging"
+                print(f"🔋 Battery: {stats['battery']['percent']:.1f}% ({status})")
+            
+            if stats['fans']:
+                print(f"\n🌀 Fans:")
+                for fan in stats['fans'][:5]:
+                    print(f"   {fan['name']}: {fan['rpm']} RPM")
+            
+            print(f"\n📊 Top 5 CPU Processes:")
+            for i, proc in enumerate(stats['processes'].get('by_cpu', [])[:5], 1):
+                print(f"   {i}. {proc['name'][:30]} - CPU: {proc['cpu_percent']:.1f}%  MEM: {proc['memory_percent']:.1f}%")
+    else:
+        monitor = AegisSystemMonitor()
+        monitor.run_monitoring_loop()
+
+
 if __name__ == "__main__":
-    monitor = AegisSystemMonitor()
-    monitor.run_monitoring_loop()
+    main()

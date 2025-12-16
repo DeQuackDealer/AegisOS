@@ -619,12 +619,12 @@ class AegisDeskLink:
             elif msg_type == "clipboard":
                 self._handle_clipboard(sock, client_info, message)
             elif msg_type == "ping":
-                self._send_message(sock, {"type": "pong", "timestamp": time.time()})
+                self._send_message(sock, {"type": "pong", "timestamp": message.get("timestamp", time.time())})
             elif msg_type == "screen_info":
                 self._handle_screen_info(sock, client_info, message)
             
         except json.JSONDecodeError:
-            pass
+            self.logger.debug("Received malformed JSON packet, ignoring")
         except Exception as e:
             self.logger.error(f"Handle message error: {e}")
     
@@ -872,7 +872,7 @@ class AegisDeskLink:
                 pass
                 
         except json.JSONDecodeError:
-            pass
+            self.logger.debug("Received malformed JSON packet from server, ignoring")
         except Exception as e:
             self.logger.error(f"Handle server message error: {e}")
     

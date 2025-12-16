@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Aegis Controller Manager - Gamepad configuration and testing with real udev rules
+Enhanced with per-game profiles, calibration, real input testing, and rumble support
 """
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, Gdk
 import os
 import subprocess
 import json
@@ -13,39 +14,96 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import glob
 import struct
+import fcntl
+import array
+import time
+import threading
+import select
 
 CONTROLLER_PROFILES = {
     "xbox": {
         "name": "Xbox Layout",
         "desc": "Standard Xbox button mapping",
         "deadzone": 0.15,
-        "rumble": True
+        "rumble": True,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
     },
     "playstation": {
         "name": "PlayStation Layout",
         "desc": "DualShock/DualSense mapping",
         "deadzone": 0.12,
-        "rumble": True
+        "rumble": True,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
     },
     "nintendo": {
         "name": "Nintendo Layout",
         "desc": "Switch Pro Controller mapping",
         "deadzone": 0.10,
-        "rumble": True
+        "rumble": True,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
     },
     "racing": {
         "name": "Racing Wheel",
         "desc": "Optimized for racing games",
         "deadzone": 0.05,
-        "rumble": True
+        "rumble": True,
+        "left_trigger_sens": 1.2,
+        "right_trigger_sens": 1.2
     },
     "flightstick": {
         "name": "Flight Stick",
         "desc": "HOTAS and joystick mapping",
         "deadzone": 0.08,
-        "rumble": False
+        "rumble": False,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
+    },
+    "logitech": {
+        "name": "Logitech",
+        "desc": "Logitech F310/F710 controllers",
+        "deadzone": 0.12,
+        "rumble": True,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
+    },
+    "razer": {
+        "name": "Razer",
+        "desc": "Razer Wolverine/Raiju controllers",
+        "deadzone": 0.10,
+        "rumble": True,
+        "left_trigger_sens": 1.1,
+        "right_trigger_sens": 1.1
+    },
+    "generic": {
+        "name": "Generic",
+        "desc": "Generic USB gamepad",
+        "deadzone": 0.18,
+        "rumble": True,
+        "left_trigger_sens": 1.0,
+        "right_trigger_sens": 1.0
     }
 }
+
+JS_EVENT_BUTTON = 0x01
+JS_EVENT_AXIS = 0x02
+JS_EVENT_INIT = 0x80
+
+JSIOCGAXES = 0x80016a11
+JSIOCGBUTTONS = 0x80016a12
+JSIOCGNAME = lambda length: 0x80006a13 + (length << 16)
+
+EV_FF = 0x15
+FF_RUMBLE = 0x50
+FF_PERIODIC = 0x51
+FF_CONSTANT = 0x52
+FF_SPRING = 0x53
+FF_FRICTION = 0x54
+FF_DAMPER = 0x55
+FF_INERTIA = 0x56
+FF_RAMP = 0x57
 
 class Controller:
     def __init__(self, path: str):
@@ -55,6 +113,7 @@ class Controller:
         self.product = ""
         self.axes = 0
         self.buttons = 0
+        self.event_path = None
         self._read_info()
     
     def _read_info(self):
@@ -72,15 +131,39 @@ class Controller:
                     if line.startswith("HID_NAME="):
                         self.name = line.split("=", 1)[1]
             
-            with open(self.path, 'rb') as f:
-                buf = bytearray(8)
+            if self.path.startswith("/dev/input/js"):
                 try:
-                    f.seek(0)
-                    f.readinto(buf)
+                    with open(self.path, 'rb') as f:
+                        buf = array.array('B', [0])
+                        fcntl.ioctl(f, JSIOCGAXES, buf)
+                        self.axes = buf[0]
+                        
+                        buf = array.array('B', [0])
+                        fcntl.ioctl(f, JSIOCGBUTTONS, buf)
+                        self.buttons = buf[0]
                 except:
                     pass
+            
+            for event_path in glob.glob("/dev/input/event*"):
+                try:
+                    event_name_path = Path(f"/sys/class/input/{Path(event_path).name}/device/name")
+                    if event_name_path.exists():
+                        if event_name_path.read_text().strip() == self.name:
+                            self.event_path = event_path
+                            break
+                except:
+                    pass
+                    
         except Exception as e:
             pass
+
+class CalibrationData:
+    def __init__(self):
+        self.axis_min = {}
+        self.axis_max = {}
+        self.axis_center = {}
+        self.calibrating = False
+        self.calibration_axis = None
 
 class AegisControllerConfig(Gtk.Window):
     CSS = """
@@ -94,30 +177,65 @@ class AegisControllerConfig(Gtk.Window):
     .controller-btn:hover { background: rgba(0,230,118,0.3); }
     .controller-btn:checked { border-color: #00e676; background: rgba(0,230,118,0.4); }
     .apply-btn { background: #00e676; color: #1a1a2e; font-weight: bold; padding: 12px 32px; border-radius: 8px; }
+    .rumble-btn { background: #ff5722; color: #fff; font-weight: bold; padding: 8px 16px; border-radius: 8px; }
+    .calibrate-btn { background: #2196f3; color: #fff; font-weight: bold; padding: 8px 16px; border-radius: 8px; }
     .info-label { color: #888; font-size: 13px; }
     .test-area { background: rgba(0,0,0,0.4); border-radius: 12px; padding: 20px; }
     .axis-label { color: #00e676; font-size: 14px; font-weight: bold; }
     .button-indicator { background: rgba(255,255,255,0.1); border-radius: 50%; min-width: 40px; min-height: 40px; }
     .button-pressed { background: #00e676; }
+    .axis-display { background: rgba(0,0,0,0.6); border-radius: 8px; border: 1px solid #00e676; }
+    .profile-section { background: rgba(0,230,118,0.1); border-radius: 8px; padding: 12px; margin-top: 8px; }
     """
     
     def __init__(self):
         super().__init__(title="Aegis Controller Manager")
-        self.set_default_size(950, 750)
+        self.set_default_size(1000, 850)
         
         self.config_path = Path.home() / ".config/aegis/controllers.json"
+        self.profiles_path = Path.home() / ".config/aegis/game-profiles"
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.profiles_path.mkdir(parents=True, exist_ok=True)
         
         self.controllers: List[Controller] = []
         self.selected_controller: Optional[Controller] = None
         self.testing = False
+        self.test_fd = None
+        self.test_thread = None
+        self.poll_timeout_id = None
+        
+        self.calibration = CalibrationData()
+        
+        self.axis_values = [0.0] * 8
+        self.button_states = [False] * 16
+        
+        self.invert_left_x = False
+        self.invert_left_y = False
+        self.invert_right_x = False
+        self.invert_right_y = False
         
         css = Gtk.CssProvider()
         css.load_from_data(self.CSS.encode())
         Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         
+        self.connect("destroy", self._on_window_destroy)
+        
         self._scan_controllers()
         self._create_ui()
+        self._load_saved_config()
+    
+    def _on_window_destroy(self, widget):
+        self.testing = False
+        if self.poll_timeout_id is not None:
+            GLib.source_remove(self.poll_timeout_id)
+            self.poll_timeout_id = None
+        if self.test_fd is not None:
+            try:
+                os.close(self.test_fd)
+            except:
+                pass
+            self.test_fd = None
+        self.calibration.calibrating = False
     
     def _scan_controllers(self):
         self.controllers = []
@@ -145,6 +263,7 @@ class AegisControllerConfig(Gtk.Window):
                             ctrl.product = ""
                             ctrl.axes = 0
                             ctrl.buttons = 0
+                            ctrl.event_path = event_path
                             event_controllers.append(ctrl)
             except:
                 pass
@@ -190,7 +309,9 @@ class AegisControllerConfig(Gtk.Window):
         
         content.pack_start(self._create_controllers_card(), False, False, 0)
         content.pack_start(self._create_profiles_card(), False, False, 0)
+        content.pack_start(self._create_game_profiles_card(), False, False, 0)
         content.pack_start(self._create_settings_card(), False, False, 0)
+        content.pack_start(self._create_calibration_card(), False, False, 0)
         content.pack_start(self._create_test_card(), False, False, 0)
         content.pack_start(self._create_steam_card(), False, False, 0)
     
@@ -243,24 +364,91 @@ class AegisControllerConfig(Gtk.Window):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.get_style_context().add_class("card")
         
-        title = Gtk.Label(label="Controller Profiles")
+        title = Gtk.Label(label="Controller Presets")
         title.get_style_context().add_class("card-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 8)
         
-        profiles_box = Gtk.Box(spacing=8)
+        profiles_grid = Gtk.FlowBox()
+        profiles_grid.set_max_children_per_line(4)
+        profiles_grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        profiles_grid.set_row_spacing(8)
+        profiles_grid.set_column_spacing(8)
         
         self.profile_btns = {}
         for pid, profile in CONTROLLER_PROFILES.items():
             btn = Gtk.ToggleButton(label=profile["name"])
             btn.get_style_context().add_class("controller-btn")
-            btn.set_size_request(120, 50)
+            btn.set_size_request(110, 45)
             btn.set_tooltip_text(profile["desc"])
             btn.connect("toggled", self._on_profile_select, pid)
             self.profile_btns[pid] = btn
-            profiles_box.pack_start(btn, False, False, 0)
+            profiles_grid.add(btn)
         
-        card.pack_start(profiles_box, False, False, 8)
+        card.pack_start(profiles_grid, False, False, 8)
+        return card
+    
+    def _create_game_profiles_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Per-Game Profiles")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        profile_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        profile_section.get_style_context().add_class("profile-section")
+        
+        row1 = Gtk.Box(spacing=12)
+        game_label = Gtk.Label(label="Game Name:")
+        game_label.set_halign(Gtk.Align.START)
+        row1.pack_start(game_label, False, False, 0)
+        
+        self.game_name_entry = Gtk.Entry()
+        self.game_name_entry.set_placeholder_text("Enter game name (e.g., Rocket League)")
+        self.game_name_entry.set_size_request(250, -1)
+        row1.pack_start(self.game_name_entry, True, True, 0)
+        
+        profile_section.pack_start(row1, False, False, 0)
+        
+        row2 = Gtk.Box(spacing=12)
+        
+        save_profile_btn = Gtk.Button(label="Save Profile for Game")
+        save_profile_btn.get_style_context().add_class("apply-btn")
+        save_profile_btn.connect("clicked", self._save_game_profile)
+        row2.pack_start(save_profile_btn, False, False, 0)
+        
+        load_profile_btn = Gtk.Button(label="Load Game Profile")
+        load_profile_btn.connect("clicked", self._load_game_profile)
+        row2.pack_start(load_profile_btn, False, False, 0)
+        
+        delete_profile_btn = Gtk.Button(label="Delete Profile")
+        delete_profile_btn.connect("clicked", self._delete_game_profile)
+        row2.pack_start(delete_profile_btn, False, False, 0)
+        
+        profile_section.pack_start(row2, False, False, 0)
+        
+        row3 = Gtk.Box(spacing=12)
+        profiles_label = Gtk.Label(label="Saved Profiles:")
+        profiles_label.set_halign(Gtk.Align.START)
+        row3.pack_start(profiles_label, False, False, 0)
+        
+        self.game_profiles_combo = Gtk.ComboBoxText()
+        self.game_profiles_combo.set_size_request(250, -1)
+        self._refresh_game_profiles_list()
+        self.game_profiles_combo.connect("changed", self._on_game_profile_selected)
+        row3.pack_start(self.game_profiles_combo, True, True, 0)
+        
+        profile_section.pack_start(row3, False, False, 0)
+        
+        row4 = Gtk.Box(spacing=12)
+        self.apply_on_load_check = Gtk.CheckButton(label="Apply settings immediately when loading profile")
+        self.apply_on_load_check.set_active(True)
+        row4.pack_start(self.apply_on_load_check, False, False, 0)
+        profile_section.pack_start(row4, False, False, 0)
+        
+        card.pack_start(profile_section, False, False, 8)
         return card
     
     def _create_settings_card(self) -> Gtk.Box:
@@ -288,9 +476,16 @@ class AegisControllerConfig(Gtk.Window):
         rumble_label.set_halign(Gtk.Align.START)
         grid.attach(rumble_label, 0, 1, 1, 1)
         
+        rumble_box = Gtk.Box(spacing=12)
         self.rumble_switch = Gtk.Switch()
         self.rumble_switch.set_active(True)
-        grid.attach(self.rumble_switch, 1, 1, 1, 1)
+        rumble_box.pack_start(self.rumble_switch, False, False, 0)
+        
+        self.test_rumble_btn = Gtk.Button(label="Test Rumble")
+        self.test_rumble_btn.get_style_context().add_class("rumble-btn")
+        self.test_rumble_btn.connect("clicked", self._test_rumble)
+        rumble_box.pack_start(self.test_rumble_btn, False, False, 0)
+        grid.attach(rumble_box, 1, 1, 1, 1)
         
         sens_label = Gtk.Label(label="Sensitivity:")
         sens_label.set_halign(Gtk.Align.START)
@@ -301,6 +496,50 @@ class AegisControllerConfig(Gtk.Window):
         self.sensitivity_scale.set_size_request(200, -1)
         self.sensitivity_scale.set_draw_value(True)
         grid.attach(self.sensitivity_scale, 1, 2, 1, 1)
+        
+        lt_label = Gtk.Label(label="Left Trigger Sensitivity:")
+        lt_label.set_halign(Gtk.Align.START)
+        grid.attach(lt_label, 0, 3, 1, 1)
+        
+        self.left_trigger_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 2.0, 0.1)
+        self.left_trigger_scale.set_value(1.0)
+        self.left_trigger_scale.set_size_request(200, -1)
+        self.left_trigger_scale.set_draw_value(True)
+        grid.attach(self.left_trigger_scale, 1, 3, 1, 1)
+        
+        rt_label = Gtk.Label(label="Right Trigger Sensitivity:")
+        rt_label.set_halign(Gtk.Align.START)
+        grid.attach(rt_label, 0, 4, 1, 1)
+        
+        self.right_trigger_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 2.0, 0.1)
+        self.right_trigger_scale.set_value(1.0)
+        self.right_trigger_scale.set_size_request(200, -1)
+        self.right_trigger_scale.set_draw_value(True)
+        grid.attach(self.right_trigger_scale, 1, 4, 1, 1)
+        
+        invert_label = Gtk.Label(label="Axis Inversion:")
+        invert_label.set_halign(Gtk.Align.START)
+        grid.attach(invert_label, 0, 5, 1, 1)
+        
+        invert_box = Gtk.Box(spacing=16)
+        
+        self.invert_left_x_check = Gtk.CheckButton(label="Left X")
+        self.invert_left_x_check.connect("toggled", lambda w: setattr(self, 'invert_left_x', w.get_active()))
+        invert_box.pack_start(self.invert_left_x_check, False, False, 0)
+        
+        self.invert_left_y_check = Gtk.CheckButton(label="Left Y")
+        self.invert_left_y_check.connect("toggled", lambda w: setattr(self, 'invert_left_y', w.get_active()))
+        invert_box.pack_start(self.invert_left_y_check, False, False, 0)
+        
+        self.invert_right_x_check = Gtk.CheckButton(label="Right X")
+        self.invert_right_x_check.connect("toggled", lambda w: setattr(self, 'invert_right_x', w.get_active()))
+        invert_box.pack_start(self.invert_right_x_check, False, False, 0)
+        
+        self.invert_right_y_check = Gtk.CheckButton(label="Right Y")
+        self.invert_right_y_check.connect("toggled", lambda w: setattr(self, 'invert_right_y', w.get_active()))
+        invert_box.pack_start(self.invert_right_y_check, False, False, 0)
+        
+        grid.attach(invert_box, 1, 5, 1, 1)
         
         card.pack_start(grid, False, False, 8)
         
@@ -315,12 +554,67 @@ class AegisControllerConfig(Gtk.Window):
         card.pack_start(actions, False, False, 8)
         return card
     
+    def _create_calibration_card(self) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        
+        title = Gtk.Label(label="Axis Calibration")
+        title.get_style_context().add_class("card-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 8)
+        
+        info = Gtk.Label()
+        info.set_markup("Calibrate your controller axes for proper min/max/center detection.\n"
+                       "Click 'Start Calibration' then move sticks to their extremes.")
+        info.get_style_context().add_class("info-label")
+        info.set_halign(Gtk.Align.START)
+        card.pack_start(info, False, False, 4)
+        
+        calibration_box = Gtk.Box(spacing=12)
+        
+        self.calibrate_btn = Gtk.Button(label="Start Calibration")
+        self.calibrate_btn.get_style_context().add_class("calibrate-btn")
+        self.calibrate_btn.connect("clicked", self._toggle_calibration)
+        calibration_box.pack_start(self.calibrate_btn, False, False, 0)
+        
+        reset_cal_btn = Gtk.Button(label="Reset Calibration")
+        reset_cal_btn.connect("clicked", self._reset_calibration)
+        calibration_box.pack_start(reset_cal_btn, False, False, 0)
+        
+        set_center_btn = Gtk.Button(label="Set Center Point")
+        set_center_btn.connect("clicked", self._set_center_point)
+        calibration_box.pack_start(set_center_btn, False, False, 0)
+        
+        card.pack_start(calibration_box, False, False, 8)
+        
+        self.calibration_status = Gtk.Label(label="Calibration: Not started")
+        self.calibration_status.get_style_context().add_class("info-label")
+        self.calibration_status.set_halign(Gtk.Align.START)
+        card.pack_start(self.calibration_status, False, False, 4)
+        
+        cal_grid = Gtk.Grid(column_spacing=20, row_spacing=8)
+        
+        for i, axis_name in enumerate(["Left X", "Left Y", "Right X", "Right Y", "L Trigger", "R Trigger"]):
+            label = Gtk.Label(label=f"{axis_name}:")
+            label.set_halign(Gtk.Align.START)
+            cal_grid.attach(label, 0, i, 1, 1)
+            
+            val_label = Gtk.Label(label="Min: -  Max: -  Center: -")
+            val_label.get_style_context().add_class("info-label")
+            val_label.set_halign(Gtk.Align.START)
+            setattr(self, f"cal_axis_{i}", val_label)
+            cal_grid.attach(val_label, 1, i, 1, 1)
+        
+        card.pack_start(cal_grid, False, False, 8)
+        
+        return card
+    
     def _create_test_card(self) -> Gtk.Box:
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.get_style_context().add_class("card")
         
         header = Gtk.Box(spacing=12)
-        title = Gtk.Label(label="Controller Test")
+        title = Gtk.Label(label="Controller Test (Live Input)")
         title.get_style_context().add_class("card-title")
         header.pack_start(title, True, True, 0)
         
@@ -333,9 +627,11 @@ class AegisControllerConfig(Gtk.Window):
         test_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         test_area.get_style_context().add_class("test-area")
         
-        axes_box = Gtk.Box(spacing=20)
+        axes_box = Gtk.Box(spacing=30)
+        axes_box.set_halign(Gtk.Align.CENTER)
         
-        for axis_name in ["Left Stick", "Right Stick", "Triggers"]:
+        self.axis_drawings = {}
+        for axis_name in ["Left Stick", "Right Stick"]:
             axis_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             
             label = Gtk.Label(label=axis_name)
@@ -343,10 +639,27 @@ class AegisControllerConfig(Gtk.Window):
             axis_frame.pack_start(label, False, False, 0)
             
             axis_visual = Gtk.DrawingArea()
-            axis_visual.set_size_request(80, 80)
+            axis_visual.set_size_request(100, 100)
+            axis_visual.get_style_context().add_class("axis-display")
+            axis_visual.connect("draw", self._draw_stick, axis_name)
+            self.axis_drawings[axis_name] = axis_visual
             axis_frame.pack_start(axis_visual, False, False, 0)
             
             axes_box.pack_start(axis_frame, False, False, 0)
+        
+        trigger_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        trigger_label = Gtk.Label(label="Triggers")
+        trigger_label.get_style_context().add_class("axis-label")
+        trigger_frame.pack_start(trigger_label, False, False, 0)
+        
+        trigger_visual = Gtk.DrawingArea()
+        trigger_visual.set_size_request(60, 100)
+        trigger_visual.get_style_context().add_class("axis-display")
+        trigger_visual.connect("draw", self._draw_triggers)
+        self.axis_drawings["Triggers"] = trigger_visual
+        trigger_frame.pack_start(trigger_visual, False, False, 0)
+        
+        axes_box.pack_start(trigger_frame, False, False, 0)
         
         test_area.pack_start(axes_box, False, False, 8)
         
@@ -354,13 +667,16 @@ class AegisControllerConfig(Gtk.Window):
         buttons_box.set_halign(Gtk.Align.CENTER)
         
         self.button_indicators = {}
-        for btn_name in ["A", "B", "X", "Y", "LB", "RB", "L3", "R3", "Start", "Select"]:
+        self.button_drawings = {}
+        btn_names = ["A", "B", "X", "Y", "LB", "RB", "L3", "R3", "Start", "Select", "Guide", "DPad"]
+        for btn_name in btn_names:
             btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             
             indicator = Gtk.DrawingArea()
             indicator.set_size_request(36, 36)
-            indicator.get_style_context().add_class("button-indicator")
-            self.button_indicators[btn_name] = indicator
+            indicator.connect("draw", self._draw_button, btn_name)
+            self.button_drawings[btn_name] = indicator
+            self.button_indicators[btn_name] = False
             btn_box.pack_start(indicator, False, False, 0)
             
             label = Gtk.Label(label=btn_name)
@@ -375,8 +691,94 @@ class AegisControllerConfig(Gtk.Window):
         self.test_status.get_style_context().add_class("info-label")
         test_area.pack_start(self.test_status, False, False, 4)
         
+        self.axis_values_label = Gtk.Label(label="Axes: [waiting...]")
+        self.axis_values_label.get_style_context().add_class("info-label")
+        test_area.pack_start(self.axis_values_label, False, False, 4)
+        
         card.pack_start(test_area, False, False, 8)
         return card
+    
+    def _draw_stick(self, widget, cr, stick_name):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgba(0.1, 0.1, 0.1, 0.9)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        cr.set_source_rgba(0, 0.9, 0.46, 0.3)
+        cr.set_line_width(1)
+        cr.move_to(width/2, 0)
+        cr.line_to(width/2, height)
+        cr.stroke()
+        cr.move_to(0, height/2)
+        cr.line_to(width, height/2)
+        cr.stroke()
+        
+        if stick_name == "Left Stick":
+            x_val = self.axis_values[0] if len(self.axis_values) > 0 else 0
+            y_val = self.axis_values[1] if len(self.axis_values) > 1 else 0
+            if self.invert_left_x:
+                x_val = -x_val
+            if self.invert_left_y:
+                y_val = -y_val
+        else:
+            x_val = self.axis_values[2] if len(self.axis_values) > 2 else 0
+            y_val = self.axis_values[3] if len(self.axis_values) > 3 else 0
+            if self.invert_right_x:
+                x_val = -x_val
+            if self.invert_right_y:
+                y_val = -y_val
+        
+        x = width/2 + (x_val * (width/2 - 8))
+        y = height/2 + (y_val * (height/2 - 8))
+        
+        cr.set_source_rgba(0, 0.9, 0.46, 1)
+        cr.arc(x, y, 6, 0, 2 * 3.14159)
+        cr.fill()
+    
+    def _draw_triggers(self, widget, cr):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgba(0.1, 0.1, 0.1, 0.9)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        lt_val = self.axis_values[4] if len(self.axis_values) > 4 else 0
+        rt_val = self.axis_values[5] if len(self.axis_values) > 5 else 0
+        
+        lt_height = max(0, (lt_val + 1) / 2) * (height - 10)
+        rt_height = max(0, (rt_val + 1) / 2) * (height - 10)
+        
+        cr.set_source_rgba(1, 0.34, 0.13, 0.8)
+        cr.rectangle(5, height - 5 - lt_height, (width/2) - 8, lt_height)
+        cr.fill()
+        
+        cr.set_source_rgba(0.13, 0.59, 0.95, 0.8)
+        cr.rectangle(width/2 + 3, height - 5 - rt_height, (width/2) - 8, rt_height)
+        cr.fill()
+        
+        cr.set_source_rgba(1, 1, 1, 0.5)
+        cr.set_font_size(8)
+        cr.move_to(8, 12)
+        cr.show_text("LT")
+        cr.move_to(width/2 + 6, 12)
+        cr.show_text("RT")
+    
+    def _draw_button(self, widget, cr, btn_name):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        pressed = self.button_indicators.get(btn_name, False)
+        
+        if pressed:
+            cr.set_source_rgba(0, 0.9, 0.46, 1)
+        else:
+            cr.set_source_rgba(0.3, 0.3, 0.3, 0.8)
+        
+        cr.arc(width/2, height/2, min(width, height)/2 - 2, 0, 2 * 3.14159)
+        cr.fill()
     
     def _create_steam_card(self) -> Gtk.Box:
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -421,9 +823,144 @@ class AegisControllerConfig(Gtk.Window):
             profile = CONTROLLER_PROFILES.get(profile_id, {})
             self.deadzone_scale.set_value(profile.get("deadzone", 0.15))
             self.rumble_switch.set_active(profile.get("rumble", True))
+            self.left_trigger_scale.set_value(profile.get("left_trigger_sens", 1.0))
+            self.right_trigger_scale.set_value(profile.get("right_trigger_sens", 1.0))
             for pid, b in self.profile_btns.items():
                 if pid != profile_id:
                     b.set_active(False)
+    
+    def _on_game_profile_selected(self, combo):
+        game_name = combo.get_active_text()
+        if game_name:
+            self.game_name_entry.set_text(game_name)
+    
+    def _refresh_game_profiles_list(self):
+        self.game_profiles_combo.remove_all()
+        for profile_file in sorted(self.profiles_path.glob("*.json")):
+            game_name = profile_file.stem
+            self.game_profiles_combo.append_text(game_name)
+    
+    def _save_game_profile(self, btn):
+        game_name = self.game_name_entry.get_text().strip()
+        if not game_name:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Game Name")
+            dialog.format_secondary_text("Please enter a game name to save the profile.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in game_name)
+        profile_file = self.profiles_path / f"{safe_name}.json"
+        
+        profile = {
+            "game_name": game_name,
+            "deadzone": self.deadzone_scale.get_value(),
+            "rumble": self.rumble_switch.get_active(),
+            "sensitivity": self.sensitivity_scale.get_value(),
+            "left_trigger_sens": self.left_trigger_scale.get_value(),
+            "right_trigger_sens": self.right_trigger_scale.get_value(),
+            "invert_left_x": self.invert_left_x_check.get_active(),
+            "invert_left_y": self.invert_left_y_check.get_active(),
+            "invert_right_x": self.invert_right_x_check.get_active(),
+            "invert_right_y": self.invert_right_y_check.get_active(),
+            "calibration": {
+                "axis_min": self.calibration.axis_min,
+                "axis_max": self.calibration.axis_max,
+                "axis_center": self.calibration.axis_center
+            }
+        }
+        
+        if self.selected_controller:
+            profile["controller"] = {
+                "name": self.selected_controller.name,
+                "path": self.selected_controller.path
+            }
+        
+        with open(profile_file, "w") as f:
+            json.dump(profile, f, indent=2)
+        
+        self._refresh_game_profiles_list()
+        
+        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                   buttons=Gtk.ButtonsType.OK, text="Profile Saved")
+        dialog.format_secondary_text(f"Profile saved for '{game_name}'")
+        dialog.run(); dialog.destroy()
+    
+    def _load_game_profile(self, btn):
+        game_name = self.game_name_entry.get_text().strip()
+        if not game_name:
+            game_name = self.game_profiles_combo.get_active_text()
+        
+        if not game_name:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Game Selected")
+            dialog.format_secondary_text("Please enter or select a game name.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in game_name)
+        profile_file = self.profiles_path / f"{safe_name}.json"
+        
+        if not profile_file.exists():
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="Profile Not Found")
+            dialog.format_secondary_text(f"No profile found for '{game_name}'")
+            dialog.run(); dialog.destroy()
+            return
+        
+        with open(profile_file, "r") as f:
+            profile = json.load(f)
+        
+        self.deadzone_scale.set_value(profile.get("deadzone", 0.15))
+        self.rumble_switch.set_active(profile.get("rumble", True))
+        self.sensitivity_scale.set_value(profile.get("sensitivity", 1.0))
+        self.left_trigger_scale.set_value(profile.get("left_trigger_sens", 1.0))
+        self.right_trigger_scale.set_value(profile.get("right_trigger_sens", 1.0))
+        self.invert_left_x_check.set_active(profile.get("invert_left_x", False))
+        self.invert_left_y_check.set_active(profile.get("invert_left_y", False))
+        self.invert_right_x_check.set_active(profile.get("invert_right_x", False))
+        self.invert_right_y_check.set_active(profile.get("invert_right_y", False))
+        
+        if "calibration" in profile:
+            cal = profile["calibration"]
+            self.calibration.axis_min = {int(k): v for k, v in cal.get("axis_min", {}).items()}
+            self.calibration.axis_max = {int(k): v for k, v in cal.get("axis_max", {}).items()}
+            self.calibration.axis_center = {int(k): v for k, v in cal.get("axis_center", {}).items()}
+            self._update_calibration_display()
+        
+        if self.apply_on_load_check.get_active():
+            self._apply_settings(None, show_dialog=False)
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Profile Loaded and Applied")
+            dialog.format_secondary_text(f"Profile loaded and applied for '{game_name}'.\nController settings have been updated.")
+        else:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Profile Loaded")
+            dialog.format_secondary_text(f"Profile loaded for '{game_name}'.\nClick 'Apply Settings' to save the configuration.")
+        dialog.run(); dialog.destroy()
+    
+    def _delete_game_profile(self, btn):
+        game_name = self.game_name_entry.get_text().strip()
+        if not game_name:
+            game_name = self.game_profiles_combo.get_active_text()
+        
+        if not game_name:
+            return
+        
+        safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in game_name)
+        profile_file = self.profiles_path / f"{safe_name}.json"
+        
+        if profile_file.exists():
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.QUESTION,
+                                       buttons=Gtk.ButtonsType.YES_NO, text="Delete Profile?")
+            dialog.format_secondary_text(f"Delete profile for '{game_name}'?")
+            response = dialog.run()
+            dialog.destroy()
+            
+            if response == Gtk.ResponseType.YES:
+                profile_file.unlink()
+                self._refresh_game_profiles_list()
+                self.game_name_entry.set_text("")
     
     def _toggle_test(self, btn):
         if not self.selected_controller:
@@ -441,19 +978,332 @@ class AegisControllerConfig(Gtk.Window):
             self._start_test_loop()
         else:
             self.test_status.set_text("Test stopped")
+            self._stop_test_loop()
     
     def _start_test_loop(self):
-        def poll():
-            if not self.testing:
-                return False
-            return True
-        GLib.timeout_add(16, poll)
+        if not self.selected_controller:
+            return
+        
+        path = self.selected_controller.path
+        
+        if path.startswith("/dev/input/js"):
+            self._start_js_test_loop(path)
+        elif path.startswith("/dev/input/event"):
+            self._start_event_test_loop(path)
     
-    def _apply_settings(self, btn):
+    def _start_js_test_loop(self, path):
+        try:
+            self.test_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError as e:
+            self.test_status.set_text(f"Cannot open device: {e}")
+            self.testing = False
+            self.test_btn.set_label("Start Test")
+            return
+        
+        def poll_js():
+            if not self.testing:
+                if self.test_fd is not None:
+                    try:
+                        os.close(self.test_fd)
+                    except:
+                        pass
+                    self.test_fd = None
+                return False
+            
+            try:
+                while True:
+                    try:
+                        event = os.read(self.test_fd, 8)
+                        if len(event) < 8:
+                            break
+                        
+                        timestamp, value, event_type, number = struct.unpack('IhBB', event)
+                        
+                        event_type = event_type & ~JS_EVENT_INIT
+                        
+                        if event_type == JS_EVENT_AXIS:
+                            normalized = value / 32767.0
+                            if number < len(self.axis_values):
+                                self.axis_values[number] = normalized
+                            
+                            if self.calibration.calibrating:
+                                self._update_calibration_values(number, value)
+                        
+                        elif event_type == JS_EVENT_BUTTON:
+                            btn_map = {0: "A", 1: "B", 2: "X", 3: "Y", 
+                                      4: "LB", 5: "RB", 6: "Select", 7: "Start",
+                                      8: "Guide", 9: "L3", 10: "R3"}
+                            btn_name = btn_map.get(number)
+                            if btn_name:
+                                self.button_indicators[btn_name] = bool(value)
+                        
+                    except BlockingIOError:
+                        break
+                    except OSError:
+                        break
+                
+                for name, drawing in self.axis_drawings.items():
+                    drawing.queue_draw()
+                for name, drawing in self.button_drawings.items():
+                    drawing.queue_draw()
+                
+                axis_str = " ".join([f"{v:.2f}" for v in self.axis_values[:6]])
+                self.axis_values_label.set_text(f"Axes: [{axis_str}]")
+                
+            except Exception as e:
+                self.test_status.set_text(f"Error: {e}")
+            
+            return True
+        
+        self.poll_timeout_id = GLib.timeout_add(16, poll_js)
+    
+    def _start_event_test_loop(self, path):
+        try:
+            self.test_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError as e:
+            self.test_status.set_text(f"Cannot open device: {e}")
+            self.testing = False
+            self.test_btn.set_label("Start Test")
+            return
+        
+        def poll_event():
+            if not self.testing:
+                if self.test_fd is not None:
+                    try:
+                        os.close(self.test_fd)
+                    except:
+                        pass
+                    self.test_fd = None
+                return False
+            
+            try:
+                while True:
+                    try:
+                        event = os.read(self.test_fd, 24)
+                        if len(event) < 24:
+                            break
+                        
+                        sec, usec, ev_type, code, value = struct.unpack('llHHi', event)
+                        
+                        EV_KEY = 0x01
+                        EV_ABS = 0x03
+                        
+                        if ev_type == EV_ABS:
+                            axis_map = {0: 0, 1: 1, 2: 4, 3: 2, 4: 3, 5: 5}
+                            if code in axis_map:
+                                idx = axis_map[code]
+                                if code in (2, 5):
+                                    normalized = value / 255.0 * 2 - 1
+                                else:
+                                    normalized = value / 32767.0
+                                if idx < len(self.axis_values):
+                                    self.axis_values[idx] = normalized
+                                
+                                if self.calibration.calibrating:
+                                    self._update_calibration_values(idx, value)
+                        
+                        elif ev_type == EV_KEY:
+                            btn_map = {304: "A", 305: "B", 307: "X", 308: "Y",
+                                      310: "LB", 311: "RB", 314: "Select", 315: "Start",
+                                      316: "Guide", 317: "L3", 318: "R3"}
+                            btn_name = btn_map.get(code)
+                            if btn_name:
+                                self.button_indicators[btn_name] = bool(value)
+                        
+                    except BlockingIOError:
+                        break
+                    except OSError:
+                        break
+                
+                for name, drawing in self.axis_drawings.items():
+                    drawing.queue_draw()
+                for name, drawing in self.button_drawings.items():
+                    drawing.queue_draw()
+                
+                axis_str = " ".join([f"{v:.2f}" for v in self.axis_values[:6]])
+                self.axis_values_label.set_text(f"Axes: [{axis_str}]")
+                
+            except Exception as e:
+                self.test_status.set_text(f"Error: {e}")
+            
+            return True
+        
+        self.poll_timeout_id = GLib.timeout_add(16, poll_event)
+    
+    def _stop_test_loop(self):
+        if self.poll_timeout_id is not None:
+            GLib.source_remove(self.poll_timeout_id)
+            self.poll_timeout_id = None
+        if self.test_fd is not None:
+            try:
+                os.close(self.test_fd)
+            except:
+                pass
+            self.test_fd = None
+    
+    def _toggle_calibration(self, btn):
+        if not self.selected_controller:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Controller Selected")
+            dialog.format_secondary_text("Please select a controller first.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        self.calibration.calibrating = not self.calibration.calibrating
+        
+        if self.calibration.calibrating:
+            self.calibrate_btn.set_label("Stop Calibration")
+            self.calibration_status.set_text("Calibrating... Move all axes to their extremes, then click Stop.")
+            
+            if not self.testing:
+                self.testing = True
+                self.test_btn.set_label("Stop Test")
+                self._start_test_loop()
+        else:
+            self.calibrate_btn.set_label("Start Calibration")
+            self.calibration_status.set_text("Calibration complete. Values saved.")
+            self._update_calibration_display()
+    
+    def _update_calibration_values(self, axis_num, raw_value):
+        if axis_num not in self.calibration.axis_min:
+            self.calibration.axis_min[axis_num] = raw_value
+            self.calibration.axis_max[axis_num] = raw_value
+        else:
+            if raw_value < self.calibration.axis_min[axis_num]:
+                self.calibration.axis_min[axis_num] = raw_value
+            if raw_value > self.calibration.axis_max[axis_num]:
+                self.calibration.axis_max[axis_num] = raw_value
+        
+        self._update_calibration_display()
+    
+    def _update_calibration_display(self):
+        for i in range(6):
+            label = getattr(self, f"cal_axis_{i}", None)
+            if label:
+                min_val = self.calibration.axis_min.get(i, "-")
+                max_val = self.calibration.axis_max.get(i, "-")
+                center_val = self.calibration.axis_center.get(i, "-")
+                label.set_text(f"Min: {min_val}  Max: {max_val}  Center: {center_val}")
+    
+    def _reset_calibration(self, btn):
+        self.calibration.axis_min = {}
+        self.calibration.axis_max = {}
+        self.calibration.axis_center = {}
+        self._update_calibration_display()
+        self.calibration_status.set_text("Calibration reset.")
+    
+    def _set_center_point(self, btn):
+        if not self.testing:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="Start Test First")
+            dialog.format_secondary_text("Start the controller test to read current axis positions for center point.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        for i, val in enumerate(self.axis_values[:6]):
+            raw_val = int(val * 32767)
+            self.calibration.axis_center[i] = raw_val
+        
+        self._update_calibration_display()
+        self.calibration_status.set_text("Center point set from current stick positions.")
+    
+    def _test_rumble(self, btn):
+        if not self.selected_controller:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Controller Selected")
+            dialog.format_secondary_text("Please select a controller first.")
+            dialog.run(); dialog.destroy()
+            return
+        
+        event_path = self.selected_controller.event_path
+        if not event_path and self.selected_controller.path.startswith("/dev/input/event"):
+            event_path = self.selected_controller.path
+        
+        if not event_path:
+            for ep in glob.glob("/dev/input/event*"):
+                try:
+                    name_path = Path(f"/sys/class/input/{Path(ep).name}/device/name")
+                    if name_path.exists() and name_path.read_text().strip() == self.selected_controller.name:
+                        event_path = ep
+                        break
+                except:
+                    pass
+        
+        if not event_path:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                                       buttons=Gtk.ButtonsType.OK, text="No Event Device")
+            dialog.format_secondary_text("Cannot find event device for rumble. Trying alternative method...")
+            dialog.run(); dialog.destroy()
+            self._try_alternative_rumble()
+            return
+        
+        def do_rumble():
+            try:
+                fd = os.open(event_path, os.O_RDWR)
+                
+                effect = bytearray(48)
+                effect[0:2] = struct.pack('H', FF_RUMBLE)
+                effect[2:4] = struct.pack('h', -1)
+                effect[4:6] = struct.pack('H', 0)
+                effect[6:8] = struct.pack('H', 0)
+                effect[8:10] = struct.pack('H', 0)
+                effect[10:12] = struct.pack('H', 500)
+                effect[12:14] = struct.pack('H', 0)
+                effect[14:16] = struct.pack('H', 0)
+                effect[16:18] = struct.pack('H', 0xFFFF)
+                effect[18:20] = struct.pack('H', 0xFFFF)
+                
+                EVIOCSFF = 0x40304580
+                try:
+                    fcntl.ioctl(fd, EVIOCSFF, effect)
+                    effect_id = struct.unpack('h', effect[2:4])[0]
+                    
+                    EV_FF = 0x15
+                    input_event = struct.pack('llHHi', 0, 0, EV_FF, effect_id, 1)
+                    os.write(fd, input_event)
+                    
+                    time.sleep(0.5)
+                    
+                    input_event = struct.pack('llHHi', 0, 0, EV_FF, effect_id, 0)
+                    os.write(fd, input_event)
+                except:
+                    pass
+                
+                os.close(fd)
+                
+                GLib.idle_add(lambda: self.test_status.set_text("Rumble test sent!"))
+                
+            except Exception as e:
+                GLib.idle_add(lambda: self.test_status.set_text(f"Rumble error: {e}"))
+        
+        thread = threading.Thread(target=do_rumble)
+        thread.daemon = True
+        thread.start()
+        self.test_status.set_text("Sending rumble test...")
+    
+    def _try_alternative_rumble(self):
+        try:
+            subprocess.run(["fftest", self.selected_controller.path], 
+                          timeout=2, capture_output=True)
+        except:
+            pass
+    
+    def _apply_settings(self, btn, show_dialog=True):
         config = {
             "deadzone": self.deadzone_scale.get_value(),
             "rumble": self.rumble_switch.get_active(),
-            "sensitivity": self.sensitivity_scale.get_value()
+            "sensitivity": self.sensitivity_scale.get_value(),
+            "left_trigger_sens": self.left_trigger_scale.get_value(),
+            "right_trigger_sens": self.right_trigger_scale.get_value(),
+            "invert_left_x": self.invert_left_x_check.get_active(),
+            "invert_left_y": self.invert_left_y_check.get_active(),
+            "invert_right_x": self.invert_right_x_check.get_active(),
+            "invert_right_y": self.invert_right_y_check.get_active(),
+            "calibration": {
+                "axis_min": self.calibration.axis_min,
+                "axis_max": self.calibration.axis_max,
+                "axis_center": self.calibration.axis_center
+            }
         }
         
         if self.selected_controller:
@@ -475,15 +1325,47 @@ class AegisControllerConfig(Gtk.Window):
             f.write(f'export SDL_JOYSTICK_DEADZONE="{int(config["deadzone"] * 32767)}"\n')
             if not config["rumble"]:
                 f.write('export SDL_JOYSTICK_DISABLE_RUMBLE="1"\n')
+            f.write(f'export AEGIS_LEFT_TRIGGER_SENS="{config["left_trigger_sens"]}"\n')
+            f.write(f'export AEGIS_RIGHT_TRIGGER_SENS="{config["right_trigger_sens"]}"\n')
+            f.write(f'export AEGIS_INVERT_LEFT_X="{int(config["invert_left_x"])}"\n')
+            f.write(f'export AEGIS_INVERT_LEFT_Y="{int(config["invert_left_y"])}"\n')
+            f.write(f'export AEGIS_INVERT_RIGHT_X="{int(config["invert_right_x"])}"\n')
+            f.write(f'export AEGIS_INVERT_RIGHT_Y="{int(config["invert_right_y"])}"\n')
         os.chmod(env_file, 0o755)
         
-        dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
-                                   buttons=Gtk.ButtonsType.OK, text="Settings Applied")
-        msg = f"Controller settings saved to:\n{self.config_path}\n\n"
-        msg += f"Environment variables saved to:\n{env_file}\n\n"
-        msg += "Add to Steam launch options:\n  source ~/.config/aegis/controller-env.sh && %command%"
-        dialog.format_secondary_text(msg)
-        dialog.run(); dialog.destroy()
+        if show_dialog:
+            dialog = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.INFO,
+                                       buttons=Gtk.ButtonsType.OK, text="Settings Applied")
+            msg = f"Controller settings saved to:\n{self.config_path}\n\n"
+            msg += f"Environment variables saved to:\n{env_file}\n\n"
+            msg += "Add to Steam launch options:\n  source ~/.config/aegis/controller-env.sh && %command%"
+            dialog.format_secondary_text(msg)
+            dialog.run(); dialog.destroy()
+    
+    def _load_saved_config(self):
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, "r") as f:
+                    config = json.load(f)
+                
+                self.deadzone_scale.set_value(config.get("deadzone", 0.15))
+                self.rumble_switch.set_active(config.get("rumble", True))
+                self.sensitivity_scale.set_value(config.get("sensitivity", 1.0))
+                self.left_trigger_scale.set_value(config.get("left_trigger_sens", 1.0))
+                self.right_trigger_scale.set_value(config.get("right_trigger_sens", 1.0))
+                self.invert_left_x_check.set_active(config.get("invert_left_x", False))
+                self.invert_left_y_check.set_active(config.get("invert_left_y", False))
+                self.invert_right_x_check.set_active(config.get("invert_right_x", False))
+                self.invert_right_y_check.set_active(config.get("invert_right_y", False))
+                
+                if "calibration" in config:
+                    cal = config["calibration"]
+                    self.calibration.axis_min = {int(k): v for k, v in cal.get("axis_min", {}).items()}
+                    self.calibration.axis_max = {int(k): v for k, v in cal.get("axis_max", {}).items()}
+                    self.calibration.axis_center = {int(k): v for k, v in cal.get("axis_center", {}).items()}
+                    self._update_calibration_display()
+            except:
+                pass
     
     def _install_udev_rules(self, btn):
         rules = """# Aegis Controller udev rules
@@ -505,6 +1387,21 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="2dc8", MODE="0666", TAG+="uaccess"
 
 # Steam Controller
 SUBSYSTEM=="usb", ATTRS{idVendor}=="28de", MODE="0666", TAG+="uaccess"
+
+# Logitech controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="046d", MODE="0666", TAG+="uaccess"
+
+# Razer controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1532", MODE="0666", TAG+="uaccess"
+
+# PDP controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0e6f", MODE="0666", TAG+="uaccess"
+
+# PowerA controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="20d6", MODE="0666", TAG+="uaccess"
+
+# HORI controllers
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0f0d", MODE="0666", TAG+="uaccess"
 """
         
         config_dir = Path.home() / ".config/aegis"
@@ -539,6 +1436,10 @@ echo "Controller rules installed! Please reconnect your controller."
         dialog.run(); dialog.destroy()
     
     def _rescan(self, btn):
+        if self.testing:
+            self.testing = False
+            self._stop_test_loop()
+        
         self._scan_controllers()
         self.destroy()
         new_win = AegisControllerConfig()
