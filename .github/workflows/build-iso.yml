@@ -783,7 +783,7 @@ jobs:
 
       - name: QEMU boot smoke test
         run: |
-          echo "=== QEMU Boot Smoke Test (informational) ==="
+          echo "=== QEMU Boot Smoke Test ==="
           ISO_FILE="${{ env.ISO_FILE }}"
           
           if [ -z "$ISO_FILE" ] || [ ! -f "$ISO_FILE" ]; then
@@ -791,106 +791,211 @@ jobs:
             exit 0
           fi
           
+          # --- BIOS Boot Test ---
+          echo ""
           echo "=== Testing BIOS boot ==="
-          timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -serial mon:stdio 2>&1 | tee /tmp/qemu-bios.log || true
+          timeout 60 qemu-system-x86_64 \
+            -nographic \
+            -m 2048 \
+            -cdrom "${ISO_FILE}" \
+            -boot d \
+            -serial mon:stdio \
+            2>&1 | tee /tmp/qemu-bios.log || true
           
+          # --- EFI Boot Test ---
           echo ""
           echo "=== Testing EFI boot ==="
-          # Find 64-bit OVMF firmware (must match x86_64 ISO)
+          
+          # Find 64-bit OVMF firmware - MUST be x64, not ia32
           OVMF_PATH=""
+          echo "Searching for 64-bit OVMF firmware..."
+          
+          # Priority list of known x64 OVMF paths
           for path in \
             /usr/share/edk2-ovmf/x64/OVMF.fd \
             /usr/share/edk2/x64/OVMF.fd \
+            /usr/share/edk2/x64/OVMF_CODE.fd \
             /usr/share/edk2/x64/OVMF.4m.fd \
+            /usr/share/OVMF/x64/OVMF_CODE.fd \
             /usr/share/OVMF/OVMF_CODE.fd \
+            /usr/share/ovmf/x64/OVMF_CODE.fd \
             /usr/share/ovmf/OVMF.fd \
             /usr/share/qemu/OVMF.fd; do
             if [ -f "$path" ]; then
-              OVMF_PATH="$path"
-              break
+              # Verify it's 64-bit by checking path doesn't contain ia32
+              if ! echo "$path" | grep -qi "ia32"; then
+                OVMF_PATH="$path"
+                echo "Found: $path"
+                break
+              fi
             fi
           done
           
-          # Fallback: search for x64 OVMF (avoid ia32)
+          # Fallback: search for x64 OVMF explicitly
           if [ -z "$OVMF_PATH" ]; then
-            OVMF_PATH=$(find /usr/share -path "*x64*" -name "OVMF*.fd" 2>/dev/null | head -1)
+            echo "Checking alternative paths..."
+            OVMF_PATH=$(find /usr/share -type f \( -path "*x64*" -o -path "*X64*" \) -name "OVMF*.fd" 2>/dev/null | grep -v -i "ia32" | head -1)
           fi
           
+          # Last resort: find any OVMF but exclude ia32
+          if [ -z "$OVMF_PATH" ]; then
+            OVMF_PATH=$(find /usr/share -type f -name "OVMF*.fd" 2>/dev/null | grep -v -i "ia32" | head -1)
+          fi
+          
+          EFI_TESTED=false
           if [ -n "$OVMF_PATH" ]; then
-            echo "Using OVMF at: $OVMF_PATH"
-            timeout 60 qemu-system-x86_64 -nographic -m 2048 -cdrom "${ISO_FILE}" -boot d -bios "$OVMF_PATH" -serial mon:stdio 2>&1 | tee /tmp/qemu-uefi.log || true
+            # Double-check it's not ia32
+            if echo "$OVMF_PATH" | grep -qi "ia32"; then
+              echo "ERROR: Only ia32 (32-bit) OVMF found - cannot test 64-bit EFI boot"
+              echo "Skipping EFI test"
+            else
+              echo "Using OVMF: $OVMF_PATH"
+              EFI_TESTED=true
+              timeout 60 qemu-system-x86_64 \
+                -nographic \
+                -m 2048 \
+                -cdrom "${ISO_FILE}" \
+                -boot d \
+                -bios "$OVMF_PATH" \
+                -serial mon:stdio \
+                2>&1 | tee /tmp/qemu-uefi.log || true
+            fi
           else
-            echo "WARNING: No 64-bit OVMF firmware found, skipping EFI test"
+            echo "WARNING: No 64-bit OVMF firmware found"
+            echo "EFI boot test skipped"
           fi
           
+          # --- Analyze Results ---
           echo ""
-          echo "=== Analyzing boot logs ==="
-          BIOS_OK=0
-          EFI_OK=0
+          echo "=========================================="
+          echo "=== Boot Test Analysis ==="
+          echo "=========================================="
           
-          # Check BIOS boot log
-          echo "--- BIOS boot analysis ---"
-          if grep -qi "isolinux\|syslinux" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "OK: BIOS bootloader (ISOLINUX) started"
-            BIOS_OK=1
-          fi
+          BIOS_RESULT="UNKNOWN"
+          EFI_RESULT="SKIPPED"
+          BIOS_ERRORS=""
+          EFI_ERRORS=""
           
-          if grep -qi "Loading.*vmlinuz\|Loading.*linux" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "OK: Kernel loading started"
-            BIOS_OK=1
-          fi
-          
-          if grep -qi "initramfs" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "OK: Initramfs loading detected"
-            BIOS_OK=1
-          fi
-          
-          if grep -qi "error\|failed\|panic" /tmp/qemu-bios.log 2>/dev/null; then
-            echo "WARNING: Errors detected in BIOS boot:"
-            grep -i "error\|failed\|panic" /tmp/qemu-bios.log | head -3
-          fi
-          
-          # Check EFI boot log
-          echo "--- EFI boot analysis ---"
-          if [ -f /tmp/qemu-uefi.log ]; then
-            if grep -qi "systemd-boot\|Boot0.*UEFI" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "OK: EFI bootloader started"
-              EFI_OK=1
+          # Analyze BIOS boot
+          echo ""
+          echo "--- BIOS Boot ---"
+          if [ -f /tmp/qemu-bios.log ] && [ -s /tmp/qemu-bios.log ]; then
+            BIOS_BOOTLOADER=false
+            BIOS_KERNEL=false
+            BIOS_INITRAMFS=false
+            BIOS_FATAL=false
+            
+            if grep -qi "isolinux\|syslinux" /tmp/qemu-bios.log; then
+              echo "[OK] Bootloader (ISOLINUX) started"
+              BIOS_BOOTLOADER=true
             fi
             
-            if grep -qi "Arch Linux install medium" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "OK: Boot menu displayed"
-              EFI_OK=1
+            if grep -qi "Loading.*vmlinuz\|Loading.*linux\|Loading /arch" /tmp/qemu-bios.log; then
+              echo "[OK] Kernel loading"
+              BIOS_KERNEL=true
             fi
             
-            if grep -qi "Failed to decompress\|efi_stub_entry.*failed" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "ERROR: Kernel decompression failed - likely wrong OVMF firmware (need 64-bit)"
-              EFI_OK=0
-            elif grep -qi "error\|failed" /tmp/qemu-uefi.log 2>/dev/null; then
-              echo "WARNING: Errors detected in EFI boot:"
-              grep -i "error\|failed" /tmp/qemu-uefi.log | head -3
+            if grep -qi "initramfs\|Loading.*initramfs" /tmp/qemu-bios.log; then
+              echo "[OK] Initramfs loading"
+              BIOS_INITRAMFS=true
+            fi
+            
+            # Check for fatal errors (not just any "error" string)
+            if grep -qi "kernel panic\|not syncing\|fatal error" /tmp/qemu-bios.log; then
+              echo "[FAIL] Fatal error detected"
+              BIOS_FATAL=true
+              BIOS_ERRORS=$(grep -i "kernel panic\|not syncing\|fatal" /tmp/qemu-bios.log | head -2)
+            fi
+            
+            if [ "$BIOS_FATAL" = true ]; then
+              BIOS_RESULT="FAIL"
+            elif [ "$BIOS_BOOTLOADER" = true ] && [ "$BIOS_KERNEL" = true ]; then
+              BIOS_RESULT="PASS"
+            elif [ "$BIOS_BOOTLOADER" = true ]; then
+              BIOS_RESULT="PARTIAL"
             fi
           else
-            echo "INFO: EFI test was skipped (no OVMF firmware found)"
+            echo "[WARN] No BIOS boot log captured"
+          fi
+          
+          # Analyze EFI boot
+          echo ""
+          echo "--- EFI Boot ---"
+          if [ "$EFI_TESTED" = true ] && [ -f /tmp/qemu-uefi.log ] && [ -s /tmp/qemu-uefi.log ]; then
+            EFI_BOOTLOADER=false
+            EFI_MENU=false
+            EFI_FATAL=false
+            
+            if grep -qi "BdsDxe.*UEFI\|systemd-boot" /tmp/qemu-uefi.log; then
+              echo "[OK] EFI bootloader started"
+              EFI_BOOTLOADER=true
+            fi
+            
+            if grep -qi "Arch Linux install medium" /tmp/qemu-uefi.log; then
+              echo "[OK] Boot menu displayed"
+              EFI_MENU=true
+            fi
+            
+            # Check for kernel decompression errors (critical)
+            if grep -qi "Failed to decompress kernel\|efi_stub_entry.*failed" /tmp/qemu-uefi.log; then
+              echo "[FAIL] Kernel decompression failed"
+              echo "       This usually means wrong OVMF firmware (32-bit vs 64-bit)"
+              EFI_FATAL=true
+              EFI_ERRORS="Kernel decompression failed"
+            fi
+            
+            # Check for other fatal errors
+            if grep -qi "kernel panic\|not syncing" /tmp/qemu-uefi.log; then
+              echo "[FAIL] Kernel panic detected"
+              EFI_FATAL=true
+            fi
+            
+            if [ "$EFI_FATAL" = true ]; then
+              EFI_RESULT="FAIL"
+            elif [ "$EFI_BOOTLOADER" = true ] && [ "$EFI_MENU" = true ]; then
+              EFI_RESULT="PASS"
+            elif [ "$EFI_BOOTLOADER" = true ]; then
+              EFI_RESULT="PARTIAL"
+            else
+              EFI_RESULT="UNKNOWN"
+            fi
+          elif [ "$EFI_TESTED" = false ]; then
+            echo "[SKIP] EFI test was not run (no 64-bit OVMF)"
+            EFI_RESULT="SKIPPED"
+          else
+            echo "[WARN] No EFI boot log captured"
+          fi
+          
+          # --- Final Summary ---
+          echo ""
+          echo "=========================================="
+          echo "=== QEMU BOOT TEST SUMMARY ==="
+          echo "=========================================="
+          echo ""
+          echo "BIOS Boot: $BIOS_RESULT"
+          if [ -n "$BIOS_ERRORS" ]; then
+            echo "  Errors: $BIOS_ERRORS"
+          fi
+          echo "EFI Boot:  $EFI_RESULT"
+          if [ -n "$EFI_ERRORS" ]; then
+            echo "  Errors: $EFI_ERRORS"
+          fi
+          echo ""
+          
+          if [ "$BIOS_RESULT" = "PASS" ]; then
+            echo "The ISO boots correctly in BIOS mode."
+            echo "For USB flash testing, this is sufficient."
+          fi
+          
+          if [ "$EFI_RESULT" = "FAIL" ]; then
+            echo ""
+            echo "EFI boot failed - this may be a test environment issue."
+            echo "The ISO may still work on real EFI hardware."
           fi
           
           echo ""
-          echo "=== QEMU Test Summary ==="
-          if [ "$BIOS_OK" -eq 1 ]; then
-            echo "BIOS boot: PASS - Bootloader and kernel loading work"
-          else
-            echo "BIOS boot: UNKNOWN - Check logs above"
-          fi
-          
-          if [ "$EFI_OK" -eq 1 ]; then
-            echo "EFI boot: PASS - Bootloader works"
-          else
-            echo "EFI boot: CHECK NEEDED - Review logs above"
-          fi
-          
-          echo ""
-          echo "Note: Tests run for 60 seconds; full boot requires more time"
-          echo "For USB testing: Use BIOS mode in VirtualBox or flash to USB drive"
+          echo "Note: QEMU tests run for 60 seconds max."
+          echo "Full boot to desktop requires real hardware or longer VM time."
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
