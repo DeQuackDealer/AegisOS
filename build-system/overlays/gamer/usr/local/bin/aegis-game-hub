@@ -4,10 +4,19 @@ Aegis Game Hub - Full-screen game library launcher
 SteamOS Big Picture style interface for Aegis OS Gamer Edition
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Pango
+import sys
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Pango
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
+
 import os
 import json
 import subprocess
@@ -818,6 +827,9 @@ class AegisGameHub(Gtk.Window):
         return False
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Game Hub: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
     app = AegisGameHub()
     app.show_all()
     Gtk.main()

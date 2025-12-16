@@ -12,9 +12,18 @@ Features:
 - Check for updates
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib, GdkPixbuf
+import sys
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib, GdkPixbuf
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
+
 import os
 import json
 import subprocess
@@ -449,6 +458,9 @@ class AegisProtonManager(Gtk.Window):
 
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Proton Manager: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
     curl_check = subprocess.run(["which", "curl"], capture_output=True)
     if curl_check.returncode != 0:
         print("Error: curl is required but not installed")

@@ -45,6 +45,8 @@ try:
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
+    print("Error: Tkinter is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S tk", file=sys.stderr)
 
 try:
     from PIL import Image, ImageTk
@@ -3344,6 +3346,10 @@ def main():
     parser.add_argument('--headless', action='store_true', help='Run in headless mode')
     
     args, remaining = parser.parse_known_args()
+    
+    if args.gui and not TKINTER_AVAILABLE:
+        print("Cannot start Aegis Game Launcher GUI: Tkinter not available.", file=sys.stderr)
+        sys.exit(1)
     
     launcher = AegisGameLauncher(headless=args.headless)
     

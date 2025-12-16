@@ -3,9 +3,18 @@
 Aegis Upscaler - FSR/DLSS/Neural upscaling manager for gaming
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib
+import sys
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
+
 import os
 import subprocess
 import json
@@ -389,6 +398,9 @@ class AegisUpscaler(Gtk.Window):
         dialog.run(); dialog.destroy()
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Upscaler: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
     win = AegisUpscaler()
     win.connect("destroy", Gtk.main_quit)
     win.show_all()

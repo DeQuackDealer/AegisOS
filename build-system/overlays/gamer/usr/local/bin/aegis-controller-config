@@ -4,12 +4,10 @@ Aegis Controller Manager - Gamepad configuration and testing with real udev rule
 Enhanced with per-game profiles, calibration, real input testing, and rumble support
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib, Gdk
 import os
 import subprocess
 import json
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 import glob
@@ -19,6 +17,16 @@ import array
 import time
 import threading
 import select
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib, Gdk
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
 
 CONTROLLER_PROFILES = {
     "xbox": {
@@ -1447,6 +1455,10 @@ echo "Controller rules installed! Please reconnect your controller."
         new_win.show_all()
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Controller Config: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
+    
     win = AegisControllerConfig()
     win.connect("destroy", Gtk.main_quit)
     win.show_all()

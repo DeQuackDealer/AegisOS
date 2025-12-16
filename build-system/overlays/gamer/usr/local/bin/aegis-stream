@@ -34,6 +34,8 @@ try:
     HAS_GUI = True
 except ImportError:
     HAS_GUI = False
+    print("Error: Tkinter is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "1.0.0"
 CONFIG_DIR = Path.home() / ".config" / "aegis" / "stream"
@@ -987,7 +989,10 @@ def main():
     elif args.client:
         port = args.port or stream.config["stream_port"]
         stream.start_client_mode(args.client, port, args.pin, args.ffplay)
-    elif args.gui and HAS_GUI:
+    elif args.gui:
+        if not HAS_GUI:
+            print("Cannot start Aegis Stream GUI: Tkinter not available.", file=sys.stderr)
+            sys.exit(1)
         print("Launching GUI...")
         gui = StreamGUI(stream)
         gui.run()

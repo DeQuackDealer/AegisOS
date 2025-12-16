@@ -37,6 +37,8 @@ try:
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
+    print("Error: Tkinter is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S tk", file=sys.stderr)
 
 
 class LicenseTier(Enum):
@@ -1906,7 +1908,7 @@ Examples:
     
     if args.gui:
         if not TKINTER_AVAILABLE:
-            print("Error: tkinter is not available. Install python3-tk package.")
+            print("Cannot start Aegis Audio Router: Tkinter not available.", file=sys.stderr)
             sys.exit(1)
         router = AegisAudioRouter(headless=False)
         gui = AudioRouterGUI(router)

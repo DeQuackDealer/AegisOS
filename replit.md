@@ -99,6 +99,22 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 
 ## Recent Changes (December 2025)
 
+### ISO Boot Failure Fixes - Missing Dependencies and Import Guards
+
+**Package List Updates (build-system/archiso/packages/)**:
+- **base.txt**: Added python-psutil, python-zeroconf, gtk3, gobject-introspection, wmctrl, xdotool, xrandr, barrier
+- **gamer.txt**: Added python-evdev, python-cairo, pango for controller/screen utilities
+- **freemium.txt**: Added python-psutil for system tools
+
+**GTK Import Guards** (12 utilities fixed):
+- Added try/except guards around GTK imports with `GTK_AVAILABLE` flag
+- Scripts now exit gracefully instead of crashing if GTK3 is missing
+- Fixed: aegis-controller-config, aegis-screen-split, aegis-game-hub, aegis-vpn-manager, aegis-wine-optimizer, aegis-proton-manager, aegis-game-scanner, aegis-stream-studio, aegis-gpu-manager, aegis-upscaler, aegis-mangohud-config, aegis-performance-tuner
+
+**Tkinter Import Guards** (5 utilities improved):
+- Enhanced error handling with stderr output for missing tkinter
+- Fixed: aegis-game-launcher, aegis-stream-deck, aegis-audio-router, aegis-stream, aegis-game-center
+
 ### Critical Regression Fixes for Aegis Utilities
 
 **aegis-system-monitor**:

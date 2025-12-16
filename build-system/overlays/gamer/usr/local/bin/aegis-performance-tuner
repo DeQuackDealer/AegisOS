@@ -3,9 +3,18 @@
 Aegis Performance Tuner - CPU/GPU optimization for gaming
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, GLib
+import sys
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
+
 import os
 import subprocess
 import json
@@ -405,6 +414,9 @@ done
         GLib.timeout_add_seconds(3, update)
 
 def main():
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Performance Tuner: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
     win = AegisPerformanceTuner()
     win.connect("destroy", Gtk.main_quit)
     win.show_all()

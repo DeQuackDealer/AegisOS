@@ -4,21 +4,29 @@ Aegis Screen Split - Advanced window tiling for streamers
 Features: Drag-and-drop layout editor, multi-monitor support, window memory, system tray
 """
 
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
 import os
 import subprocess
 import json
 import re
 import signal
 import shutil
+import sys
 import threading
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib, Gio, GdkPixbuf
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+    print("Error: GTK3 is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S gtk3 python-gobject", file=sys.stderr)
 
 _tool_availability_cache: Dict[str, Optional[str]] = {}
 _tool_warning_logged: Dict[str, bool] = {}
@@ -1471,7 +1479,10 @@ class AegisScreenSplit(Gtk.Window):
             dialog.destroy()
 
 def main():
-    import sys
+    if not GTK_AVAILABLE:
+        print("Cannot start Aegis Screen Split: GTK3 not available.", file=sys.stderr)
+        sys.exit(1)
+    
     start_minimized = "--minimized" in sys.argv or "--tray" in sys.argv
     
     win = AegisScreenSplit(start_minimized=start_minimized)

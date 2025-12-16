@@ -45,6 +45,8 @@ try:
     TKINTER_AVAILABLE = True
 except ImportError:
     TKINTER_AVAILABLE = False
+    print("Error: Tkinter is required for the graphical interface.", file=sys.stderr)
+    print("Install with: sudo pacman -S tk", file=sys.stderr)
 
 VERSION = "1.0.0"
 APP_NAME = "Aegis Game Center"
@@ -862,7 +864,8 @@ def main():
                 gui = GameCenterGUI(service)
                 gui.run()
             else:
-                print("GUI requires tkinter. Use --help for CLI options.")
+                print("Cannot start Aegis Game Center: Tkinter not available.", file=sys.stderr)
+                print("Use --help for CLI options.", file=sys.stderr)
                 sys.exit(1)
     finally:
         service.close()
