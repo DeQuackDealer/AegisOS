@@ -13,6 +13,7 @@ import argparse
 import csv
 import re
 from datetime import datetime
+from pathlib import Path
 import subprocess
 import shutil
 
@@ -31,20 +32,33 @@ class AegisSystemMonitor:
         self.dashboard_mode = dashboard_mode
         self.prev_net_io = None
         self.prev_net_time = None
+        self.logger = None
         
-        if not dashboard_mode:
-            self.setup_logging()
+        self.setup_logging()
         self.ensure_directories()
         
     def setup_logging(self):
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(self.log_file, mode='a'),
-                logging.StreamHandler()
-            ]
-        )
+        try:
+            if self.dashboard_mode:
+                logging.basicConfig(
+                    level=logging.WARNING,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.NullHandler()]
+                )
+            else:
+                handlers = [logging.StreamHandler()]
+                try:
+                    handlers.append(logging.FileHandler(self.log_file, mode='a'))
+                except (PermissionError, OSError):
+                    pass
+                logging.basicConfig(
+                    level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=handlers
+                )
+        except Exception:
+            logging.basicConfig(level=logging.WARNING, handlers=[logging.NullHandler()])
+        self.logger = logging.getLogger("AegisSystemMonitor")
         
     def ensure_directories(self):
         for d in ["/etc/aegis", "/var/lib/aegis", "/var/log", self.csv_export_dir]:
@@ -626,14 +640,26 @@ class AegisSystemMonitor:
         """Export statistics to CSV file"""
         if output_file is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(self.csv_export_dir, f"system_stats_{timestamp}.csv")
+            export_dir = self.csv_export_dir
+            if not os.path.exists(export_dir) or not os.access(export_dir, os.W_OK):
+                export_dir = os.path.join(str(Path.home()), ".aegis", "exports")
+                try:
+                    os.makedirs(export_dir, exist_ok=True)
+                except (PermissionError, OSError):
+                    export_dir = str(Path.home())
+            output_file = os.path.join(export_dir, f"system_stats_{timestamp}.csv")
         
         try:
-            if not os.path.exists(self.stats_file):
-                print("No statistics available to export")
-                return None
+            stats_file = self.stats_file
+            if not os.path.exists(stats_file):
+                alt_stats = os.path.join(str(Path.home()), ".aegis", "system-stats.json")
+                if os.path.exists(alt_stats):
+                    stats_file = alt_stats
+                else:
+                    print("No statistics available to export")
+                    return None
             
-            with open(self.stats_file, 'r') as f:
+            with open(stats_file, 'r') as f:
                 all_stats = json.load(f)
             
             if not all_stats:

@@ -96,3 +96,28 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 *   **Ollama, llama.cpp, vLLM, ONNX Runtime**: AI inference backends.
 *   **Docker/Podman**: Container management.
 *   **Samba, NFS**: Network Attached Storage.
+
+## Recent Changes (December 2025)
+
+### Critical Regression Fixes for Aegis Utilities
+
+**aegis-system-monitor**:
+- Added missing `pathlib.Path` import for home directory operations
+- Fixed logging initialization to work in both dashboard and service modes
+- Added fallback CSV export paths (`~/.aegis/exports` → home directory) when `/var/lib/aegis/exports` is not writable
+
+**aegis-screen-split**:
+- Fixed `MonitorManager.detect_monitors()` with xrandr availability check before calling
+- Converted `_toggle_zones`, `_apply_layout`, `_learn_windows` to async subprocess calls
+- Added graceful fallback to default 1920x1080 monitor when xrandr unavailable
+
+**aegis-controller-config**:
+- Verified proper `poll_timeout_id` tracking for GLib timeout cleanup
+- Resource cleanup (`_on_window_destroy`) properly closes file descriptors
+
+**aegis-desklink**:
+- JSON parsing errors properly handled with `JSONDecodeError` exception block
+
+### Known Limitations
+- `MonitorManager.detect_monitors()` uses synchronous subprocess.run during initialization (has 5-second timeout to prevent hangs)
+- Future improvement: Make monitor detection fully async for better UI responsiveness during startup

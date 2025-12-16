@@ -210,6 +210,11 @@ class MonitorManager:
     @staticmethod
     def detect_monitors() -> List[Monitor]:
         monitors = []
+        
+        if not check_tool_available("xrandr"):
+            log_tool_warning_once("xrandr", "xrandr not available - using default monitor configuration")
+            return [Monitor("Default", 1920, 1080, 0, 0, True)]
+        
         try:
             result = subprocess.run(['xrandr', '--query'], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
@@ -233,8 +238,10 @@ class MonitorManager:
                         res_match = re.search(r'(\d+)x(\d+)', line)
                         if res_match:
                             monitors.append(Monitor(name, int(res_match.group(1)), int(res_match.group(2)), 0, 0, primary))
+        except subprocess.TimeoutExpired:
+            log_tool_warning_once("xrandr_timeout", "xrandr timed out - using default monitor")
         except Exception as e:
-            print(f"Monitor detection error: {e}")
+            log_tool_warning_once("xrandr_error", f"Monitor detection error: {e}")
         
         if not monitors:
             monitors = [Monitor("Default", 1920, 1080, 0, 0, True)]
@@ -748,13 +755,10 @@ class AegisScreenSplit(Gtk.Window):
     
     def _toggle_zones(self):
         self.zones_visible = not self.zones_visible
-        try:
-            if self.zones_visible:
-                subprocess.run(["xdotool", "key", "super+z"], check=False)
-            else:
-                subprocess.run(["xdotool", "key", "super+z"], check=False)
-        except:
-            pass
+        if check_tool_available("xdotool"):
+            run_subprocess_fire_and_forget(["xdotool", "key", "super+z"])
+        else:
+            log_tool_warning_once("xdotool", "xdotool not available - zone toggle requires xdotool")
     
     def _quick_apply_layout(self, layout_id):
         self.current_layout = layout_id
@@ -1150,8 +1154,17 @@ class AegisScreenSplit(Gtk.Window):
         self.memory_list.show_all()
     
     def _learn_windows(self, btn):
-        try:
-            result = subprocess.run(['wmctrl', '-l', '-x'], capture_output=True, text=True, timeout=5)
+        if not check_tool_available("wmctrl"):
+            dialog = Gtk.MessageDialog(
+                parent=self, flags=0, message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.OK,
+                text="wmctrl is required for window learning.\n\nInstall it with: sudo apt install wmctrl"
+            )
+            dialog.run()
+            dialog.destroy()
+            return
+        
+        def on_result(result):
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
                 layout = self._get_current_layout()
@@ -1181,14 +1194,17 @@ class AegisScreenSplit(Gtk.Window):
                 )
                 dialog.run()
                 dialog.destroy()
-        except Exception as e:
+        
+        def on_error(e):
             dialog = Gtk.MessageDialog(
                 parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.OK,
-                text=f"Error: {e}\n\nMake sure wmctrl is installed."
+                text=f"Error: {e}"
             )
             dialog.run()
             dialog.destroy()
+        
+        run_subprocess_async(['wmctrl', '-l', '-x'], on_result, on_error)
     
     def _clear_memory(self, btn):
         dialog = Gtk.MessageDialog(
@@ -1350,24 +1366,27 @@ class AegisScreenSplit(Gtk.Window):
         return False
     
     def _apply_layout(self, btn):
-        try:
-            subprocess.run(["xdotool", "key", "super+z"], check=False)
-            self.zones_visible = True
-            
-            dialog = Gtk.MessageDialog(
-                parent=self, flags=0, message_type=Gtk.MessageType.INFO,
-                buttons=Gtk.ButtonsType.OK,
-                text="Layout applied! Drag windows to snap them to zones.\n\nUse the system tray icon for quick access."
-            )
-            dialog.run()
-            dialog.destroy()
-        except Exception as e:
-            dialog = Gtk.MessageDialog(
-                parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK, text=f"Error: {e}"
-            )
-            dialog.run()
-            dialog.destroy()
+        self._save_config()
+        self.zones_visible = True
+        
+        if check_tool_available("xdotool"):
+            run_subprocess_fire_and_forget(["xdotool", "key", "super+z"])
+        
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Layout applied! Drag windows to snap them to zones.\n\nUse the system tray icon for quick access."
+        )
+        dialog.run()
+        dialog.destroy()
+    
+    def _apply_layout_failed(self, btn, error):
+        dialog = Gtk.MessageDialog(
+            parent=self, flags=0, message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK, text=f"Error: {error}"
+        )
+        dialog.run()
+        dialog.destroy()
     
     def _edit_layout(self, btn):
         layout = self._get_current_layout()
