@@ -6,58 +6,67 @@ Aegis OS is a commercial Arch Linux-based distribution featuring seven distinct 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
 
+## Gamer Edition - Flagship Product ($69 lifetime / $10 annual)
+
+### 8 Integrated System Services (Background Daemons)
+All services run automatically via systemd - no user configuration needed:
+
+1. **Adaptive RAM Guardian** - Memory reclamation, leak detection, gaming process prioritization
+2. **StreamForge Capture Stack** - Kernel-mode capture (kmsgrab/NVFBC), 8ms encode latency
+3. **Latency FastPath** - IRQ affinity steering, 1000Hz USB polling, CPU governor auto-switching
+4. **VRAM Heatmap Balancer** - Real-time GPU memory monitoring, shader cache cleanup
+5. **NetBoost Network Optimizer** - QoS for gaming traffic, BBR congestion control
+6. **Shader Pre-Cache Engine** - Background DXVK/VKD3D shader compilation
+7. **Audio Zero-Latency** - PipeWire optimization, 2.7ms competitive mode
+8. **Thermal Guard** - Smart temperature monitoring, automatic fan curve adjustment
+
+### OS-Level Features
+- **Kernel**: BORE Scheduler, BFQ I/O, Transparent Huge Pages, NUMA-Aware Allocation
+- **Wine/Proton**: ESYNC/FSYNC, DXVK Pre-Cached Shaders, VKD3D-Proton optimized
+- **Dual GPU**: Split-Frame Rendering (60/40 split) via custom Vulkan layer, mixed NVIDIA/AMD support
+- **Upscaling**: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
+
+### Website Marketing Sections (gamer.html)
+- Hero with pricing cards ($69 lifetime / $10 annual)
+- Quick stats: 98%+ compatibility, <1ms latency, 5 anti-cheats, 8 services, 18+ emulators, 0 bloatware
+- Flagship Premium Features showcase
+- Integrated System Services grid (8 services)
+- Kernel & System-Level Optimizations
+- Comparison Table: Aegis vs Windows 11 vs SteamOS (11 metrics)
+- Why Linux Gaming in 2025 section
+- System Requirements (Minimum, 4K Gaming, Dual GPU)
+- FAQ section (6 questions)
+- Controller Support, Streaming, Performance sections
+
 ## System Architecture
 
 ### Build System
-The core build system uses `archiso` to create bootable ISOs for all seven editions, each configured with specific Linux kernels and package lists. It features full Aegis branding, including custom `profiledef.sh`, `/etc/os-release` codenames, a Windows 10-themed LightDM greeter, custom Plymouth boot splash, Fastfetch integration, and a pre-configured `aegis` user.
+The core build system uses `archiso` to create bootable ISOs for all seven editions. Full Aegis branding with custom `profiledef.sh`, `/etc/os-release` codenames, LightDM greeter, Plymouth boot splash, and pre-configured `aegis` user.
 
 ### Promotional Website
-A Flask-based marketing website with a Windows 10-inspired static HTML frontend. It includes security features (rate limiting, JWT, CSRF, audit logging) and displays OS editions, features, and pricing from `TIER_FEATURES.json`. The site provides RESTful APIs for license management, monitoring, analytics, and user authentication.
+Flask-based marketing website with security features (rate limiting, JWT, CSRF, audit logging). RESTful APIs for license management, Stripe payments, and admin panel.
 
 ### Installer System
-A fully offline, cross-platform Python/tkinter GUI installer, packaged with PyInstaller. It supports both Freemium and licensed installations. ISO integrity is verified via SHA-256 checksums from `manifest.json`, and licensed editions include RSA-2048 signature verification for license files.
+Fully offline Python/tkinter GUI installer with PyInstaller packaging. SHA-256 ISO verification and RSA-2048 license signature verification.
 
 ### Payment & License System
-Manages user accounts, generates unique license keys, processes payments via Stripe, and tracks Stripe events and email logs. License keys are sent via SendGrid. An admin panel supports promotional "free period" modes.
+Stripe integration, SendGrid email delivery, unique license key generation. Admin panel with promotional "free period" modes.
 
-### Auto-Update System
-A REST API enables Aegis OS installations to check for and download RSA-signed updates, supporting edition-specific channels (Stable, Priority, Beta, LTS).
-
-### Desktop Environment
-Based on XFCE, it provides a Windows 10-inspired user experience with custom GTK themes, an Aegis Theme Manager, Aero Snap, a translucent taskbar, and Windows-compatible keyboard shortcuts.
-
-### Wine/Proton Optimization
-Offers high Windows application compatibility through pre-configured Wine/Proton settings and an `Aegis Wine Optimizer` tool for managing optimized prefixes and dependencies.
-
-### Aegis Exclusive Tools
-Over 50 custom Python-based utilities (GUI/CLI) are included, with features tiered by OS edition. These tools cover office suites, multimedia, system care, gaming optimization, AI/ML development, and enterprise management. They leverage `pkexec` for privileged operations and secure `subprocess` calls.
-
-### AI Security Tiering System
-All editions integrate AI-powered security, from basic heuristics to XDR and ML-driven threat intelligence, configured via `tier-security.json` and `aegis_ai_security.py`.
-
-### Aegis Neural Upscaler (ANU) System
-Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (GTK3 GUI/CLI with multiple backends) and `aegis-game-launcher` for unified game launching and upscaler injection.
+## Pricing Structure
+- **Gamer** (Flagship): $69 lifetime, $10/year
+- **Basic**: $19 lifetime, $3/year
+- **Workplace**: $9 lifetime, $2/year
+- **AI Developer**: $79 lifetime, $12/year
+- **Gamer+AI**: $119 lifetime, $17/year
+- **Freemium**: Free
+- **Server**: Contact Us
 
 ## External Dependencies
-
-*   **archiso**: Arch Linux ISO build system.
-*   **Flask**: Python web framework.
-*   **PyJWT**: JSON Web Token handling.
-*   **SendGrid**: Transactional email service.
-*   **Stripe**: Payment processing.
-*   **Python 3**: Core language for many components and tools.
-*   **tkinter**: Python GUI library.
-*   **MPV**: Renderer for wallpaper engine and streaming.
-*   **FFmpeg**: Video processing.
-*   **ClamAV, UFW**: Security tools.
-*   **rsync**: Backup utility.
-*   **Steam, Lutris, Heroic**: Game library integrations.
-*   **KDE Connect, Barrier/Synergy**: Device linking.
-*   **GameMode**: Gaming optimization.
-*   **NVIDIA drivers**: Hardware encoding.
-*   **AppArmor/Firejail**: Sandboxing.
-*   **PipeWire/PulseAudio**: Audio processing.
-*   **rclone**: Cloud storage integration.
-*   **Ollama, llama.cpp, vLLM, ONNX Runtime**: AI inference backends.
-*   **Docker/Podman**: Container management.
-*   **Samba, NFS**: Network Attached Storage.
+* **archiso**: ISO build system
+* **Flask, PyJWT, SendGrid, Stripe**: Web & payment
+* **Python 3, tkinter**: Tools & installer
+* **Wine/Proton, DXVK, VKD3D**: Windows compatibility
+* **PipeWire, FFmpeg, MPV**: Audio/video
+* **Steam, Lutris, Heroic**: Game launchers
+* **GameMode, MangoHud**: Gaming optimization
+* **OpenRGB**: RGB peripheral control
