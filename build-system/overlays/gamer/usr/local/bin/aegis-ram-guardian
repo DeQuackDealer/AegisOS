@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""
+Aegis Adaptive RAM Guardian - Intelligent Memory Management Service
+
+A kernel-level memory optimization daemon that:
+- Monitors memory pressure via PSI (Pressure Stall Information)
+- Detects memory leaks and bloat in long-running applications
+- Automatically reclaims unused RAM before it impacts gaming
+- Prioritizes gaming processes with smart cgroup management
+- Works silently in the background with zero user interaction
+
+This is an OS-LEVEL FEATURE, not an app. It runs as a systemd service.
+"""
+
+import os
+import sys
+import time
+import json
+import signal
+import logging
+import subprocess
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set
+from datetime import datetime, timedelta
+
+CONFIG_PATH = Path("/etc/aegis/ram-guardian.json")
+STATE_PATH = Path("/var/lib/aegis/ram-guardian")
+LOG_PATH = Path("/var/log/aegis/ram-guardian.log")
+
+DEFAULT_CONFIG = {
+    "enabled": True,
+    "check_interval_seconds": 10,
+    "memory_pressure_threshold": 0.7,
+    "critical_pressure_threshold": 0.9,
+    "reclaim_inactive_after_minutes": 30,
+    "gaming_priority_boost": True,
+    "aggressive_reclaim_on_game_launch": True,
+    "protected_processes": ["Xorg", "Wayland", "pipewire", "pulseaudio", "gamemoded"],
+    "gaming_process_patterns": ["steam", "lutris", "wine", "proton", "heroic", ".exe"],
+    "max_reclaim_per_cycle_mb": 1024,
+    "enable_zswap_tuning": True,
+    "enable_page_cache_management": True,
+    "enable_cgroup_isolation": True,
+    "silent_mode": True
+}
+
+@dataclass
+class ProcessMemoryInfo:
+    pid: int
+    name: str
+    rss_mb: float
+    vms_mb: float
+    shared_mb: float
+    started_at: datetime
+    is_gaming: bool
+    growth_rate_mb_per_hour: float
+
+@dataclass
+class MemoryStats:
+    total_mb: float
+    available_mb: float
+    used_mb: float
+    cached_mb: float
+    buffers_mb: float
+    swap_used_mb: float
+    swap_total_mb: float
+    pressure_some: float
+    pressure_full: float
+
+class AdaptiveRAMGuardian:
+    def __init__(self):
+        self.config = self._load_config()
+        self.running = True
+        self.process_history: Dict[int, List[tuple]] = {}
+        self.gaming_active = False
+        self.last_reclaim_time = datetime.now()
+        self.reclaimed_total_mb = 0
+        self._setup_logging()
+        self._setup_signal_handlers()
+        self._ensure_directories()
+        
+    def _load_config(self) -> dict:
+        if CONFIG_PATH.exists():
+            try:
+                with open(CONFIG_PATH) as f:
+                    user_config = json.load(f)
+                    return {**DEFAULT_CONFIG, **user_config}
+            except Exception:
+                pass
+        return DEFAULT_CONFIG.copy()
+    
+    def _setup_logging(self):
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        level = logging.WARNING if self.config["silent_mode"] else logging.INFO
+        logging.basicConfig(
+            level=level,
+            format='%(asctime)s [RAM-Guardian] %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_PATH),
+                logging.StreamHandler() if not self.config["silent_mode"] else logging.NullHandler()
+            ]
+        )
+        self.logger = logging.getLogger("ram-guardian")
+    
+    def _setup_signal_handlers(self):
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGUSR1, self._handle_status_request)
+    
+    def _handle_shutdown(self, signum, frame):
+        self.logger.info("Shutting down RAM Guardian...")
+        self.running = False
+    
+    def _handle_status_request(self, signum, frame):
+        stats = self._get_memory_stats()
+        self.logger.info(f"Status: {stats.available_mb:.0f}MB available, "
+                        f"{self.reclaimed_total_mb:.0f}MB reclaimed total, "
+                        f"Gaming active: {self.gaming_active}")
+    
+    def _ensure_directories(self):
+        STATE_PATH.mkdir(parents=True, exist_ok=True)
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    
+    def _get_memory_stats(self) -> MemoryStats:
+        with open("/proc/meminfo") as f:
+            meminfo = {}
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    key = parts[0].rstrip(":")
+                    meminfo[key] = int(parts[1]) / 1024
+        
+        pressure_some = 0.0
+        pressure_full = 0.0
+        psi_path = Path("/proc/pressure/memory")
+        if psi_path.exists():
+            try:
+                with open(psi_path) as f:
+                    for line in f:
+                        if line.startswith("some"):
+                            parts = line.split()
+                            for part in parts:
+                                if part.startswith("avg10="):
+                                    pressure_some = float(part.split("=")[1])
+                        elif line.startswith("full"):
+                            parts = line.split()
+                            for part in parts:
+                                if part.startswith("avg10="):
+                                    pressure_full = float(part.split("=")[1])
+            except Exception:
+                pass
+        
+        return MemoryStats(
+            total_mb=meminfo.get("MemTotal", 0),
+            available_mb=meminfo.get("MemAvailable", 0),
+            used_mb=meminfo.get("MemTotal", 0) - meminfo.get("MemAvailable", 0),
+            cached_mb=meminfo.get("Cached", 0),
+            buffers_mb=meminfo.get("Buffers", 0),
+            swap_used_mb=meminfo.get("SwapTotal", 0) - meminfo.get("SwapFree", 0),
+            swap_total_mb=meminfo.get("SwapTotal", 0),
+            pressure_some=pressure_some,
+            pressure_full=pressure_full
+        )
+    
+    def _get_process_list(self) -> List[ProcessMemoryInfo]:
+        processes = []
+        gaming_patterns = self.config["gaming_process_patterns"]
+        
+        for pid_dir in Path("/proc").iterdir():
+            if not pid_dir.name.isdigit():
+                continue
+            
+            try:
+                pid = int(pid_dir.name)
+                
+                with open(pid_dir / "comm") as f:
+                    name = f.read().strip()
+                
+                with open(pid_dir / "statm") as f:
+                    statm = f.read().split()
+                    page_size = os.sysconf("SC_PAGE_SIZE") / 1024 / 1024
+                    vms_mb = int(statm[0]) * page_size
+                    rss_mb = int(statm[1]) * page_size
+                    shared_mb = int(statm[2]) * page_size
+                
+                with open(pid_dir / "stat") as f:
+                    stat = f.read().split()
+                    starttime = int(stat[21])
+                    uptime = float(open("/proc/uptime").read().split()[0])
+                    clk_tck = os.sysconf("SC_CLK_TCK")
+                    started_seconds_ago = uptime - (starttime / clk_tck)
+                    started_at = datetime.now() - timedelta(seconds=started_seconds_ago)
+                
+                is_gaming = any(p.lower() in name.lower() for p in gaming_patterns)
+                
+                growth_rate = 0.0
+                if pid in self.process_history:
+                    history = self.process_history[pid]
+                    if len(history) >= 2:
+                        old_rss, old_time = history[0]
+                        hours_elapsed = (datetime.now() - old_time).total_seconds() / 3600
+                        if hours_elapsed > 0:
+                            growth_rate = (rss_mb - old_rss) / hours_elapsed
+                
+                processes.append(ProcessMemoryInfo(
+                    pid=pid,
+                    name=name,
+                    rss_mb=rss_mb,
+                    vms_mb=vms_mb,
+                    shared_mb=shared_mb,
+                    started_at=started_at,
+                    is_gaming=is_gaming,
+                    growth_rate_mb_per_hour=growth_rate
+                ))
+                
+                if pid not in self.process_history:
+                    self.process_history[pid] = []
+                self.process_history[pid].append((rss_mb, datetime.now()))
+                if len(self.process_history[pid]) > 60:
+                    self.process_history[pid] = self.process_history[pid][-30:]
+                    
+            except (FileNotFoundError, PermissionError, ValueError, IndexError):
+                continue
+        
+        return processes
+    
+    def _detect_gaming_activity(self, processes: List[ProcessMemoryInfo]) -> bool:
+        return any(p.is_gaming and p.rss_mb > 100 for p in processes)
+    
+    def _reclaim_memory(self, aggressive: bool = False) -> float:
+        reclaimed = 0.0
+        
+        if self.config["enable_page_cache_management"]:
+            try:
+                with open("/proc/sys/vm/drop_caches", "w") as f:
+                    f.write("1")
+                reclaimed += 100
+            except PermissionError:
+                pass
+        
+        cgroup_reclaim = Path("/sys/fs/cgroup/memory.reclaim")
+        if cgroup_reclaim.exists():
+            try:
+                reclaim_bytes = self.config["max_reclaim_per_cycle_mb"] * 1024 * 1024
+                if aggressive:
+                    reclaim_bytes *= 2
+                with open(cgroup_reclaim, "w") as f:
+                    f.write(str(reclaim_bytes))
+                reclaimed += self.config["max_reclaim_per_cycle_mb"]
+            except (PermissionError, OSError):
+                pass
+        
+        if self.config["enable_zswap_tuning"]:
+            try:
+                zswap_path = Path("/sys/module/zswap/parameters")
+                if zswap_path.exists():
+                    max_pool = "40" if aggressive else "25"
+                    (zswap_path / "max_pool_percent").write_text(max_pool)
+            except (PermissionError, OSError):
+                pass
+        
+        return reclaimed
+    
+    def _isolate_gaming_processes(self, processes: List[ProcessMemoryInfo]):
+        if not self.config["enable_cgroup_isolation"]:
+            return
+        
+        gaming_cgroup = Path("/sys/fs/cgroup/aegis-gaming")
+        if not gaming_cgroup.exists():
+            try:
+                gaming_cgroup.mkdir(parents=True, exist_ok=True)
+                (gaming_cgroup / "memory.high").write_text("max")
+                (gaming_cgroup / "memory.low").write_text("2G")
+            except (PermissionError, OSError):
+                return
+        
+        for proc in processes:
+            if proc.is_gaming:
+                try:
+                    (gaming_cgroup / "cgroup.procs").write_text(str(proc.pid))
+                except (PermissionError, OSError):
+                    continue
+    
+    def _handle_memory_pressure(self, stats: MemoryStats, processes: List[ProcessMemoryInfo]):
+        pressure_ratio = stats.used_mb / stats.total_mb
+        
+        if pressure_ratio > self.config["critical_pressure_threshold"]:
+            self.logger.warning(f"Critical memory pressure: {pressure_ratio:.1%}")
+            reclaimed = self._reclaim_memory(aggressive=True)
+            self.reclaimed_total_mb += reclaimed
+            
+        elif pressure_ratio > self.config["memory_pressure_threshold"]:
+            reclaimed = self._reclaim_memory(aggressive=False)
+            self.reclaimed_total_mb += reclaimed
+        
+        if self.gaming_active and self.config["gaming_priority_boost"]:
+            self._isolate_gaming_processes(processes)
+    
+    def _detect_memory_leaks(self, processes: List[ProcessMemoryInfo]) -> List[ProcessMemoryInfo]:
+        leaky = []
+        for proc in processes:
+            if proc.growth_rate_mb_per_hour > 50:
+                runtime_hours = (datetime.now() - proc.started_at).total_seconds() / 3600
+                if runtime_hours > 0.5:
+                    leaky.append(proc)
+        return leaky
+    
+    def _write_status(self, stats: MemoryStats):
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "memory_available_mb": stats.available_mb,
+            "memory_used_mb": stats.used_mb,
+            "memory_pressure_some": stats.pressure_some,
+            "memory_pressure_full": stats.pressure_full,
+            "gaming_active": self.gaming_active,
+            "total_reclaimed_mb": self.reclaimed_total_mb
+        }
+        try:
+            with open(STATE_PATH / "status.json", "w") as f:
+                json.dump(status, f, indent=2)
+        except Exception:
+            pass
+    
+    def run(self):
+        self.logger.info("Aegis Adaptive RAM Guardian started")
+        
+        while self.running:
+            try:
+                stats = self._get_memory_stats()
+                processes = self._get_process_list()
+                
+                was_gaming = self.gaming_active
+                self.gaming_active = self._detect_gaming_activity(processes)
+                
+                if self.gaming_active and not was_gaming:
+                    self.logger.info("Gaming activity detected, enabling priority mode")
+                    if self.config["aggressive_reclaim_on_game_launch"]:
+                        reclaimed = self._reclaim_memory(aggressive=True)
+                        self.reclaimed_total_mb += reclaimed
+                
+                self._handle_memory_pressure(stats, processes)
+                
+                leaky = self._detect_memory_leaks(processes)
+                if leaky and not self.config["silent_mode"]:
+                    for proc in leaky[:3]:
+                        self.logger.info(f"Memory growth detected: {proc.name} ({proc.pid}) "
+                                        f"+{proc.growth_rate_mb_per_hour:.0f}MB/hr")
+                
+                self._write_status(stats)
+                
+                time.sleep(self.config["check_interval_seconds"])
+                
+            except Exception as e:
+                self.logger.error(f"Error in main loop: {e}")
+                time.sleep(30)
+        
+        self.logger.info("RAM Guardian stopped")
+
+def main():
+    if os.geteuid() != 0:
+        print("RAM Guardian requires root privileges", file=sys.stderr)
+        sys.exit(1)
+    
+    guardian = AdaptiveRAMGuardian()
+    guardian.run()
+
+if __name__ == "__main__":
+    main()

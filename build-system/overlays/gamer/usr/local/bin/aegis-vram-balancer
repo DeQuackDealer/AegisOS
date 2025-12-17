@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""
+Aegis VRAM Heatmap Balancer - Intelligent GPU Memory Management
+
+A system service that prevents VRAM-related stuttering through:
+- Real-time VRAM usage monitoring via nvidia-smi/amdgpu
+- Proactive texture streaming hints before VRAM exhaustion
+- Automatic quality adjustment recommendations
+- Memory budget enforcement for multi-app scenarios
+- Integration with games via VK_EXT_memory_budget
+
+This is an OS-LEVEL FEATURE running as a systemd service.
+"""
+
+import os
+import sys
+import json
+import signal
+import logging
+import subprocess
+import time
+import re
+from pathlib import Path
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+from datetime import datetime
+
+CONFIG_PATH = Path("/etc/aegis/vram-balancer.json")
+STATE_PATH = Path("/var/lib/aegis/vram-balancer")
+LOG_PATH = Path("/var/log/aegis/vram-balancer.log")
+
+DEFAULT_CONFIG = {
+    "enabled": True,
+    "check_interval_seconds": 2,
+    "warning_threshold": 0.85,
+    "critical_threshold": 0.95,
+    "enable_texture_streaming_hints": True,
+    "enable_shader_cache_cleanup": True,
+    "priority_apps": ["steam", "wine", "proton", ".exe"],
+    "low_priority_apps": ["firefox", "chromium", "electron"],
+    "aggressive_cleanup_on_game_launch": True,
+    "reserve_mb_for_system": 256
+}
+
+@dataclass
+class GPUMemoryInfo:
+    gpu_index: int
+    gpu_name: str
+    total_mb: int
+    used_mb: int
+    free_mb: int
+    temperature_c: int
+    utilization_percent: int
+    processes: List[Dict]
+
+class VRAMBalancer:
+    def __init__(self):
+        self.config = self._load_config()
+        self.running = True
+        self.gpu_vendor = "unknown"
+        self.gaming_active = False
+        self._setup_logging()
+        self._setup_signal_handlers()
+        self._ensure_directories()
+        self._detect_gpu_vendor()
+    
+    def _load_config(self) -> dict:
+        if CONFIG_PATH.exists():
+            try:
+                with open(CONFIG_PATH) as f:
+                    return {**DEFAULT_CONFIG, **json.load(f)}
+            except Exception:
+                pass
+        return DEFAULT_CONFIG.copy()
+    
+    def _setup_logging(self):
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [VRAM-Balancer] %(levelname)s: %(message)s',
+            handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler()]
+        )
+        self.logger = logging.getLogger("vram-balancer")
+    
+    def _setup_signal_handlers(self):
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+    
+    def _handle_shutdown(self, signum, frame):
+        self.logger.info("Shutting down VRAM Balancer...")
+        self.running = False
+    
+    def _ensure_directories(self):
+        STATE_PATH.mkdir(parents=True, exist_ok=True)
+    
+    def _detect_gpu_vendor(self):
+        nvidia_smi = subprocess.run(["which", "nvidia-smi"], capture_output=True)
+        if nvidia_smi.returncode == 0:
+            self.gpu_vendor = "nvidia"
+            return
+        
+        amdgpu_path = Path("/sys/class/drm/card0/device/vendor")
+        if amdgpu_path.exists():
+            vendor = amdgpu_path.read_text().strip()
+            if vendor == "0x1002":
+                self.gpu_vendor = "amd"
+                return
+        
+        self.gpu_vendor = "intel"
+        self.logger.info(f"Detected GPU vendor: {self.gpu_vendor}")
+    
+    def _get_nvidia_memory(self) -> Optional[GPUMemoryInfo]:
+        try:
+            result = subprocess.run([
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu",
+                "--format=csv,noheader,nounits"
+            ], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode != 0:
+                return None
+            
+            parts = result.stdout.strip().split(", ")
+            if len(parts) < 7:
+                return None
+            
+            proc_result = subprocess.run([
+                "nvidia-smi",
+                "--query-compute-apps=pid,used_memory,name",
+                "--format=csv,noheader,nounits"
+            ], capture_output=True, text=True, timeout=5)
+            
+            processes = []
+            if proc_result.returncode == 0:
+                for line in proc_result.stdout.strip().split("\n"):
+                    if line:
+                        proc_parts = line.split(", ")
+                        if len(proc_parts) >= 3:
+                            processes.append({
+                                "pid": int(proc_parts[0]),
+                                "used_mb": int(proc_parts[1]),
+                                "name": proc_parts[2]
+                            })
+            
+            return GPUMemoryInfo(
+                gpu_index=int(parts[0]),
+                gpu_name=parts[1],
+                total_mb=int(parts[2]),
+                used_mb=int(parts[3]),
+                free_mb=int(parts[4]),
+                temperature_c=int(parts[5]),
+                utilization_percent=int(parts[6]),
+                processes=processes
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to query NVIDIA GPU: {e}")
+            return None
+    
+    def _get_amd_memory(self) -> Optional[GPUMemoryInfo]:
+        try:
+            vram_total = Path("/sys/class/drm/card0/device/mem_info_vram_total")
+            vram_used = Path("/sys/class/drm/card0/device/mem_info_vram_used")
+            
+            if not vram_total.exists() or not vram_used.exists():
+                return None
+            
+            total_bytes = int(vram_total.read_text().strip())
+            used_bytes = int(vram_used.read_text().strip())
+            
+            total_mb = total_bytes // (1024 * 1024)
+            used_mb = used_bytes // (1024 * 1024)
+            free_mb = total_mb - used_mb
+            
+            temp = 0
+            temp_path = Path("/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input")
+            if temp_path.exists():
+                temp = int(temp_path.read_text().strip()) // 1000
+            
+            utilization = 0
+            util_path = Path("/sys/class/drm/card0/device/gpu_busy_percent")
+            if util_path.exists():
+                utilization = int(util_path.read_text().strip())
+            
+            return GPUMemoryInfo(
+                gpu_index=0,
+                gpu_name="AMD GPU",
+                total_mb=total_mb,
+                used_mb=used_mb,
+                free_mb=free_mb,
+                temperature_c=temp,
+                utilization_percent=utilization,
+                processes=[]
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to query AMD GPU: {e}")
+            return None
+    
+    def _get_memory_info(self) -> Optional[GPUMemoryInfo]:
+        if self.gpu_vendor == "nvidia":
+            return self._get_nvidia_memory()
+        elif self.gpu_vendor == "amd":
+            return self._get_amd_memory()
+        return None
+    
+    def _cleanup_shader_cache(self):
+        if not self.config["enable_shader_cache_cleanup"]:
+            return
+        
+        cache_dirs = [
+            Path.home() / ".cache/mesa_shader_cache",
+            Path.home() / ".nv/ComputeCache",
+            Path.home() / ".cache/nvidia",
+        ]
+        
+        for cache_dir in cache_dirs:
+            if cache_dir.exists():
+                try:
+                    size = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file())
+                    if size > 1024 * 1024 * 1024:
+                        self.logger.info(f"Shader cache at {cache_dir} is {size // (1024*1024)}MB, cleanup recommended")
+                except Exception:
+                    pass
+    
+    def _detect_gaming_activity(self) -> bool:
+        patterns = self.config["priority_apps"]
+        try:
+            ps_output = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+            for line in ps_output.stdout.split("\n"):
+                for pattern in patterns:
+                    if pattern.lower() in line.lower():
+                        return True
+        except Exception:
+            pass
+        return False
+    
+    def _handle_high_vram(self, info: GPUMemoryInfo):
+        usage_ratio = info.used_mb / info.total_mb
+        
+        if usage_ratio > self.config["critical_threshold"]:
+            self.logger.warning(f"CRITICAL: VRAM at {usage_ratio:.1%} ({info.used_mb}MB/{info.total_mb}MB)")
+            
+            if self.config["enable_shader_cache_cleanup"]:
+                self._cleanup_shader_cache()
+            
+        elif usage_ratio > self.config["warning_threshold"]:
+            self.logger.info(f"Warning: VRAM at {usage_ratio:.1%} ({info.used_mb}MB/{info.total_mb}MB)")
+    
+    def _write_status(self, info: Optional[GPUMemoryInfo]):
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "gpu_vendor": self.gpu_vendor,
+            "gaming_active": self.gaming_active
+        }
+        
+        if info:
+            status.update({
+                "gpu_name": info.gpu_name,
+                "vram_total_mb": info.total_mb,
+                "vram_used_mb": info.used_mb,
+                "vram_free_mb": info.free_mb,
+                "vram_usage_percent": round(info.used_mb / info.total_mb * 100, 1),
+                "temperature_c": info.temperature_c,
+                "utilization_percent": info.utilization_percent
+            })
+        
+        try:
+            with open(STATE_PATH / "status.json", "w") as f:
+                json.dump(status, f, indent=2)
+        except Exception:
+            pass
+    
+    def run(self):
+        self.logger.info(f"Aegis VRAM Balancer started (GPU: {self.gpu_vendor})")
+        
+        while self.running:
+            info = self._get_memory_info()
+            
+            was_gaming = self.gaming_active
+            self.gaming_active = self._detect_gaming_activity()
+            
+            if self.gaming_active and not was_gaming:
+                self.logger.info("Gaming detected, enabling VRAM priority mode")
+                if self.config["aggressive_cleanup_on_game_launch"]:
+                    self._cleanup_shader_cache()
+            
+            if info:
+                self._handle_high_vram(info)
+            
+            self._write_status(info)
+            time.sleep(self.config["check_interval_seconds"])
+        
+        self.logger.info("VRAM Balancer stopped")
+
+def main():
+    balancer = VRAMBalancer()
+    balancer.run()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,20 @@
+[Unit]
+Description=Aegis Latency FastPath - Kernel-Level Input Optimization
+Documentation=https://aegis-os.com/docs/latency-fastpath
+After=local-fs.target
+Before=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-latency-fastpath
+Restart=always
+RestartSec=5
+Nice=-20
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=99
+
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aegis /var/log/aegis /proc /sys
+
+[Install]
+WantedBy=multi-user.target
