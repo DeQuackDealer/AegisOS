@@ -102,10 +102,10 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 ### Website Marketing Restructure - Gamer Edition as Flagship
 
 **Pricing Updates (server.py, TIER_FEATURES.json)**:
-- **Gamer**: $149 lifetime, $20/year (flagship product)
-- **Basic**: $99 lifetime, $14/year (secondary featured)
+- **Gamer**: $69 lifetime, $10/year (flagship product)
+- **Basic**: $19 lifetime, $3/year (secondary featured)
+- **Workplace**: $9 lifetime, $2/year (budget option)
 - **AI Developer**: $79 lifetime, $12/year
-- **Workplace**: $39 lifetime, $6/year
 - **Gamer+AI**: $179 lifetime, $25/year
 - **Freemium**: Free, **Server**: Contact Us
 
