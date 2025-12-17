@@ -1,0 +1,126 @@
+#!/bin/bash
+# Aegis OS First Boot - License Binding Prompt
+# Runs once after installation
+
+LICENSE_FILE="/boot/aegis-license.json"
+CONFIG_DIR="/etc/aegis"
+ACTIVATED_MARKER="$CONFIG_DIR/.activated"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+clear
+echo -e "${BLUE}${BOLD}"
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║                                                                ║"
+echo "║     █████╗ ███████╗ ██████╗ ██╗███████╗     ██████╗ ███████╗  ║"
+echo "║    ██╔══██╗██╔════╝██╔════╝ ██║██╔════╝    ██╔═══██╗██╔════╝  ║"
+echo "║    ███████║█████╗  ██║  ███╗██║███████╗    ██║   ██║███████╗  ║"
+echo "║    ██╔══██║██╔══╝  ██║   ██║██║╚════██║    ██║   ██║╚════██║  ║"
+echo "║    ██║  ██║███████╗╚██████╔╝██║███████║    ╚██████╔╝███████║  ║"
+echo "║    ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝╚══════╝     ╚═════╝ ╚══════╝  ║"
+echo "║                                                                ║"
+echo "║                    FIRST BOOT SETUP                            ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo -e "${NC}"
+
+# Check if already activated
+if [ -f "$ACTIVATED_MARKER" ]; then
+    echo -e "${GREEN}System already activated.${NC}"
+    exit 0
+fi
+
+# Create config directory
+mkdir -p "$CONFIG_DIR"
+
+# Check for license file
+if [ -f "$LICENSE_FILE" ]; then
+    LICENSE_KEY=$(jq -r '.license_key // empty' "$LICENSE_FILE" 2>/dev/null)
+    EDITION=$(jq -r '.edition // "freemium"' "$LICENSE_FILE" 2>/dev/null)
+    
+    if [ -n "$LICENSE_KEY" ] && [ "$LICENSE_KEY" != "null" ]; then
+        echo -e "${CYAN}License detected: ${BOLD}${EDITION^^}${NC} Edition"
+        echo ""
+        echo -e "${YELLOW}${BOLD}Would you like to bind this license to this computer?${NC}"
+        echo ""
+        echo "  This ties your license to this specific hardware."
+        echo "  You won't be able to use it on another computer unless you transfer it."
+        echo ""
+        echo -e "${GREEN}[Y]${NC} Yes - Activate full ${EDITION^^} features (recommended)"
+        echo -e "${YELLOW}[N]${NC} No  - Use Freemium mode instead"
+        echo ""
+        
+        while true; do
+            read -p "Your choice (Y/N): " choice
+            case "$choice" in
+                [Yy]* )
+                    echo ""
+                    echo -e "${BLUE}Activating license...${NC}"
+                    
+                    # Run activation
+                    if /usr/local/bin/aegis-activate "$LICENSE_KEY"; then
+                        echo -e "${GREEN}${BOLD}Activation successful!${NC}"
+                        echo "$EDITION" > "$CONFIG_DIR/edition"
+                        touch "$ACTIVATED_MARKER"
+                        
+                        # Enable edition-specific services
+                        if [ "$EDITION" = "gamer" ] || [ "$EDITION" = "gamer-ai" ]; then
+                            echo -e "${CYAN}Enabling gaming optimizations...${NC}"
+                            systemctl enable --now aegis-ram-guardian 2>/dev/null
+                            systemctl enable --now aegis-latency-fastpath 2>/dev/null
+                            systemctl enable --now aegis-netboost 2>/dev/null
+                            systemctl enable --now aegis-shader-precache 2>/dev/null
+                            systemctl enable --now aegis-audio-lowlatency 2>/dev/null
+                            systemctl enable --now aegis-thermal-guard 2>/dev/null
+                            systemctl enable --now aegis-vram-balancer 2>/dev/null
+                            systemctl enable --now aegis-streamforge 2>/dev/null
+                        fi
+                    else
+                        echo -e "${RED}Activation failed. Starting in Freemium mode.${NC}"
+                        echo "freemium" > "$CONFIG_DIR/edition"
+                        touch "$ACTIVATED_MARKER"
+                    fi
+                    break
+                    ;;
+                [Nn]* )
+                    echo ""
+                    echo -e "${YELLOW}Starting in Freemium mode.${NC}"
+                    echo "You can activate later with: sudo aegis-activate <license-key>"
+                    echo "freemium" > "$CONFIG_DIR/edition"
+                    touch "$ACTIVATED_MARKER"
+                    break
+                    ;;
+                * )
+                    echo "Please answer Y or N."
+                    ;;
+            esac
+        done
+    else
+        echo -e "${YELLOW}No license key found. Starting in Freemium mode.${NC}"
+        echo "freemium" > "$CONFIG_DIR/edition"
+        touch "$ACTIVATED_MARKER"
+    fi
+else
+    echo -e "${YELLOW}No license file found. Starting in Freemium mode.${NC}"
+    echo ""
+    echo "To activate a paid edition, run:"
+    echo "  sudo aegis-activate <your-license-key>"
+    echo ""
+    echo "freemium" > "$CONFIG_DIR/edition"
+    touch "$ACTIVATED_MARKER"
+fi
+
+# Clean up license file from boot partition
+rm -f "$LICENSE_FILE" 2>/dev/null
+
+echo ""
+echo -e "${GREEN}Setup complete! Press Enter to continue...${NC}"
+read
+
+exit 0

@@ -1,0 +1,17 @@
+[Unit]
+Description=Aegis OS First Boot License Setup
+After=multi-user.target
+ConditionPathExists=!/etc/aegis/.activated
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aegis-first-boot
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
