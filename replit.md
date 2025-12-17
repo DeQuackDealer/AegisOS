@@ -99,6 +99,31 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 
 ## Recent Changes (December 2025)
 
+### Website Marketing Restructure - Gamer Edition as Flagship
+
+**Pricing Updates (server.py, TIER_FEATURES.json)**:
+- **Gamer**: $149 lifetime, $20/year (flagship product)
+- **Basic**: $99 lifetime, $14/year (secondary featured)
+- **AI Developer**: $79 lifetime, $12/year
+- **Workplace**: $39 lifetime, $6/year
+- **Gamer+AI**: $179 lifetime, $25/year
+- **Freemium**: Free, **Server**: Contact Us
+
+**Homepage Redesign (index.html)**:
+- Hero section now features Gamer Edition with gaming-focused messaging
+- Two-column featured grid with Gamer ("MOST POPULAR" badge) and Basic
+- New "Other Versions We Offer" section with compact cards for budget alternatives
+
+**Enhanced Gamer Page (gamer.html)**:
+- $149 flagship pricing with "FLAGSHIP" badge
+- Enhanced feature list: Sub-1ms latency, Dual GPU Orchestration, Stream Studio, Anti-Cheat Ready
+- New "Performance Overlay Dashboard" and "Controller Configuration Hub" sections
+
+**Pricing Page Redesign (pricing.html)**:
+- Featured Plans section with Gamer and Basic prominently displayed
+- "Other Editions" section for remaining tiers
+- Comparison table with Gamer highlighted
+
 ### ISO Boot Failure Fixes - Missing Dependencies and Import Guards
 
 **Package List Updates (build-system/archiso/packages/)**:
