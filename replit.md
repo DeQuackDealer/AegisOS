@@ -122,9 +122,13 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 - New "Other Versions We Offer" section with compact cards for budget alternatives
 
 **Enhanced Gamer Page (gamer.html)**:
-- $149 flagship pricing with "FLAGSHIP" badge
+- $69 flagship pricing with "FLAGSHIP" badge
 - Enhanced feature list: Sub-1ms latency, Dual GPU Orchestration, Stream Studio, Anti-Cheat Ready
 - New "Performance Overlay Dashboard" and "Controller Configuration Hub" sections
+- Performance Benchmarks section with CSS bar charts (Cyberpunk, Elden Ring, BG3, CS2, Starfield)
+- Supported Game Launchers grid (Steam, Lutris, Heroic, Epic, GOG, Battle.net, EA, Ubisoft, itch.io, Amazon)
+- Streaming Integration section (OBS, Streamlabs, Discord, Twitch, YouTube, Sunshine/Moonlight, VTuber support)
+- Quick Stats Banner (98%+ compatibility, 10k shaders, 18 emulators, <1ms latency, 5 anti-cheat systems)
 
 **Pricing Page Redesign (pricing.html)**:
 - Featured Plans section with Gamer and Basic prominently displayed
