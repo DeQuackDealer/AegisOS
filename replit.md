@@ -106,8 +106,15 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 - **Basic**: $19 lifetime, $3/year (secondary featured)
 - **Workplace**: $9 lifetime, $2/year (budget option)
 - **AI Developer**: $79 lifetime, $12/year
-- **Gamer+AI**: $179 lifetime, $25/year
+- **Gamer+AI**: $119 lifetime, $17/year
 - **Freemium**: Free, **Server**: Contact Us
+
+**OS-Level Baked-In Features (gamer.html)**:
+- Kernel Optimizations: BORE Scheduler, BFQ I/O Scheduler, Transparent Huge Pages, IRQ Affinity, NUMA-Aware Allocation
+- Wine/Proton Deep Integration: ESYNC/FSYNC, DXVK Pre-Cached Shaders, VKD3D-Proton, Shader Pre-Compilation
+- Dual GPU Split-Frame Rendering: 60/40 frame splitting via custom Vulkan layer, works with mixed NVIDIA/AMD GPUs
+- Advanced Upscaling: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
+- Memory Optimizations: 2MB Huge Pages, Smart VRAM Management, GameMode Integration
 
 **Homepage Redesign (index.html)**:
 - Hero section now features Gamer Edition with gaming-focused messaging
