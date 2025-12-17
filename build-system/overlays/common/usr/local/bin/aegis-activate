@@ -59,27 +59,69 @@ def get_edition():
             return data.get('edition', 'freemium')
     return 'freemium'
 
+def get_hardware_id():
+    """Get unique hardware identifier from motherboard - cannot be spoofed easily"""
+    hardware_ids = {}
+    
+    # Method 1: DMI Product UUID (motherboard - most reliable)
+    try:
+        with open("/sys/class/dmi/id/product_uuid", "r") as f:
+            hardware_ids["motherboard_uuid"] = f.read().strip()
+    except:
+        pass
+    
+    # Method 2: Board serial number
+    try:
+        with open("/sys/class/dmi/id/board_serial", "r") as f:
+            hardware_ids["board_serial"] = f.read().strip()
+    except:
+        pass
+    
+    # Method 3: Machine ID (fallback)
+    try:
+        with open("/etc/machine-id", "r") as f:
+            hardware_ids["machine_id"] = f.read().strip()
+    except:
+        pass
+    
+    # Method 4: Primary network MAC
+    try:
+        import glob
+        for path in glob.glob("/sys/class/net/*/address"):
+            if "lo" not in path:
+                with open(path) as f:
+                    mac = f.read().strip()
+                    if mac and mac != "00:00:00:00:00:00":
+                        hardware_ids["mac_address"] = mac
+                        break
+    except:
+        pass
+    
+    # Create combined fingerprint
+    combined = json.dumps(hardware_ids, sort_keys=True)
+    fingerprint = hashlib.sha256(combined.encode()).hexdigest()[:32]
+    
+    return fingerprint, hardware_ids
+
 def get_machine_id():
-    """Get unique machine identifier"""
-    machine_id_file = Path("/etc/machine-id")
-    if machine_id_file.exists():
-        with open(machine_id_file) as f:
-            return f.read().strip()
-    return hashlib.sha256(socket.gethostname().encode()).hexdigest()[:32]
+    """Get unique machine identifier (legacy wrapper)"""
+    fingerprint, _ = get_hardware_id()
+    return fingerprint
 
 def is_activated():
     """Check if already activated"""
     return ACTIVATION_MARKER.exists()
 
 def activate_license(license_key):
-    """Activate license with server"""
+    """Activate license with hardware binding"""
     edition = get_edition()
-    machine_id = get_machine_id()
+    hardware_id, hardware_details = get_hardware_id()
     
     data = json.dumps({
         'license_key': license_key,
         'edition': edition,
-        'machine_id': machine_id,
+        'hardware_id': hardware_id,
+        'hardware_details': hardware_details,
         'hostname': socket.gethostname()
     }).encode('utf-8')
     

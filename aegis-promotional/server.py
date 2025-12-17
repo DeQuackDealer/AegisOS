@@ -3177,19 +3177,98 @@ def verify_license():
 @app.route('/api/v1/license/activate', methods=['POST'])
 @rate_limit(limit=100)
 def activate_license():
-    """Activate a license"""
+    """Activate a license with hardware binding"""
     data = request.get_json() or {}
-    license_id = data.get('license_id')
+    license_key = data.get('license_key') or data.get('license_id')
+    hardware_id = data.get('hardware_id')
+    hardware_details = data.get('hardware_details', {})
 
-    if not license_id or license_id not in LICENSES:
-        return jsonify({'error': 'Invalid license'}), 400
+    if not license_key:
+        return jsonify({'success': False, 'error': 'License key required'}), 400
 
-    license_data = LICENSES[license_id]
-    license_data['activated'] = True
-    license_data['activated_date'] = datetime.now().isoformat()
+    license_record = License.query.filter_by(license_key=license_key).first()
+    
+    if not license_record:
+        tamper_protected_audit_log('ACTIVATION_FAILED_INVALID_KEY', {
+            'key_prefix': license_key[:8] if license_key else 'N/A',
+            'hardware_id': hardware_id
+        }, 'HIGH')
+        return jsonify({'success': False, 'error': 'Invalid license key'}), 400
 
-    tamper_protected_audit_log('license_activated', {'license_id': license_id}, 'INFO')
-    return jsonify({'message': 'License activated', 'license': license_data}), 200
+    if license_record.status == 'revoked':
+        return jsonify({'success': False, 'error': 'License has been revoked'}), 403
+
+    if license_record.hardware_id and license_record.hardware_id != hardware_id:
+        tamper_protected_audit_log('ACTIVATION_FAILED_HARDWARE_MISMATCH', {
+            'license_key': license_key[:8],
+            'stored_hardware': license_record.hardware_id[:16],
+            'attempted_hardware': hardware_id[:16] if hardware_id else 'N/A'
+        }, 'HIGH')
+        return jsonify({
+            'success': False, 
+            'error': 'License already activated on another computer',
+            'already_bound': True
+        }), 403
+
+    if not license_record.hardware_id and hardware_id:
+        license_record.hardware_id = hardware_id
+        license_record.hardware_details = json.dumps(hardware_details)
+        license_record.activation_count = (license_record.activation_count or 0) + 1
+
+    license_record.activated_at = datetime.utcnow()
+    db.session.commit()
+
+    tamper_protected_audit_log('ACTIVATION_SUCCESS', {
+        'license_key': license_key[:8],
+        'edition': license_record.edition,
+        'hardware_id': hardware_id[:16] if hardware_id else 'N/A'
+    }, 'INFO')
+
+    return jsonify({
+        'success': True,
+        'message': 'License activated successfully',
+        'edition': license_record.edition,
+        'activated_at': license_record.activated_at.isoformat(),
+        'features': TIERS.get(license_record.edition, {}).get('features', [])
+    }), 200
+
+@app.route('/api/deactivate', methods=['POST'])
+@app.route('/api/v1/license/deactivate', methods=['POST'])
+@rate_limit(limit=20)
+def deactivate_license():
+    """Deactivate license to allow transfer to new hardware"""
+    data = request.get_json() or {}
+    license_key = data.get('license_key')
+    hardware_id = data.get('hardware_id')
+
+    if not license_key:
+        return jsonify({'success': False, 'error': 'License key required'}), 400
+
+    license_record = License.query.filter_by(license_key=license_key).first()
+    
+    if not license_record:
+        return jsonify({'success': False, 'error': 'Invalid license key'}), 400
+
+    if license_record.hardware_id != hardware_id:
+        tamper_protected_audit_log('DEACTIVATION_FAILED_HARDWARE_MISMATCH', {
+            'license_key': license_key[:8],
+            'attempted_hardware': hardware_id[:16] if hardware_id else 'N/A'
+        }, 'HIGH')
+        return jsonify({'success': False, 'error': 'Hardware mismatch - can only deactivate from original computer'}), 403
+
+    license_record.hardware_id = None
+    license_record.hardware_details = None
+    db.session.commit()
+
+    tamper_protected_audit_log('LICENSE_DEACTIVATED', {
+        'license_key': license_key[:8],
+        'edition': license_record.edition
+    }, 'INFO')
+
+    return jsonify({
+        'success': True,
+        'message': 'License deactivated. You can now activate on a new computer.'
+    }), 200
 
 @app.route('/api/v1/admin/license/<license_id>', methods=['DELETE'])
 @rate_limit(limit=100)
