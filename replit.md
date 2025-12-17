@@ -116,6 +116,12 @@ Custom AI upscaling technology for gaming editions, featuring `aegis-upscaler` (
 - Advanced Upscaling: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
 - Memory Optimizations: 2MB Huge Pages, Smart VRAM Management, GameMode Integration
 
+**Integrated System Services (background services, not apps)**:
+- **Adaptive RAM Guardian**: Automatic memory reclamation, leak detection, gaming process prioritization
+- **StreamForge Capture Stack**: Kernel-mode capture (kmsgrab/NVFBC), 8ms encode latency, auto game detection
+- **Latency FastPath**: IRQ affinity steering, 1000Hz USB polling, CPU governor auto-switching
+- **VRAM Heatmap Balancer**: Real-time GPU memory monitoring, shader cache cleanup, stutter prevention
+
 **Homepage Redesign (index.html)**:
 - Hero section now features Gamer Edition with gaming-focused messaging
 - Two-column featured grid with Gamer ("MOST POPULAR" badge) and Basic
