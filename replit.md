@@ -50,7 +50,9 @@ Flask-based marketing website with security features (rate limiting, JWT, CSRF, 
 Fully offline Python/tkinter GUI installer with PyInstaller packaging. SHA-256 ISO verification and RSA-2048 license signature verification.
 
 ### Payment & License System
-Stripe integration, SendGrid email delivery, unique license key generation. Admin panel with promotional "free period" modes.
+Stripe integration using manual secrets (STRIPE_SECRET_KEY_LIVE, STRIPE_PUBLISHABLE_KEY_LIVE) instead of Replit's Stripe connector. SendGrid email delivery, unique license key generation. Admin panel with promotional "free period" modes.
+
+**Note:** The Stripe connector in .replit cannot be removed via agent. To publish, may need to complete connector setup or contact Replit support to remove it.
 
 ## Pricing Structure
 - **Gamer** (Flagship): $69 lifetime, $10/year
