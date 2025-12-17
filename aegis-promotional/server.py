@@ -112,11 +112,11 @@ SENDGRID_FROM_EMAIL = os.environ.get('SENDGRID_FROM_EMAIL', 'riley.liang@hotmail
 
 TIERS = {
     "freemium": {"lifetime": 0, "annual": 0, "features": ["base_os", "nouveau_driver", "basic_desktop"], "users": "10", "api_limit": 100},
-    "basic": {"lifetime": 69, "annual": 10, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware"], "users": "100", "api_limit": 5000},
-    "workplace": {"lifetime": 49, "annual": 8, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
-    "gamer": {"lifetime": 89, "annual": 13, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "3ms_latency"], "users": "100", "api_limit": 5000},
-    "ai-dev": {"lifetime": 109, "annual": 15, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
-    "gamer-ai": {"lifetime": 149, "annual": 20, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "cuda_12_3", "ai_tools", "hybrid_gpu_scheduling", "ai_game_optimization", "neural_upscaling", "smart_vram_management"], "users": "1000", "api_limit": 50000},
+    "basic": {"lifetime": 99, "annual": 14, "features": ["base_os", "enhanced_security", "encrypted_storage", "secure_dns", "vpn_client", "password_manager", "anti_ransomware", "priority_support", "cloud_backup"], "users": "100", "api_limit": 5000},
+    "workplace": {"lifetime": 39, "annual": 6, "features": ["base_os", "enterprise_security", "teams_collaboration", "screen_sharing", "remote_desktop", "office365_compat", "sso_integration", "active_directory"], "users": "250", "api_limit": 10000},
+    "gamer": {"lifetime": 149, "annual": 20, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "8k_upscaling", "rgb_ecosystem", "sub_1ms_latency", "dual_gpu_orchestration", "stream_studio", "anti_cheat_ready", "controller_config", "performance_overlay"], "users": "100", "api_limit": 5000},
+    "ai-dev": {"lifetime": 79, "annual": 12, "features": ["base_os", "cuda_12_3", "rocm", "intel_oneapi", "ai_tools", "100ml_libraries", "triton_server", "langchain", "vector_dbs"], "users": "1000", "api_limit": 50000},
+    "gamer-ai": {"lifetime": 179, "annual": 25, "features": ["base_os", "nvidia_driver", "amd_driver", "gaming_mode", "ray_tracing", "dlss3", "fsr3", "cuda_12_3", "ai_tools", "hybrid_gpu_scheduling", "ai_game_optimization", "neural_upscaling", "smart_vram_management"], "users": "1000", "api_limit": 50000},
     "server": {"lifetime": 0, "annual": 0, "features": ["base_os", "enterprise", "kubernetes", "100k_rps", "multi_region", "auto_scaling", "disaster_recovery", "zero_trust"], "users": "100000", "api_limit": 0}
 }
 

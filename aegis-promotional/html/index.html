@@ -139,6 +139,7 @@
         .feature-card p { color: var(--text-secondary); font-size: 0.95rem; line-height: 1.6; }
 
         .editions-section { padding: 100px 24px; }
+        .featured-editions-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 32px; max-width: 900px; margin: 0 auto 60px; }
         .editions-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
         .edition-card {
             background: var(--white); border-radius: 16px;
@@ -146,12 +147,24 @@
             position: relative;
         }
         .edition-card:hover { transform: translateY(-4px); box-shadow: var(--card-shadow-hover); border-color: var(--accent); }
-        .edition-card.featured { border-color: var(--accent); }
+        .edition-card.featured { 
+            border-color: var(--accent); 
+            box-shadow: 0 8px 40px rgba(21, 166, 240, 0.2);
+        }
+        .edition-card.featured .edition-header { padding: 36px 28px 20px; }
+        .edition-card.featured .edition-icon { font-size: 3rem; margin-bottom: 16px; }
+        .edition-card.featured .edition-header h3 { font-size: 1.5rem; margin-bottom: 8px; }
+        .edition-card.featured .edition-price { font-size: 2.2rem; }
+        .edition-card.featured .edition-features { padding: 20px 28px; }
+        .edition-card.featured .edition-features li { padding: 8px 0; font-size: 0.95rem; }
+        .edition-card.featured .edition-cta { padding: 0 28px 28px; }
+        .edition-card.featured .edition-cta .btn { padding: 14px 24px; font-size: 1rem; }
         .edition-badge {
             position: absolute; top: 12px; right: 12px;
             background: var(--accent); color: var(--white);
             padding: 4px 12px; border-radius: 999px; font-size: 0.75rem; font-weight: 600;
         }
+        .edition-badge.popular { background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%); }
         .edition-header { padding: 28px 20px 16px; text-align: center; }
         .edition-icon { font-size: 2.5rem; margin-bottom: 12px; }
         .edition-header h3 { font-size: 1.2rem; font-weight: 700; margin-bottom: 6px; color: var(--primary); }
@@ -166,6 +179,22 @@
         .edition-features li::before { content: "✓"; color: var(--accent); font-weight: 700; flex-shrink: 0; }
         .edition-cta { padding: 0 20px 20px; }
         .edition-cta .btn { width: 100%; justify-content: center; padding: 12px 20px; font-size: 0.95rem; }
+        .other-editions { margin-top: 60px; }
+        .other-editions-header { text-align: center; margin-bottom: 32px; }
+        .other-editions-header h3 { font-size: 1.5rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+        .other-editions-header p { font-size: 1rem; color: var(--text-secondary); opacity: 0.8; }
+        .compact-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+        .compact-card {
+            background: var(--background); border-radius: 12px;
+            border: 1px solid var(--border); padding: 20px 16px;
+            text-align: center; transition: all 0.3s;
+        }
+        .compact-card:hover { background: var(--white); border-color: var(--accent); transform: translateY(-2px); }
+        .compact-card .edition-icon { font-size: 1.8rem; margin-bottom: 8px; }
+        .compact-card h4 { font-size: 0.95rem; font-weight: 600; color: var(--primary); margin-bottom: 4px; }
+        .compact-card .price { font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+        .compact-card .price span { font-size: 0.75rem; font-weight: 500; color: var(--text-secondary); }
+        .compact-card .btn { padding: 8px 16px; font-size: 0.8rem; border-radius: 8px; }
 
         .cta-section {
             background: linear-gradient(135deg, var(--primary) 0%, #1a4a70 100%);
@@ -190,14 +219,20 @@
 
         @media (max-width: 1024px) {
             .features-grid, .editions-grid { grid-template-columns: repeat(2, 1fr); }
+            .featured-editions-grid { grid-template-columns: 1fr; max-width: 500px; }
+            .compact-grid { grid-template-columns: repeat(3, 1fr); }
             .footer-grid { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 768px) {
             .nav-menu { display: none; }
             .hero h1 { font-size: 2.2rem; }
             .features-grid, .editions-grid { grid-template-columns: 1fr; }
+            .compact-grid { grid-template-columns: repeat(2, 1fr); }
             .footer-grid { grid-template-columns: 1fr; text-align: center; }
             .hero-buttons { flex-direction: column; align-items: center; }
+        }
+        @media (max-width: 480px) {
+            .compact-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -221,22 +256,27 @@
 
     <section class="hero">
         <div class="container">
-            <span class="hero-badge">Version 1.0 - Now Available</span>
-            <h1>Linux That Just <span>Works</span></h1>
+            <span class="hero-badge">🎮 Gaming Edition - Now Available</span>
+            <h1>The Ultimate <span>Gaming</span> Linux</h1>
             <p class="subtitle">
-                Aegis OS brings the power of Arch Linux with the ease of a modern desktop. 
-                Built for gamers, developers, and professionals who want performance without compromise.
+                Experience gaming without limits. Sub-millisecond latency, 98%+ Windows game compatibility, 
+                DLSS 3.5, Ray Tracing, and anti-cheat ready. Built for competitive gamers who demand the best.
             </p>
             <div class="hero-buttons">
-                <a href="/api/download/freemium" class="btn btn-primary">
+                <a href="/gamer.html" class="btn btn-primary">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    Get Gamer Edition - $149
+                </a>
+                <a href="/api/download/freemium" class="btn btn-secondary">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                         <polyline points="7 10 12 15 17 10"/>
                         <line x1="12" y1="15" x2="12" y2="3"/>
                     </svg>
                     Download Free
                 </a>
-                <a href="#editions" class="btn btn-secondary">View All Editions</a>
             </div>
             <div class="hero-screenshot">
                 <div class="desktop-mockup">
@@ -303,155 +343,88 @@
         <div class="container">
             <div class="section-header">
                 <h2>Choose Your Edition</h2>
-                <p>From free to professional, we have the right edition for your needs.</p>
+                <p>Premium editions with lifetime licenses. No subscriptions, no hassle.</p>
             </div>
-            <div class="editions-grid">
-                <div class="edition-card">
-                    <div class="edition-header">
-                        <div class="edition-icon">🆓</div>
-                        <h3>Freemium</h3>
-                        <div class="edition-price">Free</div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>XFCE Desktop</li>
-                            <li>Firefox & LibreOffice</li>
-                            <li>Basic Security</li>
-                            <li>Community Support</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/api/download/freemium" class="btn btn-primary">Download</a>
-                    </div>
-                </div>
-                <div class="edition-card">
-                    <div class="edition-header">
-                        <div class="edition-icon">💼</div>
-                        <h3>Basic</h3>
-                        <div class="edition-price">$69 <span>lifetime</span></div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>Enhanced Security</li>
-                            <li>Cloud Backup</li>
-                            <li>VPN Client</li>
-                            <li>Priority Updates</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/basic.html" class="btn btn-primary">Get Basic</a>
-                    </div>
-                </div>
+            
+            <div class="featured-editions-grid">
                 <div class="edition-card featured">
-                    <span class="edition-badge">Popular</span>
+                    <span class="edition-badge popular">MOST POPULAR</span>
                     <div class="edition-header">
                         <div class="edition-icon">🎮</div>
-                        <h3>Gamer</h3>
-                        <div class="edition-price">$89 <span>lifetime</span></div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>Steam & Lutris</li>
-                            <li>Proton-GE & Wine</li>
-                            <li>MangoHUD</li>
-                            <li>GPU Optimized</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/gamer.html" class="btn btn-primary">Get Gamer</a>
-                    </div>
-                </div>
-                <div class="edition-card">
-                    <div class="edition-header">
-                        <div class="edition-icon">🏢</div>
-                        <h3>Workplace</h3>
-                        <div class="edition-price">$49 <span>lifetime</span></div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>Office 365 Compat</li>
-                            <li>Remote Desktop</li>
-                            <li>VPN & SSO</li>
-                            <li>Enterprise Security</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/workplace.html" class="btn btn-primary">Get Workplace</a>
-                    </div>
-                </div>
-            </div>
-            <div class="editions-grid" style="margin-top: 24px;">
-                <div class="edition-card">
-                    <div class="edition-header">
-                        <div class="edition-icon">🤖</div>
-                        <h3>AI Developer</h3>
-                        <div class="edition-price">$109 <span>lifetime</span></div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>CUDA & cuDNN</li>
-                            <li>PyTorch & TensorFlow</li>
-                            <li>JupyterLab</li>
-                            <li>Docker & K8s</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/ai.html" class="btn btn-primary">Get AI Dev</a>
-                    </div>
-                </div>
-                <div class="edition-card">
-                    <span class="edition-badge">Ultimate</span>
-                    <div class="edition-header">
-                        <div class="edition-icon">🎮🤖</div>
-                        <h3>Gamer+AI</h3>
+                        <h3>Gamer Edition</h3>
                         <div class="edition-price">$149 <span>lifetime</span></div>
                     </div>
                     <div class="edition-features">
                         <ul>
-                            <li>All Gamer Features</li>
-                            <li>All AI Dev Features</li>
-                            <li>Neural Upscaling</li>
-                            <li>AI Game Mods</li>
+                            <li>&lt;1ms Input Latency</li>
+                            <li>98%+ Windows Game Compatibility</li>
+                            <li>DLSS 3.5 & FSR 3.0 Support</li>
+                            <li>Ray Tracing Optimized</li>
+                            <li>Stream Studio Included</li>
+                            <li>Anti-Cheat Ready (EAC, BattlEye)</li>
                         </ul>
                     </div>
                     <div class="edition-cta">
-                        <a href="/gamer-ai.html" class="btn btn-primary">Get Gamer+AI</a>
+                        <a href="/gamer.html" class="btn btn-primary">Get Gamer Edition</a>
                     </div>
                 </div>
-                <div class="edition-card">
+                <div class="edition-card featured">
                     <div class="edition-header">
+                        <div class="edition-icon">💼</div>
+                        <h3>Basic Edition</h3>
+                        <div class="edition-price">$99 <span>lifetime</span></div>
+                    </div>
+                    <div class="edition-features">
+                        <ul>
+                            <li>500+ Professional Apps</li>
+                            <li>Cloud Backup & Sync</li>
+                            <li>Built-in VPN Client</li>
+                            <li>Advanced Security Suite</li>
+                            <li>Priority Support</li>
+                            <li>Lifetime Updates</li>
+                        </ul>
+                    </div>
+                    <div class="edition-cta">
+                        <a href="/basic.html" class="btn btn-primary">Get Basic Edition</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="other-editions">
+                <div class="other-editions-header">
+                    <h3>Other Versions We Offer</h3>
+                    <p>Specialized editions for every need and budget</p>
+                </div>
+                <div class="compact-grid">
+                    <div class="compact-card">
+                        <div class="edition-icon">🆓</div>
+                        <h4>Freemium</h4>
+                        <div class="price">Free</div>
+                        <a href="/api/download/freemium" class="btn btn-secondary">Download</a>
+                    </div>
+                    <div class="compact-card">
+                        <div class="edition-icon">🏢</div>
+                        <h4>Workplace</h4>
+                        <div class="price">$39 <span>lifetime</span></div>
+                        <a href="/workplace.html" class="btn btn-secondary">Learn More</a>
+                    </div>
+                    <div class="compact-card">
+                        <div class="edition-icon">🤖</div>
+                        <h4>AI Developer</h4>
+                        <div class="price">$79 <span>lifetime</span></div>
+                        <a href="/ai.html" class="btn btn-secondary">Learn More</a>
+                    </div>
+                    <div class="compact-card">
+                        <div class="edition-icon">🎮🤖</div>
+                        <h4>Gamer+AI</h4>
+                        <div class="price">$179 <span>lifetime</span></div>
+                        <a href="/gamer-ai.html" class="btn btn-secondary">Learn More</a>
+                    </div>
+                    <div class="compact-card">
                         <div class="edition-icon">🖥️</div>
-                        <h3>Server</h3>
-                        <div class="edition-price">Contact <span>us</span></div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>Enterprise Grade</li>
-                            <li>Kubernetes Ready</li>
-                            <li>24/7 Support</li>
-                            <li>99.95% SLA</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/server.html" class="btn btn-primary">Get Server</a>
-                    </div>
-                </div>
-                <div class="edition-card" style="background: var(--background); border-style: dashed;">
-                    <div class="edition-header">
-                        <div class="edition-icon">📊</div>
-                        <h3>Compare All</h3>
-                        <div class="edition-price" style="font-size: 1rem; color: var(--text-secondary);">See full details</div>
-                    </div>
-                    <div class="edition-features">
-                        <ul>
-                            <li>Feature Comparison</li>
-                            <li>Pricing Details</li>
-                            <li>System Requirements</li>
-                            <li>FAQ & Support</li>
-                        </ul>
-                    </div>
-                    <div class="edition-cta">
-                        <a href="/pricing.html" class="btn btn-secondary">View Pricing</a>
+                        <h4>Server</h4>
+                        <div class="price">Contact Us</div>
+                        <a href="/server.html" class="btn btn-secondary">Learn More</a>
                     </div>
                 </div>
             </div>
