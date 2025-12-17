@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+"""
+Aegis Thermal Guard - Smart Temperature Management for Gaming
+Prevents thermal throttling with intelligent fan curves and power management.
+Runs as a background systemd service.
+"""
+
+import os
+import sys
+import time
+import json
+import subprocess
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
+from threading import Thread, Lock
+import signal
+import glob
+
+CONFIG_DIR = Path("/etc/aegis/thermal")
+STATE_DIR = Path("/var/lib/aegis/thermal")
+LOG_FILE = Path("/var/log/aegis/thermal.log")
+
+HWMON_PATH = Path("/sys/class/hwmon")
+THERMAL_PATH = Path("/sys/class/thermal")
+NVIDIA_SMI = "/usr/bin/nvidia-smi"
+
+TEMP_THRESHOLDS = {
+    "safe": 70,
+    "warning": 80,
+    "throttle": 90,
+    "critical": 95,
+}
+
+FAN_CURVES = {
+    "silent": [(0, 30), (50, 35), (60, 45), (70, 60), (80, 80), (90, 100)],
+    "balanced": [(0, 40), (50, 45), (60, 55), (70, 70), (80, 90), (90, 100)],
+    "performance": [(0, 50), (50, 55), (60, 65), (70, 80), (80, 95), (90, 100)],
+    "max_cooling": [(0, 70), (50, 75), (60, 85), (70, 95), (80, 100), (90, 100)],
+}
+
+@dataclass
+class ThermalZone:
+    name: str
+    path: str
+    temp_celsius: float
+    max_temp: float
+    type: str
+
+@dataclass
+class GPUThermal:
+    name: str
+    temp_celsius: float
+    fan_speed: int
+    power_draw: float
+    power_limit: float
+    memory_temp: Optional[float]
+
+@dataclass
+class ThermalStats:
+    cpu_temp: float
+    gpu_temp: float
+    gpu_hotspot: Optional[float]
+    avg_fan_speed: int
+    power_draw: float
+    throttling: bool
+    current_curve: str
+    timestamp: float
+
+class ThermalGuard:
+    def __init__(self):
+        self.running = False
+        self.lock = Lock()
+        self.current_curve = "balanced"
+        self.zones: Dict[str, ThermalZone] = {}
+        self.gpu_info: Optional[GPUThermal] = None
+        self.stats_history: List[ThermalStats] = []
+        self.throttle_events = 0
+        self.has_nvidia = False
+        self.has_amd = False
+        self._setup_logging()
+        self._detect_hardware()
+
+    def _setup_logging(self):
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [ThermalGuard] %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("thermal-guard")
+
+    def _detect_hardware(self):
+        try:
+            result = subprocess.run([NVIDIA_SMI], capture_output=True, timeout=5)
+            if result.returncode == 0:
+                self.has_nvidia = True
+                self.logger.info("NVIDIA GPU detected")
+        except Exception:
+            pass
+        try:
+            for hwmon in HWMON_PATH.iterdir():
+                name_file = hwmon / "name"
+                if name_file.exists():
+                    name = name_file.read_text().strip()
+                    if "amdgpu" in name:
+                        self.has_amd = True
+                        self.logger.info("AMD GPU detected")
+        except Exception:
+            pass
+
+    def _read_thermal_zones(self) -> List[ThermalZone]:
+        zones = []
+        try:
+            for zone in THERMAL_PATH.iterdir():
+                if not zone.name.startswith("thermal_zone"):
+                    continue
+                temp_file = zone / "temp"
+                type_file = zone / "type"
+                if temp_file.exists():
+                    temp = int(temp_file.read_text().strip()) / 1000
+                    zone_type = type_file.read_text().strip() if type_file.exists() else "unknown"
+                    zones.append(ThermalZone(
+                        name=zone.name,
+                        path=str(zone),
+                        temp_celsius=temp,
+                        max_temp=100.0,
+                        type=zone_type
+                    ))
+        except Exception as e:
+            self.logger.debug(f"Error reading thermal zones: {e}")
+        return zones
+
+    def _read_hwmon_temps(self) -> Dict[str, float]:
+        temps = {}
+        try:
+            for hwmon in HWMON_PATH.iterdir():
+                name_file = hwmon / "name"
+                if not name_file.exists():
+                    continue
+                name = name_file.read_text().strip()
+                for temp_file in hwmon.glob("temp*_input"):
+                    try:
+                        temp = int(temp_file.read_text().strip()) / 1000
+                        label_file = hwmon / temp_file.name.replace("_input", "_label")
+                        if label_file.exists():
+                            label = label_file.read_text().strip()
+                        else:
+                            label = temp_file.name
+                        temps[f"{name}/{label}"] = temp
+                    except Exception:
+                        pass
+        except Exception as e:
+            self.logger.debug(f"Error reading hwmon: {e}")
+        return temps
+
+    def _get_nvidia_temps(self) -> Optional[GPUThermal]:
+        if not self.has_nvidia:
+            return None
+        try:
+            result = subprocess.run([
+                NVIDIA_SMI,
+                "--query-gpu=name,temperature.gpu,fan.speed,power.draw,power.limit,memory.temperature",
+                "--format=csv,noheader,nounits"
+            ], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(', ')
+                if len(parts) >= 5:
+                    return GPUThermal(
+                        name=parts[0],
+                        temp_celsius=float(parts[1]) if parts[1] != "[N/A]" else 0,
+                        fan_speed=int(parts[2].replace(" %", "")) if parts[2] != "[N/A]" else 0,
+                        power_draw=float(parts[3]) if parts[3] != "[N/A]" else 0,
+                        power_limit=float(parts[4]) if parts[4] != "[N/A]" else 0,
+                        memory_temp=float(parts[5]) if len(parts) > 5 and parts[5] != "[N/A]" else None
+                    )
+        except Exception as e:
+            self.logger.debug(f"NVIDIA query error: {e}")
+        return None
+
+    def _get_amd_temps(self) -> Optional[GPUThermal]:
+        if not self.has_amd:
+            return None
+        try:
+            for hwmon in HWMON_PATH.iterdir():
+                name_file = hwmon / "name"
+                if name_file.exists() and "amdgpu" in name_file.read_text():
+                    temp = 0
+                    fan_speed = 0
+                    power = 0
+                    for temp_file in hwmon.glob("temp*_input"):
+                        temp = int(temp_file.read_text().strip()) / 1000
+                        break
+                    pwm_file = hwmon / "pwm1"
+                    if pwm_file.exists():
+                        fan_speed = int(int(pwm_file.read_text().strip()) / 255 * 100)
+                    power_file = hwmon / "power1_average"
+                    if power_file.exists():
+                        power = int(power_file.read_text().strip()) / 1000000
+                    return GPUThermal(
+                        name="AMD GPU",
+                        temp_celsius=temp,
+                        fan_speed=fan_speed,
+                        power_draw=power,
+                        power_limit=300,
+                        memory_temp=None
+                    )
+        except Exception as e:
+            self.logger.debug(f"AMD query error: {e}")
+        return None
+
+    def _get_cpu_temp(self) -> float:
+        zones = self._read_thermal_zones()
+        for zone in zones:
+            if "cpu" in zone.type.lower() or "x86_pkg" in zone.type.lower():
+                return zone.temp_celsius
+        hwmon_temps = self._read_hwmon_temps()
+        for name, temp in hwmon_temps.items():
+            if "coretemp" in name.lower() or "k10temp" in name.lower():
+                return temp
+        if zones:
+            return max(z.temp_celsius for z in zones)
+        return 0
+
+    def _calculate_fan_speed(self, temp: float, curve_name: str) -> int:
+        curve = FAN_CURVES.get(curve_name, FAN_CURVES["balanced"])
+        for i, (threshold, speed) in enumerate(curve):
+            if temp <= threshold:
+                if i == 0:
+                    return speed
+                prev_threshold, prev_speed = curve[i-1]
+                ratio = (temp - prev_threshold) / (threshold - prev_threshold)
+                return int(prev_speed + ratio * (speed - prev_speed))
+        return 100
+
+    def _detect_throttling(self, cpu_temp: float, gpu_temp: float) -> bool:
+        return cpu_temp >= TEMP_THRESHOLDS["throttle"] or gpu_temp >= TEMP_THRESHOLDS["throttle"]
+
+    def _auto_select_curve(self, cpu_temp: float, gpu_temp: float) -> str:
+        max_temp = max(cpu_temp, gpu_temp)
+        if max_temp >= TEMP_THRESHOLDS["warning"]:
+            return "max_cooling"
+        elif max_temp >= TEMP_THRESHOLDS["safe"]:
+            return "performance"
+        else:
+            return "balanced"
+
+    def _apply_nvidia_fan_curve(self, target_speed: int):
+        if not self.has_nvidia:
+            return
+        try:
+            subprocess.run([
+                NVIDIA_SMI, "-pm", "1"
+            ], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+    def _apply_amd_fan_curve(self, target_speed: int):
+        if not self.has_amd:
+            return
+        try:
+            for hwmon in HWMON_PATH.iterdir():
+                name_file = hwmon / "name"
+                if name_file.exists() and "amdgpu" in name_file.read_text():
+                    enable_file = hwmon / "pwm1_enable"
+                    pwm_file = hwmon / "pwm1"
+                    if enable_file.exists():
+                        enable_file.write_text("1")
+                    if pwm_file.exists():
+                        pwm_value = int(target_speed / 100 * 255)
+                        pwm_file.write_text(str(pwm_value))
+        except Exception as e:
+            self.logger.debug(f"AMD fan control error: {e}")
+
+    def _thermal_loop(self):
+        check_interval = 2
+        while self.running:
+            try:
+                cpu_temp = self._get_cpu_temp()
+                gpu_thermal = self._get_nvidia_temps() or self._get_amd_temps()
+                gpu_temp = gpu_thermal.temp_celsius if gpu_thermal else 0
+                is_throttling = self._detect_throttling(cpu_temp, gpu_temp)
+                if is_throttling:
+                    self.throttle_events += 1
+                    self.current_curve = "max_cooling"
+                    self.logger.warning(f"Throttling detected! CPU: {cpu_temp}C, GPU: {gpu_temp}C")
+                else:
+                    self.current_curve = self._auto_select_curve(cpu_temp, gpu_temp)
+                target_fan = self._calculate_fan_speed(max(cpu_temp, gpu_temp), self.current_curve)
+                stats = ThermalStats(
+                    cpu_temp=cpu_temp,
+                    gpu_temp=gpu_temp,
+                    gpu_hotspot=gpu_thermal.memory_temp if gpu_thermal else None,
+                    avg_fan_speed=target_fan,
+                    power_draw=gpu_thermal.power_draw if gpu_thermal else 0,
+                    throttling=is_throttling,
+                    current_curve=self.current_curve,
+                    timestamp=time.time()
+                )
+                with self.lock:
+                    self.stats_history.append(stats)
+                    if len(self.stats_history) > 1800:
+                        self.stats_history = self.stats_history[-900:]
+                    self.gpu_info = gpu_thermal
+            except Exception as e:
+                self.logger.error(f"Thermal loop error: {e}")
+            time.sleep(check_interval)
+
+    def start(self):
+        self.running = True
+        self.logger.info("Thermal Guard service starting...")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._thermal_loop()
+
+    def stop(self):
+        self.running = False
+        self.logger.info("Thermal Guard service stopped")
+
+    def get_status(self) -> Dict:
+        with self.lock:
+            recent = self.stats_history[-1] if self.stats_history else None
+            avg_cpu = sum(s.cpu_temp for s in self.stats_history[-30:]) / max(len(self.stats_history[-30:]), 1)
+            avg_gpu = sum(s.gpu_temp for s in self.stats_history[-30:]) / max(len(self.stats_history[-30:]), 1)
+        return {
+            "running": self.running,
+            "current_curve": self.current_curve,
+            "thresholds": TEMP_THRESHOLDS,
+            "throttle_events": self.throttle_events,
+            "current": {
+                "cpu_temp": recent.cpu_temp if recent else 0,
+                "gpu_temp": recent.gpu_temp if recent else 0,
+                "gpu_hotspot": recent.gpu_hotspot if recent else None,
+                "fan_speed": recent.avg_fan_speed if recent else 0,
+                "power_draw": recent.power_draw if recent else 0,
+                "is_throttling": recent.throttling if recent else False,
+            } if recent else {},
+            "averages": {
+                "cpu_temp_30s": round(avg_cpu, 1),
+                "gpu_temp_30s": round(avg_gpu, 1),
+            },
+            "gpu": asdict(self.gpu_info) if self.gpu_info else None,
+            "has_nvidia": self.has_nvidia,
+            "has_amd": self.has_amd,
+        }
+
+def main():
+    guard = ThermalGuard()
+    def signal_handler(signum, frame):
+        guard.stop()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "status":
+            print(json.dumps(guard.get_status(), indent=2))
+        elif cmd == "temps":
+            cpu = guard._get_cpu_temp()
+            gpu = guard._get_nvidia_temps() or guard._get_amd_temps()
+            print(f"CPU: {cpu:.1f}C")
+            if gpu:
+                print(f"GPU: {gpu.temp_celsius:.1f}C (Fan: {gpu.fan_speed}%, Power: {gpu.power_draw:.1f}W)")
+        elif cmd == "curve":
+            if len(sys.argv) > 2:
+                guard.current_curve = sys.argv[2]
+                print(f"Set curve to: {sys.argv[2]}")
+            else:
+                print("Available curves:", ", ".join(FAN_CURVES.keys()))
+        else:
+            print("Usage: aegis-thermal-guard [status|temps|curve <name>]")
+            print("  (no args): Run as daemon")
+            print("  status: Show full status")
+            print("  temps: Show current temperatures")
+            print("  curve <name>: Set fan curve")
+    else:
+        guard.start()
+
+if __name__ == "__main__":
+    main()

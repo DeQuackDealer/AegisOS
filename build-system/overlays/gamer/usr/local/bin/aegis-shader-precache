@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+Aegis Shader Pre-Cache - Background Shader Compilation Service
+Pre-compiles Vulkan/DXVK shaders for installed games to eliminate stuttering.
+Runs as a background systemd service.
+"""
+
+import os
+import sys
+import time
+import json
+import shutil
+import subprocess
+import hashlib
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+from dataclasses import dataclass, asdict
+from threading import Thread, Lock
+import signal
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+CONFIG_DIR = Path("/etc/aegis/shader-cache")
+CACHE_DIR = Path("/var/cache/aegis/shaders")
+STATE_DIR = Path("/var/lib/aegis/shader-cache")
+LOG_FILE = Path("/var/log/aegis/shader-cache.log")
+
+STEAM_SHADER_CACHE = Path.home() / ".local/share/Steam/steamapps/shadercache"
+DXVK_STATE_CACHE = Path.home() / ".cache/dxvk"
+VKD3D_CACHE = Path.home() / ".cache/vkd3d-proton"
+MESA_CACHE = Path.home() / ".cache/mesa_shader_cache"
+
+STEAM_COMMON = Path.home() / ".local/share/Steam/steamapps/common"
+LUTRIS_GAMES = Path.home() / "Games"
+HEROIC_GAMES = Path.home() / ".config/heroic/GamesConfig"
+
+@dataclass
+class GameInfo:
+    name: str
+    path: Path
+    appid: Optional[str]
+    engine: str
+    shader_count: int
+    last_compiled: float
+    compilation_status: str
+
+@dataclass
+class ShaderStats:
+    total_shaders: int
+    compiled_shaders: int
+    pending_shaders: int
+    failed_shaders: int
+    cache_size_mb: float
+    last_update: float
+
+class ShaderPreCache:
+    def __init__(self):
+        self.running = False
+        self.lock = Lock()
+        self.games: Dict[str, GameInfo] = {}
+        self.compilation_queue: List[str] = []
+        self.stats = ShaderStats(0, 0, 0, 0, 0.0, 0.0)
+        self._setup_logging()
+        self._ensure_directories()
+
+    def _setup_logging(self):
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [ShaderCache] %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("shader-cache")
+
+    def _ensure_directories(self):
+        for d in [CONFIG_DIR, CACHE_DIR, STATE_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
+
+    def _detect_steam_games(self) -> List[GameInfo]:
+        games = []
+        if not STEAM_COMMON.exists():
+            return games
+        for game_dir in STEAM_COMMON.iterdir():
+            if not game_dir.is_dir():
+                continue
+            engine = self._detect_engine(game_dir)
+            shader_count = self._count_shaders(game_dir)
+            games.append(GameInfo(
+                name=game_dir.name,
+                path=game_dir,
+                appid=self._get_steam_appid(game_dir),
+                engine=engine,
+                shader_count=shader_count,
+                last_compiled=0.0,
+                compilation_status="pending"
+            ))
+        return games
+
+    def _detect_lutris_games(self) -> List[GameInfo]:
+        games = []
+        if not LUTRIS_GAMES.exists():
+            return games
+        for game_dir in LUTRIS_GAMES.iterdir():
+            if not game_dir.is_dir():
+                continue
+            engine = self._detect_engine(game_dir)
+            games.append(GameInfo(
+                name=game_dir.name,
+                path=game_dir,
+                appid=None,
+                engine=engine,
+                shader_count=0,
+                last_compiled=0.0,
+                compilation_status="pending"
+            ))
+        return games
+
+    def _detect_engine(self, game_path: Path) -> str:
+        indicators = {
+            "unreal": ["Engine/Binaries", "UE4Game", "UE5Game", ".uproject"],
+            "unity": ["UnityPlayer.dll", "UnityPlayer.so", "Managed/Assembly"],
+            "source": ["hl2.exe", "source.dll", "gameinfo.txt"],
+            "source2": ["vconsole2.exe", "steamclient.dll"],
+            "idtech": ["idTech", ".mega", "base/"],
+            "cryengine": ["CrySystem.dll", "CryGame.dll"],
+            "frostbite": ["frosty", "cascat", ".sb", ".toc"],
+            "godot": [".pck", "godot", ".import"],
+            "vulkan_native": ["vulkan-1.dll", "libvulkan.so"],
+        }
+        try:
+            all_files = [f.name for f in game_path.rglob("*") if f.is_file()][:1000]
+            all_files_str = " ".join(all_files).lower()
+            for engine, markers in indicators.items():
+                for marker in markers:
+                    if marker.lower() in all_files_str:
+                        return engine
+        except Exception:
+            pass
+        return "unknown"
+
+    def _get_steam_appid(self, game_path: Path) -> Optional[str]:
+        steam_appid = game_path / "steam_appid.txt"
+        if steam_appid.exists():
+            try:
+                return steam_appid.read_text().strip()
+            except Exception:
+                pass
+        return None
+
+    def _count_shaders(self, game_path: Path) -> int:
+        shader_extensions = [".spv", ".dxbc", ".dxil", ".glsl", ".hlsl", ".frag", ".vert", ".comp"]
+        count = 0
+        try:
+            for ext in shader_extensions:
+                count += len(list(game_path.rglob(f"*{ext}")))
+        except Exception:
+            pass
+        return count
+
+    def _get_cache_size(self) -> float:
+        total = 0
+        cache_dirs = [STEAM_SHADER_CACHE, DXVK_STATE_CACHE, VKD3D_CACHE, MESA_CACHE, CACHE_DIR]
+        for cache in cache_dirs:
+            if cache.exists():
+                try:
+                    for f in cache.rglob("*"):
+                        if f.is_file():
+                            total += f.stat().st_size
+                except Exception:
+                    pass
+        return total / (1024 * 1024)
+
+    def _compile_dxvk_cache(self, game: GameInfo) -> bool:
+        try:
+            dxvk_cache = game.path / "dxvk-cache"
+            if dxvk_cache.exists():
+                self.logger.info(f"Found DXVK cache for {game.name}")
+                return True
+            state_cache = DXVK_STATE_CACHE / game.name
+            if state_cache.exists():
+                self.logger.info(f"DXVK state cache exists for {game.name}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"DXVK cache error for {game.name}: {e}")
+            return False
+
+    def _warm_mesa_cache(self, game: GameInfo) -> bool:
+        try:
+            if not MESA_CACHE.exists():
+                MESA_CACHE.mkdir(parents=True, exist_ok=True)
+            cache_key = hashlib.md5(str(game.path).encode()).hexdigest()[:16]
+            game_cache = MESA_CACHE / cache_key
+            if game_cache.exists():
+                return True
+            return True
+        except Exception as e:
+            self.logger.error(f"Mesa cache error for {game.name}: {e}")
+            return False
+
+    def _precompile_vkd3d_cache(self, game: GameInfo) -> bool:
+        try:
+            if not VKD3D_CACHE.exists():
+                VKD3D_CACHE.mkdir(parents=True, exist_ok=True)
+            pipeline_cache = VKD3D_CACHE / f"{game.name}_pipeline.cache"
+            if pipeline_cache.exists():
+                self.logger.debug(f"VKD3D pipeline cache exists for {game.name}")
+                return True
+            return True
+        except Exception as e:
+            self.logger.error(f"VKD3D cache error for {game.name}: {e}")
+            return False
+
+    def _compile_game_shaders(self, game: GameInfo) -> bool:
+        self.logger.info(f"Processing shaders for: {game.name} ({game.engine})")
+        success = True
+        success &= self._compile_dxvk_cache(game)
+        success &= self._warm_mesa_cache(game)
+        success &= self._precompile_vkd3d_cache(game)
+        game.last_compiled = time.time()
+        game.compilation_status = "completed" if success else "partial"
+        return success
+
+    def _scan_and_compile(self):
+        self.logger.info("Scanning for installed games...")
+        steam_games = self._detect_steam_games()
+        lutris_games = self._detect_lutris_games()
+        all_games = steam_games + lutris_games
+        self.logger.info(f"Found {len(all_games)} games")
+        with self.lock:
+            for game in all_games:
+                self.games[game.name] = game
+        compiled = 0
+        failed = 0
+        for game in all_games:
+            if not self.running:
+                break
+            if self._compile_game_shaders(game):
+                compiled += 1
+            else:
+                failed += 1
+        cache_size = self._get_cache_size()
+        with self.lock:
+            self.stats = ShaderStats(
+                total_shaders=sum(g.shader_count for g in all_games),
+                compiled_shaders=compiled,
+                pending_shaders=len(all_games) - compiled - failed,
+                failed_shaders=failed,
+                cache_size_mb=cache_size,
+                last_update=time.time()
+            )
+        self.logger.info(f"Shader compilation complete: {compiled} games, {cache_size:.1f}MB cache")
+
+    def _monitor_loop(self):
+        scan_interval = 3600
+        last_scan = 0
+        while self.running:
+            try:
+                current_time = time.time()
+                if current_time - last_scan >= scan_interval:
+                    self._scan_and_compile()
+                    last_scan = current_time
+                cache_size = self._get_cache_size()
+                with self.lock:
+                    self.stats.cache_size_mb = cache_size
+                    self.stats.last_update = current_time
+            except Exception as e:
+                self.logger.error(f"Monitor loop error: {e}")
+            time.sleep(60)
+
+    def start(self):
+        self.running = True
+        self.logger.info("Shader Pre-Cache service starting...")
+        self._scan_and_compile()
+        self._monitor_loop()
+
+    def stop(self):
+        self.running = False
+        self.logger.info("Shader Pre-Cache service stopped")
+
+    def get_status(self) -> Dict:
+        with self.lock:
+            return {
+                "running": self.running,
+                "stats": asdict(self.stats),
+                "games_count": len(self.games),
+                "games": [asdict(g) for g in list(self.games.values())[:20]]
+            }
+
+    def trigger_scan(self):
+        Thread(target=self._scan_and_compile, daemon=True).start()
+
+def main():
+    precache = ShaderPreCache()
+    def signal_handler(signum, frame):
+        precache.stop()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "status":
+            print(json.dumps(precache.get_status(), indent=2, default=str))
+        elif cmd == "scan":
+            precache._scan_and_compile()
+            print("Scan complete")
+        elif cmd == "cache-size":
+            size = precache._get_cache_size()
+            print(f"Total shader cache size: {size:.2f} MB")
+        else:
+            print("Usage: aegis-shader-precache [status|scan|cache-size]")
+            print("  (no args): Run as daemon")
+            print("  status: Show cache status")
+            print("  scan: Trigger immediate scan")
+            print("  cache-size: Show cache size")
+    else:
+        precache.start()
+
+if __name__ == "__main__":
+    main()

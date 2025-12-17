@@ -1,0 +1,19 @@
+[Unit]
+Description=Aegis NetBoost - Network Optimization for Gaming
+Documentation=https://aegis-os.com/docs/netboost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-netboost
+Restart=on-failure
+RestartSec=5
+Nice=-5
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_NICE
+
+[Install]
+WantedBy=multi-user.target

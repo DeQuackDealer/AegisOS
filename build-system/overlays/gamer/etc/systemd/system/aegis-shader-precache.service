@@ -1,0 +1,18 @@
+[Unit]
+Description=Aegis Shader Pre-Cache - Background Shader Compilation
+Documentation=https://aegis-os.com/docs/shader-cache
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-shader-precache
+Restart=on-failure
+RestartSec=30
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+MemoryMax=2G
+
+[Install]
+WantedBy=graphical-session.target

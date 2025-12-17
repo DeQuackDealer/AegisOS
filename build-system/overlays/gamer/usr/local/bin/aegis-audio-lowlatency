@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""
+Aegis Audio Low-Latency - Zero-Latency Audio Pipeline for Gaming
+Optimizes PipeWire/PulseAudio for competitive gaming with minimal audio delay.
+Runs as a background systemd service.
+"""
+
+import os
+import sys
+import time
+import json
+import subprocess
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from threading import Thread, Lock
+import signal
+
+CONFIG_DIR = Path("/etc/aegis/audio")
+STATE_DIR = Path("/var/lib/aegis/audio")
+LOG_FILE = Path("/var/log/aegis/audio-lowlatency.log")
+
+PIPEWIRE_CONF = Path.home() / ".config/pipewire/pipewire.conf.d/aegis-gaming.conf"
+WIREPLUMBER_CONF = Path.home() / ".config/wireplumber/main.lua.d/aegis-gaming.lua"
+
+GAMING_PROFILES = {
+    "competitive": {
+        "quantum": 64,
+        "rate": 48000,
+        "buffer_size": 128,
+        "periods": 2,
+        "latency_ms": 2.7,
+    },
+    "balanced": {
+        "quantum": 256,
+        "rate": 48000,
+        "buffer_size": 512,
+        "periods": 2,
+        "latency_ms": 10.7,
+    },
+    "quality": {
+        "quantum": 1024,
+        "rate": 48000,
+        "buffer_size": 2048,
+        "periods": 3,
+        "latency_ms": 42.7,
+    },
+}
+
+@dataclass
+class AudioStats:
+    backend: str
+    sample_rate: int
+    buffer_size: int
+    latency_ms: float
+    xruns: int
+    cpu_usage: float
+    active_streams: int
+
+class AudioOptimizer:
+    def __init__(self):
+        self.running = False
+        self.lock = Lock()
+        self.current_profile = "balanced"
+        self.original_config: Dict[str, str] = {}
+        self.stats_history: List[AudioStats] = []
+        self.xrun_count = 0
+        self._setup_logging()
+        self._detect_backend()
+
+    def _setup_logging(self):
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [AudioLL] %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("audio-lowlatency")
+
+    def _detect_backend(self) -> str:
+        try:
+            result = subprocess.run(
+                ["pw-cli", "info", "0"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                self.backend = "pipewire"
+                return "pipewire"
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(
+                ["pactl", "info"],
+                capture_output=True, text=True, timeout=5
+            )
+            if "PulseAudio" in result.stdout or "PipeWire" in result.stdout:
+                if "PipeWire" in result.stdout:
+                    self.backend = "pipewire"
+                else:
+                    self.backend = "pulseaudio"
+                return self.backend
+        except Exception:
+            pass
+        self.backend = "unknown"
+        return "unknown"
+
+    def _get_current_settings(self) -> Dict:
+        settings = {}
+        try:
+            if self.backend == "pipewire":
+                result = subprocess.run(
+                    ["pw-metadata", "-n", "settings", "0"],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.split('\n'):
+                    if "clock.quantum" in line:
+                        parts = line.split("'")
+                        if len(parts) >= 4:
+                            settings["quantum"] = int(parts[3])
+                    if "clock.rate" in line:
+                        parts = line.split("'")
+                        if len(parts) >= 4:
+                            settings["rate"] = int(parts[3])
+        except Exception as e:
+            self.logger.debug(f"Could not get current settings: {e}")
+        return settings
+
+    def _apply_pipewire_settings(self, profile: Dict):
+        quantum = profile["quantum"]
+        rate = profile["rate"]
+        try:
+            subprocess.run([
+                "pw-metadata", "-n", "settings", "0",
+                "clock.force-quantum", str(quantum)
+            ], capture_output=True, timeout=5)
+            subprocess.run([
+                "pw-metadata", "-n", "settings", "0",
+                "clock.force-rate", str(rate)
+            ], capture_output=True, timeout=5)
+            self.logger.info(f"Applied PipeWire settings: quantum={quantum}, rate={rate}")
+        except Exception as e:
+            self.logger.error(f"Failed to apply PipeWire settings: {e}")
+
+    def _apply_pulseaudio_settings(self, profile: Dict):
+        try:
+            buffer_size = profile["buffer_size"]
+            subprocess.run([
+                "pactl", "set-default-source-latency", str(buffer_size)
+            ], capture_output=True, timeout=5)
+            self.logger.info(f"Applied PulseAudio latency settings")
+        except Exception as e:
+            self.logger.error(f"Failed to apply PulseAudio settings: {e}")
+
+    def _create_persistent_config(self, profile_name: str):
+        profile = GAMING_PROFILES.get(profile_name, GAMING_PROFILES["balanced"])
+        if self.backend == "pipewire":
+            PIPEWIRE_CONF.parent.mkdir(parents=True, exist_ok=True)
+            config = f"""# Aegis Gaming Audio Configuration
+# Profile: {profile_name}
+context.properties = {{
+    default.clock.quantum = {profile['quantum']}
+    default.clock.min-quantum = {profile['quantum']}
+    default.clock.max-quantum = {profile['quantum'] * 4}
+    default.clock.rate = {profile['rate']}
+}}
+context.modules = [
+    {{ name = libpipewire-module-rt
+        args = {{
+            nice.level = -11
+            rt.prio = 88
+            rt.time.soft = 2000000
+            rt.time.hard = 2000000
+        }}
+    }}
+]
+"""
+            try:
+                PIPEWIRE_CONF.write_text(config)
+                self.logger.info(f"Created PipeWire config: {PIPEWIRE_CONF}")
+            except Exception as e:
+                self.logger.error(f"Failed to write PipeWire config: {e}")
+
+    def _detect_gaming_activity(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["ps", "aux"],
+                capture_output=True, text=True, timeout=10
+            )
+            game_indicators = [
+                "steam", "wine", "proton", "lutris", "heroic",
+                "gamemoderun", "mangohud", "vkcube", "glxgears"
+            ]
+            for indicator in game_indicators:
+                if indicator in result.stdout.lower():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _count_xruns(self) -> int:
+        try:
+            if self.backend == "pipewire":
+                result = subprocess.run(
+                    ["pw-top", "-b", "-n", "1"],
+                    capture_output=True, text=True, timeout=5
+                )
+                return 0
+        except Exception:
+            pass
+        return 0
+
+    def _get_audio_stats(self) -> Optional[AudioStats]:
+        try:
+            settings = self._get_current_settings()
+            quantum = settings.get("quantum", 1024)
+            rate = settings.get("rate", 48000)
+            latency_ms = (quantum / rate) * 1000 * 2
+            active_streams = 0
+            try:
+                result = subprocess.run(
+                    ["pw-cli", "list-objects"],
+                    capture_output=True, text=True, timeout=5
+                )
+                active_streams = result.stdout.lower().count("stream")
+            except Exception:
+                pass
+            return AudioStats(
+                backend=self.backend,
+                sample_rate=rate,
+                buffer_size=quantum,
+                latency_ms=latency_ms,
+                xruns=self.xrun_count,
+                cpu_usage=0.0,
+                active_streams=active_streams
+            )
+        except Exception as e:
+            self.logger.debug(f"Stats collection error: {e}")
+            return None
+
+    def _auto_switch_profile(self):
+        is_gaming = self._detect_gaming_activity()
+        target_profile = "competitive" if is_gaming else "balanced"
+        if target_profile != self.current_profile:
+            self.logger.info(f"Auto-switching to {target_profile} profile (gaming={is_gaming})")
+            self.apply_profile(target_profile)
+
+    def apply_profile(self, profile_name: str):
+        if profile_name not in GAMING_PROFILES:
+            self.logger.error(f"Unknown profile: {profile_name}")
+            return
+        profile = GAMING_PROFILES[profile_name]
+        self.current_profile = profile_name
+        if self.backend == "pipewire":
+            self._apply_pipewire_settings(profile)
+        elif self.backend == "pulseaudio":
+            self._apply_pulseaudio_settings(profile)
+        self._create_persistent_config(profile_name)
+        self.logger.info(f"Applied {profile_name} profile: {profile['latency_ms']}ms latency")
+
+    def _monitor_loop(self):
+        self.apply_profile("balanced")
+        check_interval = 5
+        while self.running:
+            try:
+                self._auto_switch_profile()
+                stats = self._get_audio_stats()
+                if stats:
+                    with self.lock:
+                        self.stats_history.append(stats)
+                        if len(self.stats_history) > 360:
+                            self.stats_history = self.stats_history[-180:]
+            except Exception as e:
+                self.logger.error(f"Monitor loop error: {e}")
+            time.sleep(check_interval)
+
+    def start(self):
+        self.running = True
+        self.logger.info(f"Audio Low-Latency service starting (backend: {self.backend})")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._monitor_loop()
+
+    def stop(self):
+        self.running = False
+        self.apply_profile("balanced")
+        self.logger.info("Audio Low-Latency service stopped")
+
+    def get_status(self) -> Dict:
+        with self.lock:
+            recent_stats = self.stats_history[-1] if self.stats_history else None
+        return {
+            "running": self.running,
+            "backend": self.backend,
+            "current_profile": self.current_profile,
+            "profiles_available": list(GAMING_PROFILES.keys()),
+            "current_latency_ms": GAMING_PROFILES[self.current_profile]["latency_ms"],
+            "stats": {
+                "sample_rate": recent_stats.sample_rate if recent_stats else 0,
+                "buffer_size": recent_stats.buffer_size if recent_stats else 0,
+                "latency_ms": recent_stats.latency_ms if recent_stats else 0,
+                "xruns": recent_stats.xruns if recent_stats else 0,
+                "active_streams": recent_stats.active_streams if recent_stats else 0
+            } if recent_stats else {}
+        }
+
+def main():
+    optimizer = AudioOptimizer()
+    def signal_handler(signum, frame):
+        optimizer.stop()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "status":
+            print(json.dumps(optimizer.get_status(), indent=2))
+        elif cmd == "profile":
+            if len(sys.argv) > 2:
+                optimizer.apply_profile(sys.argv[2])
+                print(f"Applied profile: {sys.argv[2]}")
+            else:
+                print("Available profiles:", ", ".join(GAMING_PROFILES.keys()))
+        elif cmd == "competitive":
+            optimizer.apply_profile("competitive")
+            print("Applied competitive profile (2.7ms latency)")
+        elif cmd == "balanced":
+            optimizer.apply_profile("balanced")
+            print("Applied balanced profile (10.7ms latency)")
+        else:
+            print("Usage: aegis-audio-lowlatency [status|profile <name>|competitive|balanced]")
+            print("  (no args): Run as daemon")
+            print("  status: Show current status")
+            print("  profile <name>: Apply specific profile")
+            print("  competitive: Switch to competitive mode")
+            print("  balanced: Switch to balanced mode")
+    else:
+        optimizer.start()
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""
+Aegis NetBoost - Network Optimization for Gaming
+Automatic QoS, packet prioritization, and latency reduction for online games.
+Runs as a background systemd service.
+"""
+
+import os
+import sys
+import time
+import json
+import socket
+import struct
+import subprocess
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+from dataclasses import dataclass
+from threading import Thread, Lock
+import signal
+
+CONFIG_DIR = Path("/etc/aegis/netboost")
+STATE_DIR = Path("/var/lib/aegis/netboost")
+LOG_FILE = Path("/var/log/aegis/netboost.log")
+
+GAME_PORTS = {
+    "steam": [(27015, 27030), (27036, 27037)],
+    "epic": [(5222, 5222)],
+    "riot": [(5000, 5500), (8393, 8400)],
+    "valorant": [(7000, 8000)],
+    "csgo": [(27015, 27020)],
+    "fortnite": [(5222, 5222), (5795, 5847)],
+    "apex": [(37000, 40000)],
+    "overwatch": [(3478, 3479), (5060, 5062)],
+    "minecraft": [(25565, 25565)],
+    "discord": [(50000, 65535)],
+}
+
+KNOWN_GAME_SERVERS = {
+    "valve": ["162.254.192.0/24", "162.254.193.0/24", "162.254.194.0/24"],
+    "riot": ["104.160.128.0/19"],
+    "epic": ["52.203.0.0/16"],
+    "ea": ["159.153.0.0/16"],
+}
+
+@dataclass
+class NetworkStats:
+    interface: str
+    rx_bytes: int
+    tx_bytes: int
+    rx_packets: int
+    tx_packets: int
+    latency_ms: float
+    jitter_ms: float
+    packet_loss: float
+
+@dataclass
+class GameSession:
+    pid: int
+    name: str
+    start_time: float
+    ports: Set[int]
+    server_ip: Optional[str]
+    avg_latency: float
+
+class NetworkOptimizer:
+    def __init__(self):
+        self.running = False
+        self.lock = Lock()
+        self.active_games: Dict[int, GameSession] = {}
+        self.original_settings: Dict[str, str] = {}
+        self.primary_interface: Optional[str] = None
+        self.stats_history: List[NetworkStats] = []
+        self._setup_logging()
+        self._detect_interface()
+
+    def _setup_logging(self):
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s [NetBoost] %(levelname)s: %(message)s',
+            handlers=[
+                logging.FileHandler(LOG_FILE),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger("netboost")
+
+    def _detect_interface(self):
+        try:
+            result = subprocess.run(
+                ["ip", "route", "get", "8.8.8.8"],
+                capture_output=True, text=True, timeout=5
+            )
+            for part in result.stdout.split():
+                if part.startswith("eth") or part.startswith("wl") or part.startswith("enp"):
+                    self.primary_interface = part
+                    break
+            if not self.primary_interface:
+                parts = result.stdout.split()
+                if "dev" in parts:
+                    idx = parts.index("dev")
+                    if idx + 1 < len(parts):
+                        self.primary_interface = parts[idx + 1]
+        except Exception as e:
+            self.logger.warning(f"Could not detect network interface: {e}")
+            self.primary_interface = "eth0"
+
+    def _save_original_settings(self):
+        settings_to_save = [
+            ("net.ipv4.tcp_congestion_control", "/proc/sys/net/ipv4/tcp_congestion_control"),
+            ("net.ipv4.tcp_fastopen", "/proc/sys/net/ipv4/tcp_fastopen"),
+            ("net.ipv4.tcp_low_latency", "/proc/sys/net/ipv4/tcp_low_latency"),
+            ("net.core.netdev_budget", "/proc/sys/net/core/netdev_budget"),
+            ("net.ipv4.tcp_timestamps", "/proc/sys/net/ipv4/tcp_timestamps"),
+        ]
+        for name, path in settings_to_save:
+            try:
+                with open(path, 'r') as f:
+                    self.original_settings[name] = f.read().strip()
+            except Exception:
+                pass
+
+    def _apply_gaming_network_settings(self):
+        self._save_original_settings()
+        optimizations = [
+            ("net.ipv4.tcp_congestion_control", "bbr"),
+            ("net.ipv4.tcp_fastopen", "3"),
+            ("net.ipv4.tcp_low_latency", "1"),
+            ("net.core.netdev_budget", "600"),
+            ("net.ipv4.tcp_timestamps", "0"),
+            ("net.ipv4.tcp_sack", "1"),
+            ("net.ipv4.tcp_window_scaling", "1"),
+            ("net.core.rmem_max", "16777216"),
+            ("net.core.wmem_max", "16777216"),
+            ("net.ipv4.tcp_rmem", "4096 87380 16777216"),
+            ("net.ipv4.tcp_wmem", "4096 65536 16777216"),
+            ("net.ipv4.udp_rmem_min", "8192"),
+            ("net.ipv4.udp_wmem_min", "8192"),
+            ("net.core.netdev_max_backlog", "5000"),
+        ]
+        for setting, value in optimizations:
+            try:
+                subprocess.run(
+                    ["sysctl", "-w", f"{setting}={value}"],
+                    capture_output=True, timeout=5
+                )
+            except Exception as e:
+                self.logger.debug(f"Could not apply {setting}: {e}")
+
+        self.logger.info("Applied gaming network optimizations")
+
+    def _setup_traffic_control(self):
+        if not self.primary_interface:
+            return
+        try:
+            subprocess.run(
+                ["tc", "qdisc", "del", "dev", self.primary_interface, "root"],
+                capture_output=True, timeout=5
+            )
+        except Exception:
+            pass
+        try:
+            subprocess.run([
+                "tc", "qdisc", "add", "dev", self.primary_interface,
+                "root", "handle", "1:", "prio", "bands", "3"
+            ], capture_output=True, timeout=5)
+            subprocess.run([
+                "tc", "qdisc", "add", "dev", self.primary_interface,
+                "parent", "1:1", "handle", "10:", "fq_codel",
+                "target", "5ms", "interval", "100ms", "quantum", "1514"
+            ], capture_output=True, timeout=5)
+            for game, port_ranges in GAME_PORTS.items():
+                for start, end in port_ranges:
+                    for port in range(start, min(end + 1, start + 10)):
+                        subprocess.run([
+                            "tc", "filter", "add", "dev", self.primary_interface,
+                            "protocol", "ip", "parent", "1:", "prio", "1",
+                            "u32", "match", "ip", "dport", str(port), "0xffff",
+                            "flowid", "1:1"
+                        ], capture_output=True, timeout=5)
+            self.logger.info("Traffic control configured for gaming priority")
+        except Exception as e:
+            self.logger.warning(f"Could not setup traffic control: {e}")
+
+    def _detect_active_games(self) -> List[Dict]:
+        games = []
+        try:
+            result = subprocess.run(
+                ["ss", "-tunp"],
+                capture_output=True, text=True, timeout=10
+            )
+            game_keywords = [
+                "steam", "csgo", "dota", "tf2", "portal", "wine", "proton",
+                "lutris", "heroic", "bottles", "game", "unity", "unreal",
+                "godot", "java", "minecraft", "apex", "fortnite", "valorant"
+            ]
+            for line in result.stdout.lower().split('\n'):
+                for keyword in game_keywords:
+                    if keyword in line:
+                        games.append({"line": line, "game": keyword})
+                        break
+        except Exception as e:
+            self.logger.debug(f"Game detection error: {e}")
+        return games
+
+    def _measure_latency(self, host: str = "8.8.8.8") -> tuple:
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "5", "-i", "0.2", host],
+                capture_output=True, text=True, timeout=10
+            )
+            lines = result.stdout.split('\n')
+            for line in lines:
+                if "rtt" in line or "round-trip" in line:
+                    parts = line.split('=')[-1].strip().split('/')
+                    if len(parts) >= 4:
+                        avg = float(parts[1])
+                        mdev = float(parts[3].replace(" ms", ""))
+                        return avg, mdev
+        except Exception:
+            pass
+        return 0.0, 0.0
+
+    def _get_network_stats(self) -> Optional[NetworkStats]:
+        if not self.primary_interface:
+            return None
+        try:
+            with open(f"/sys/class/net/{self.primary_interface}/statistics/rx_bytes") as f:
+                rx_bytes = int(f.read().strip())
+            with open(f"/sys/class/net/{self.primary_interface}/statistics/tx_bytes") as f:
+                tx_bytes = int(f.read().strip())
+            with open(f"/sys/class/net/{self.primary_interface}/statistics/rx_packets") as f:
+                rx_packets = int(f.read().strip())
+            with open(f"/sys/class/net/{self.primary_interface}/statistics/tx_packets") as f:
+                tx_packets = int(f.read().strip())
+            latency, jitter = self._measure_latency()
+            return NetworkStats(
+                interface=self.primary_interface,
+                rx_bytes=rx_bytes,
+                tx_bytes=tx_bytes,
+                rx_packets=rx_packets,
+                tx_packets=tx_packets,
+                latency_ms=latency,
+                jitter_ms=jitter,
+                packet_loss=0.0
+            )
+        except Exception as e:
+            self.logger.debug(f"Stats collection error: {e}")
+            return None
+
+    def _optimization_loop(self):
+        self._apply_gaming_network_settings()
+        self._setup_traffic_control()
+        check_interval = 5
+        while self.running:
+            try:
+                games = self._detect_active_games()
+                if games:
+                    check_interval = 2
+                else:
+                    check_interval = 10
+                stats = self._get_network_stats()
+                if stats:
+                    with self.lock:
+                        self.stats_history.append(stats)
+                        if len(self.stats_history) > 720:
+                            self.stats_history = self.stats_history[-360:]
+                    if stats.latency_ms > 100:
+                        self.logger.warning(f"High latency detected: {stats.latency_ms:.1f}ms")
+                    if stats.jitter_ms > 20:
+                        self.logger.warning(f"High jitter detected: {stats.jitter_ms:.1f}ms")
+            except Exception as e:
+                self.logger.error(f"Optimization loop error: {e}")
+            time.sleep(check_interval)
+
+    def _restore_settings(self):
+        for setting, value in self.original_settings.items():
+            try:
+                subprocess.run(
+                    ["sysctl", "-w", f"{setting}={value}"],
+                    capture_output=True, timeout=5
+                )
+            except Exception:
+                pass
+        if self.primary_interface:
+            try:
+                subprocess.run(
+                    ["tc", "qdisc", "del", "dev", self.primary_interface, "root"],
+                    capture_output=True, timeout=5
+                )
+            except Exception:
+                pass
+        self.logger.info("Restored original network settings")
+
+    def start(self):
+        self.running = True
+        self.logger.info(f"NetBoost starting on {self.primary_interface}")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._optimization_loop()
+
+    def stop(self):
+        self.running = False
+        self._restore_settings()
+        self.logger.info("NetBoost stopped")
+
+    def get_status(self) -> Dict:
+        with self.lock:
+            recent_stats = self.stats_history[-10:] if self.stats_history else []
+        avg_latency = sum(s.latency_ms for s in recent_stats) / len(recent_stats) if recent_stats else 0
+        avg_jitter = sum(s.jitter_ms for s in recent_stats) / len(recent_stats) if recent_stats else 0
+        return {
+            "running": self.running,
+            "interface": self.primary_interface,
+            "avg_latency_ms": round(avg_latency, 2),
+            "avg_jitter_ms": round(avg_jitter, 2),
+            "active_games": len(self.active_games),
+            "optimizations_applied": len(self.original_settings) > 0
+        }
+
+def main():
+    optimizer = NetworkOptimizer()
+    def signal_handler(signum, frame):
+        optimizer.stop()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "status":
+            print(json.dumps(optimizer.get_status(), indent=2))
+        elif sys.argv[1] == "test":
+            latency, jitter = optimizer._measure_latency()
+            print(f"Latency: {latency:.2f}ms, Jitter: {jitter:.2f}ms")
+        else:
+            print("Usage: aegis-netboost [status|test]")
+            print("  (no args): Run as daemon")
+            print("  status: Show current status")
+            print("  test: Run latency test")
+    else:
+        optimizer.start()
+
+if __name__ == "__main__":
+    main()

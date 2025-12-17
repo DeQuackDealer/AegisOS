@@ -1,0 +1,17 @@
+[Unit]
+Description=Aegis Audio Low-Latency - Zero-Latency Audio for Gaming
+Documentation=https://aegis-os.com/docs/audio-lowlatency
+After=pipewire.service pulseaudio.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-audio-lowlatency
+Restart=on-failure
+RestartSec=5
+Nice=-10
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+
+[Install]
+WantedBy=graphical-session.target
