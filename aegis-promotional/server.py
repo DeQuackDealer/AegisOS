@@ -41,36 +41,37 @@ FAILED_ATTEMPTS = defaultdict(lambda: {'count': 0, 'locked_until': 0})
 JWT_SECRET = os.getenv('JWT_SECRET', secrets.token_urlsafe(32))
 CSRF_TOKENS = {}
 
-# Stripe configuration - auto-detects test vs production environment
-# In development: uses test keys (sk_test_..., pk_test_...)
-# In production (deployed): uses live keys (sk_live_..., pk_live_...)
+# Stripe configuration - uses LIVE keys for real payments
+# Set STRIPE_LIVE_MODE=false to use test keys instead
 
 def get_stripe_keys():
-    """Get appropriate Stripe keys based on
-     environment"""
-    is_production = os.getenv('REPLIT_DEPLOYMENT') == '1'
+    """Get appropriate Stripe keys based on environment"""
+    # Use live keys by default, unless explicitly set to use test mode
+    use_live = os.getenv('STRIPE_LIVE_MODE', 'true').lower() != 'false'
 
-    if is_production:
-        # Production deployment - use live keys
+    if use_live:
+        # Live mode - real payments
         return {
             'secret': os.getenv('STRIPE_SECRET_KEY_LIVE', ''),
-            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_LIVE', '')
+            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_LIVE', ''),
+            'mode': 'LIVE'
         }
     else:
-        # Development - use test keys
+        # Test mode - for testing only
         return {
             'secret': os.getenv('STRIPE_SECRET_KEY_TEST', ''),
-            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_TEST', '')
+            'publishable': os.getenv('STRIPE_PUBLISHABLE_KEY_TEST', ''),
+            'mode': 'TEST'
         }
 
 # Initialize Stripe
 stripe_keys = get_stripe_keys()
 stripe.api_key = stripe_keys['secret']
 STRIPE_PUBLISHABLE = stripe_keys['publishable']
+STRIPE_MODE = stripe_keys['mode']
 
 # Log which mode we're in
-environment = "PRODUCTION (Live payments)" if os.getenv('REPLIT_DEPLOYMENT') == '1' else "DEVELOPMENT (Test mode)"
-logger.info(f"Stripe initialized in {environment}")
+logger.info(f"Stripe initialized in {STRIPE_MODE} mode")
 
 from models import db, User, License, StripeEvent, EmailLog, AdminUser, AdminRole, Giveaway, GiveawayEntry, FreePeriodRedemption, FreePeriodConfig
 db.init_app(app)
@@ -4601,7 +4602,7 @@ def serve_assets(filename):
 @rate_limit(limit=100, window=3600)
 def get_stripe_config():
     """Get Stripe publishable key for frontend"""
-    return jsonify({'publishableKey': STRIPE_PUBLISHABLE, 'testMode': os.getenv('REPLIT_DEPLOYMENT') != '1'})
+    return jsonify({'publishableKey': STRIPE_PUBLISHABLE, 'testMode': STRIPE_MODE == 'TEST'})
 
 @app.route('/api/checkout', methods=['POST'])
 @rate_limit(limit=20, window=3600)
