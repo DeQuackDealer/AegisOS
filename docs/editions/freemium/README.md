@@ -123,7 +123,7 @@ yay -S aur-package-name
 | Edition | Price | Best For |
 |---------|-------|----------|
 | Basic | $69 | Productivity and general use |
-| Gamer | $69 | Gaming with Wine/Proton |
+| Gamer | $49 | Gaming with Wine/Proton |
 | Workplace | $49 | Business and enterprise |
 | AI Developer | $89 | Machine learning and data science |
 | Gamer+AI | $129 | Gaming + AI development |

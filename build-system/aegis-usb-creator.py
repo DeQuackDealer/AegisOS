@@ -99,13 +99,13 @@ EDITIONS = {
     },
     "gamer": {
         "name": "Aegis OS Gamer",
-        "display_name": "Gamer ($69 Lifetime)",
+        "display_name": "Gamer ($49 Lifetime)",
         "size_gb": 2.4,
         "size_bytes": 2576980377,
         "license_required": True,
         "license_prefix": "GAME",
         "color": "#f97316",
-        "icon": "$69",
+        "icon": "$49",
         "features": [
             "8 Integrated System Services",
             "AirDrop / Quick Share",

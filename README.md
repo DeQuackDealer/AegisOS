@@ -21,7 +21,7 @@ Aegis OS is a commercial Linux distribution offering a Windows 10-inspired exper
 | **Freemium** | Free | New Linux users | 30-day trial, Wine/Proton basics |
 | **Basic** | $69 | General users | Full productivity suite |
 | **Workplace** | $49 | Business users | Office 365 compatibility, VPN |
-| **Gamer** | $69 | PC gamers | Steam, Lutris, Proton-GE, MangoHUD |
+| **Gamer** | $49 | PC gamers | Steam, Lutris, Proton-GE, MangoHUD |
 | **AI Developer** | $89 | ML engineers | CUDA, PyTorch, JupyterLab |
 | **Gamer+AI** | $129 | Power users | Gaming + ML workstation |
 | **Server** | $129 | Enterprise | XDR security, Kubernetes |

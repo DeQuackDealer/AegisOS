@@ -136,7 +136,7 @@ EDITIONS = {
     "gamer": {
         "name": "Aegis OS Gamer",
         "prefix": "GAME",
-        "price": "$69 Lifetime",
+        "price": "$49 Lifetime",
         "size_gb": 6.5,
         "kernel": "linux-zen",
         "features": [

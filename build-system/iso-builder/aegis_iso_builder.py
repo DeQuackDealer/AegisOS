@@ -36,7 +36,7 @@ WARNING_YELLOW = "#ffa502"
 EDITIONS = {
     "freemium": {"name": "Freemium", "code": "FREE", "price": "Free"},
     "basic": {"name": "Basic", "code": "BASIC", "price": "$49"},
-    "gamer": {"name": "Gamer", "code": "GAMER", "price": "$69"},
+    "gamer": {"name": "Gamer", "code": "GAMER", "price": "$49"},
     "workplace": {"name": "Workplace", "code": "WORK", "price": "$69"},
     "ai_developer": {"name": "AI Developer", "code": "AIDEV", "price": "$89"},
     "gamer_ai": {"name": "Gamer+AI", "code": "GMAI", "price": "$129"},

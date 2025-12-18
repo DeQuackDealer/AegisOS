@@ -50,7 +50,7 @@ declare -A EDITIONS
 EDITIONS=(
     ["1"]="freemium|Freemium|FREE|Base Linux OS, XFCE Desktop, Wine, Proton, DeskLink Basic (2 PCs), Gaming/AI/Workplace Lite packs"
     ["2"]="basic|Basic|$69 lifetime|All Freemium + Pro apps, Unlimited DeskLink, Mobile Link Pro, 50+ themes, Cloud sync, 24/7 support"
-    ["3"]="gamer|Gamer|$69 lifetime|All Basic + Low-latency kernel, Aegis Game Launcher, Wallpaper Engine, Audio Router, Stream, Game Library"
+    ["3"]="gamer|Gamer|$49 lifetime|All Basic + Low-latency kernel, Aegis Game Launcher, Wallpaper Engine, Audio Router, Stream, Game Library"
     ["4"]="ai-dev|AI Developer|$89 lifetime|All Basic + CUDA/ROCm support, Jupyter, PyTorch, TensorFlow, AI Toolkit, Model Hub, Training tools"
     ["5"]="workplace|Workplace|$49 lifetime|All Basic + Enterprise VPN, Meeting tools, Remote desktop, SSO, MDM, Compliance tools"
     ["6"]="gamer-ai|Gamer+AI|$129 lifetime|All Gamer + All AI Developer features combined, best for gaming + AI development"

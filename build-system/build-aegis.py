@@ -143,7 +143,7 @@ EDITIONS = {
         "kernel": "linux-zen",
         "desktop": "xfce4",
         "tier": "pro",
-        "price": "$69",
+        "price": "$49",
         "iso_size_gb": 6.5,
         "packages": ["base.txt", "xfce.txt", "gamer.txt"],
         "description": "SteamOS-inspired gaming powerhouse with Proton and Wine.",

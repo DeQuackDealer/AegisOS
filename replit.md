@@ -6,7 +6,7 @@ Aegis OS is a commercial Arch Linux-based distribution featuring seven distinct 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
 
-## Gamer Edition - Flagship Product ($69 lifetime / $10 annual)
+## Gamer Edition - Flagship Product ($49 lifetime / $10 annual)
 
 ### 8 Integrated System Services (Background Daemons)
 All services run automatically via systemd - no user configuration needed:
@@ -27,7 +27,7 @@ All services run automatically via systemd - no user configuration needed:
 - **Upscaling**: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
 
 ### Website Marketing Sections (gamer.html)
-- Hero with pricing cards ($69 lifetime / $10 annual)
+- Hero with pricing cards ($49 lifetime / $10 annual)
 - Quick stats: High compatibility, Low latency, 4 anti-cheats, 8 services, 18+ emulators, 0 bloatware
 - Flagship Premium Features showcase
 - Integrated System Services grid (8 services)
@@ -63,7 +63,7 @@ Stripe integration using manual secrets (STRIPE_SECRET_KEY_LIVE, STRIPE_PUBLISHA
 **Note:** The Stripe connector in .replit cannot be removed via agent. To publish, may need to complete connector setup or contact Replit support to remove it.
 
 ## Pricing Structure
-- **Gamer** (Flagship): $69 lifetime, $10/year
+- **Gamer** (Flagship): $49 lifetime, $10/year
 - **Basic**: $19 lifetime, $3/year
 - **Workplace**: $9 lifetime, $2/year
 - **AI Developer**: $79 lifetime, $12/year

@@ -235,7 +235,7 @@ nv_powermizer_mode=1
 
 ## Pricing & Licensing
 
-**Price: $69 (one-time)**
+**Price: $49 (one-time)**
 
 Includes:
 - Lifetime license for Gamer Edition
@@ -246,7 +246,7 @@ Includes:
 ### Upgrade Paths
 | From | To | Price |
 |------|-----|-------|
-| Freemium | Gamer | $69 |
+| Freemium | Gamer | $49 |
 | Gamer | Gamer+AI | $60 |
 | Basic | Gamer | $40 |
 

@@ -24,7 +24,7 @@ Aegis OS uses a comprehensive licensing system that validates licenses on boot a
 | Freemium | FREE | FREE |
 | Basic | $19 | $3/year |
 | Workplace | $9 | $2/year |
-| Gamer | $69 | $10/year |
+| Gamer | $49 | $10/year |
 | AI Developer | $79 | $12/year |
 | Gamer + AI | $119 | $17/year |
 | Server | Contact | Contact |
@@ -58,7 +58,7 @@ OS Boot → License Check → Validate Online/Offline → Apply Features → Sta
 - Email support
 - 16GB RAM, 8 CPU cores
 
-#### Gamer ($69 lifetime / $10 annual)
+#### Gamer ($49 lifetime / $10 annual)
 - NVIDIA/AMD proprietary drivers
 - Gaming mode optimization
 - Ray tracing & DLSS 3

@@ -374,7 +374,7 @@ apply_tier_features() {
             echo ""
             echo -e "${YELLOW}Upgrade to unlock premium features:${NC}"
             echo "  - Basic ($19): Enhanced security, VPN, anti-ransomware"
-            echo "  - Gamer ($69): DLSS 3.5, FSR 3, <3ms latency"
+            echo "  - Gamer ($49): DLSS 3.5, FSR 3, <3ms latency"
             echo "  - AI Dev ($79): PyTorch, TensorFlow, CUDA"
             echo "  - Server: Enterprise security, 100K+ RPS"
             ;;

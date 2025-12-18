@@ -73,7 +73,7 @@ EDITIONS = {
     },
     "gamer": {
         "name": "Aegis OS Gamer",
-        "description": "Optimized for gaming - $69",
+        "description": "Optimized for gaming - $49",
         "size_mb": 4500,
         "requires_license": True
     },
