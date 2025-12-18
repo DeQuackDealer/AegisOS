@@ -28,7 +28,7 @@ All services run automatically via systemd - no user configuration needed:
 
 ### Website Marketing Sections (gamer.html)
 - Hero with pricing cards ($69 lifetime / $10 annual)
-- Quick stats: 98%+ compatibility, <1ms latency, 5 anti-cheats, 8 services, 18+ emulators, 0 bloatware
+- Quick stats: High compatibility, Low latency, 4 anti-cheats, 8 services, 18+ emulators, 0 bloatware
 - Flagship Premium Features showcase
 - Integrated System Services grid (8 services)
 - Kernel & System-Level Optimizations
@@ -37,6 +37,14 @@ All services run automatically via systemd - no user configuration needed:
 - System Requirements (Minimum, 4K Gaming, Dual GPU)
 - FAQ section (6 questions)
 - Controller Support, Streaming, Performance sections
+
+### Legal & Marketing Notes (Updated Dec 2025)
+- **Anti-cheat claims**: Only claim EAC, BattlEye, GameGuard, PunkBuster support. Valorant/Fortnite do NOT work on Linux due to kernel-level anti-cheat.
+- **Emulators**: Use Suyu (Switch) and Lime3DS (3DS) instead of Yuzu/Citra which were legally shut down by Nintendo.
+- **Performance claims**: Use "High compatibility" and "Low latency" instead of specific percentages or milliseconds.
+- **Benchmarks**: All benchmarks marked as "Estimated" with disclaimer about hardware variance.
+- **Update guarantee**: Guaranteed updates through January 1, 2028 with "likely continuation beyond" language.
+- **RGB support**: All RGB is via OpenRGB (community-driven), not official vendor integrations.
 
 ## System Architecture
 
