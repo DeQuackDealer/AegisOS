@@ -1,0 +1,456 @@
+#!/usr/bin/env python3
+"""
+Aegis Wallpaper Engine - Dynamic Video/Image Wallpapers
+Low-resource video wallpapers with parallax effects
+"""
+
+import os
+import sys
+import json
+import signal
+import subprocess
+import threading
+from pathlib import Path
+from typing import Optional
+import time
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib
+except ImportError:
+    pass
+
+CONFIG_DIR = Path.home() / ".config/aegis/wallpaper"
+WALLPAPER_DIR = Path.home() / ".local/share/aegis/wallpapers"
+SYSTEM_WALLPAPERS = Path("/usr/share/aegis/wallpapers")
+STATE_FILE = Path.home() / ".local/state/aegis/wallpaper.json"
+
+DEFAULT_CONFIG = {
+    "enabled": True,
+    "current_wallpaper": None,
+    "mode": "static",
+    "video_muted": True,
+    "video_loop": True,
+    "parallax_enabled": False,
+    "parallax_strength": 0.02,
+    "fps_limit": 30,
+    "pause_on_fullscreen": True,
+    "pause_on_battery": True,
+    "quality": "high"
+}
+
+class WallpaperDaemon:
+    def __init__(self):
+        self.running = True
+        self.mpv_process: Optional[subprocess.Popen] = None
+        self.config = self._load_config()
+        self._setup_directories()
+        self._setup_signal_handlers()
+        
+    def _load_config(self) -> dict:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        config_file = CONFIG_DIR / "config.json"
+        if config_file.exists():
+            try:
+                with open(config_file) as f:
+                    return {**DEFAULT_CONFIG, **json.load(f)}
+            except Exception:
+                pass
+        return DEFAULT_CONFIG.copy()
+    
+    def _save_config(self):
+        config_file = CONFIG_DIR / "config.json"
+        with open(config_file, "w") as f:
+            json.dump(self.config, f, indent=2)
+    
+    def _setup_directories(self):
+        WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    
+    def _setup_signal_handlers(self):
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGUSR1, self._reload_wallpaper)
+    
+    def _handle_shutdown(self, signum, frame):
+        self.running = False
+        self._stop_video()
+    
+    def _reload_wallpaper(self, signum, frame):
+        self.config = self._load_config()
+        self._apply_wallpaper()
+    
+    def _get_desktop_resolution(self) -> str:
+        try:
+            result = subprocess.run(
+                ["xrandr", "--current"],
+                capture_output=True, text=True
+            )
+            for line in result.stdout.split("\n"):
+                if " connected" in line and "x" in line:
+                    parts = line.split()
+                    for part in parts:
+                        if "x" in part and part[0].isdigit():
+                            return part.split("+")[0]
+        except Exception:
+            pass
+        return "1920x1080"
+    
+    def _is_fullscreen_app_running(self) -> bool:
+        try:
+            result = subprocess.run(
+                ["xprop", "-root", "_NET_ACTIVE_WINDOW"],
+                capture_output=True, text=True
+            )
+            if "0x" in result.stdout:
+                window_id = result.stdout.split()[-1]
+                state = subprocess.run(
+                    ["xprop", "-id", window_id, "_NET_WM_STATE"],
+                    capture_output=True, text=True
+                )
+                return "_NET_WM_STATE_FULLSCREEN" in state.stdout
+        except Exception:
+            pass
+        return False
+    
+    def _is_on_battery(self) -> bool:
+        try:
+            status_file = Path("/sys/class/power_supply/BAT0/status")
+            if status_file.exists():
+                return status_file.read_text().strip() == "Discharging"
+        except Exception:
+            pass
+        return False
+    
+    def _stop_video(self):
+        if self.mpv_process:
+            try:
+                self.mpv_process.terminate()
+                self.mpv_process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.mpv_process.kill()
+                except Exception:
+                    pass
+            self.mpv_process = None
+    
+    def _start_video_wallpaper(self, video_path: str):
+        self._stop_video()
+        
+        resolution = self._get_desktop_resolution()
+        width, height = resolution.split("x") if "x" in resolution else ("1920", "1080")
+        
+        audio_opt = "" if self.config["video_muted"] else "--volume=50"
+        loop_opt = "--loop-file=inf" if self.config["video_loop"] else ""
+        
+        xwinwrap_available = subprocess.run(["which", "xwinwrap"], capture_output=True).returncode == 0
+        
+        if xwinwrap_available:
+            cmd = [
+                "xwinwrap", "-g", f"{width}x{height}+0+0", "-ov", "-ni", "-s", "-nf", "--",
+                "mpv", "-wid", "WID",
+                "--no-audio" if self.config["video_muted"] else "--volume=50",
+                "--loop-file=inf" if self.config["video_loop"] else "--loop-file=no",
+                f"--fps={self.config['fps_limit']}",
+                "--no-border", "--no-osd-bar", "--no-input-default-bindings",
+                "--really-quiet", "--vo=gpu", "--hwdec=auto",
+                video_path
+            ]
+        else:
+            cmd = [
+                "mpv",
+                f"--geometry={width}x{height}+0+0",
+                "--no-audio" if self.config["video_muted"] else "--volume=50",
+                "--loop-file=inf" if self.config["video_loop"] else "--loop-file=no",
+                f"--fps={self.config['fps_limit']}",
+                "--no-border", "--no-osd-bar", "--no-input-default-bindings",
+                "--input-vo-keyboard=no", "--really-quiet",
+                "--vo=gpu", "--hwdec=auto", "--ontop=no", "--below=yes",
+                "--title=aegis-wallpaper",
+                video_path
+            ]
+        
+        try:
+            self.mpv_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        except Exception as e:
+            print(f"Error starting video wallpaper: {e}")
+            self._set_static_wallpaper(video_path.replace(".mp4", ".jpg"))
+    
+    def _set_static_wallpaper(self, image_path: str):
+        self._stop_video()
+        
+        commands = [
+            ["feh", "--bg-fill", image_path],
+            ["nitrogen", "--set-zoom-fill", image_path],
+            ["xfconf-query", "-c", "xfce4-desktop", "-p", 
+             "/backdrop/screen0/monitor0/workspace0/last-image", "-s", image_path]
+        ]
+        
+        for cmd in commands:
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=5)
+                break
+            except Exception:
+                continue
+    
+    def _get_wallpaper_type(self, path: str) -> str:
+        video_exts = {".mp4", ".webm", ".mkv", ".avi", ".mov", ".gif"}
+        image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        
+        ext = Path(path).suffix.lower()
+        if ext in video_exts:
+            return "video"
+        elif ext in image_exts:
+            return "image"
+        return "unknown"
+    
+    def _apply_wallpaper(self):
+        wallpaper = self.config.get("current_wallpaper")
+        if not wallpaper:
+            return
+        
+        if not Path(wallpaper).exists():
+            for search_dir in [WALLPAPER_DIR, SYSTEM_WALLPAPERS]:
+                candidate = search_dir / wallpaper
+                if candidate.exists():
+                    wallpaper = str(candidate)
+                    break
+            else:
+                print(f"Wallpaper not found: {wallpaper}")
+                return
+        
+        wp_type = self._get_wallpaper_type(wallpaper)
+        
+        if wp_type == "video":
+            self._start_video_wallpaper(wallpaper)
+            self.config["mode"] = "video"
+        elif wp_type == "image":
+            self._set_static_wallpaper(wallpaper)
+            self.config["mode"] = "static"
+        
+        self._write_state()
+    
+    def _write_state(self):
+        state = {
+            "running": True,
+            "mode": self.config["mode"],
+            "wallpaper": self.config.get("current_wallpaper"),
+            "video_pid": self.mpv_process.pid if self.mpv_process else None
+        }
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump(state, f, indent=2)
+        except Exception:
+            pass
+    
+    def set_wallpaper(self, path: str):
+        self.config["current_wallpaper"] = path
+        self._save_config()
+        self._apply_wallpaper()
+    
+    def list_wallpapers(self) -> list:
+        wallpapers = []
+        
+        for search_dir in [SYSTEM_WALLPAPERS, WALLPAPER_DIR]:
+            if search_dir.exists():
+                for f in search_dir.iterdir():
+                    if f.is_file():
+                        wp_type = self._get_wallpaper_type(str(f))
+                        if wp_type in ["video", "image"]:
+                            wallpapers.append({
+                                "name": f.name,
+                                "path": str(f),
+                                "type": wp_type,
+                                "size": f.stat().st_size
+                            })
+        
+        return wallpapers
+    
+    def run_daemon(self):
+        print("Aegis Wallpaper Engine started")
+        
+        if self.config["current_wallpaper"]:
+            self._apply_wallpaper()
+        
+        paused = False
+        while self.running:
+            should_pause = False
+            
+            if self.config["pause_on_fullscreen"] and self._is_fullscreen_app_running():
+                should_pause = True
+            if self.config["pause_on_battery"] and self._is_on_battery():
+                should_pause = True
+            
+            if self.config["mode"] == "video" and self.mpv_process:
+                if should_pause and not paused:
+                    try:
+                        os.kill(self.mpv_process.pid, signal.SIGSTOP)
+                        paused = True
+                    except Exception:
+                        pass
+                elif not should_pause and paused:
+                    try:
+                        os.kill(self.mpv_process.pid, signal.SIGCONT)
+                        paused = False
+                    except Exception:
+                        pass
+            
+            time.sleep(2)
+        
+        self._stop_video()
+        print("Aegis Wallpaper Engine stopped")
+
+class WallpaperGUI(Gtk.Window):
+    def __init__(self, daemon: WallpaperDaemon):
+        super().__init__(title="Aegis Wallpaper Engine")
+        self.daemon = daemon
+        self.set_default_size(800, 600)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.setup_ui()
+        self.load_wallpapers()
+    
+    def setup_ui(self):
+        css = b"""
+        window { background-color: #0f172a; }
+        .wallpaper-card { background-color: #1e293b; border-radius: 8px; }
+        .wallpaper-card:hover { background-color: #334155; }
+        .title { color: white; font-size: 18px; font-weight: bold; }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+        main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        main.set_margin_start(20)
+        main.set_margin_end(20)
+        main.set_margin_top(20)
+        main.set_margin_bottom(20)
+        self.add(main)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        title = Gtk.Label()
+        title.set_markup('<span foreground="#3b82f6" font="16" weight="bold">AEGIS</span> <span foreground="white" font="16">WALLPAPER ENGINE</span>')
+        header.pack_start(title, False, False, 0)
+        
+        add_btn = Gtk.Button(label="+ Add Wallpaper")
+        add_btn.connect("clicked", self.on_add_clicked)
+        header.pack_end(add_btn, False, False, 0)
+        
+        main.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        self.flowbox = Gtk.FlowBox()
+        self.flowbox.set_valign(Gtk.Align.START)
+        self.flowbox.set_max_children_per_line(4)
+        self.flowbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.flowbox.set_homogeneous(True)
+        self.flowbox.set_column_spacing(10)
+        self.flowbox.set_row_spacing(10)
+        scroll.add(self.flowbox)
+        main.pack_start(scroll, True, True, 0)
+    
+    def load_wallpapers(self):
+        for child in self.flowbox.get_children():
+            self.flowbox.remove(child)
+        
+        for wp in self.daemon.list_wallpapers():
+            card = self.create_wallpaper_card(wp)
+            self.flowbox.add(card)
+        
+        self.flowbox.show_all()
+    
+    def create_wallpaper_card(self, wp: dict) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        card.get_style_context().add_class("wallpaper-card")
+        card.set_size_request(180, 140)
+        
+        icon = Gtk.Label()
+        icon.set_markup(f'<span font="32">{"🎬" if wp["type"] == "video" else "🖼️"}</span>')
+        card.pack_start(icon, True, True, 10)
+        
+        name = Gtk.Label(label=wp["name"][:20])
+        name.set_halign(Gtk.Align.CENTER)
+        card.pack_start(name, False, False, 0)
+        
+        btn = Gtk.Button(label="Apply")
+        btn.connect("clicked", lambda b, p=wp["path"]: self.on_apply(p))
+        card.pack_start(btn, False, False, 5)
+        
+        return card
+    
+    def on_apply(self, path: str):
+        self.daemon.set_wallpaper(path)
+    
+    def on_add_clicked(self, button):
+        dialog = Gtk.FileChooserDialog(
+            title="Select Wallpaper",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        
+        filter_media = Gtk.FileFilter()
+        filter_media.set_name("Images & Videos")
+        filter_media.add_mime_type("image/*")
+        filter_media.add_mime_type("video/*")
+        dialog.add_filter(filter_media)
+        
+        if dialog.run() == Gtk.ResponseType.OK:
+            src = Path(dialog.get_filename())
+            dst = WALLPAPER_DIR / src.name
+            
+            import shutil
+            shutil.copy2(src, dst)
+            self.load_wallpapers()
+        
+        dialog.destroy()
+
+def main():
+    daemon = WallpaperDaemon()
+    
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        
+        if cmd == "daemon":
+            daemon.run_daemon()
+        elif cmd == "set" and len(sys.argv) > 2:
+            daemon.set_wallpaper(sys.argv[2])
+            print(f"Wallpaper set: {sys.argv[2]}")
+        elif cmd == "list":
+            for wp in daemon.list_wallpapers():
+                print(f"{wp['type']:6} {wp['name']}")
+        elif cmd == "stop":
+            daemon._stop_video()
+            print("Video wallpaper stopped")
+        elif cmd == "gui":
+            try:
+                app = WallpaperGUI(daemon)
+                app.connect("destroy", Gtk.main_quit)
+                app.show_all()
+                Gtk.main()
+            except Exception as e:
+                print(f"GUI not available: {e}")
+        else:
+            print("Usage: aegis-wallpaper [daemon|set <path>|list|stop|gui]")
+    else:
+        try:
+            app = WallpaperGUI(daemon)
+            app.connect("destroy", Gtk.main_quit)
+            app.show_all()
+            Gtk.main()
+        except Exception:
+            daemon.run_daemon()
+
+if __name__ == "__main__":
+    main()
