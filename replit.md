@@ -26,9 +26,15 @@ All services run automatically via systemd - no user configuration needed:
 - **Dual GPU**: Split-Frame Rendering (60/40 split) via custom Vulkan layer, mixed NVIDIA/AMD support
 - **Upscaling**: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
 
+### 4 Exclusive Gaming Apps (Aegis-only)
+1. **Aegis Game Library** - Unified launcher with Console Mode & SD card support
+2. **StreamForge Studio** - One-click streaming with 8ms encode latency
+3. **Aegis Wallpaper Engine** - Animated/interactive wallpapers
+4. **Desktop Style Manager** - 12 pre-built desktop layouts
+
 ### Website Marketing Sections (gamer.html)
 - Hero with pricing cards ($49 lifetime / $10 annual)
-- Quick stats: High compatibility, Low latency, 4 anti-cheats, 8 services, 18+ emulators, 0 bloatware
+- Quick stats: High compatibility, Low latency, 4 anti-cheats, 8 services, 22+ emulators, 4 exclusive apps, 10 launchers
 - Flagship Premium Features showcase
 - Integrated System Services grid (8 services)
 - Kernel & System-Level Optimizations
@@ -70,6 +76,13 @@ Stripe integration using manual secrets (STRIPE_SECRET_KEY_LIVE, STRIPE_PUBLISHA
 - **Gamer+AI**: $119 lifetime, $17/year
 - **Freemium**: Free
 - **Server**: Contact Us
+
+## AegisOSRepo Structure
+Raw source code repository with 2 branches:
+- **basic branch**: Core foundation (Freemium base) - Proton/Wine integration, basic gaming
+- **gamer branch**: Premium features ($49) - Dual GPU, 8 services, StreamForge, etc.
+
+Located at: `AegisOSRepo/` directory
 
 ## External Dependencies
 * **archiso**: ISO build system

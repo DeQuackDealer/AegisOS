@@ -1,0 +1,14 @@
+[Unit]
+Description=Aegis OS Audio Zero-Latency
+After=pipewire.service
+Requires=pipewire.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aegis-audio-zerolatency enable
+ExecStop=/usr/local/bin/aegis-audio-zerolatency disable
+User=aegis
+
+[Install]
+WantedBy=default.target

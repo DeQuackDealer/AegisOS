@@ -1,0 +1,14 @@
+[Unit]
+Description=Aegis OS NetBoost Network Optimizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aegis-netboost enable
+ExecStop=/usr/local/bin/aegis-netboost disable
+User=root
+
+[Install]
+WantedBy=multi-user.target

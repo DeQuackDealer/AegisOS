@@ -1,0 +1,23 @@
+[Unit]
+Description=Aegis OS System Monitor
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aegis-system-monitor-daemon
+Restart=on-failure
+RestartSec=5
+User=aegis
+Group=aegis
+
+# Resource limits
+MemoryMax=128M
+CPUQuota=10%
+
+# Security
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
