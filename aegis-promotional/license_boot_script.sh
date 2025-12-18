@@ -373,9 +373,9 @@ apply_tier_features() {
             echo "✓ Resource-Aware Background Tasks"
             echo ""
             echo -e "${YELLOW}Upgrade to unlock premium features:${NC}"
-            echo "  - Basic ($69): Enhanced security, VPN, anti-ransomware"
-            echo "  - Gamer ($89): DLSS 3.5, FSR 3, <3ms latency"
-            echo "  - AI Dev ($109): PyTorch, TensorFlow, CUDA"
+            echo "  - Basic ($19): Enhanced security, VPN, anti-ransomware"
+            echo "  - Gamer ($69): DLSS 3.5, FSR 3, <3ms latency"
+            echo "  - AI Dev ($79): PyTorch, TensorFlow, CUDA"
             echo "  - Server: Enterprise security, 100K+ RPS"
             ;;
     esac
