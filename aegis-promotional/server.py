@@ -7470,18 +7470,6 @@ def admin_settings_page():
     """Serve admin settings page (redirect to dashboard for now)"""
     return redirect('/admin')
 
-@app.route('/admin/installers')
-@rate_limit(limit=100)
-def admin_installers_page():
-    """Serve admin installers page"""
-    try:
-        filepath = os.path.join(BASE_DIR, 'html', 'admin', 'installers.html')
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
-    except Exception as e:
-        logger.error(f"Error serving admin installers: {e}")
-        return jsonify({'error': 'Admin page not found'}), 404
-
 @app.route('/admin/installer/<edition>')
 @rate_limit(limit=50)
 def admin_installer_download(edition):
