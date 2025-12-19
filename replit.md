@@ -1,10 +1,39 @@
 # Aegis OS Build System
 
 ## Overview
-Aegis OS is a commercial Arch Linux-based distribution featuring seven distinct editions (Freemium, Basic, Gamer, AI Developer, Gamer+AI, Server, Workplace) with a tiered software licensing model. The project includes an automated `archiso`-based build system for ISO creation, a Flask-based promotional website, a comprehensive offline installer, and a payment/license management system. It aims to deliver a Windows 10-inspired desktop experience, optimized gaming via Wine/Proton, over 50 custom Python utilities, and AI-powered security features. Aegis OS targets a broad market, from casual users to AI professionals and enterprises.
+Aegis OS is a commercial Arch Linux-based distribution featuring 3 core editions (Freemium, Basic, Gamer) with a tiered software licensing model. The project includes an automated `archiso`-based build system for ISO creation, a Flask-based promotional website, a comprehensive offline installer, and a payment/license management system. It aims to deliver a Windows 10-inspired desktop experience, optimized gaming via Wine/Proton, over 50 custom Python utilities, and AI-powered security features.
 
 ## User Preferences
 Preferred communication style: Simple, everyday language.
+
+## Core Selling Points
+
+### 1. Built-in Upscalers (Any Game Can Be Upscaled)
+- FSR 3.0, DLSS 3.5, XeSS integration
+- Anime4K for animated content
+- Aegis Neural Upscaler (custom AI upscaling)
+- Works with ANY game, not just supported titles
+
+### 2. Dual GPU Rendering (Focal + Border Split)
+- Primary GPU: Renders focal/center region (60%)
+- Secondary GPU: Renders border/edge region (40%)
+- **Overlap Blending**: 8-pixel overlap zone where both GPUs render, then averaged for seamless transitions
+- Mixed vendor support (NVIDIA + AMD together)
+- Custom Vulkan layer implementation
+
+### 3. Heavy RAM Optimization via AI
+- Adaptive RAM Guardian service
+- AI-powered memory reclamation
+- Gaming process prioritization
+- Leak detection and prevention
+- Minimal OS footprint (800MB idle)
+
+### 4. AI Security Checker
+- Scans every file before download/execution
+- Flags suspicious files with detailed warnings
+- Can modify/quarantine malicious files
+- Real-time protection daemon
+- Signature + behavior analysis
 
 ## Gamer Edition - Flagship Product ($49 lifetime / $10 annual)
 
@@ -23,7 +52,7 @@ All services run automatically via systemd - no user configuration needed:
 ### OS-Level Features
 - **Kernel**: BORE Scheduler, BFQ I/O, Transparent Huge Pages, NUMA-Aware Allocation
 - **Wine/Proton**: ESYNC/FSYNC, DXVK Pre-Cached Shaders, VKD3D-Proton optimized
-- **Dual GPU**: Split-Frame Rendering (60/40 split) via custom Vulkan layer, mixed NVIDIA/AMD support
+- **Dual GPU**: Split-Frame Rendering (60/40 split) with 8-pixel overlap blending via custom Vulkan layer
 - **Upscaling**: FSR 3.0, DLSS 3.5, XeSS, Anime4K, Aegis Neural Upscaler
 
 ### 4 Exclusive Gaming Apps (Aegis-only)
@@ -31,18 +60,6 @@ All services run automatically via systemd - no user configuration needed:
 2. **StreamForge Studio** - One-click streaming with 8ms encode latency
 3. **Aegis Wallpaper Engine** - Animated/interactive wallpapers
 4. **Desktop Style Manager** - 12 pre-built desktop layouts
-
-### Website Marketing Sections (gamer.html)
-- Hero with pricing cards ($49 lifetime / $10 annual)
-- Quick stats: High compatibility, Low latency, 4 anti-cheats, 8 services, 22+ emulators, 4 exclusive apps, 10 launchers
-- Flagship Premium Features showcase
-- Integrated System Services grid (8 services)
-- Kernel & System-Level Optimizations
-- Comparison Table: Aegis vs Windows 11 vs SteamOS (11 metrics)
-- Why Linux Gaming in 2025 section
-- System Requirements (Minimum, 4K Gaming, Dual GPU)
-- FAQ section (6 questions)
-- Controller Support, Streaming, Performance sections
 
 ### Legal & Marketing Notes (Updated Dec 2025)
 - **Anti-cheat claims**: Only claim EAC, BattlEye, GameGuard, PunkBuster support. Valorant/Fortnite do NOT work on Linux due to kernel-level anti-cheat.
@@ -55,7 +72,7 @@ All services run automatically via systemd - no user configuration needed:
 ## System Architecture
 
 ### Build System
-The core build system uses `archiso` to create bootable ISOs for all seven editions. Full Aegis branding with custom `profiledef.sh`, `/etc/os-release` codenames, LightDM greeter, Plymouth boot splash, and pre-configured `aegis` user.
+The core build system uses `archiso` to create bootable ISOs for all editions. Full Aegis branding with custom `profiledef.sh`, `/etc/os-release` codenames, LightDM greeter, Plymouth boot splash, and pre-configured `aegis` user.
 
 ### Promotional Website
 Flask-based marketing website with security features (rate limiting, JWT, CSRF, audit logging). RESTful APIs for license management, Stripe payments, and admin panel.
@@ -68,14 +85,12 @@ Stripe integration using manual secrets (STRIPE_SECRET_KEY_LIVE, STRIPE_PUBLISHA
 
 **Note:** The Stripe connector in .replit cannot be removed via agent. To publish, may need to complete connector setup or contact Replit support to remove it.
 
-## Pricing Structure
-- **Gamer** (Flagship): $49 lifetime, $10/year
-- **Basic**: $19 lifetime, $3/year
-- **Workplace**: $9 lifetime, $2/year
-- **AI Developer**: $79 lifetime, $12/year
-- **Gamer+AI**: $119 lifetime, $17/year
+## Pricing Structure (3 Core Editions)
 - **Freemium**: Free
-- **Server**: Contact Us
+- **Basic**: $19 lifetime, $3/year
+- **Gamer** (Flagship): $49 lifetime, $10/year
+
+*More Specialised Editions Coming Soon*
 
 ## AegisOSRepo Structure
 Raw source code repository with 2 branches:
