@@ -117,6 +117,12 @@ class OptimizationSettings:
         self.save()
     
     def apply_optimizations(self):
+        """Apply gaming optimizations via environment variables.
+        
+        Note: System services (RAM Guardian, Kernel Optimizer, etc.) should be
+        enabled/started via systemd at boot time or via Aegis Settings app.
+        This method only sets environment variables for game processes.
+        """
         env = {}
         p = self.settings.get("performance", {})
         i = self.settings.get("input_display", {})
@@ -124,20 +130,12 @@ class OptimizationSettings:
         s = self.settings.get("streaming", {})
         
         if p.get("ram_guardian"):
-            subprocess.run(["systemctl", "--user", "start", "aegis-ram-guardian.service"], capture_output=True)
+            env["AEGIS_RAM_GUARDIAN"] = "1"
         
-        if p.get("kernel_profile") != "balanced":
-            profile = p.get("kernel_profile", "gaming")
-            subprocess.run(["systemctl", "--user", "start", f"aegis-kernel-optimizer@{profile}.service"], capture_output=True)
+        kernel_profile = p.get("kernel_profile", "balanced")
+        env["AEGIS_KERNEL_PROFILE"] = kernel_profile
         
-        governor = p.get("cpu_governor", "schedutil")
-        try:
-            for cpu in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
-                gov_file = cpu / "cpufreq" / "scaling_governor"
-                if gov_file.exists():
-                    subprocess.run(["pkexec", "tee", str(gov_file)], input=governor.encode(), capture_output=True)
-        except Exception:
-            pass
+        env["AEGIS_CPU_GOVERNOR"] = p.get("cpu_governor", "schedutil")
         
         if i.get("input_optimizer"):
             env["AEGIS_INPUT_8000HZ"] = "1"
@@ -170,23 +168,20 @@ class OptimizationSettings:
             env["AEGIS_NOISE_SUPPRESSION"] = str(a.get("noise_strength", 0.7))
         
         if s.get("replay_buffer"):
-            subprocess.run(["systemctl", "--user", "start", "aegis-streamforge-replay.service"], capture_output=True)
+            env["AEGIS_REPLAY_BUFFER"] = "1"
             env["AEGIS_REPLAY_DURATION"] = str(s.get("replay_duration", 120))
         
         if s.get("ndi_streaming"):
-            subprocess.run(["systemctl", "--user", "start", "aegis-ndi.service"], capture_output=True)
+            env["AEGIS_NDI_STREAMING"] = "1"
+        
+        if s.get("multitrack_audio"):
+            env["AEGIS_MULTITRACK_AUDIO"] = "1"
         
         return env
     
-    def get_service_status(self, service_name):
-        try:
-            result = subprocess.run(
-                ["systemctl", "--user", "is-active", service_name],
-                capture_output=True, text=True
-            )
-            return result.stdout.strip() == "active"
-        except Exception:
-            return False
+    def is_optimization_enabled(self, category, key):
+        """Check if an optimization setting is enabled."""
+        return bool(self.settings.get(category, {}).get(key))
 
 
 class OptimizationSettingsDialog(Gtk.Dialog):
