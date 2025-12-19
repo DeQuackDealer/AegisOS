@@ -1,0 +1,24 @@
+[Unit]
+Description=Aegis OS Kernel Optimizer
+Documentation=https://aegis-os.com/docs/kernel-optimizer
+After=multi-user.target
+Before=aegis-latency-fastpath.service
+Wants=aegis-latency-fastpath.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aegis-kernel-optimizer enable --profile gaming
+ExecStop=/usr/local/bin/aegis-kernel-optimizer disable
+User=root
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/sys/devices/system/cpu /proc/sys
+
+[Install]
+WantedBy=multi-user.target

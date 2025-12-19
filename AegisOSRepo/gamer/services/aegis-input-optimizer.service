@@ -1,0 +1,19 @@
+[Unit]
+Description=Aegis OS Input Optimizer
+Documentation=https://aegis-os.com/docs/input-optimizer
+After=multi-user.target systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/aegis-input-optimizer-daemon
+ExecReload=/usr/local/bin/aegis-input-optimizer-daemon --reload
+ExecStop=/usr/local/bin/aegis-input-optimizer-daemon --restore
+User=root
+Nice=-10
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+
+[Install]
+WantedBy=multi-user.target
