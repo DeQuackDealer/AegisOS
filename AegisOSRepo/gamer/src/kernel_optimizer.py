@@ -176,10 +176,10 @@ class KernelOptimizer:
                     core_id = int((topo_path / "core_id").read_text().strip())
                     core_ids.add(core_id)
                     
-            topology.sockets = len(physical_ids) if physical_ids else 1
-            topology.physical_cores = len(core_ids) if core_ids else topology.logical_cores
-            topology.threads_per_core = topology.logical_cores // topology.physical_cores if topology.physical_cores else 1
-            topology.cores_per_socket = topology.physical_cores // topology.sockets if topology.sockets else topology.physical_cores
+            topology.sockets = max(len(physical_ids), 1)
+            topology.physical_cores = len(core_ids) if core_ids else max(topology.logical_cores, 1)
+            topology.threads_per_core = max(topology.logical_cores // topology.physical_cores, 1) if topology.physical_cores > 0 else 1
+            topology.cores_per_socket = max(topology.physical_cores // topology.sockets, 1) if topology.sockets > 0 else topology.physical_cores
             
             # Plan core isolation (reserve 2 cores for system, rest for gaming)
             if topology.logical_cores >= 4:
@@ -295,11 +295,17 @@ class KernelOptimizer:
                 try:
                     governor_path.write_text(governor.value)
                 except PermissionError:
-                    # Try via cpupower
-                    subprocess.run(
-                        ["cpupower", "frequency-set", "-g", governor.value],
-                        capture_output=True
-                    )
+                    try:
+                        subprocess.run(
+                            ["cpupower", "frequency-set", "-g", governor.value],
+                            capture_output=True, check=True
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        subprocess.run(
+                            ["sh", "-c", f"echo {governor.value} | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"],
+                            capture_output=True
+                        )
+                    break
                     
         except Exception as e:
             self._logger.error(f"Failed to set CPU governor: {e}")

@@ -142,8 +142,13 @@ class InputOptimizer:
             if current_device:
                 devices.append(current_device)
                 
-        except Exception:
+        except subprocess.TimeoutExpired:
             pass
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            import sys
+            print(f"Warning: Device detection error: {e}", file=sys.stderr)
             
         self._devices = [d for d in devices if d.is_mouse or d.is_keyboard]
         return self._devices
@@ -186,6 +191,10 @@ class InputOptimizer:
             'ATTR{bInterfaceSubClass}=="01", ATTR{bInterfaceProtocol}=="02", '
             'ATTR{power/autosuspend}="-1"'
         )
+        
+        udev_rules.append("")
+        udev_rules.append("# Set USB polling interval to 1ms (1000Hz minimum)")
+        udev_rules.append('SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{bInterval}="1"')
         
         try:
             Path(self.UDEV_RULES_PATH).parent.mkdir(parents=True, exist_ok=True)

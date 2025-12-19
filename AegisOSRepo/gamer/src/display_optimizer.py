@@ -184,6 +184,18 @@ class DisplayOptimizer:
         """Extract display name from EDID data"""
         if not edid_data or len(edid_data) < 128:
             return "Unknown Display"
+        
+        for i in range(54, 126, 18):
+            descriptor = edid_data[i:i+18]
+            if len(descriptor) >= 5 and descriptor[0:4] == b'\x00\x00\x00\xFC':
+                name_bytes = descriptor[5:18]
+                try:
+                    name = name_bytes.decode('ascii').strip('\n\r ')
+                    if name:
+                        return name
+                except UnicodeDecodeError:
+                    pass
+        
         return "Generic Display"
     
     def _parse_mode(self, mode_str: str) -> Tuple[Tuple[int, int], float]:
@@ -226,10 +238,47 @@ class DisplayOptimizer:
             return False
     
     def _check_hdr_capable(self, edid_data: Optional[bytes]) -> bool:
-        """Check if display supports HDR from EDID"""
+        """
+        Check if display supports HDR from EDID CTA-861 extensions.
+        
+        Parses CTA extension blocks looking for HDR Static Metadata
+        Data Block (Extended Tag Code 0x06).
+        """
         if not edid_data or len(edid_data) < 256:
             return False
-        return True
+        
+        num_extensions = edid_data[126] if len(edid_data) > 126 else 0
+        
+        for ext_idx in range(num_extensions):
+            ext_offset = 128 + (ext_idx * 128)
+            if ext_offset + 128 > len(edid_data):
+                break
+            
+            ext_block = edid_data[ext_offset:ext_offset + 128]
+            
+            if ext_block[0] != 0x02:
+                continue
+            
+            dtd_start = ext_block[2] if len(ext_block) > 2 else 4
+            if dtd_start < 4:
+                dtd_start = 4
+            
+            offset = 4
+            while offset < dtd_start and offset < len(ext_block) - 1:
+                header = ext_block[offset]
+                tag = (header >> 5) & 0x07
+                length = header & 0x1F
+                
+                if tag == 7 and length > 0 and offset + 1 < len(ext_block):
+                    extended_tag = ext_block[offset + 1]
+                    if extended_tag == 0x06:
+                        return True
+                
+                offset += 1 + length
+                if length == 0:
+                    break
+        
+        return False
     
     def _parse_hdr_metadata(self, edid_data: Optional[bytes]) -> Optional[Dict]:
         """Parse HDR metadata from EDID extensions"""
@@ -452,15 +501,17 @@ class DisplayOptimizer:
         """Detect running compositor"""
         compositors = ["kwin_wayland", "kwin_x11", "mutter", "picom", "gamescope"]
         
-        try:
-            result = subprocess.run(["pgrep", "-a", ""],
-                                  capture_output=True, text=True)
-            for comp in compositors:
-                if comp in result.stdout:
+        for comp in compositors:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-x", comp],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
                     self._compositor = comp
                     return comp
-        except Exception:
-            pass
+            except Exception:
+                continue
             
         return None
     
