@@ -1,20 +1,19 @@
 #!/bin/bash
 # Aegis OS Push Script - Pushes to main GitHub repository
-# Usage: GITHUB_PAT=your_token ./push-branches.sh
+# Automatically uses GITHUB_PAT from Replit secrets
 
-# Check for token
+# Check for token (from environment/secrets)
 if [ -z "${GITHUB_PAT}" ]; then
-    echo "ERROR: GITHUB_PAT is not set"
+    echo "ERROR: GITHUB_PAT secret is not set in Replit"
     echo ""
-    echo "Usage: GITHUB_PAT=your_token ./push-branches.sh"
-    echo ""
-    echo "To get a token:"
-    echo "1. Go to GitHub > Settings > Developer Settings > Personal Access Tokens"
-    echo "2. Create a Classic token with 'repo' permissions"
+    echo "To fix:"
+    echo "1. Go to Replit Secrets tab"
+    echo "2. Add a secret named GITHUB_PAT"
+    echo "3. Set the value to your GitHub Personal Access Token"
     exit 1
 fi
 
-echo "GitHub token found (${#GITHUB_PAT} characters)"
+echo "Using GITHUB_PAT from Replit secrets (${#GITHUB_PAT} characters)"
 echo ""
 
 # Remove duplicate workflow file if it exists
