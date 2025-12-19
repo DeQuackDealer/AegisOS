@@ -62,8 +62,12 @@ class DualGPURenderer:
     Split-frame rendering using custom Vulkan layer.
     
     Divides rendering workload between two GPUs:
-    - Primary GPU: 60% of frame (upper portion or complex geometry)
-    - Secondary GPU: 40% of frame (lower portion or effects)
+    - Primary GPU: Renders focal/center region (60% of frame)
+    - Secondary GPU: Renders border/edge region (40% of frame)
+    
+    OVERLAP BLENDING: Both GPUs render a small overlap region (5-10 pixels)
+    at the boundary. The compositor averages these pixels for seamless
+    transitions with no visible seams.
     
     Supports mixed vendor configurations (NVIDIA + AMD).
     """
@@ -75,12 +79,18 @@ class DualGPURenderer:
     DEFAULT_PRIMARY_RATIO = 0.6
     DEFAULT_SECONDARY_RATIO = 0.4
     
+    # Overlap region for smooth blending (pixels)
+    DEFAULT_OVERLAP_PIXELS = 8
+    MIN_OVERLAP_PIXELS = 4
+    MAX_OVERLAP_PIXELS = 16
+    
     def __init__(self):
         self._gpus: List[GPUConfig] = []
         self._primary_gpu: Optional[GPUConfig] = None
         self._secondary_gpu: Optional[GPUConfig] = None
         self._render_mode: RenderMode = RenderMode.SINGLE
         self._split_ratio: Tuple[float, float] = (0.6, 0.4)
+        self._overlap_pixels: int = self.DEFAULT_OVERLAP_PIXELS
         self._enabled: bool = False
         self._stats: Optional[RenderStats] = None
         self._lock = Lock()
@@ -207,6 +217,32 @@ class DualGPURenderer:
             
         # TODO: Apply to Vulkan layer
         return True
+    
+    def set_overlap_pixels(self, pixels: int) -> bool:
+        """
+        Set the overlap region size for smooth blending.
+        
+        Both GPUs render this overlap region, and the compositor
+        averages the pixels for seamless transitions.
+        
+        Args:
+            pixels: Number of pixels to overlap (4-16 recommended)
+            
+        Returns:
+            True if set successfully
+        """
+        if pixels < self.MIN_OVERLAP_PIXELS or pixels > self.MAX_OVERLAP_PIXELS:
+            return False
+            
+        with self._lock:
+            self._overlap_pixels = pixels
+            
+        # TODO: Apply to Vulkan layer
+        return True
+    
+    def get_overlap_pixels(self) -> int:
+        """Get current overlap region size"""
+        return self._overlap_pixels
 
 
 class VulkanSplitLayer:
@@ -254,17 +290,44 @@ class VulkanSplitLayer:
 
 class FrameCompositor:
     """
-    Composites split frames from multiple GPUs.
+    Composites split frames from multiple GPUs with overlap blending.
     
     Takes rendered portions from each GPU and combines them
-    into final output frame.
+    into final output frame. Uses weighted averaging in the
+    overlap region for seamless transitions.
+    
+    Overlap Blending Algorithm:
+    1. Primary GPU renders center region + overlap pixels outward
+    2. Secondary GPU renders border region + overlap pixels inward
+    3. In overlap zone: pixel = (primary * weight) + (secondary * (1-weight))
+       where weight transitions from 1.0 to 0.0 across the overlap
     """
     
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, overlap_pixels: int = 8):
         self._width = width
         self._height = height
+        self._overlap_pixels = overlap_pixels
         self._primary_buffer = None
         self._secondary_buffer = None
+        self._blend_weights = self._calculate_blend_weights()
+        
+    def _calculate_blend_weights(self) -> List[float]:
+        """
+        Pre-calculate blend weights for overlap region.
+        Uses smooth cosine interpolation for natural transitions.
+        """
+        import math
+        weights = []
+        for i in range(self._overlap_pixels):
+            t = i / (self._overlap_pixels - 1) if self._overlap_pixels > 1 else 0.5
+            weight = 0.5 * (1.0 + math.cos(math.pi * t))
+            weights.append(weight)
+        return weights
+    
+    def set_overlap_pixels(self, pixels: int) -> None:
+        """Update overlap region size"""
+        self._overlap_pixels = pixels
+        self._blend_weights = self._calculate_blend_weights()
         
     def composite_split_frame(
         self,
@@ -272,8 +335,22 @@ class FrameCompositor:
         secondary_data: bytes,
         split_line: int
     ) -> bytes:
-        """Composite split frame from two GPU outputs"""
-        # TODO: Implement frame composition
+        """
+        Composite split frame from two GPU outputs with overlap blending.
+        
+        Args:
+            primary_data: Rendered data from primary GPU (focal/center region)
+            secondary_data: Rendered data from secondary GPU (border region)
+            split_line: Y coordinate where the split occurs
+            
+        Returns:
+            Composited frame with smooth blended transition
+        """
+        # TODO: Implement frame composition with overlap blending
+        # Algorithm:
+        # 1. Copy primary_data for rows 0 to (split_line - overlap/2)
+        # 2. For overlap region: blend pixels using pre-calculated weights
+        # 3. Copy secondary_data for rows (split_line + overlap/2) to height
         raise NotImplementedError("Build required: ./build.sh")
     
     def composite_alternate_frame(
@@ -285,6 +362,23 @@ class FrameCompositor:
         """Composite alternate frame rendering"""
         # TODO: Implement AFR composition
         raise NotImplementedError("Build required: ./build.sh")
+    
+    def blend_pixel(self, primary_pixel: tuple, secondary_pixel: tuple, weight: float) -> tuple:
+        """
+        Blend two pixels using weighted average.
+        
+        Args:
+            primary_pixel: (R, G, B, A) from primary GPU
+            secondary_pixel: (R, G, B, A) from secondary GPU
+            weight: Blend weight (1.0 = full primary, 0.0 = full secondary)
+            
+        Returns:
+            Blended (R, G, B, A) tuple
+        """
+        return tuple(
+            int(p * weight + s * (1.0 - weight))
+            for p, s in zip(primary_pixel, secondary_pixel)
+        )
 
 
 # Build marker
