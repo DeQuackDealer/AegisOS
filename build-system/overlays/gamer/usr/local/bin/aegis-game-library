@@ -24,6 +24,616 @@ CONFIG_DIR = Path.home() / ".config" / "aegis-games"
 CACHE_DIR = Path.home() / ".cache" / "aegis-games"
 PROFILES_DIR = Path("/etc/aegis/game-profiles")
 SYSTEM_PROFILES = Path("/usr/share/aegis/game-profiles")
+OPTIMIZATION_CONFIG = CONFIG_DIR / "optimization.json"
+
+class OptimizationSettings:
+    DEFAULT_SETTINGS = {
+        "performance": {
+            "ram_guardian": False,
+            "kernel_profile": "balanced",
+            "cpu_governor": "schedutil"
+        },
+        "input_display": {
+            "input_optimizer": False,
+            "vrr_freesync": False,
+            "hdr": False,
+            "integer_scaling": False,
+            "frame_generation": "off"
+        },
+        "audio": {
+            "audio_profile": "balanced",
+            "spatial_audio": False,
+            "spatial_mode": "5.1",
+            "noise_suppression": False,
+            "noise_strength": 0.7
+        },
+        "streaming": {
+            "replay_buffer": False,
+            "replay_duration": 120,
+            "ndi_streaming": False,
+            "multitrack_audio": False
+        }
+    }
+    
+    def __init__(self):
+        self.settings = self.load()
+    
+    def load(self):
+        if OPTIMIZATION_CONFIG.exists():
+            try:
+                with open(OPTIMIZATION_CONFIG) as f:
+                    loaded = json.load(f)
+                merged = self.DEFAULT_SETTINGS.copy()
+                for category in merged:
+                    if category in loaded:
+                        merged[category].update(loaded[category])
+                return merged
+            except Exception:
+                pass
+        return self.DEFAULT_SETTINGS.copy()
+    
+    def save(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(OPTIMIZATION_CONFIG, "w") as f:
+            json.dump(self.settings, f, indent=2)
+    
+    def get(self, category, key):
+        return self.settings.get(category, {}).get(key)
+    
+    def set(self, category, key, value):
+        if category not in self.settings:
+            self.settings[category] = {}
+        self.settings[category][key] = value
+        self.save()
+    
+    def apply_quick_optimize(self):
+        self.settings = {
+            "performance": {
+                "ram_guardian": True,
+                "kernel_profile": "gaming",
+                "cpu_governor": "performance"
+            },
+            "input_display": {
+                "input_optimizer": True,
+                "vrr_freesync": True,
+                "hdr": False,
+                "integer_scaling": False,
+                "frame_generation": "off"
+            },
+            "audio": {
+                "audio_profile": "competitive",
+                "spatial_audio": True,
+                "spatial_mode": "hrtf",
+                "noise_suppression": True,
+                "noise_strength": 0.85
+            },
+            "streaming": {
+                "replay_buffer": True,
+                "replay_duration": 120,
+                "ndi_streaming": False,
+                "multitrack_audio": True
+            }
+        }
+        self.save()
+    
+    def apply_optimizations(self):
+        env = {}
+        p = self.settings.get("performance", {})
+        i = self.settings.get("input_display", {})
+        a = self.settings.get("audio", {})
+        s = self.settings.get("streaming", {})
+        
+        if p.get("ram_guardian"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-ram-guardian.service"], capture_output=True)
+        
+        if p.get("kernel_profile") != "balanced":
+            profile = p.get("kernel_profile", "gaming")
+            subprocess.run(["systemctl", "--user", "start", f"aegis-kernel-optimizer@{profile}.service"], capture_output=True)
+        
+        governor = p.get("cpu_governor", "schedutil")
+        try:
+            for cpu in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
+                gov_file = cpu / "cpufreq" / "scaling_governor"
+                if gov_file.exists():
+                    subprocess.run(["pkexec", "tee", str(gov_file)], input=governor.encode(), capture_output=True)
+        except Exception:
+            pass
+        
+        if i.get("input_optimizer"):
+            env["AEGIS_INPUT_8000HZ"] = "1"
+            env["AEGIS_FLAT_ACCEL"] = "1"
+        
+        if i.get("vrr_freesync"):
+            env["ENABLE_VRR"] = "1"
+            env["vblank_mode"] = "0"
+        
+        if i.get("hdr"):
+            env["DXVK_HDR"] = "1"
+            env["ENABLE_HDR_WSI"] = "1"
+        
+        fg = i.get("frame_generation", "off")
+        if fg == "fsr3":
+            env["ENABLE_FSR3_FG"] = "1"
+        elif fg == "afmf":
+            env["AMD_AFMF"] = "1"
+        elif fg == "dlss_fg":
+            env["ENABLE_DLSS_FG"] = "1"
+        
+        audio_profile = a.get("audio_profile", "balanced")
+        audio_quantums = {"competitive": "128", "balanced": "512", "quality": "1024", "streaming": "256"}
+        env["PIPEWIRE_QUANTUM"] = audio_quantums.get(audio_profile, "512")
+        
+        if a.get("spatial_audio"):
+            env["AEGIS_SPATIAL_AUDIO"] = a.get("spatial_mode", "5.1")
+        
+        if a.get("noise_suppression"):
+            env["AEGIS_NOISE_SUPPRESSION"] = str(a.get("noise_strength", 0.7))
+        
+        if s.get("replay_buffer"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-streamforge-replay.service"], capture_output=True)
+            env["AEGIS_REPLAY_DURATION"] = str(s.get("replay_duration", 120))
+        
+        if s.get("ndi_streaming"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-ndi.service"], capture_output=True)
+        
+        return env
+    
+    def get_service_status(self, service_name):
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", service_name],
+                capture_output=True, text=True
+            )
+            return result.stdout.strip() == "active"
+        except Exception:
+            return False
+
+
+class OptimizationSettingsDialog(Gtk.Dialog):
+    def __init__(self, parent, settings):
+        super().__init__(title="Optimization Settings", transient_for=parent, modal=True)
+        self.settings = settings
+        self.set_default_size(700, 550)
+        self.add_button("Close", Gtk.ResponseType.CLOSE)
+        
+        self.apply_dialog_css()
+        
+        content = self.get_content_area()
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(15)
+        content.set_margin_bottom(15)
+        
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        header_box.set_margin_bottom(15)
+        
+        title_label = Gtk.Label()
+        title_label.set_markup('<span font="16" weight="bold" foreground="#3b82f6">Gaming Optimization Settings</span>')
+        header_box.pack_start(title_label, False, False, 0)
+        
+        quick_btn = Gtk.Button(label="⚡ Quick Optimize")
+        quick_btn.get_style_context().add_class("quick-optimize-btn")
+        quick_btn.connect("clicked", self.on_quick_optimize)
+        quick_btn.set_tooltip_text("Apply recommended gaming settings")
+        header_box.pack_end(quick_btn, False, False, 0)
+        
+        content.pack_start(header_box, False, False, 0)
+        
+        notebook = Gtk.Notebook()
+        notebook.set_tab_pos(Gtk.PositionType.TOP)
+        
+        notebook.append_page(self.create_performance_tab(), Gtk.Label(label="Performance"))
+        notebook.append_page(self.create_input_display_tab(), Gtk.Label(label="Input & Display"))
+        notebook.append_page(self.create_audio_tab(), Gtk.Label(label="Audio"))
+        notebook.append_page(self.create_streaming_tab(), Gtk.Label(label="Streaming"))
+        
+        content.pack_start(notebook, True, True, 0)
+        self.show_all()
+    
+    def apply_dialog_css(self):
+        css = b"""
+        .settings-section {
+            background-color: #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 8px 0;
+        }
+        .section-title {
+            color: #3b82f6;
+            font-weight: bold;
+            font-size: 13px;
+        }
+        .setting-label {
+            color: #e2e8f0;
+            font-size: 12px;
+        }
+        .status-active {
+            color: #22c55e;
+        }
+        .status-inactive {
+            color: #64748b;
+        }
+        .quick-optimize-btn {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 15px;
+        }
+        .quick-optimize-btn:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+        }
+        notebook tab {
+            background-color: #1e293b;
+            color: #94a3b8;
+            padding: 8px 15px;
+        }
+        notebook tab:checked {
+            background-color: #334155;
+            color: #3b82f6;
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+        )
+    
+    def create_status_indicator(self, active):
+        label = Gtk.Label()
+        if active:
+            label.set_markup('<span foreground="#22c55e">●</span>')
+        else:
+            label.set_markup('<span foreground="#64748b">●</span>')
+        return label
+    
+    def create_section(self, title):
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        frame.get_style_context().add_class("settings-section")
+        
+        title_label = Gtk.Label()
+        title_label.set_markup(f'<span weight="bold" foreground="#3b82f6">{title}</span>')
+        title_label.set_halign(Gtk.Align.START)
+        frame.pack_start(title_label, False, False, 0)
+        
+        return frame
+    
+    def create_toggle_row(self, label_text, category, key, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        active = self.settings.get(category, key) or False
+        status = self.create_status_indicator(active)
+        row.pack_start(status, False, False, 0)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        switch = Gtk.Switch()
+        switch.set_active(active)
+        switch.set_valign(Gtk.Align.CENTER)
+        switch.connect("state-set", self.on_toggle_changed, category, key, status)
+        row.pack_end(switch, False, False, 0)
+        
+        return row
+    
+    def create_combo_row(self, label_text, category, key, options, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        combo = Gtk.ComboBoxText()
+        current = self.settings.get(category, key)
+        active_idx = 0
+        for i, (value, display) in enumerate(options):
+            combo.append(value, display)
+            if value == current:
+                active_idx = i
+        combo.set_active(active_idx)
+        combo.connect("changed", self.on_combo_changed, category, key)
+        row.pack_end(combo, False, False, 0)
+        
+        return row
+    
+    def create_slider_row(self, label_text, category, key, min_val, max_val, step, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        current = self.settings.get(category, key) or min_val
+        
+        value_label = Gtk.Label(label=str(int(current) if step >= 1 else f"{current:.1f}"))
+        value_label.set_width_chars(6)
+        
+        adjustment = Gtk.Adjustment(value=current, lower=min_val, upper=max_val, step_increment=step)
+        scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adjustment)
+        scale.set_draw_value(False)
+        scale.set_size_request(150, -1)
+        scale.connect("value-changed", self.on_slider_changed, category, key, value_label, step)
+        
+        row.pack_end(value_label, False, False, 0)
+        row.pack_end(scale, False, False, 5)
+        
+        return row
+    
+    def create_performance_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        ram_section = self.create_section("RAM Guardian")
+        ram_section.pack_start(
+            self.create_toggle_row("RAM Guardian", "performance", "ram_guardian", 
+                                   "Auto-clear memory caches for maximum game RAM"),
+            False, False, 0
+        )
+        box.pack_start(ram_section, False, False, 0)
+        
+        kernel_section = self.create_section("Kernel Optimizer")
+        kernel_section.pack_start(
+            self.create_combo_row("Optimization Profile", "performance", "kernel_profile", [
+                ("gaming", "Gaming - High performance"),
+                ("competitive", "Competitive - Maximum FPS"),
+                ("balanced", "Balanced - Normal use"),
+                ("power_saving", "Power Saving - Battery mode")
+            ], "Core isolation, tickless mode, scheduler tuning"),
+            False, False, 0
+        )
+        box.pack_start(kernel_section, False, False, 0)
+        
+        cpu_section = self.create_section("CPU Governor")
+        cpu_section.pack_start(
+            self.create_combo_row("CPU Frequency Governor", "performance", "cpu_governor", [
+                ("performance", "Performance - Max frequency"),
+                ("schedutil", "Schedutil - Dynamic scaling"),
+                ("powersave", "Powersave - Min frequency")
+            ], "Controls CPU frequency scaling behavior"),
+            False, False, 0
+        )
+        box.pack_start(cpu_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_input_display_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        input_section = self.create_section("Input Optimizer")
+        input_section.pack_start(
+            self.create_toggle_row("Input Optimizer", "input_display", "input_optimizer",
+                                   "8000Hz USB polling, flat mouse acceleration"),
+            False, False, 0
+        )
+        box.pack_start(input_section, False, False, 0)
+        
+        display_section = self.create_section("Display Optimizer")
+        display_section.pack_start(
+            self.create_toggle_row("VRR / FreeSync", "input_display", "vrr_freesync",
+                                   "Variable Refresh Rate for tear-free gaming"),
+            False, False, 0
+        )
+        display_section.pack_start(
+            self.create_toggle_row("HDR", "input_display", "hdr",
+                                   "High Dynamic Range output"),
+            False, False, 0
+        )
+        display_section.pack_start(
+            self.create_toggle_row("Integer Scaling", "input_display", "integer_scaling",
+                                   "Pixel-perfect scaling for retro games"),
+            False, False, 0
+        )
+        box.pack_start(display_section, False, False, 0)
+        
+        fg_section = self.create_section("Frame Generation")
+        fg_section.pack_start(
+            self.create_combo_row("Technology", "input_display", "frame_generation", [
+                ("off", "Off - Disabled"),
+                ("fsr3", "FSR 3 Frame Generation"),
+                ("afmf", "AMD AFMF (Driver-level)"),
+                ("dlss_fg", "DLSS Frame Generation")
+            ], "AI-powered frame interpolation"),
+            False, False, 0
+        )
+        box.pack_start(fg_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_audio_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        latency_section = self.create_section("Audio Latency Profile")
+        latency_section.pack_start(
+            self.create_combo_row("Profile", "audio", "audio_profile", [
+                ("competitive", "Competitive - 2.7ms latency"),
+                ("balanced", "Balanced - 10.7ms latency"),
+                ("quality", "Quality - 21.3ms latency"),
+                ("streaming", "Streaming - 5.3ms latency")
+            ], "PipeWire quantum/buffer size"),
+            False, False, 0
+        )
+        box.pack_start(latency_section, False, False, 0)
+        
+        spatial_section = self.create_section("Spatial Audio")
+        spatial_section.pack_start(
+            self.create_toggle_row("Spatial Audio", "audio", "spatial_audio",
+                                   "Virtual surround sound for headphones"),
+            False, False, 0
+        )
+        spatial_section.pack_start(
+            self.create_combo_row("Spatial Mode", "audio", "spatial_mode", [
+                ("5.1", "Virtual 5.1 Surround"),
+                ("7.1", "Virtual 7.1 Surround"),
+                ("hrtf", "HRTF Binaural")
+            ], "Surround sound rendering method"),
+            False, False, 0
+        )
+        box.pack_start(spatial_section, False, False, 0)
+        
+        noise_section = self.create_section("AI Noise Suppression")
+        noise_section.pack_start(
+            self.create_toggle_row("Noise Suppression", "audio", "noise_suppression",
+                                   "RNNoise AI-powered microphone cleanup"),
+            False, False, 0
+        )
+        noise_section.pack_start(
+            self.create_slider_row("Suppression Strength", "audio", "noise_strength", 
+                                   0.1, 1.0, 0.1, "0.1 = light, 1.0 = aggressive"),
+            False, False, 0
+        )
+        box.pack_start(noise_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_streaming_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        replay_section = self.create_section("StreamForge Replay Buffer")
+        replay_section.pack_start(
+            self.create_toggle_row("Replay Buffer", "streaming", "replay_buffer",
+                                   "Always-on recording with hotkey save (F9)"),
+            False, False, 0
+        )
+        replay_section.pack_start(
+            self.create_slider_row("Buffer Duration (seconds)", "streaming", "replay_duration",
+                                   30, 300, 30, "30s - 5 minutes of replay history"),
+            False, False, 0
+        )
+        box.pack_start(replay_section, False, False, 0)
+        
+        ndi_section = self.create_section("NDI Streaming")
+        ndi_section.pack_start(
+            self.create_toggle_row("NDI Network Streaming", "streaming", "ndi_streaming",
+                                   "Stream to second PC for dual-PC setup"),
+            False, False, 0
+        )
+        box.pack_start(ndi_section, False, False, 0)
+        
+        audio_section = self.create_section("Multi-Track Audio")
+        audio_section.pack_start(
+            self.create_toggle_row("Multi-Track Recording", "streaming", "multitrack_audio",
+                                   "Separate audio tracks for game/voice/music"),
+            False, False, 0
+        )
+        box.pack_start(audio_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def on_toggle_changed(self, switch, state, category, key, status_indicator):
+        self.settings.set(category, key, state)
+        if state:
+            status_indicator.set_markup('<span foreground="#22c55e">●</span>')
+        else:
+            status_indicator.set_markup('<span foreground="#64748b">●</span>')
+        return False
+    
+    def on_combo_changed(self, combo, category, key):
+        value = combo.get_active_id()
+        if value:
+            self.settings.set(category, key, value)
+    
+    def on_slider_changed(self, scale, category, key, value_label, step):
+        value = scale.get_value()
+        self.settings.set(category, key, value)
+        if step >= 1:
+            value_label.set_text(str(int(value)))
+        else:
+            value_label.set_text(f"{value:.1f}")
+    
+    def on_quick_optimize(self, button):
+        self.settings.apply_quick_optimize()
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Quick Optimize Applied!"
+        )
+        dialog.format_secondary_text(
+            "Recommended gaming settings have been applied:\n\n"
+            "• RAM Guardian: Enabled\n"
+            "• Kernel Profile: Gaming\n"
+            "• CPU Governor: Performance\n"
+            "• Input Optimizer: Enabled (8000Hz)\n"
+            "• VRR/FreeSync: Enabled\n"
+            "• Audio: Competitive (2.7ms)\n"
+            "• Spatial Audio: HRTF\n"
+            "• Noise Suppression: Enabled\n"
+            "• Replay Buffer: 2 minutes\n\n"
+            "Close and reopen settings to see updated values."
+        )
+        dialog.run()
+        dialog.destroy()
+        self.destroy()
+
 
 class GameProfile:
     def __init__(self, game_id):
@@ -344,6 +954,7 @@ class AegisGameLibrary(Gtk.Window):
         self.scanner = GameScanner()
         self.current_filter = "all"
         self.running_game = None
+        self.optimization_settings = OptimizationSettings()
         
         self.setup_css()
         self.setup_ui()
@@ -410,6 +1021,18 @@ class AegisGameLibrary(Gtk.Window):
             color: #64748b;
             font-size: 12px;
         }
+        .settings-button {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 15px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .settings-button:hover {
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
@@ -440,6 +1063,11 @@ class AegisGameLibrary(Gtk.Window):
         self.search.get_style_context().add_class("search-entry")
         self.search.connect("changed", self.on_search_changed)
         header.pack_start(self.search, True, True, 50)
+        
+        settings_btn = Gtk.Button(label="⚙️ Settings")
+        settings_btn.get_style_context().add_class("settings-button")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        header.pack_end(settings_btn, False, False, 0)
         
         scan_btn = Gtk.Button(label="Scan Games")
         scan_btn.connect("clicked", self.on_scan_clicked)
@@ -580,6 +1208,9 @@ class AegisGameLibrary(Gtk.Window):
         profile = GameProfile(game.appid or game.name.lower().replace(" ", "_"))
         env = profile.get_env()
         
+        optimization_env = self.optimization_settings.apply_optimizations()
+        env.update(optimization_env)
+        
         subprocess.run(["systemctl", "--user", "start", "aegis-gaming-mode.target"], 
                        capture_output=True)
         
@@ -622,6 +1253,12 @@ class AegisGameLibrary(Gtk.Window):
             self.current_filter = source
             self.refresh_grid()
     
+    def on_settings_clicked(self, button):
+        dialog = OptimizationSettingsDialog(self, self.optimization_settings)
+        dialog.run()
+        dialog.destroy()
+        self.optimization_settings = OptimizationSettings()
+    
     def on_scan_clicked(self, button):
         button.set_sensitive(False)
         button.set_label("Scanning...")
@@ -647,6 +1284,7 @@ class ConsoleMode(Gtk.Window):
         self.selected_index = 0
         self.controller_thread = None
         self.running = True
+        self.optimization_settings = OptimizationSettings()
         
         self.fullscreen()
         self.set_decorated(False)
@@ -905,6 +1543,9 @@ class ConsoleMode(Gtk.Window):
             game = self.game_tiles[self.selected_index].game
             profile = GameProfile(game.appid or game.name.lower().replace(" ", "_"))
             env = profile.get_env()
+            
+            optimization_env = self.optimization_settings.apply_optimizations()
+            env.update(optimization_env)
             
             subprocess.run(["systemctl", "--user", "start", "aegis-gaming-mode.target"], 
                            capture_output=True)

@@ -1,1339 +1,1614 @@
 #!/usr/bin/env python3
 """
-Aegis OS Game Library - Unified Game Launcher
-Detects and manages games from Steam, Lutris, Heroic, and native sources
-Provides playtime tracking and game metadata management
+Aegis Game Library - Unified Game Launcher
+Detects and manages games from Steam, GOG, Epic, Heroic, and native Linux
 """
 
 import os
 import sys
 import json
 import subprocess
-import logging
-import argparse
 import threading
-import time
-import re
-import glob as glob_module
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 try:
-    import tkinter as tk
-    from tkinter import ttk, messagebox, scrolledtext
-    TKINTER_AVAILABLE = True
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
 except ImportError:
-    TKINTER_AVAILABLE = False
+    print("GTK3 not found. Install with: sudo pacman -S python-gobject gtk3")
+    sys.exit(1)
 
-try:
-    import yaml
-    YAML_AVAILABLE = True
-except ImportError:
-    YAML_AVAILABLE = False
+CONFIG_DIR = Path.home() / ".config" / "aegis-games"
+CACHE_DIR = Path.home() / ".cache" / "aegis-games"
+PROFILES_DIR = Path("/etc/aegis/game-profiles")
+SYSTEM_PROFILES = Path("/usr/share/aegis/game-profiles")
+OPTIMIZATION_CONFIG = CONFIG_DIR / "optimization.json"
 
-
-class AegisGameLibrary:
-    def __init__(self):
-        self.version = "1.0.0"
-        self.config_dir = Path("/etc/aegis")
-        self.data_dir = Path("/var/lib/aegis/games")
-        self.log_dir = Path("/var/log/aegis")
-        self.config_file = self.config_dir / "games-config.json"
-        self.library_file = self.data_dir / "library.json"
-        self.playtime_file = self.data_dir / "playtime.json"
-        
-        self.home_dir = Path.home()
-        
-        self.ensure_directories()
-        self.setup_logging()
-        self.load_config()
-        self.load_library()
-        self.load_playtime()
-        
-    def ensure_directories(self):
-        """Create required directories"""
-        for directory in [self.config_dir, self.data_dir, self.log_dir]:
-            directory.mkdir(parents=True, exist_ok=True)
-    
-    def setup_logging(self):
-        """Configure logging"""
-        log_file = self.log_dir / "aegis-games.log"
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger("AegisGameLibrary")
-    
-    def load_config(self):
-        """Load game library configuration"""
-        default_config = {
-            "auto_scan_on_start": True,
-            "scan_steam": True,
-            "scan_lutris": True,
-            "scan_heroic": True,
-            "scan_native": True,
-            "steam_paths": [
-                str(self.home_dir / ".steam/steam"),
-                str(self.home_dir / ".local/share/Steam")
-            ],
-            "lutris_path": str(self.home_dir / ".config/lutris"),
-            "heroic_path": str(self.home_dir / ".config/heroic"),
-            "native_paths": [
-                "/usr/share/applications",
-                str(self.home_dir / ".local/share/applications")
-            ],
-            "show_hidden_games": False,
-            "sort_by": "name",
-            "view_mode": "grid",
-            "track_playtime": True,
-            "last_scan": None
+class OptimizationSettings:
+    DEFAULT_SETTINGS = {
+        "performance": {
+            "ram_guardian": False,
+            "kernel_profile": "balanced",
+            "cpu_governor": "schedutil"
+        },
+        "input_display": {
+            "input_optimizer": False,
+            "vrr_freesync": False,
+            "hdr": False,
+            "integer_scaling": False,
+            "frame_generation": "off"
+        },
+        "audio": {
+            "audio_profile": "balanced",
+            "spatial_audio": False,
+            "spatial_mode": "5.1",
+            "noise_suppression": False,
+            "noise_strength": 0.7
+        },
+        "streaming": {
+            "replay_buffer": False,
+            "replay_duration": 120,
+            "ndi_streaming": False,
+            "multitrack_audio": False
         }
-        
-        try:
-            with open(self.config_file, 'r') as f:
-                self.config = {**default_config, **json.load(f)}
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.config = default_config
-            self.save_config()
+    }
     
-    def save_config(self):
-        """Save configuration"""
-        with open(self.config_file, 'w') as f:
-            json.dump(self.config, f, indent=2)
+    def __init__(self):
+        self.settings = self.load()
     
-    def load_library(self):
-        """Load game library from file"""
-        try:
-            with open(self.library_file, 'r') as f:
-                self.library = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.library = {
-                "version": self.version,
-                "last_updated": None,
-                "games": {}
-            }
-            self.save_library()
-    
-    def save_library(self):
-        """Save game library to file"""
-        self.library["last_updated"] = datetime.now().isoformat()
-        with open(self.library_file, 'w') as f:
-            json.dump(self.library, f, indent=2)
-    
-    def load_playtime(self):
-        """Load playtime tracking data"""
-        try:
-            with open(self.playtime_file, 'r') as f:
-                self.playtime = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self.playtime = {
-                "sessions": [],
-                "totals": {}
-            }
-            self.save_playtime()
-    
-    def save_playtime(self):
-        """Save playtime tracking data"""
-        with open(self.playtime_file, 'w') as f:
-            json.dump(self.playtime, f, indent=2)
-
-    def scan_steam_games(self) -> List[Dict]:
-        """Scan for Steam games from manifest files"""
-        games = []
-        
-        for steam_path in self.config["steam_paths"]:
-            steamapps_path = Path(steam_path) / "steamapps"
-            
-            if not steamapps_path.exists():
-                continue
-            
-            acf_files = list(steamapps_path.glob("appmanifest_*.acf"))
-            
-            for acf_file in acf_files:
-                try:
-                    game_data = self.parse_acf_file(acf_file)
-                    if game_data:
-                        game_id = f"steam_{game_data['appid']}"
-                        
-                        install_dir = steamapps_path / "common" / game_data.get("installdir", "")
-                        install_size = self.get_directory_size(install_dir) if install_dir.exists() else 0
-                        
-                        games.append({
-                            "id": game_id,
-                            "name": game_data.get("name", "Unknown Game"),
-                            "platform": "steam",
-                            "appid": game_data.get("appid"),
-                            "install_path": str(install_dir),
-                            "install_size": install_size,
-                            "state": game_data.get("StateFlags", "4"),
-                            "last_updated": game_data.get("LastUpdated"),
-                            "launch_command": f"steam://rungameid/{game_data['appid']}",
-                            "icon": None,
-                            "hidden": False
-                        })
-                        
-                except Exception as e:
-                    self.logger.warning(f"Failed to parse {acf_file}: {e}")
-        
-        return games
-    
-    def parse_acf_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse Steam ACF manifest file (Valve KeyValues format)"""
-        try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            data = {}
-            key_pattern = re.compile(r'"(\w+)"\s+"([^"]*)"')
-            
-            for match in key_pattern.finditer(content):
-                key, value = match.groups()
-                data[key.lower()] = value
-            
-            if 'appid' not in data:
-                return None
-            
-            return {
-                "appid": data.get("appid"),
-                "name": data.get("name", "Unknown"),
-                "installdir": data.get("installdir", ""),
-                "StateFlags": data.get("stateflags", "4"),
-                "LastUpdated": data.get("lastupdated")
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing ACF file {filepath}: {e}")
-            return None
-    
-    def scan_lutris_games(self) -> List[Dict]:
-        """Scan for Lutris games from YAML config files"""
-        games = []
-        
-        if not YAML_AVAILABLE:
-            self.logger.warning("PyYAML not available, skipping Lutris scan")
-            return games
-        
-        lutris_games_path = Path(self.config["lutris_path"]) / "games"
-        
-        if not lutris_games_path.exists():
-            return games
-        
-        yml_files = list(lutris_games_path.glob("*.yml"))
-        
-        for yml_file in yml_files:
+    def load(self):
+        if OPTIMIZATION_CONFIG.exists():
             try:
-                with open(yml_file, 'r') as f:
-                    game_data = yaml.safe_load(f)
-                
-                if not game_data:
-                    continue
-                
-                game_slug = yml_file.stem
-                game_id = f"lutris_{game_slug}"
-                
-                install_path = game_data.get("game", {}).get("exe", "")
-                if install_path:
-                    install_path = str(Path(install_path).parent)
-                
-                games.append({
-                    "id": game_id,
-                    "name": game_data.get("name", game_slug),
-                    "platform": "lutris",
-                    "slug": game_slug,
-                    "runner": game_data.get("runner", "unknown"),
-                    "install_path": install_path,
-                    "install_size": self.get_directory_size(Path(install_path)) if install_path and Path(install_path).exists() else 0,
-                    "year": game_data.get("year"),
-                    "launch_command": f"lutris:rungame/{game_slug}",
-                    "icon": None,
-                    "hidden": False
-                })
-                
-            except Exception as e:
-                self.logger.warning(f"Failed to parse Lutris game {yml_file}: {e}")
-        
-        return games
+                with open(OPTIMIZATION_CONFIG) as f:
+                    loaded = json.load(f)
+                merged = self.DEFAULT_SETTINGS.copy()
+                for category in merged:
+                    if category in loaded:
+                        merged[category].update(loaded[category])
+                return merged
+            except Exception:
+                pass
+        return self.DEFAULT_SETTINGS.copy()
     
-    def scan_heroic_games(self) -> List[Dict]:
-        """Scan for Heroic Games Launcher games"""
-        games = []
-        heroic_path = Path(self.config["heroic_path"])
+    def save(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(OPTIMIZATION_CONFIG, "w") as f:
+            json.dump(self.settings, f, indent=2)
+    
+    def get(self, category, key):
+        return self.settings.get(category, {}).get(key)
+    
+    def set(self, category, key, value):
+        if category not in self.settings:
+            self.settings[category] = {}
+        self.settings[category][key] = value
+        self.save()
+    
+    def apply_quick_optimize(self):
+        self.settings = {
+            "performance": {
+                "ram_guardian": True,
+                "kernel_profile": "gaming",
+                "cpu_governor": "performance"
+            },
+            "input_display": {
+                "input_optimizer": True,
+                "vrr_freesync": True,
+                "hdr": False,
+                "integer_scaling": False,
+                "frame_generation": "off"
+            },
+            "audio": {
+                "audio_profile": "competitive",
+                "spatial_audio": True,
+                "spatial_mode": "hrtf",
+                "noise_suppression": True,
+                "noise_strength": 0.85
+            },
+            "streaming": {
+                "replay_buffer": True,
+                "replay_duration": 120,
+                "ndi_streaming": False,
+                "multitrack_audio": True
+            }
+        }
+        self.save()
+    
+    def apply_optimizations(self):
+        env = {}
+        p = self.settings.get("performance", {})
+        i = self.settings.get("input_display", {})
+        a = self.settings.get("audio", {})
+        s = self.settings.get("streaming", {})
         
-        library_paths = [
-            heroic_path / "gog_store" / "installed.json",
-            heroic_path / "store" / "installed.json",
-            heroic_path / "legendaryConfig" / "legendary" / "installed.json"
+        if p.get("ram_guardian"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-ram-guardian.service"], capture_output=True)
+        
+        if p.get("kernel_profile") != "balanced":
+            profile = p.get("kernel_profile", "gaming")
+            subprocess.run(["systemctl", "--user", "start", f"aegis-kernel-optimizer@{profile}.service"], capture_output=True)
+        
+        governor = p.get("cpu_governor", "schedutil")
+        try:
+            for cpu in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
+                gov_file = cpu / "cpufreq" / "scaling_governor"
+                if gov_file.exists():
+                    subprocess.run(["pkexec", "tee", str(gov_file)], input=governor.encode(), capture_output=True)
+        except Exception:
+            pass
+        
+        if i.get("input_optimizer"):
+            env["AEGIS_INPUT_8000HZ"] = "1"
+            env["AEGIS_FLAT_ACCEL"] = "1"
+        
+        if i.get("vrr_freesync"):
+            env["ENABLE_VRR"] = "1"
+            env["vblank_mode"] = "0"
+        
+        if i.get("hdr"):
+            env["DXVK_HDR"] = "1"
+            env["ENABLE_HDR_WSI"] = "1"
+        
+        fg = i.get("frame_generation", "off")
+        if fg == "fsr3":
+            env["ENABLE_FSR3_FG"] = "1"
+        elif fg == "afmf":
+            env["AMD_AFMF"] = "1"
+        elif fg == "dlss_fg":
+            env["ENABLE_DLSS_FG"] = "1"
+        
+        audio_profile = a.get("audio_profile", "balanced")
+        audio_quantums = {"competitive": "128", "balanced": "512", "quality": "1024", "streaming": "256"}
+        env["PIPEWIRE_QUANTUM"] = audio_quantums.get(audio_profile, "512")
+        
+        if a.get("spatial_audio"):
+            env["AEGIS_SPATIAL_AUDIO"] = a.get("spatial_mode", "5.1")
+        
+        if a.get("noise_suppression"):
+            env["AEGIS_NOISE_SUPPRESSION"] = str(a.get("noise_strength", 0.7))
+        
+        if s.get("replay_buffer"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-streamforge-replay.service"], capture_output=True)
+            env["AEGIS_REPLAY_DURATION"] = str(s.get("replay_duration", 120))
+        
+        if s.get("ndi_streaming"):
+            subprocess.run(["systemctl", "--user", "start", "aegis-ndi.service"], capture_output=True)
+        
+        return env
+    
+    def get_service_status(self, service_name):
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-active", service_name],
+                capture_output=True, text=True
+            )
+            return result.stdout.strip() == "active"
+        except Exception:
+            return False
+
+
+class OptimizationSettingsDialog(Gtk.Dialog):
+    def __init__(self, parent, settings):
+        super().__init__(title="Optimization Settings", transient_for=parent, modal=True)
+        self.settings = settings
+        self.set_default_size(700, 550)
+        self.add_button("Close", Gtk.ResponseType.CLOSE)
+        
+        self.apply_dialog_css()
+        
+        content = self.get_content_area()
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(15)
+        content.set_margin_bottom(15)
+        
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        header_box.set_margin_bottom(15)
+        
+        title_label = Gtk.Label()
+        title_label.set_markup('<span font="16" weight="bold" foreground="#3b82f6">Gaming Optimization Settings</span>')
+        header_box.pack_start(title_label, False, False, 0)
+        
+        quick_btn = Gtk.Button(label="⚡ Quick Optimize")
+        quick_btn.get_style_context().add_class("quick-optimize-btn")
+        quick_btn.connect("clicked", self.on_quick_optimize)
+        quick_btn.set_tooltip_text("Apply recommended gaming settings")
+        header_box.pack_end(quick_btn, False, False, 0)
+        
+        content.pack_start(header_box, False, False, 0)
+        
+        notebook = Gtk.Notebook()
+        notebook.set_tab_pos(Gtk.PositionType.TOP)
+        
+        notebook.append_page(self.create_performance_tab(), Gtk.Label(label="Performance"))
+        notebook.append_page(self.create_input_display_tab(), Gtk.Label(label="Input & Display"))
+        notebook.append_page(self.create_audio_tab(), Gtk.Label(label="Audio"))
+        notebook.append_page(self.create_streaming_tab(), Gtk.Label(label="Streaming"))
+        
+        content.pack_start(notebook, True, True, 0)
+        self.show_all()
+    
+    def apply_dialog_css(self):
+        css = b"""
+        .settings-section {
+            background-color: #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 8px 0;
+        }
+        .section-title {
+            color: #3b82f6;
+            font-weight: bold;
+            font-size: 13px;
+        }
+        .setting-label {
+            color: #e2e8f0;
+            font-size: 12px;
+        }
+        .status-active {
+            color: #22c55e;
+        }
+        .status-inactive {
+            color: #64748b;
+        }
+        .quick-optimize-btn {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 15px;
+        }
+        .quick-optimize-btn:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+        }
+        notebook tab {
+            background-color: #1e293b;
+            color: #94a3b8;
+            padding: 8px 15px;
+        }
+        notebook tab:checked {
+            background-color: #334155;
+            color: #3b82f6;
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+        )
+    
+    def create_status_indicator(self, active):
+        label = Gtk.Label()
+        if active:
+            label.set_markup('<span foreground="#22c55e">●</span>')
+        else:
+            label.set_markup('<span foreground="#64748b">●</span>')
+        return label
+    
+    def create_section(self, title):
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        frame.get_style_context().add_class("settings-section")
+        
+        title_label = Gtk.Label()
+        title_label.set_markup(f'<span weight="bold" foreground="#3b82f6">{title}</span>')
+        title_label.set_halign(Gtk.Align.START)
+        frame.pack_start(title_label, False, False, 0)
+        
+        return frame
+    
+    def create_toggle_row(self, label_text, category, key, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        active = self.settings.get(category, key) or False
+        status = self.create_status_indicator(active)
+        row.pack_start(status, False, False, 0)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        switch = Gtk.Switch()
+        switch.set_active(active)
+        switch.set_valign(Gtk.Align.CENTER)
+        switch.connect("state-set", self.on_toggle_changed, category, key, status)
+        row.pack_end(switch, False, False, 0)
+        
+        return row
+    
+    def create_combo_row(self, label_text, category, key, options, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        combo = Gtk.ComboBoxText()
+        current = self.settings.get(category, key)
+        active_idx = 0
+        for i, (value, display) in enumerate(options):
+            combo.append(value, display)
+            if value == current:
+                active_idx = i
+        combo.set_active(active_idx)
+        combo.connect("changed", self.on_combo_changed, category, key)
+        row.pack_end(combo, False, False, 0)
+        
+        return row
+    
+    def create_slider_row(self, label_text, category, key, min_val, max_val, step, description=""):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        row.set_margin_top(5)
+        
+        label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        label = Gtk.Label(label=label_text)
+        label.set_halign(Gtk.Align.START)
+        label.get_style_context().add_class("setting-label")
+        label_box.pack_start(label, False, False, 0)
+        
+        if description:
+            desc = Gtk.Label()
+            desc.set_markup(f'<span font="10" foreground="#64748b">{description}</span>')
+            desc.set_halign(Gtk.Align.START)
+            label_box.pack_start(desc, False, False, 0)
+        
+        row.pack_start(label_box, True, True, 0)
+        
+        current = self.settings.get(category, key) or min_val
+        
+        value_label = Gtk.Label(label=str(int(current) if step >= 1 else f"{current:.1f}"))
+        value_label.set_width_chars(6)
+        
+        adjustment = Gtk.Adjustment(value=current, lower=min_val, upper=max_val, step_increment=step)
+        scale = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=adjustment)
+        scale.set_draw_value(False)
+        scale.set_size_request(150, -1)
+        scale.connect("value-changed", self.on_slider_changed, category, key, value_label, step)
+        
+        row.pack_end(value_label, False, False, 0)
+        row.pack_end(scale, False, False, 5)
+        
+        return row
+    
+    def create_performance_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        ram_section = self.create_section("RAM Guardian")
+        ram_section.pack_start(
+            self.create_toggle_row("RAM Guardian", "performance", "ram_guardian", 
+                                   "Auto-clear memory caches for maximum game RAM"),
+            False, False, 0
+        )
+        box.pack_start(ram_section, False, False, 0)
+        
+        kernel_section = self.create_section("Kernel Optimizer")
+        kernel_section.pack_start(
+            self.create_combo_row("Optimization Profile", "performance", "kernel_profile", [
+                ("gaming", "Gaming - High performance"),
+                ("competitive", "Competitive - Maximum FPS"),
+                ("balanced", "Balanced - Normal use"),
+                ("power_saving", "Power Saving - Battery mode")
+            ], "Core isolation, tickless mode, scheduler tuning"),
+            False, False, 0
+        )
+        box.pack_start(kernel_section, False, False, 0)
+        
+        cpu_section = self.create_section("CPU Governor")
+        cpu_section.pack_start(
+            self.create_combo_row("CPU Frequency Governor", "performance", "cpu_governor", [
+                ("performance", "Performance - Max frequency"),
+                ("schedutil", "Schedutil - Dynamic scaling"),
+                ("powersave", "Powersave - Min frequency")
+            ], "Controls CPU frequency scaling behavior"),
+            False, False, 0
+        )
+        box.pack_start(cpu_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_input_display_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        input_section = self.create_section("Input Optimizer")
+        input_section.pack_start(
+            self.create_toggle_row("Input Optimizer", "input_display", "input_optimizer",
+                                   "8000Hz USB polling, flat mouse acceleration"),
+            False, False, 0
+        )
+        box.pack_start(input_section, False, False, 0)
+        
+        display_section = self.create_section("Display Optimizer")
+        display_section.pack_start(
+            self.create_toggle_row("VRR / FreeSync", "input_display", "vrr_freesync",
+                                   "Variable Refresh Rate for tear-free gaming"),
+            False, False, 0
+        )
+        display_section.pack_start(
+            self.create_toggle_row("HDR", "input_display", "hdr",
+                                   "High Dynamic Range output"),
+            False, False, 0
+        )
+        display_section.pack_start(
+            self.create_toggle_row("Integer Scaling", "input_display", "integer_scaling",
+                                   "Pixel-perfect scaling for retro games"),
+            False, False, 0
+        )
+        box.pack_start(display_section, False, False, 0)
+        
+        fg_section = self.create_section("Frame Generation")
+        fg_section.pack_start(
+            self.create_combo_row("Technology", "input_display", "frame_generation", [
+                ("off", "Off - Disabled"),
+                ("fsr3", "FSR 3 Frame Generation"),
+                ("afmf", "AMD AFMF (Driver-level)"),
+                ("dlss_fg", "DLSS Frame Generation")
+            ], "AI-powered frame interpolation"),
+            False, False, 0
+        )
+        box.pack_start(fg_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_audio_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        latency_section = self.create_section("Audio Latency Profile")
+        latency_section.pack_start(
+            self.create_combo_row("Profile", "audio", "audio_profile", [
+                ("competitive", "Competitive - 2.7ms latency"),
+                ("balanced", "Balanced - 10.7ms latency"),
+                ("quality", "Quality - 21.3ms latency"),
+                ("streaming", "Streaming - 5.3ms latency")
+            ], "PipeWire quantum/buffer size"),
+            False, False, 0
+        )
+        box.pack_start(latency_section, False, False, 0)
+        
+        spatial_section = self.create_section("Spatial Audio")
+        spatial_section.pack_start(
+            self.create_toggle_row("Spatial Audio", "audio", "spatial_audio",
+                                   "Virtual surround sound for headphones"),
+            False, False, 0
+        )
+        spatial_section.pack_start(
+            self.create_combo_row("Spatial Mode", "audio", "spatial_mode", [
+                ("5.1", "Virtual 5.1 Surround"),
+                ("7.1", "Virtual 7.1 Surround"),
+                ("hrtf", "HRTF Binaural")
+            ], "Surround sound rendering method"),
+            False, False, 0
+        )
+        box.pack_start(spatial_section, False, False, 0)
+        
+        noise_section = self.create_section("AI Noise Suppression")
+        noise_section.pack_start(
+            self.create_toggle_row("Noise Suppression", "audio", "noise_suppression",
+                                   "RNNoise AI-powered microphone cleanup"),
+            False, False, 0
+        )
+        noise_section.pack_start(
+            self.create_slider_row("Suppression Strength", "audio", "noise_strength", 
+                                   0.1, 1.0, 0.1, "0.1 = light, 1.0 = aggressive"),
+            False, False, 0
+        )
+        box.pack_start(noise_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_streaming_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        box.set_margin_bottom(15)
+        
+        replay_section = self.create_section("StreamForge Replay Buffer")
+        replay_section.pack_start(
+            self.create_toggle_row("Replay Buffer", "streaming", "replay_buffer",
+                                   "Always-on recording with hotkey save (F9)"),
+            False, False, 0
+        )
+        replay_section.pack_start(
+            self.create_slider_row("Buffer Duration (seconds)", "streaming", "replay_duration",
+                                   30, 300, 30, "30s - 5 minutes of replay history"),
+            False, False, 0
+        )
+        box.pack_start(replay_section, False, False, 0)
+        
+        ndi_section = self.create_section("NDI Streaming")
+        ndi_section.pack_start(
+            self.create_toggle_row("NDI Network Streaming", "streaming", "ndi_streaming",
+                                   "Stream to second PC for dual-PC setup"),
+            False, False, 0
+        )
+        box.pack_start(ndi_section, False, False, 0)
+        
+        audio_section = self.create_section("Multi-Track Audio")
+        audio_section.pack_start(
+            self.create_toggle_row("Multi-Track Recording", "streaming", "multitrack_audio",
+                                   "Separate audio tracks for game/voice/music"),
+            False, False, 0
+        )
+        box.pack_start(audio_section, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def on_toggle_changed(self, switch, state, category, key, status_indicator):
+        self.settings.set(category, key, state)
+        if state:
+            status_indicator.set_markup('<span foreground="#22c55e">●</span>')
+        else:
+            status_indicator.set_markup('<span foreground="#64748b">●</span>')
+        return False
+    
+    def on_combo_changed(self, combo, category, key):
+        value = combo.get_active_id()
+        if value:
+            self.settings.set(category, key, value)
+    
+    def on_slider_changed(self, scale, category, key, value_label, step):
+        value = scale.get_value()
+        self.settings.set(category, key, value)
+        if step >= 1:
+            value_label.set_text(str(int(value)))
+        else:
+            value_label.set_text(f"{value:.1f}")
+    
+    def on_quick_optimize(self, button):
+        self.settings.apply_quick_optimize()
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Quick Optimize Applied!"
+        )
+        dialog.format_secondary_text(
+            "Recommended gaming settings have been applied:\n\n"
+            "• RAM Guardian: Enabled\n"
+            "• Kernel Profile: Gaming\n"
+            "• CPU Governor: Performance\n"
+            "• Input Optimizer: Enabled (8000Hz)\n"
+            "• VRR/FreeSync: Enabled\n"
+            "• Audio: Competitive (2.7ms)\n"
+            "• Spatial Audio: HRTF\n"
+            "• Noise Suppression: Enabled\n"
+            "• Replay Buffer: 2 minutes\n\n"
+            "Close and reopen settings to see updated values."
+        )
+        dialog.run()
+        dialog.destroy()
+        self.destroy()
+
+
+class GameProfile:
+    def __init__(self, game_id):
+        self.game_id = game_id
+        self.profile = self.load_profile()
+    
+    def load_profile(self):
+        for profile_dir in [PROFILES_DIR, SYSTEM_PROFILES, CONFIG_DIR / "profiles"]:
+            profile_file = profile_dir / f"{self.game_id}.json"
+            if profile_file.exists():
+                with open(profile_file) as f:
+                    return json.load(f)
+        return self.default_profile()
+    
+    def default_profile(self):
+        return {
+            "name": "Default",
+            "gamemode": True,
+            "mangohud": True,
+            "fsync": True,
+            "esync": True,
+            "shader_cache": True,
+            "cpu_governor": "performance",
+            "priority": "high",
+            "env": {}
+        }
+    
+    def get_env(self):
+        env = os.environ.copy()
+        p = self.profile
+        
+        if p.get("gamemode"):
+            env["ENABLE_GAMEMODE"] = "1"
+        if p.get("mangohud"):
+            env["MANGOHUD"] = "1"
+            env["MANGOHUD_CONFIG"] = "cpu_stats,gpu_stats,fps,frametime,frame_timing"
+        if p.get("fsync"):
+            env["WINEFSYNC"] = "1"
+        if p.get("esync"):
+            env["WINEESYNC"] = "1"
+        if p.get("shader_cache"):
+            env["DXVK_STATE_CACHE"] = "1"
+            env["VKD3D_SHADER_CACHE"] = "1"
+        
+        env["__GL_THREADED_OPTIMIZATIONS"] = "1"
+        env["mesa_glthread"] = "true"
+        env["RADV_PERFTEST"] = "gpl"
+        
+        env.update(p.get("env", {}))
+        return env
+
+class Game:
+    def __init__(self, name, exe_path, source, icon=None, appid=None):
+        self.name = name
+        self.exe_path = exe_path
+        self.source = source
+        self.icon = icon
+        self.appid = appid
+        self.last_played = None
+        self.play_time = 0
+        self.profile = None
+    
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "exe_path": str(self.exe_path),
+            "source": self.source,
+            "icon": self.icon,
+            "appid": self.appid,
+            "last_played": self.last_played,
+            "play_time": self.play_time
+        }
+    
+    @classmethod
+    def from_dict(cls, data):
+        game = cls(
+            data["name"],
+            data["exe_path"],
+            data["source"],
+            data.get("icon"),
+            data.get("appid")
+        )
+        game.last_played = data.get("last_played")
+        game.play_time = data.get("play_time", 0)
+        return game
+
+class GameScanner:
+    def __init__(self):
+        self.games = []
+    
+    def scan_steam(self):
+        steam_paths = [
+            Path.home() / ".steam/steam/steamapps",
+            Path.home() / ".local/share/Steam/steamapps",
+            Path("/home") / os.environ.get("USER", "") / ".steam/steam/steamapps"
         ]
         
-        gog_library = heroic_path / "gog_store" / "library.json"
-        epic_library = heroic_path / "store_cache" / "legendary_library.json"
-        
-        for lib_file in [gog_library, epic_library]:
-            if lib_file.exists():
-                try:
-                    with open(lib_file, 'r') as f:
-                        data = json.load(f)
-                    
-                    game_list = data.get("library", data) if isinstance(data, dict) else data
-                    
-                    if isinstance(game_list, list):
-                        for game in game_list:
-                            if isinstance(game, dict):
-                                game_id = game.get("app_name", game.get("appName", ""))
-                                if not game_id:
-                                    continue
-                                
-                                platform_type = "heroic_gog" if "gog" in str(lib_file) else "heroic_epic"
-                                full_game_id = f"{platform_type}_{game_id}"
-                                
-                                install_path = game.get("install_path", game.get("install", {}).get("install_path", ""))
-                                
-                                games.append({
-                                    "id": full_game_id,
-                                    "name": game.get("title", game.get("app_name", "Unknown")),
-                                    "platform": platform_type,
-                                    "app_name": game_id,
-                                    "install_path": install_path,
-                                    "install_size": game.get("install_size", 0),
-                                    "is_installed": game.get("is_installed", False),
-                                    "launch_command": f"heroic://launch/{game_id}",
-                                    "icon": game.get("art_square", game.get("art_cover")),
-                                    "hidden": False
-                                })
-                                
-                except Exception as e:
-                    self.logger.warning(f"Failed to parse Heroic library {lib_file}: {e}")
-        
-        for installed_file in library_paths:
-            if installed_file.exists():
-                try:
-                    with open(installed_file, 'r') as f:
-                        installed_data = json.load(f)
-                    
-                    if isinstance(installed_data, dict):
-                        for app_name, game_info in installed_data.items():
-                            existing = next((g for g in games if game_info.get("appName", app_name) in g["id"]), None)
-                            if existing:
-                                existing["is_installed"] = True
-                                existing["install_path"] = game_info.get("install_path", existing.get("install_path", ""))
-                                
-                except Exception as e:
-                    self.logger.warning(f"Failed to parse Heroic installed games {installed_file}: {e}")
-        
-        return games
-    
-    def scan_native_games(self) -> List[Dict]:
-        """Scan for native Linux games from .desktop files"""
-        games = []
-        
-        for apps_path in self.config["native_paths"]:
-            apps_dir = Path(apps_path)
-            
-            if not apps_dir.exists():
+        for steam_path in steam_paths:
+            if not steam_path.exists():
                 continue
             
-            desktop_files = list(apps_dir.glob("*.desktop"))
-            
-            for desktop_file in desktop_files:
+            for acf in steam_path.glob("appmanifest_*.acf"):
                 try:
-                    game_data = self.parse_desktop_file(desktop_file)
+                    with open(acf) as f:
+                        content = f.read()
                     
-                    if not game_data:
-                        continue
+                    appid = self._parse_vdf_value(content, "appid")
+                    name = self._parse_vdf_value(content, "name")
+                    installdir = self._parse_vdf_value(content, "installdir")
                     
-                    categories = game_data.get("categories", "").lower()
-                    if "game" not in categories:
-                        continue
-                    
-                    game_id = f"native_{desktop_file.stem}"
-                    
-                    games.append({
-                        "id": game_id,
-                        "name": game_data.get("name", desktop_file.stem),
-                        "platform": "native",
-                        "desktop_file": str(desktop_file),
-                        "exec": game_data.get("exec", ""),
-                        "icon": game_data.get("icon"),
-                        "categories": game_data.get("categories", ""),
-                        "install_path": game_data.get("path", ""),
-                        "install_size": 0,
-                        "launch_command": game_data.get("exec", ""),
-                        "hidden": game_data.get("hidden", False)
-                    })
-                    
-                except Exception as e:
-                    self.logger.warning(f"Failed to parse desktop file {desktop_file}: {e}")
+                    if name and installdir:
+                        game_path = steam_path / "common" / installdir
+                        icon = f"steam_icon_{appid}" if appid else None
+                        
+                        self.games.append(Game(
+                            name=name,
+                            exe_path=str(game_path),
+                            source="Steam",
+                            icon=icon,
+                            appid=appid
+                        ))
+                except Exception:
+                    pass
+    
+    def scan_heroic(self):
+        heroic_path = Path.home() / ".config/heroic/GamesConfig"
+        installed_path = Path.home() / ".config/heroic/lib-cache/library.json"
         
-        return games
-    
-    def parse_desktop_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse a .desktop file"""
-        try:
-            data = {}
-            current_section = None
-            
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    line = line.strip()
-                    
-                    if line.startswith('['):
-                        current_section = line[1:-1]
-                        continue
-                    
-                    if current_section != "Desktop Entry":
-                        continue
-                    
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        data[key.lower()] = value
-            
-            return {
-                "name": data.get("name", ""),
-                "exec": data.get("exec", ""),
-                "icon": data.get("icon", ""),
-                "categories": data.get("categories", ""),
-                "path": data.get("path", ""),
-                "hidden": data.get("nodisplay", "false").lower() == "true" or data.get("hidden", "false").lower() == "true"
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing desktop file {filepath}: {e}")
-            return None
-    
-    def get_directory_size(self, path: Path) -> int:
-        """Get total size of a directory in bytes"""
-        total_size = 0
-        try:
-            for entry in path.rglob('*'):
-                if entry.is_file():
-                    total_size += entry.stat().st_size
-        except (PermissionError, OSError):
-            pass
-        return total_size
-    
-    def format_size(self, size_bytes: int) -> str:
-        """Format bytes to human-readable size"""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.1f} PB"
-    
-    def scan_all_games(self, callback=None) -> Dict:
-        """Scan all configured game sources"""
-        self.logger.info("Starting full game library scan...")
-        
-        all_games = []
-        scan_results = {
-            "steam": 0,
-            "lutris": 0,
-            "heroic": 0,
-            "native": 0,
-            "total": 0,
-            "errors": []
-        }
-        
-        if self.config["scan_steam"]:
-            if callback:
-                callback("Scanning Steam games...")
+        if installed_path.exists():
             try:
-                steam_games = self.scan_steam_games()
-                all_games.extend(steam_games)
-                scan_results["steam"] = len(steam_games)
-                self.logger.info(f"Found {len(steam_games)} Steam games")
-            except Exception as e:
-                scan_results["errors"].append(f"Steam scan error: {e}")
-                self.logger.error(f"Steam scan error: {e}")
-        
-        if self.config["scan_lutris"]:
-            if callback:
-                callback("Scanning Lutris games...")
-            try:
-                lutris_games = self.scan_lutris_games()
-                all_games.extend(lutris_games)
-                scan_results["lutris"] = len(lutris_games)
-                self.logger.info(f"Found {len(lutris_games)} Lutris games")
-            except Exception as e:
-                scan_results["errors"].append(f"Lutris scan error: {e}")
-                self.logger.error(f"Lutris scan error: {e}")
-        
-        if self.config["scan_heroic"]:
-            if callback:
-                callback("Scanning Heroic games...")
-            try:
-                heroic_games = self.scan_heroic_games()
-                all_games.extend(heroic_games)
-                scan_results["heroic"] = len(heroic_games)
-                self.logger.info(f"Found {len(heroic_games)} Heroic games")
-            except Exception as e:
-                scan_results["errors"].append(f"Heroic scan error: {e}")
-                self.logger.error(f"Heroic scan error: {e}")
-        
-        if self.config["scan_native"]:
-            if callback:
-                callback("Scanning native games...")
-            try:
-                native_games = self.scan_native_games()
-                all_games.extend(native_games)
-                scan_results["native"] = len(native_games)
-                self.logger.info(f"Found {len(native_games)} native games")
-            except Exception as e:
-                scan_results["errors"].append(f"Native scan error: {e}")
-                self.logger.error(f"Native scan error: {e}")
-        
-        for game in all_games:
-            game_id = game["id"]
-            existing = self.library["games"].get(game_id, {})
-            
-            game["added_date"] = existing.get("added_date", datetime.now().isoformat())
-            game["last_played"] = existing.get("last_played")
-            game["play_count"] = existing.get("play_count", 0)
-            game["favorite"] = existing.get("favorite", False)
-            game["user_rating"] = existing.get("user_rating")
-            game["notes"] = existing.get("notes", "")
-            
-            self.library["games"][game_id] = game
-        
-        scan_results["total"] = len(all_games)
-        self.config["last_scan"] = datetime.now().isoformat()
-        self.save_config()
-        self.save_library()
-        
-        if callback:
-            callback(f"Scan complete! Found {scan_results['total']} games")
-        
-        self.logger.info(f"Scan complete: {scan_results}")
-        return scan_results
-    
-    def get_games(self, search: str = None, platform: str = None, 
-                  sort_by: str = None, favorites_only: bool = False) -> List[Dict]:
-        """Get games from library with optional filtering"""
-        games = list(self.library["games"].values())
-        
-        if not self.config.get("show_hidden_games", False):
-            games = [g for g in games if not g.get("hidden", False)]
-        
-        if search:
-            search_lower = search.lower()
-            games = [g for g in games if search_lower in g.get("name", "").lower()]
-        
-        if platform and platform != "all":
-            games = [g for g in games if g.get("platform") == platform]
-        
-        if favorites_only:
-            games = [g for g in games if g.get("favorite", False)]
-        
-        sort_key = sort_by or self.config.get("sort_by", "name")
-        
-        if sort_key == "name":
-            games.sort(key=lambda x: x.get("name", "").lower())
-        elif sort_key == "platform":
-            games.sort(key=lambda x: (x.get("platform", ""), x.get("name", "").lower()))
-        elif sort_key == "last_played":
-            games.sort(key=lambda x: x.get("last_played") or "", reverse=True)
-        elif sort_key == "play_count":
-            games.sort(key=lambda x: x.get("play_count", 0), reverse=True)
-        elif sort_key == "install_size":
-            games.sort(key=lambda x: x.get("install_size", 0), reverse=True)
-        
-        return games
-    
-    def get_game(self, game_id: str) -> Optional[Dict]:
-        """Get a specific game by ID"""
-        return self.library["games"].get(game_id)
-    
-    def launch_game(self, game_id: str, callback=None) -> Dict:
-        """Launch a game and track playtime"""
-        game = self.get_game(game_id)
-        if not game:
-            return {"success": False, "error": f"Game '{game_id}' not found"}
-        
-        platform = game.get("platform", "")
-        launch_cmd = game.get("launch_command", "")
-        
-        if not launch_cmd:
-            return {"success": False, "error": "No launch command available"}
-        
-        result = {
-            "success": False,
-            "game_id": game_id,
-            "game_name": game.get("name"),
-            "platform": platform,
-            "start_time": datetime.now().isoformat(),
-            "end_time": None,
-            "play_duration": 0,
-            "error": None
-        }
-        
-        self.logger.info(f"Launching game: {game.get('name')} ({platform})")
-        if callback:
-            callback(f"Launching {game.get('name')}...")
-        
-        try:
-            start_time = time.time()
-            
-            if platform == "steam":
-                subprocess.Popen(["xdg-open", launch_cmd])
-                result["success"] = True
+                with open(installed_path) as f:
+                    data = json.load(f)
                 
-            elif platform == "lutris":
-                subprocess.Popen(["xdg-open", launch_cmd])
-                result["success"] = True
-                
-            elif platform.startswith("heroic"):
-                subprocess.Popen(["xdg-open", launch_cmd])
-                result["success"] = True
-                
-            elif platform == "native":
-                exec_cmd = launch_cmd.replace("%f", "").replace("%F", "").replace("%u", "").replace("%U", "").strip()
-                parts = exec_cmd.split()
-                if parts:
-                    process = subprocess.Popen(parts)
-                    
-                    if self.config.get("track_playtime", True):
-                        process.wait()
-                        end_time = time.time()
-                        result["play_duration"] = int(end_time - start_time)
-                    
-                    result["success"] = True
-            else:
-                subprocess.Popen(["xdg-open", launch_cmd])
-                result["success"] = True
-            
-            if result["success"]:
-                game["last_played"] = datetime.now().isoformat()
-                game["play_count"] = game.get("play_count", 0) + 1
-                self.save_library()
-                
-                if self.config.get("track_playtime", True):
-                    self.record_play_session(game_id, result.get("play_duration", 0))
-                
-        except Exception as e:
-            result["success"] = False
-            result["error"] = str(e)
-            self.logger.error(f"Failed to launch game: {e}")
-        
-        result["end_time"] = datetime.now().isoformat()
-        return result
+                for game in data.get("library", []):
+                    if game.get("is_installed"):
+                        self.games.append(Game(
+                            name=game.get("title", "Unknown"),
+                            exe_path=game.get("install_path", ""),
+                            source="Epic/Heroic",
+                            appid=game.get("app_name")
+                        ))
+            except Exception:
+                pass
     
-    def record_play_session(self, game_id: str, duration: int):
-        """Record a play session for tracking"""
-        session = {
-            "game_id": game_id,
-            "start_time": datetime.now().isoformat(),
-            "duration": duration
-        }
-        
-        self.playtime["sessions"].append(session)
-        
-        if len(self.playtime["sessions"]) > 10000:
-            self.playtime["sessions"] = self.playtime["sessions"][-10000:]
-        
-        current_total = self.playtime["totals"].get(game_id, 0)
-        self.playtime["totals"][game_id] = current_total + duration
-        
-        self.save_playtime()
-    
-    def get_playtime(self, game_id: str = None) -> Dict:
-        """Get playtime statistics"""
-        if game_id:
-            total_seconds = self.playtime["totals"].get(game_id, 0)
-            sessions = [s for s in self.playtime["sessions"] if s["game_id"] == game_id]
-            
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            
-            return {
-                "game_id": game_id,
-                "total_seconds": total_seconds,
-                "total_formatted": f"{hours}h {minutes}m",
-                "session_count": len(sessions),
-                "recent_sessions": sessions[-10:]
-            }
-        else:
-            stats = {
-                "total_games_played": len(self.playtime["totals"]),
-                "total_playtime_seconds": sum(self.playtime["totals"].values()),
-                "games": {}
-            }
-            
-            for gid, total in sorted(self.playtime["totals"].items(), 
-                                     key=lambda x: x[1], reverse=True):
-                game = self.get_game(gid)
-                hours = total // 3600
-                minutes = (total % 3600) // 60
-                stats["games"][gid] = {
-                    "name": game.get("name", "Unknown") if game else "Unknown",
-                    "total_seconds": total,
-                    "total_formatted": f"{hours}h {minutes}m"
-                }
-            
-            total_hours = stats["total_playtime_seconds"] // 3600
-            total_minutes = (stats["total_playtime_seconds"] % 3600) // 60
-            stats["total_playtime_formatted"] = f"{total_hours}h {total_minutes}m"
-            
-            return stats
-    
-    def toggle_favorite(self, game_id: str) -> bool:
-        """Toggle favorite status for a game"""
-        game = self.get_game(game_id)
-        if not game:
-            return False
-        
-        game["favorite"] = not game.get("favorite", False)
-        self.save_library()
-        return game["favorite"]
-    
-    def set_hidden(self, game_id: str, hidden: bool) -> bool:
-        """Set hidden status for a game"""
-        game = self.get_game(game_id)
-        if not game:
-            return False
-        
-        game["hidden"] = hidden
-        self.save_library()
-        return True
-    
-    def get_stats(self) -> Dict:
-        """Get library statistics"""
-        games = list(self.library["games"].values())
-        
-        platform_counts = {}
-        total_size = 0
-        favorites_count = 0
-        played_count = 0
-        
-        for game in games:
-            platform = game.get("platform", "unknown")
-            platform_counts[platform] = platform_counts.get(platform, 0) + 1
-            total_size += game.get("install_size", 0)
-            
-            if game.get("favorite"):
-                favorites_count += 1
-            
-            if game.get("play_count", 0) > 0:
-                played_count += 1
-        
-        playtime_stats = self.get_playtime()
-        
-        return {
-            "total_games": len(games),
-            "platform_counts": platform_counts,
-            "total_install_size": total_size,
-            "total_install_size_formatted": self.format_size(total_size),
-            "favorites_count": favorites_count,
-            "played_count": played_count,
-            "never_played_count": len(games) - played_count,
-            "total_playtime": playtime_stats.get("total_playtime_formatted", "0h 0m"),
-            "last_scan": self.config.get("last_scan"),
-            "library_version": self.library.get("version", self.version)
-        }
-
-
-class GameLibraryGUI:
-    def __init__(self):
-        self.library = AegisGameLibrary()
-        self.root = tk.Tk()
-        self.current_platform = "all"
-        self.search_var = tk.StringVar()
-        self.selected_game = None
-        self.setup_window()
-        self.create_widgets()
-        self.refresh_game_list()
-        
-    def setup_window(self):
-        """Configure the main window"""
-        self.root.title("Aegis Game Library")
-        self.root.geometry("1100x750")
-        self.root.configure(bg='#1a1a2e')
-        self.root.minsize(900, 650)
-        
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        style.configure('TFrame', background='#1a1a2e')
-        style.configure('TLabel', background='#1a1a2e', foreground='white', font=('Arial', 10))
-        style.configure('TButton', padding=8, font=('Arial', 10))
-        style.configure('Header.TLabel', font=('Arial', 22, 'bold'), foreground='#00d4ff')
-        style.configure('SubHeader.TLabel', font=('Arial', 14, 'bold'), foreground='#00d4ff')
-        style.configure('GameName.TLabel', font=('Arial', 12, 'bold'), foreground='#ffffff')
-        style.configure('GameInfo.TLabel', font=('Arial', 9), foreground='#aaaaaa')
-        style.configure('Platform.TLabel', font=('Arial', 9, 'bold'), foreground='#00ff88')
-        style.configure('Stats.TLabel', font=('Arial', 11), foreground='#cccccc')
-        
-        style.configure('TLabelframe', background='#1a1a2e')
-        style.configure('TLabelframe.Label', background='#1a1a2e', foreground='white', font=('Arial', 11, 'bold'))
-        
-        style.configure('Accent.TButton', font=('Arial', 11, 'bold'))
-        
-    def create_widgets(self):
-        """Create GUI widgets"""
-        header_frame = ttk.Frame(self.root)
-        header_frame.pack(fill='x', padx=20, pady=15)
-        
-        title = ttk.Label(header_frame, text="🎮 Aegis Game Library", style='Header.TLabel')
-        title.pack(side='left')
-        
-        stats = self.library.get_stats()
-        stats_text = f"📦 {stats['total_games']} Games | 💾 {stats['total_install_size_formatted']} | ⏱️ {stats['total_playtime']}"
-        stats_label = ttk.Label(header_frame, text=stats_text, style='Stats.TLabel')
-        stats_label.pack(side='right')
-        self.stats_label = stats_label
-        
-        toolbar_frame = ttk.Frame(self.root)
-        toolbar_frame.pack(fill='x', padx=20, pady=5)
-        
-        search_entry = ttk.Entry(toolbar_frame, textvariable=self.search_var, width=35, font=('Arial', 11))
-        search_entry.pack(side='left', padx=(0, 10))
-        search_entry.insert(0, "Search games...")
-        search_entry.bind('<FocusIn>', lambda e: search_entry.delete(0, tk.END) if search_entry.get() == "Search games..." else None)
-        search_entry.bind('<Return>', lambda e: self.do_search())
-        
-        search_btn = ttk.Button(toolbar_frame, text="🔍 Search", command=self.do_search)
-        search_btn.pack(side='left', padx=5)
-        
-        clear_btn = ttk.Button(toolbar_frame, text="✖ Clear", command=self.clear_search)
-        clear_btn.pack(side='left', padx=5)
-        
-        ttk.Separator(toolbar_frame, orient='vertical').pack(side='left', fill='y', padx=10)
-        
-        scan_btn = ttk.Button(toolbar_frame, text="🔄 Scan Games", command=self.scan_games)
-        scan_btn.pack(side='left', padx=5)
-        
-        stats_btn = ttk.Button(toolbar_frame, text="📊 Stats", command=self.show_stats)
-        stats_btn.pack(side='right', padx=5)
-        
-        fav_btn = ttk.Button(toolbar_frame, text="⭐ Favorites", command=self.show_favorites)
-        fav_btn.pack(side='right', padx=5)
-        
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill='both', expand=True, padx=20, pady=10)
-        
-        left_panel = ttk.Frame(main_frame, width=180)
-        left_panel.pack(side='left', fill='y', padx=(0, 10))
-        left_panel.pack_propagate(False)
-        
-        plat_label = ttk.Label(left_panel, text="Platforms", style='SubHeader.TLabel')
-        plat_label.pack(pady=(0, 10))
-        
-        platform_icons = {
-            "all": ("📋", "All Games"),
-            "steam": ("🎮", "Steam"),
-            "lutris": ("🍷", "Lutris"),
-            "heroic_epic": ("🏆", "Epic (Heroic)"),
-            "heroic_gog": ("🎯", "GOG (Heroic)"),
-            "native": ("🐧", "Native Linux")
-        }
-        
-        for plat_id, (icon, name) in platform_icons.items():
-            btn = ttk.Button(
-                left_panel, text=f"{icon} {name}",
-                command=lambda p=plat_id: self.filter_by_platform(p)
-            )
-            btn.pack(fill='x', pady=2)
-        
-        right_panel = ttk.Frame(main_frame)
-        right_panel.pack(side='right', fill='both', expand=True)
-        
-        list_header = ttk.Frame(right_panel)
-        list_header.pack(fill='x', pady=(0, 5))
-        
-        self.list_title = ttk.Label(list_header, text="All Games", style='SubHeader.TLabel')
-        self.list_title.pack(side='left')
-        
-        self.game_count_label = ttk.Label(list_header, text="", style='GameInfo.TLabel')
-        self.game_count_label.pack(side='right')
-        
-        list_container = ttk.Frame(right_panel)
-        list_container.pack(fill='both', expand=True)
-        
-        self.canvas = tk.Canvas(list_container, bg='#16213e', highlightthickness=0)
-        scrollbar = ttk.Scrollbar(list_container, orient='vertical', command=self.canvas.yview)
-        
-        self.game_list_frame = ttk.Frame(self.canvas)
-        
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        
-        scrollbar.pack(side='right', fill='y')
-        self.canvas.pack(side='left', fill='both', expand=True)
-        
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.game_list_frame, anchor='nw')
-        
-        self.game_list_frame.bind('<Configure>', self.on_frame_configure)
-        self.canvas.bind('<Configure>', self.on_canvas_configure)
-        
-        self.canvas.bind_all('<MouseWheel>', lambda e: self.canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        self.canvas.bind_all('<Button-4>', lambda e: self.canvas.yview_scroll(-1, "units"))
-        self.canvas.bind_all('<Button-5>', lambda e: self.canvas.yview_scroll(1, "units"))
-        
-        detail_frame = ttk.LabelFrame(right_panel, text="Game Details", padding=10)
-        detail_frame.pack(fill='x', pady=(10, 0))
-        
-        self.detail_name = ttk.Label(detail_frame, text="Select a game", style='GameName.TLabel')
-        self.detail_name.pack(anchor='w')
-        
-        self.detail_info = ttk.Label(detail_frame, text="", style='GameInfo.TLabel')
-        self.detail_info.pack(anchor='w', pady=(5, 0))
-        
-        detail_buttons = ttk.Frame(detail_frame)
-        detail_buttons.pack(fill='x', pady=(10, 0))
-        
-        self.launch_btn = ttk.Button(detail_buttons, text="▶️ Launch Game", command=self.launch_selected, style='Accent.TButton')
-        self.launch_btn.pack(side='left', padx=(0, 10))
-        self.launch_btn.state(['disabled'])
-        
-        self.fav_btn = ttk.Button(detail_buttons, text="⭐ Favorite", command=self.toggle_favorite)
-        self.fav_btn.pack(side='left', padx=5)
-        self.fav_btn.state(['disabled'])
-        
-        self.hide_btn = ttk.Button(detail_buttons, text="👁️ Hide", command=self.toggle_hidden)
-        self.hide_btn.pack(side='left', padx=5)
-        self.hide_btn.state(['disabled'])
-        
-    def on_frame_configure(self, event):
-        """Reset scroll region when frame size changes"""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        
-    def on_canvas_configure(self, event):
-        """Resize frame when canvas size changes"""
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-    
-    def refresh_game_list(self, games=None):
-        """Refresh the game list display"""
-        for widget in self.game_list_frame.winfo_children():
-            widget.destroy()
-        
-        if games is None:
-            search_term = self.search_var.get()
-            if search_term == "Search games...":
-                search_term = None
-            
-            platform = self.current_platform if self.current_platform != "all" else None
-            games = self.library.get_games(search=search_term, platform=platform)
-        
-        self.game_count_label.config(text=f"({len(games)} games)")
-        
-        if not games:
-            no_games = ttk.Label(self.game_list_frame, text="No games found", style='GameInfo.TLabel')
-            no_games.pack(pady=20)
+    def scan_lutris(self):
+        lutris_db = Path.home() / ".local/share/lutris/pga.db"
+        if not lutris_db.exists():
             return
         
-        platform_icons = {
-            "steam": "🎮",
-            "lutris": "🍷",
-            "heroic_epic": "🏆",
-            "heroic_gog": "🎯",
-            "native": "🐧"
-        }
-        
-        for game in games:
-            game_frame = tk.Frame(self.game_list_frame, bg='#1f2940', cursor='hand2')
-            game_frame.pack(fill='x', pady=2, padx=5)
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(lutris_db))
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, slug, directory, runner FROM games WHERE installed = 1")
             
-            game_frame.bind('<Enter>', lambda e, f=game_frame: f.configure(bg='#2a3a5a'))
-            game_frame.bind('<Leave>', lambda e, f=game_frame: f.configure(bg='#1f2940'))
-            game_frame.bind('<Button-1>', lambda e, g=game: self.select_game(g))
-            game_frame.bind('<Double-Button-1>', lambda e, g=game: self.launch_game(g))
-            
-            platform_icon = platform_icons.get(game.get("platform", ""), "📦")
-            fav_icon = "⭐" if game.get("favorite") else ""
-            
-            info_frame = tk.Frame(game_frame, bg='#1f2940')
-            info_frame.pack(fill='x', padx=10, pady=8)
-            info_frame.bind('<Button-1>', lambda e, g=game: self.select_game(g))
-            info_frame.bind('<Double-Button-1>', lambda e, g=game: self.launch_game(g))
-            
-            name_label = tk.Label(
-                info_frame, 
-                text=f"{platform_icon} {fav_icon} {game.get('name', 'Unknown')}",
-                bg='#1f2940', fg='white', font=('Arial', 11, 'bold'),
-                anchor='w'
-            )
-            name_label.pack(fill='x')
-            name_label.bind('<Button-1>', lambda e, g=game: self.select_game(g))
-            name_label.bind('<Double-Button-1>', lambda e, g=game: self.launch_game(g))
-            
-            size_str = self.library.format_size(game.get("install_size", 0)) if game.get("install_size", 0) > 0 else "N/A"
-            last_played = game.get("last_played", "Never")
-            if last_played and last_played != "Never":
-                try:
-                    dt = datetime.fromisoformat(last_played)
-                    last_played = dt.strftime("%Y-%m-%d %H:%M")
-                except:
-                    pass
-            
-            play_count = game.get("play_count", 0)
-            
-            info_text = f"Platform: {game.get('platform', 'unknown').title()} | Size: {size_str} | Played: {play_count}x | Last: {last_played}"
-            
-            info_label = tk.Label(
-                info_frame,
-                text=info_text,
-                bg='#1f2940', fg='#888888', font=('Arial', 9),
-                anchor='w'
-            )
-            info_label.pack(fill='x')
-            info_label.bind('<Button-1>', lambda e, g=game: self.select_game(g))
-            info_label.bind('<Double-Button-1>', lambda e, g=game: self.launch_game(g))
-        
-        self.update_stats_display()
+            for name, slug, directory, runner in cursor.fetchall():
+                self.games.append(Game(
+                    name=name,
+                    exe_path=directory or "",
+                    source=f"Lutris ({runner})",
+                    appid=slug
+                ))
+            conn.close()
+        except Exception:
+            pass
     
-    def select_game(self, game: Dict):
-        """Select a game and show details"""
-        self.selected_game = game
-        
-        self.detail_name.config(text=f"🎮 {game.get('name', 'Unknown')}")
-        
-        size_str = self.library.format_size(game.get("install_size", 0)) if game.get("install_size", 0) > 0 else "N/A"
-        last_played = game.get("last_played", "Never")
-        if last_played and last_played != "Never":
-            try:
-                dt = datetime.fromisoformat(last_played)
-                last_played = dt.strftime("%Y-%m-%d %H:%M")
-            except:
-                pass
-        
-        playtime = self.library.get_playtime(game.get("id"))
-        playtime_str = playtime.get("total_formatted", "0h 0m")
-        
-        info_lines = [
-            f"Platform: {game.get('platform', 'unknown').title()}",
-            f"Install Size: {size_str}",
-            f"Play Count: {game.get('play_count', 0)}",
-            f"Total Playtime: {playtime_str}",
-            f"Last Played: {last_played}",
-            f"Install Path: {game.get('install_path', 'N/A')}"
+    def scan_gog(self):
+        gog_path = Path.home() / "GOG Games"
+        if gog_path.exists():
+            for game_dir in gog_path.iterdir():
+                if game_dir.is_dir():
+                    start_script = game_dir / "start.sh"
+                    if start_script.exists():
+                        self.games.append(Game(
+                            name=game_dir.name.replace("_", " "),
+                            exe_path=str(start_script),
+                            source="GOG"
+                        ))
+    
+    def scan_native(self):
+        native_paths = [
+            Path.home() / "Games",
+            Path.home() / ".local/share/applications"
         ]
         
-        self.detail_info.config(text=" | ".join(info_lines[:4]) + f"\n{info_lines[5]}")
-        
-        self.launch_btn.state(['!disabled'])
-        self.fav_btn.state(['!disabled'])
-        self.hide_btn.state(['!disabled'])
-        
-        if game.get("favorite"):
-            self.fav_btn.config(text="⭐ Unfavorite")
-        else:
-            self.fav_btn.config(text="☆ Favorite")
-    
-    def launch_selected(self):
-        """Launch the selected game"""
-        if self.selected_game:
-            self.launch_game(self.selected_game)
-    
-    def launch_game(self, game: Dict):
-        """Launch a game"""
-        result = self.library.launch_game(game.get("id"))
-        
-        if result.get("success"):
-            messagebox.showinfo("Game Launched", f"Launching {game.get('name')}...")
-        else:
-            messagebox.showerror("Launch Failed", f"Failed to launch game: {result.get('error', 'Unknown error')}")
-    
-    def toggle_favorite(self):
-        """Toggle favorite status for selected game"""
-        if self.selected_game:
-            is_fav = self.library.toggle_favorite(self.selected_game.get("id"))
-            self.selected_game["favorite"] = is_fav
+        for path in native_paths:
+            if not path.exists():
+                continue
             
-            if is_fav:
-                self.fav_btn.config(text="⭐ Unfavorite")
-            else:
-                self.fav_btn.config(text="☆ Favorite")
-            
-            self.refresh_game_list()
+            for desktop in path.glob("*.desktop"):
+                try:
+                    with open(desktop) as f:
+                        content = f.read()
+                    
+                    if "Game" in content or "game" in content.lower():
+                        name = self._parse_desktop_value(content, "Name")
+                        exe = self._parse_desktop_value(content, "Exec")
+                        icon = self._parse_desktop_value(content, "Icon")
+                        
+                        if name and exe:
+                            self.games.append(Game(
+                                name=name,
+                                exe_path=exe,
+                                source="Native",
+                                icon=icon
+                            ))
+                except Exception:
+                    pass
     
-    def toggle_hidden(self):
-        """Toggle hidden status for selected game"""
-        if self.selected_game:
-            current_hidden = self.selected_game.get("hidden", False)
-            self.library.set_hidden(self.selected_game.get("id"), not current_hidden)
-            self.refresh_game_list()
-    
-    def filter_by_platform(self, platform: str):
-        """Filter games by platform"""
-        self.current_platform = platform
+    def scan_sdcard(self):
+        """Scan SD cards and external drives for games"""
+        sd_paths = self._detect_removable_drives()
         
-        platform_names = {
-            "all": "All Games",
-            "steam": "Steam Games",
-            "lutris": "Lutris Games",
-            "heroic_epic": "Epic Games (Heroic)",
-            "heroic_gog": "GOG Games (Heroic)",
-            "native": "Native Linux Games"
+        for mount_point in sd_paths:
+            self._scan_steam_library(mount_point)
+            self._scan_portable_games(mount_point)
+    
+    def _detect_removable_drives(self):
+        """Detect mounted SD cards and USB drives"""
+        removable = []
+        
+        media_paths = [
+            Path("/run/media") / os.environ.get("USER", ""),
+            Path("/media") / os.environ.get("USER", ""),
+            Path("/media"),
+            Path("/mnt")
+        ]
+        
+        for media_path in media_paths:
+            if media_path.exists():
+                for drive in media_path.iterdir():
+                    if drive.is_dir() and drive.name not in ["cdrom", "floppy"]:
+                        removable.append(drive)
+        
+        return removable
+    
+    def _scan_steam_library(self, mount_point):
+        """Scan for Steam library on external drive"""
+        steam_paths = [
+            mount_point / "SteamLibrary/steamapps",
+            mount_point / "steam/steamapps",
+            mount_point / "Steam/steamapps"
+        ]
+        
+        for steam_path in steam_paths:
+            if steam_path.exists():
+                for acf in steam_path.glob("appmanifest_*.acf"):
+                    try:
+                        with open(acf) as f:
+                            content = f.read()
+                        
+                        appid = self._parse_vdf_value(content, "appid")
+                        name = self._parse_vdf_value(content, "name")
+                        installdir = self._parse_vdf_value(content, "installdir")
+                        
+                        if name and installdir:
+                            game_path = steam_path / "common" / installdir
+                            self.games.append(Game(
+                                name=f"{name} [SD]",
+                                exe_path=str(game_path),
+                                source="Steam (SD Card)",
+                                appid=appid
+                            ))
+                    except Exception:
+                        pass
+    
+    def _scan_portable_games(self, mount_point):
+        """Scan for portable games on external drive"""
+        game_folders = [
+            mount_point / "Games",
+            mount_point / "PortableGames",
+            mount_point / "ROMs"
+        ]
+        
+        for folder in game_folders:
+            if folder.exists():
+                for item in folder.iterdir():
+                    if item.is_dir():
+                        exe_files = list(item.glob("*.sh")) + list(item.glob("*.AppImage"))
+                        for exe in exe_files:
+                            self.games.append(Game(
+                                name=f"{item.name} [SD]",
+                                exe_path=str(exe),
+                                source="Portable (SD Card)"
+                            ))
+    
+    def scan_all(self):
+        self.games = []
+        self.scan_steam()
+        self.scan_heroic()
+        self.scan_lutris()
+        self.scan_gog()
+        self.scan_native()
+        self.scan_sdcard()
+        return self.games
+    
+    def _parse_vdf_value(self, content, key):
+        import re
+        match = re.search(rf'"{key}"\s+"([^"]+)"', content, re.IGNORECASE)
+        return match.group(1) if match else None
+    
+    def _parse_desktop_value(self, content, key):
+        for line in content.split("\n"):
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+        return None
+
+class AegisGameLibrary(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Aegis Game Library")
+        self.set_default_size(1200, 800)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        
+        self.games = []
+        self.scanner = GameScanner()
+        self.current_filter = "all"
+        self.running_game = None
+        self.optimization_settings = OptimizationSettings()
+        
+        self.setup_css()
+        self.setup_ui()
+        self.load_games()
+    
+    def setup_css(self):
+        css = b"""
+        window {
+            background-color: #0f172a;
         }
+        .sidebar {
+            background-color: #1e293b;
+        }
+        .game-card {
+            background-color: #1e293b;
+            border-radius: 8px;
+            padding: 10px;
+        }
+        .game-card:hover {
+            background-color: #334155;
+        }
+        .game-title {
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .game-source {
+            color: #64748b;
+            font-size: 11px;
+        }
+        .play-button {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 20px;
+            font-weight: bold;
+        }
+        .play-button:hover {
+            background: linear-gradient(135deg, #16a34a, #15803d);
+        }
+        .header-bar {
+            background-color: #0f172a;
+            border-bottom: 1px solid #334155;
+        }
+        .search-entry {
+            background-color: #1e293b;
+            color: white;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 8px;
+        }
+        .filter-button {
+            background-color: transparent;
+            color: #94a3b8;
+            border: none;
+            padding: 10px 15px;
+        }
+        .filter-button:checked {
+            color: #3b82f6;
+            border-bottom: 2px solid #3b82f6;
+        }
+        .stats-label {
+            color: #64748b;
+            font-size: 12px;
+        }
+        .settings-button {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 15px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .settings-button:hover {
+            background: linear-gradient(135deg, #4f46e5, #4338ca);
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+    
+    def setup_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main_box)
         
-        self.list_title.config(text=platform_names.get(platform, "Games"))
-        self.refresh_game_list()
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        header.set_margin_start(20)
+        header.set_margin_end(20)
+        header.set_margin_top(15)
+        header.set_margin_bottom(15)
+        header.get_style_context().add_class("header-bar")
+        
+        logo = Gtk.Label(label="AEGIS GAME LIBRARY")
+        logo.set_markup('<span font="18" weight="bold" foreground="#3b82f6">AEGIS</span> <span font="18" foreground="white">GAME LIBRARY</span>')
+        header.pack_start(logo, False, False, 0)
+        
+        self.search = Gtk.Entry()
+        self.search.set_placeholder_text("Search games...")
+        self.search.set_width_chars(30)
+        self.search.get_style_context().add_class("search-entry")
+        self.search.connect("changed", self.on_search_changed)
+        header.pack_start(self.search, True, True, 50)
+        
+        settings_btn = Gtk.Button(label="⚙️ Settings")
+        settings_btn.get_style_context().add_class("settings-button")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        header.pack_end(settings_btn, False, False, 0)
+        
+        scan_btn = Gtk.Button(label="Scan Games")
+        scan_btn.connect("clicked", self.on_scan_clicked)
+        header.pack_end(scan_btn, False, False, 0)
+        
+        main_box.pack_start(header, False, False, 0)
+        
+        filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        filter_box.set_margin_start(20)
+        filter_box.set_margin_bottom(10)
+        
+        filters = [("All", "all"), ("Steam", "Steam"), ("Epic/Heroic", "Epic"), 
+                   ("Lutris", "Lutris"), ("GOG", "GOG"), ("Native", "Native")]
+        
+        self.filter_buttons = {}
+        for label, source in filters:
+            btn = Gtk.ToggleButton(label=label)
+            btn.get_style_context().add_class("filter-button")
+            btn.connect("toggled", self.on_filter_toggled, source)
+            filter_box.pack_start(btn, False, False, 0)
+            self.filter_buttons[source] = btn
+        
+        self.filter_buttons["all"].set_active(True)
+        
+        self.stats_label = Gtk.Label()
+        self.stats_label.get_style_context().add_class("stats-label")
+        filter_box.pack_end(self.stats_label, False, False, 20)
+        
+        main_box.pack_start(filter_box, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        self.games_grid = Gtk.FlowBox()
+        self.games_grid.set_valign(Gtk.Align.START)
+        self.games_grid.set_max_children_per_line(6)
+        self.games_grid.set_min_children_per_line(2)
+        self.games_grid.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.games_grid.set_homogeneous(True)
+        self.games_grid.set_column_spacing(15)
+        self.games_grid.set_row_spacing(15)
+        self.games_grid.set_margin_start(20)
+        self.games_grid.set_margin_end(20)
+        self.games_grid.set_margin_bottom(20)
+        
+        scroll.add(self.games_grid)
+        main_box.pack_start(scroll, True, True, 0)
     
-    def do_search(self):
-        """Perform search"""
-        self.refresh_game_list()
+    def load_games(self):
+        cache_file = CACHE_DIR / "games.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file) as f:
+                    data = json.load(f)
+                self.games = [Game.from_dict(g) for g in data]
+                self.refresh_grid()
+            except Exception:
+                self.scan_games()
+        else:
+            self.scan_games()
     
-    def clear_search(self):
-        """Clear search"""
-        self.search_var.set("Search games...")
-        self.current_platform = "all"
-        self.list_title.config(text="All Games")
-        self.refresh_game_list()
-    
-    def show_favorites(self):
-        """Show favorite games"""
-        games = self.library.get_games(favorites_only=True)
-        self.list_title.config(text="⭐ Favorite Games")
-        self.refresh_game_list(games)
+    def save_games(self):
+        cache_file = CACHE_DIR / "games.json"
+        with open(cache_file, "w") as f:
+            json.dump([g.to_dict() for g in self.games], f, indent=2)
     
     def scan_games(self):
-        """Scan for games"""
         def do_scan():
-            self.library.scan_all_games(callback=lambda msg: None)
-            self.root.after(0, self.refresh_game_list)
-            self.root.after(0, lambda: messagebox.showinfo("Scan Complete", "Game library scan completed!"))
+            self.games = self.scanner.scan_all()
+            GLib.idle_add(self.on_scan_complete)
         
-        messagebox.showinfo("Scanning", "Scanning for games... This may take a moment.")
-        thread = threading.Thread(target=do_scan, daemon=True)
-        thread.start()
+        threading.Thread(target=do_scan, daemon=True).start()
     
-    def show_stats(self):
-        """Show library statistics"""
-        stats = self.library.get_stats()
-        playtime = self.library.get_playtime()
-        
-        stats_window = tk.Toplevel(self.root)
-        stats_window.title("Library Statistics")
-        stats_window.geometry("500x600")
-        stats_window.configure(bg='#1a1a2e')
-        
-        title = tk.Label(stats_window, text="📊 Library Statistics", 
-                        font=('Arial', 16, 'bold'), bg='#1a1a2e', fg='#00d4ff')
-        title.pack(pady=20)
-        
-        stats_frame = tk.Frame(stats_window, bg='#1a1a2e')
-        stats_frame.pack(fill='both', expand=True, padx=20)
-        
-        stats_text = f"""
-📦 Total Games: {stats['total_games']}
-💾 Total Install Size: {stats['total_install_size_formatted']}
-⭐ Favorites: {stats['favorites_count']}
-🎮 Games Played: {stats['played_count']}
-📵 Never Played: {stats['never_played_count']}
-⏱️ Total Playtime: {stats['total_playtime']}
-
-📋 Games by Platform:
-"""
-        
-        for platform, count in stats['platform_counts'].items():
-            stats_text += f"   • {platform.title()}: {count}\n"
-        
-        if playtime.get("games"):
-            stats_text += "\n🏆 Most Played Games:\n"
-            for i, (gid, gdata) in enumerate(list(playtime["games"].items())[:5]):
-                stats_text += f"   {i+1}. {gdata['name']}: {gdata['total_formatted']}\n"
-        
-        stats_text += f"\n🔄 Last Scan: {stats.get('last_scan', 'Never')}"
-        
-        stats_label = tk.Label(stats_frame, text=stats_text, 
-                              font=('Arial', 11), bg='#1a1a2e', fg='white',
-                              justify='left', anchor='nw')
-        stats_label.pack(fill='both', expand=True)
-        
-        close_btn = ttk.Button(stats_window, text="Close", command=stats_window.destroy)
-        close_btn.pack(pady=20)
+    def on_scan_complete(self):
+        self.save_games()
+        self.refresh_grid()
     
-    def update_stats_display(self):
-        """Update the stats display in header"""
-        stats = self.library.get_stats()
-        stats_text = f"📦 {stats['total_games']} Games | 💾 {stats['total_install_size_formatted']} | ⏱️ {stats['total_playtime']}"
-        self.stats_label.config(text=stats_text)
-    
-    def run(self):
-        """Run the GUI"""
-        if self.library.config.get("auto_scan_on_start"):
-            if not self.library.config.get("last_scan"):
-                thread = threading.Thread(target=lambda: self.library.scan_all_games(), daemon=True)
-                thread.start()
+    def refresh_grid(self):
+        for child in self.games_grid.get_children():
+            self.games_grid.remove(child)
         
-        self.root.mainloop()
+        search_text = self.search.get_text().lower()
+        filtered = []
+        
+        for game in self.games:
+            if search_text and search_text not in game.name.lower():
+                continue
+            if self.current_filter != "all" and self.current_filter not in game.source:
+                continue
+            filtered.append(game)
+        
+        filtered.sort(key=lambda g: g.name.lower())
+        
+        for game in filtered:
+            card = self.create_game_card(game)
+            self.games_grid.add(card)
+        
+        self.games_grid.show_all()
+        self.stats_label.set_text(f"{len(filtered)} games")
+    
+    def create_game_card(self, game):
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.get_style_context().add_class("game-card")
+        card.set_size_request(180, 220)
+        
+        icon_box = Gtk.Box()
+        icon_box.set_size_request(160, 120)
+        icon_box.set_halign(Gtk.Align.CENTER)
+        
+        icon_label = Gtk.Label()
+        icon_label.set_markup(f'<span font="48" foreground="#3b82f6">🎮</span>')
+        icon_box.add(icon_label)
+        card.pack_start(icon_box, False, False, 0)
+        
+        title = Gtk.Label(label=game.name)
+        title.get_style_context().add_class("game-title")
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_max_width_chars(20)
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        source = Gtk.Label(label=game.source)
+        source.get_style_context().add_class("game-source")
+        source.set_halign(Gtk.Align.START)
+        card.pack_start(source, False, False, 0)
+        
+        play_btn = Gtk.Button(label="▶ PLAY")
+        play_btn.get_style_context().add_class("play-button")
+        play_btn.connect("clicked", self.on_play_clicked, game)
+        card.pack_end(play_btn, False, False, 5)
+        
+        return card
+    
+    def on_play_clicked(self, button, game):
+        self.launch_game(game)
+    
+    def launch_game(self, game):
+        profile = GameProfile(game.appid or game.name.lower().replace(" ", "_"))
+        env = profile.get_env()
+        
+        optimization_env = self.optimization_settings.apply_optimizations()
+        env.update(optimization_env)
+        
+        subprocess.run(["systemctl", "--user", "start", "aegis-gaming-mode.target"], 
+                       capture_output=True)
+        
+        if game.source == "Steam" and game.appid:
+            cmd = ["steam", f"steam://rungameid/{game.appid}"]
+        elif game.source == "Epic/Heroic":
+            cmd = ["heroic", "--no-gui", game.appid or game.exe_path]
+        elif os.path.isfile(game.exe_path):
+            cmd = [game.exe_path]
+        else:
+            cmd = ["xdg-open", game.exe_path]
+        
+        try:
+            if profile.profile.get("gamemode"):
+                cmd = ["gamemoderun"] + cmd
+            
+            subprocess.Popen(cmd, env=env, start_new_session=True)
+            
+            game.last_played = datetime.now().isoformat()
+            self.save_games()
+        except Exception as e:
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                flags=0,
+                message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.OK,
+                text=f"Failed to launch game: {e}"
+            )
+            dialog.run()
+            dialog.destroy()
+    
+    def on_search_changed(self, entry):
+        self.refresh_grid()
+    
+    def on_filter_toggled(self, button, source):
+        if button.get_active():
+            for s, btn in self.filter_buttons.items():
+                if s != source:
+                    btn.set_active(False)
+            self.current_filter = source
+            self.refresh_grid()
+    
+    def on_settings_clicked(self, button):
+        dialog = OptimizationSettingsDialog(self, self.optimization_settings)
+        dialog.run()
+        dialog.destroy()
+        self.optimization_settings = OptimizationSettings()
+    
+    def on_scan_clicked(self, button):
+        button.set_sensitive(False)
+        button.set_label("Scanning...")
+        
+        def do_scan():
+            self.games = self.scanner.scan_all()
+            GLib.idle_add(finish_scan)
+        
+        def finish_scan():
+            self.save_games()
+            self.refresh_grid()
+            button.set_sensitive(True)
+            button.set_label("Scan Games")
+        
+        threading.Thread(target=do_scan, daemon=True).start()
 
-
-def cli_main():
-    """Command-line interface"""
-    parser = argparse.ArgumentParser(
-        description="Aegis Game Library - Unified Game Launcher",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  aegis-game-library --scan                    Scan for installed games
-  aegis-game-library --list                    List all games
-  aegis-game-library --list --platform steam   List Steam games only
-  aegis-game-library --launch steam_12345      Launch a specific game
-  aegis-game-library --stats                   Show library statistics
-  aegis-game-library                           Launch GUI mode
+class ConsoleMode(Gtk.Window):
+    """Fullscreen console mode with controller support (like Steam Big Picture)"""
+    
+    def __init__(self, games):
+        super().__init__(title="Aegis Game Library - Console Mode")
+        self.games = games
+        self.selected_index = 0
+        self.controller_thread = None
+        self.running = True
+        self.optimization_settings = OptimizationSettings()
+        
+        self.fullscreen()
+        self.set_decorated(False)
+        self.apply_console_css()
+        self.setup_console_ui()
+        self.setup_keyboard_controls()
+        self.start_controller_input()
+        
+        self.connect("destroy", self.on_exit)
+    
+    def apply_console_css(self):
+        css = """
+        .console-bg {
+            background: linear-gradient(180deg, #0a0e1a 0%, #1a1f2e 50%, #0f1320 100%);
+        }
+        .console-title {
+            font-size: 48px;
+            font-weight: bold;
+            color: #3b82f6;
+            margin: 40px;
+        }
+        .game-tile {
+            background: linear-gradient(135deg, #1e293b, #334155);
+            border-radius: 16px;
+            border: 3px solid transparent;
+            padding: 20px;
+            min-width: 280px;
+            min-height: 200px;
+            margin: 15px;
+        }
+        .game-tile:selected, .game-tile.selected {
+            border-color: #3b82f6;
+            background: linear-gradient(135deg, #1e3a5f, #2d4a6f);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+        }
+        .game-tile-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+        }
+        .game-tile-source {
+            font-size: 16px;
+            color: #94a3b8;
+        }
+        .console-hint {
+            font-size: 18px;
+            color: #64748b;
+            margin: 20px;
+        }
+        .play-hint {
+            font-size: 32px;
+            color: #22c55e;
+            font-weight: bold;
+        }
         """
-    )
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
     
-    parser.add_argument('--scan', action='store_true', help='Scan for installed games')
-    parser.add_argument('--list', action='store_true', help='List all games')
-    parser.add_argument('--launch', metavar='GAME_ID', help='Launch a game by ID')
-    parser.add_argument('--stats', action='store_true', help='Show library statistics')
-    parser.add_argument('--playtime', metavar='GAME_ID', nargs='?', const='all', 
-                       help='Show playtime (optionally for specific game)')
-    parser.add_argument('--platform', choices=['steam', 'lutris', 'heroic_epic', 'heroic_gog', 'native'],
-                       help='Filter by platform (use with --list)')
-    parser.add_argument('--search', metavar='TERM', help='Search games by name')
-    parser.add_argument('--favorites', action='store_true', help='Show only favorites')
-    parser.add_argument('--json', action='store_true', help='Output in JSON format')
-    parser.add_argument('--gui', action='store_true', help='Launch GUI mode')
-    parser.add_argument('--version', action='version', version='Aegis Game Library 1.0.0')
+    def setup_console_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.get_style_context().add_class("console-bg")
+        self.add(main_box)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.set_margin_top(30)
+        header.set_margin_start(50)
+        header.set_margin_end(50)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="36" weight="bold" foreground="#3b82f6">AEGIS</span> <span font="36" foreground="white">GAME LIBRARY</span>')
+        header.pack_start(title, False, False, 0)
+        
+        exit_hint = Gtk.Label()
+        exit_hint.set_markup('<span foreground="#64748b">Press ESC or SELECT+START to exit</span>')
+        header.pack_end(exit_hint, False, False, 0)
+        
+        main_box.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        self.games_box = Gtk.FlowBox()
+        self.games_box.set_valign(Gtk.Align.START)
+        self.games_box.set_max_children_per_line(5)
+        self.games_box.set_min_children_per_line(3)
+        self.games_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.games_box.set_homogeneous(True)
+        self.games_box.set_column_spacing(20)
+        self.games_box.set_row_spacing(20)
+        self.games_box.set_margin_start(50)
+        self.games_box.set_margin_end(50)
+        self.games_box.set_margin_top(30)
+        self.games_box.set_margin_bottom(50)
+        
+        self.game_tiles = []
+        for i, game in enumerate(self.games):
+            tile = self.create_game_tile(game, i)
+            self.games_box.add(tile)
+            self.game_tiles.append(tile)
+        
+        scroll.add(self.games_box)
+        main_box.pack_start(scroll, True, True, 0)
+        
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=50)
+        footer.set_halign(Gtk.Align.CENTER)
+        footer.set_margin_bottom(30)
+        
+        hints = [
+            ("D-Pad / Arrow Keys", "Navigate"),
+            ("A / Enter", "Play Game"),
+            ("B / Backspace", "Back"),
+            ("Y / F", "Favorite"),
+            ("Start / ESC", "Exit")
+        ]
+        
+        for button, action in hints:
+            hint_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            btn_label = Gtk.Label()
+            btn_label.set_markup(f'<span foreground="#3b82f6" font="14">[{button}]</span>')
+            action_label = Gtk.Label()
+            action_label.set_markup(f'<span foreground="#94a3b8" font="14">{action}</span>')
+            hint_box.pack_start(btn_label, False, False, 0)
+            hint_box.pack_start(action_label, False, False, 0)
+            footer.pack_start(hint_box, False, False, 0)
+        
+        main_box.pack_end(footer, False, False, 0)
+        
+        if self.game_tiles:
+            self.update_selection(0)
     
+    def create_game_tile(self, game, index):
+        tile = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        tile.get_style_context().add_class("game-tile")
+        tile.set_size_request(280, 200)
+        
+        icon = Gtk.Label()
+        icon.set_markup('<span font="64">🎮</span>')
+        tile.pack_start(icon, True, True, 0)
+        
+        name = Gtk.Label(label=game.name[:25] + "..." if len(game.name) > 25 else game.name)
+        name.get_style_context().add_class("game-tile-title")
+        tile.pack_start(name, False, False, 0)
+        
+        source = Gtk.Label(label=game.source)
+        source.get_style_context().add_class("game-tile-source")
+        tile.pack_start(source, False, False, 0)
+        
+        tile.game = game
+        tile.index = index
+        
+        return tile
+    
+    def update_selection(self, new_index):
+        if not self.game_tiles:
+            return
+        
+        new_index = max(0, min(new_index, len(self.game_tiles) - 1))
+        
+        for tile in self.game_tiles:
+            tile.get_style_context().remove_class("selected")
+        
+        self.selected_index = new_index
+        self.game_tiles[new_index].get_style_context().add_class("selected")
+        
+        child = self.games_box.get_child_at_index(new_index)
+        if child:
+            self.games_box.select_child(child)
+            child.grab_focus()
+    
+    def setup_keyboard_controls(self):
+        self.connect("key-press-event", self.on_key_press)
+    
+    def on_key_press(self, widget, event):
+        key = Gdk.keyval_name(event.keyval)
+        
+        cols = 5
+        
+        if key in ["Up", "w", "W"]:
+            self.update_selection(self.selected_index - cols)
+        elif key in ["Down", "s", "S"]:
+            self.update_selection(self.selected_index + cols)
+        elif key in ["Left", "a", "A"]:
+            self.update_selection(self.selected_index - 1)
+        elif key in ["Right", "d", "D"]:
+            self.update_selection(self.selected_index + 1)
+        elif key in ["Return", "space"]:
+            self.launch_selected()
+        elif key == "Escape":
+            self.exit_console_mode()
+        elif key in ["f", "F"]:
+            pass
+        
+        return True
+    
+    def start_controller_input(self):
+        """Start controller input thread using evdev"""
+        def controller_loop():
+            try:
+                import evdev
+                from evdev import ecodes
+                
+                devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+                gamepads = [d for d in devices if ecodes.EV_ABS in d.capabilities()]
+                
+                if not gamepads:
+                    return
+                
+                gamepad = gamepads[0]
+                
+                select_pressed = False
+                start_pressed = False
+                
+                for event in gamepad.read_loop():
+                    if not self.running:
+                        break
+                    
+                    if event.type == ecodes.EV_KEY:
+                        if event.code == ecodes.BTN_SOUTH and event.value == 1:
+                            GLib.idle_add(self.launch_selected)
+                        elif event.code == ecodes.BTN_EAST and event.value == 1:
+                            GLib.idle_add(self.exit_console_mode)
+                        elif event.code == ecodes.BTN_SELECT:
+                            select_pressed = event.value == 1
+                        elif event.code == ecodes.BTN_START:
+                            start_pressed = event.value == 1
+                        
+                        if select_pressed and start_pressed:
+                            GLib.idle_add(self.exit_console_mode)
+                    
+                    elif event.type == ecodes.EV_ABS:
+                        if event.code == ecodes.ABS_HAT0Y:
+                            if event.value == -1:
+                                GLib.idle_add(self.update_selection, self.selected_index - 5)
+                            elif event.value == 1:
+                                GLib.idle_add(self.update_selection, self.selected_index + 5)
+                        elif event.code == ecodes.ABS_HAT0X:
+                            if event.value == -1:
+                                GLib.idle_add(self.update_selection, self.selected_index - 1)
+                            elif event.value == 1:
+                                GLib.idle_add(self.update_selection, self.selected_index + 1)
+            except ImportError:
+                pass
+            except Exception:
+                pass
+        
+        self.controller_thread = threading.Thread(target=controller_loop, daemon=True)
+        self.controller_thread.start()
+    
+    def launch_selected(self):
+        if self.game_tiles and 0 <= self.selected_index < len(self.game_tiles):
+            game = self.game_tiles[self.selected_index].game
+            profile = GameProfile(game.appid or game.name.lower().replace(" ", "_"))
+            env = profile.get_env()
+            
+            optimization_env = self.optimization_settings.apply_optimizations()
+            env.update(optimization_env)
+            
+            subprocess.run(["systemctl", "--user", "start", "aegis-gaming-mode.target"], 
+                           capture_output=True)
+            
+            if game.source.startswith("Steam") and game.appid:
+                cmd = ["steam", f"steam://rungameid/{game.appid}"]
+            elif "Heroic" in game.source or "Epic" in game.source:
+                cmd = ["heroic", "--no-gui", game.appid or game.exe_path]
+            elif os.path.isfile(game.exe_path):
+                cmd = [game.exe_path]
+            else:
+                cmd = ["xdg-open", game.exe_path]
+            
+            try:
+                if profile.profile.get("gamemode"):
+                    cmd = ["gamemoderun"] + cmd
+                subprocess.Popen(cmd, env=env, start_new_session=True)
+            except Exception as e:
+                print(f"Launch error: {e}")
+    
+    def exit_console_mode(self):
+        self.running = False
+        self.unfullscreen()
+        self.destroy()
+    
+    def on_exit(self, widget):
+        self.running = False
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Aegis Game Library")
+    parser.add_argument("--console", "-c", action="store_true", 
+                        help="Launch in console/fullscreen mode (controller-friendly)")
+    parser.add_argument("--autostart", action="store_true",
+                        help="Enable autostart on boot for console mode")
     args = parser.parse_args()
     
-    if len(sys.argv) == 1 or args.gui:
-        if TKINTER_AVAILABLE:
-            gui = GameLibraryGUI()
-            gui.run()
-        else:
-            print("Error: GUI requires tkinter. Install python3-tk or use CLI mode.")
-            sys.exit(1)
+    if args.autostart:
+        autostart_dir = Path.home() / ".config/autostart"
+        autostart_dir.mkdir(parents=True, exist_ok=True)
+        desktop_entry = autostart_dir / "aegis-game-library-console.desktop"
+        desktop_entry.write_text("""[Desktop Entry]
+Type=Application
+Name=Aegis Game Library (Console Mode)
+Exec=aegis-game-library --console
+Hidden=false
+X-GNOME-Autostart-enabled=true
+""")
+        print("Console mode autostart enabled!")
         return
     
-    library = AegisGameLibrary()
+    scanner = GameScanner()
+    games = scanner.scan_all()
     
-    if args.scan:
-        print("🔍 Scanning for installed games...")
-        results = library.scan_all_games(callback=lambda msg: print(f"   {msg}"))
-        
-        if args.json:
-            print(json.dumps(results, indent=2))
-        else:
-            print(f"\n✅ Scan Complete!")
-            print(f"   Steam: {results['steam']} games")
-            print(f"   Lutris: {results['lutris']} games")
-            print(f"   Heroic: {results['heroic']} games")
-            print(f"   Native: {results['native']} games")
-            print(f"   Total: {results['total']} games")
-            
-            if results['errors']:
-                print(f"\n⚠️  Errors:")
-                for err in results['errors']:
-                    print(f"   - {err}")
-    
-    elif args.list:
-        games = library.get_games(
-            search=args.search,
-            platform=args.platform,
-            favorites_only=args.favorites
-        )
-        
-        if args.json:
-            print(json.dumps(games, indent=2))
-        else:
-            if not games:
-                print("No games found.")
-                return
-            
-            print(f"\n🎮 Game Library ({len(games)} games)")
-            print("=" * 80)
-            
-            platform_icons = {
-                "steam": "🎮",
-                "lutris": "🍷",
-                "heroic_epic": "🏆",
-                "heroic_gog": "🎯",
-                "native": "🐧"
-            }
-            
-            for game in games:
-                icon = platform_icons.get(game.get("platform", ""), "📦")
-                fav = "⭐" if game.get("favorite") else "  "
-                size = library.format_size(game.get("install_size", 0)) if game.get("install_size", 0) > 0 else "N/A"
-                
-                print(f"{icon} {fav} {game.get('name', 'Unknown'):<40} [{game.get('platform', 'unknown'):<12}] {size:>10}")
-                print(f"      ID: {game.get('id')}")
-    
-    elif args.launch:
-        game = library.get_game(args.launch)
-        
-        if not game:
-            games = library.get_games(search=args.launch)
-            if len(games) == 1:
-                game = games[0]
-            elif len(games) > 1:
-                print(f"Multiple games match '{args.launch}':")
-                for g in games:
-                    print(f"  - {g.get('id')}: {g.get('name')}")
-                print("Please specify the exact game ID.")
-                sys.exit(1)
-            else:
-                print(f"Game not found: {args.launch}")
-                sys.exit(1)
-        
-        print(f"🚀 Launching {game.get('name')}...")
-        result = library.launch_game(game.get("id"))
-        
-        if result.get("success"):
-            print("✅ Game launched successfully!")
-        else:
-            print(f"❌ Failed to launch: {result.get('error', 'Unknown error')}")
-            sys.exit(1)
-    
-    elif args.stats:
-        stats = library.get_stats()
-        
-        if args.json:
-            print(json.dumps(stats, indent=2))
-        else:
-            print("\n📊 Library Statistics")
-            print("=" * 50)
-            print(f"📦 Total Games: {stats['total_games']}")
-            print(f"💾 Total Install Size: {stats['total_install_size_formatted']}")
-            print(f"⭐ Favorites: {stats['favorites_count']}")
-            print(f"🎮 Games Played: {stats['played_count']}")
-            print(f"📵 Never Played: {stats['never_played_count']}")
-            print(f"⏱️ Total Playtime: {stats['total_playtime']}")
-            
-            print("\n📋 Games by Platform:")
-            for platform, count in stats['platform_counts'].items():
-                print(f"   • {platform.title()}: {count}")
-            
-            print(f"\n🔄 Last Scan: {stats.get('last_scan', 'Never')}")
-    
-    elif args.playtime:
-        if args.playtime == 'all':
-            playtime = library.get_playtime()
-        else:
-            playtime = library.get_playtime(args.playtime)
-        
-        if args.json:
-            print(json.dumps(playtime, indent=2))
-        else:
-            if args.playtime == 'all':
-                print("\n⏱️ Playtime Statistics")
-                print("=" * 50)
-                print(f"Total Games Played: {playtime.get('total_games_played', 0)}")
-                print(f"Total Playtime: {playtime.get('total_playtime_formatted', '0h 0m')}")
-                
-                if playtime.get("games"):
-                    print("\n🏆 Games by Playtime:")
-                    for gid, gdata in list(playtime["games"].items())[:20]:
-                        print(f"   • {gdata['name']}: {gdata['total_formatted']}")
-            else:
-                game = library.get_game(args.playtime)
-                game_name = game.get("name", args.playtime) if game else args.playtime
-                
-                print(f"\n⏱️ Playtime for {game_name}")
-                print("=" * 50)
-                print(f"Total Time: {playtime.get('total_formatted', '0h 0m')}")
-                print(f"Sessions: {playtime.get('session_count', 0)}")
-    
+    if args.console:
+        app = ConsoleMode(games)
     else:
-        parser.print_help()
-
+        app = AegisGameLibrary()
+    
+    app.connect("destroy", Gtk.main_quit)
+    app.show_all()
+    Gtk.main()
 
 if __name__ == "__main__":
-    cli_main()
+    main()
