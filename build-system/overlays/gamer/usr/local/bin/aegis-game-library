@@ -25,6 +25,77 @@ CACHE_DIR = Path.home() / ".cache" / "aegis-games"
 PROFILES_DIR = Path("/etc/aegis/game-profiles")
 SYSTEM_PROFILES = Path("/usr/share/aegis/game-profiles")
 OPTIMIZATION_CONFIG = CONFIG_DIR / "optimization.json"
+APP_STATE_FILE = CONFIG_DIR / "app_state.json"
+
+APP_VERSION = "1.2.0"
+CHANGELOG = [
+    {
+        "version": "1.2.0",
+        "date": "December 2025",
+        "changes": [
+            "New 4-tab optimization settings panel",
+            "Quick Optimize button for one-click gaming setup",
+            "11 integrated system services support",
+            "Spatial Audio with 5.1/7.1/HRTF modes",
+            "AI Noise Suppression for voice chat",
+            "Frame Generation (FSR 3/AFMF/DLSS FG)",
+            "StreamForge Replay Buffer integration",
+            "NDI dual-PC streaming support"
+        ]
+    },
+    {
+        "version": "1.1.0",
+        "date": "November 2025",
+        "changes": [
+            "SD card and external drive scanning",
+            "Console Mode with controller support",
+            "Per-game optimization profiles"
+        ]
+    },
+    {
+        "version": "1.0.0",
+        "date": "October 2025",
+        "changes": [
+            "Initial release",
+            "Steam, Lutris, Heroic, GOG scanning",
+            "Game profile system"
+        ]
+    }
+]
+
+class AppState:
+    def __init__(self):
+        self.state = self.load()
+    
+    def load(self):
+        if APP_STATE_FILE.exists():
+            try:
+                with open(APP_STATE_FILE) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"first_run": True, "last_version": None, "tips_dismissed": []}
+    
+    def save(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(APP_STATE_FILE, "w") as f:
+            json.dump(self.state, f, indent=2)
+    
+    def is_first_run(self):
+        return self.state.get("first_run", True)
+    
+    def mark_first_run_complete(self):
+        self.state["first_run"] = False
+        self.state["last_version"] = APP_VERSION
+        self.save()
+    
+    def needs_update_prompt(self):
+        last_version = self.state.get("last_version")
+        return last_version is not None and last_version != APP_VERSION
+    
+    def mark_version_seen(self):
+        self.state["last_version"] = APP_VERSION
+        self.save()
 
 class OptimizationSettings:
     DEFAULT_SETTINGS = {
@@ -630,6 +701,304 @@ class OptimizationSettingsDialog(Gtk.Dialog):
         self.destroy()
 
 
+class WelcomeDialog(Gtk.Dialog):
+    def __init__(self, parent, on_complete):
+        super().__init__(title="Welcome to Aegis Game Library", transient_for=parent, modal=True)
+        self.on_complete = on_complete
+        self.set_default_size(650, 500)
+        self.add_button("Get Started!", Gtk.ResponseType.OK)
+        
+        content = self.get_content_area()
+        content.set_margin_start(30)
+        content.set_margin_end(30)
+        content.set_margin_top(20)
+        content.set_margin_bottom(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="24" weight="bold" foreground="#3b82f6">Welcome to Aegis Game Library!</span>')
+        title.set_margin_bottom(20)
+        content.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label()
+        subtitle.set_markup('<span font="14" foreground="#94a3b8">Your unified gaming hub with powerful optimizations</span>')
+        subtitle.set_margin_bottom(25)
+        content.pack_start(subtitle, False, False, 0)
+        
+        features = [
+            ("🎮", "All Your Games in One Place", "Steam, Epic, GOG, Lutris, and native games - all unified"),
+            ("⚡", "11 Gaming Optimization Services", "RAM Guardian, Latency FastPath, Audio Zero-Latency, and more"),
+            ("🎬", "StreamForge Integration", "Replay buffer, NDI streaming, and multi-track recording"),
+            ("🔊", "Spatial Audio & Noise Suppression", "5.1/7.1/HRTF surround and AI noise cancellation"),
+            ("🖥️", "Display Optimizer", "VRR, HDR, Frame Generation (FSR 3/AFMF/DLSS FG)"),
+            ("⚙️", "One-Click Quick Optimize", "Apply recommended gaming settings instantly")
+        ]
+        
+        for emoji, title_text, desc in features:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+            row.set_margin_bottom(12)
+            
+            icon_label = Gtk.Label()
+            icon_label.set_markup(f'<span font="22">{emoji}</span>')
+            icon_label.set_size_request(40, -1)
+            row.pack_start(icon_label, False, False, 0)
+            
+            text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            
+            feature_title = Gtk.Label()
+            feature_title.set_markup(f'<span font="12" weight="bold" foreground="white">{title_text}</span>')
+            feature_title.set_halign(Gtk.Align.START)
+            text_box.pack_start(feature_title, False, False, 0)
+            
+            feature_desc = Gtk.Label()
+            feature_desc.set_markup(f'<span font="11" foreground="#64748b">{desc}</span>')
+            feature_desc.set_halign(Gtk.Align.START)
+            text_box.pack_start(feature_desc, False, False, 0)
+            
+            row.pack_start(text_box, True, True, 0)
+            content.pack_start(row, False, False, 0)
+        
+        tip_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        tip_box.set_margin_top(20)
+        
+        tip_icon = Gtk.Label()
+        tip_icon.set_markup('<span font="16" foreground="#f59e0b">💡</span>')
+        tip_box.pack_start(tip_icon, False, False, 0)
+        
+        tip_text = Gtk.Label()
+        tip_text.set_markup('<span font="11" foreground="#f59e0b">Tip: Click the </span><span font="11" weight="bold" foreground="#6366f1">⚙️ Settings</span><span font="11" foreground="#f59e0b"> button to access all optimization features!</span>')
+        tip_text.set_line_wrap(True)
+        tip_box.pack_start(tip_text, True, True, 0)
+        
+        content.pack_start(tip_box, False, False, 0)
+        
+        self.connect("response", self.on_response)
+        self.show_all()
+    
+    def on_response(self, dialog, response):
+        self.on_complete()
+        self.destroy()
+
+
+class WhatsNewDialog(Gtk.Dialog):
+    def __init__(self, parent, on_complete):
+        super().__init__(title="What's New", transient_for=parent, modal=True)
+        self.on_complete = on_complete
+        self.set_default_size(550, 450)
+        self.add_button("Got it!", Gtk.ResponseType.OK)
+        
+        content = self.get_content_area()
+        content.set_margin_start(25)
+        content.set_margin_end(25)
+        content.set_margin_top(20)
+        content.set_margin_bottom(15)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        title = Gtk.Label()
+        title.set_markup(f'<span font="18" weight="bold" foreground="#22c55e">🎉 What\'s New in v{APP_VERSION}</span>')
+        header.pack_start(title, False, False, 0)
+        
+        content.pack_start(header, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_margin_top(15)
+        
+        changes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        
+        for release in CHANGELOG[:2]:
+            version_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            
+            version_header = Gtk.Label()
+            version_header.set_markup(f'<span font="13" weight="bold" foreground="#3b82f6">Version {release["version"]}</span> <span font="11" foreground="#64748b">({release["date"]})</span>')
+            version_header.set_halign(Gtk.Align.START)
+            version_box.pack_start(version_header, False, False, 0)
+            
+            for change in release["changes"]:
+                change_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                
+                bullet = Gtk.Label()
+                bullet.set_markup('<span foreground="#22c55e">✓</span>')
+                change_row.pack_start(bullet, False, False, 0)
+                
+                change_text = Gtk.Label(label=change)
+                change_text.set_halign(Gtk.Align.START)
+                change_text.get_style_context().add_class("change-item")
+                change_row.pack_start(change_text, True, True, 0)
+                
+                version_box.pack_start(change_row, False, False, 0)
+            
+            changes_box.pack_start(version_box, False, False, 0)
+        
+        scroll.add(changes_box)
+        content.pack_start(scroll, True, True, 0)
+        
+        self.connect("response", self.on_response)
+        self.show_all()
+    
+    def on_response(self, dialog, response):
+        self.on_complete()
+        self.destroy()
+
+
+class HelpDialog(Gtk.Dialog):
+    def __init__(self, parent):
+        super().__init__(title="Help & Tips", transient_for=parent, modal=True)
+        self.set_default_size(600, 500)
+        self.add_button("Close", Gtk.ResponseType.CLOSE)
+        
+        content = self.get_content_area()
+        content.set_margin_start(25)
+        content.set_margin_end(25)
+        content.set_margin_top(20)
+        content.set_margin_bottom(15)
+        
+        notebook = Gtk.Notebook()
+        notebook.set_tab_pos(Gtk.PositionType.TOP)
+        
+        notebook.append_page(self.create_quick_start_tab(), Gtk.Label(label="Quick Start"))
+        notebook.append_page(self.create_features_tab(), Gtk.Label(label="Features"))
+        notebook.append_page(self.create_shortcuts_tab(), Gtk.Label(label="Shortcuts"))
+        notebook.append_page(self.create_changelog_tab(), Gtk.Label(label="Changelog"))
+        
+        content.pack_start(notebook, True, True, 0)
+        self.show_all()
+    
+    def create_quick_start_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        steps = [
+            ("1️⃣", "Scan Your Games", "Click 'Scan Games' to find all installed games from Steam, Epic, GOG, Lutris, and more."),
+            ("2️⃣", "Quick Optimize", "Open Settings → Click 'Quick Optimize' to enable recommended gaming optimizations."),
+            ("3️⃣", "Play!", "Click the PLAY button on any game card to launch with optimizations applied."),
+            ("4️⃣", "Fine-Tune", "Adjust individual settings in the Settings panel for your specific needs.")
+        ]
+        
+        for emoji, title, desc in steps:
+            self._add_help_row(box, emoji, title, desc)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_features_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        features = [
+            ("⚡", "RAM Guardian", "Automatically clears memory caches for more game RAM"),
+            ("🎯", "Input Optimizer", "8000Hz polling and flat mouse acceleration"),
+            ("🖥️", "Display Optimizer", "VRR, HDR, and Frame Generation support"),
+            ("🔊", "Audio Zero-Latency", "2.7ms audio with spatial sound and noise suppression"),
+            ("🎬", "StreamForge", "Replay buffer and NDI streaming for content creators"),
+            ("🧠", "Kernel Optimizer", "CPU isolation and LAVD scheduler for minimal latency")
+        ]
+        
+        for emoji, title, desc in features:
+            self._add_help_row(box, emoji, title, desc)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_shortcuts_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        shortcuts = [
+            ("F10", "Save Replay Buffer (last 2 minutes)"),
+            ("F12", "Toggle Performance Overlay"),
+            ("Ctrl+S", "Open Settings"),
+            ("Ctrl+R", "Rescan Games"),
+            ("Ctrl+H", "Open Help"),
+            ("F11", "Toggle Console Mode (fullscreen)")
+        ]
+        
+        for key, action in shortcuts:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+            
+            key_label = Gtk.Label()
+            key_label.set_markup(f'<span font="11" weight="bold" foreground="#3b82f6">{key}</span>')
+            key_label.set_size_request(80, -1)
+            key_label.set_halign(Gtk.Align.START)
+            row.pack_start(key_label, False, False, 0)
+            
+            action_label = Gtk.Label(label=action)
+            action_label.set_halign(Gtk.Align.START)
+            row.pack_start(action_label, True, True, 0)
+            
+            box.pack_start(row, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def create_changelog_tab(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        for release in CHANGELOG:
+            version_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            
+            header = Gtk.Label()
+            header.set_markup(f'<span font="12" weight="bold" foreground="#3b82f6">v{release["version"]}</span> <span foreground="#64748b">- {release["date"]}</span>')
+            header.set_halign(Gtk.Align.START)
+            version_box.pack_start(header, False, False, 0)
+            
+            for change in release["changes"]:
+                change_label = Gtk.Label()
+                change_label.set_markup(f'<span foreground="#94a3b8">• {change}</span>')
+                change_label.set_halign(Gtk.Align.START)
+                version_box.pack_start(change_label, False, False, 0)
+            
+            box.pack_start(version_box, False, False, 0)
+        
+        scroll.add(box)
+        return scroll
+    
+    def _add_help_row(self, box, emoji, title, desc):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        
+        icon = Gtk.Label()
+        icon.set_markup(f'<span font="18">{emoji}</span>')
+        icon.set_size_request(35, -1)
+        row.pack_start(icon, False, False, 0)
+        
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        title_label = Gtk.Label()
+        title_label.set_markup(f'<span font="11" weight="bold" foreground="white">{title}</span>')
+        title_label.set_halign(Gtk.Align.START)
+        text_box.pack_start(title_label, False, False, 0)
+        
+        desc_label = Gtk.Label()
+        desc_label.set_markup(f'<span font="10" foreground="#64748b">{desc}</span>')
+        desc_label.set_halign(Gtk.Align.START)
+        desc_label.set_line_wrap(True)
+        text_box.pack_start(desc_label, False, False, 0)
+        
+        row.pack_start(text_box, True, True, 0)
+        box.pack_start(row, False, False, 0)
+
+
 class GameProfile:
     def __init__(self, game_id):
         self.game_id = game_id
@@ -950,10 +1319,13 @@ class AegisGameLibrary(Gtk.Window):
         self.current_filter = "all"
         self.running_game = None
         self.optimization_settings = OptimizationSettings()
+        self.app_state = AppState()
         
         self.setup_css()
         self.setup_ui()
         self.load_games()
+        
+        GLib.idle_add(self.check_startup_dialogs)
     
     def setup_css(self):
         css = b"""
@@ -1028,6 +1400,17 @@ class AegisGameLibrary(Gtk.Window):
         .settings-button:hover {
             background: linear-gradient(135deg, #4f46e5, #4338ca);
         }
+        .help-button {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-weight: bold;
+        }
+        .help-button:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+        }
         """
         provider = Gtk.CssProvider()
         provider.load_from_data(css)
@@ -1058,6 +1441,11 @@ class AegisGameLibrary(Gtk.Window):
         self.search.get_style_context().add_class("search-entry")
         self.search.connect("changed", self.on_search_changed)
         header.pack_start(self.search, True, True, 50)
+        
+        help_btn = Gtk.Button(label="❓ Help")
+        help_btn.get_style_context().add_class("help-button")
+        help_btn.connect("clicked", self.on_help_clicked)
+        header.pack_end(help_btn, False, False, 0)
         
         settings_btn = Gtk.Button(label="⚙️ Settings")
         settings_btn.get_style_context().add_class("settings-button")
@@ -1253,6 +1641,18 @@ class AegisGameLibrary(Gtk.Window):
         dialog.run()
         dialog.destroy()
         self.optimization_settings = OptimizationSettings()
+    
+    def on_help_clicked(self, button):
+        dialog = HelpDialog(self)
+        dialog.run()
+        dialog.destroy()
+    
+    def check_startup_dialogs(self):
+        if self.app_state.is_first_run():
+            WelcomeDialog(self, self.app_state.mark_first_run_complete)
+        elif self.app_state.needs_update_prompt():
+            WhatsNewDialog(self, self.app_state.mark_version_seen)
+        return False
     
     def on_scan_clicked(self, button):
         button.set_sensitive(False)
