@@ -10,7 +10,7 @@ if [ -z "${GITHUB_PAT}" ]; then
     echo ""
     echo "To get a token:"
     echo "1. Go to GitHub > Settings > Developer Settings > Personal Access Tokens"
-    echo "2. Create a Fine-grained token or Classic token with 'repo' permissions"
+    echo "2. Create a Classic token with 'repo' permissions"
     exit 1
 fi
 
@@ -23,9 +23,9 @@ if [ -f ".github/workflows/build-aegis-iso.yml" ]; then
     rm -f .github/workflows/build-aegis-iso.yml
 fi
 
-# Configure git to use token (prevents password prompt)
-git config --local credential.helper store
-echo "https://DeQuackDealer:${GITHUB_PAT}@github.com" > ~/.git-credentials
+# Clear any cached credentials that might interfere
+git config --unset-all credential.helper 2>/dev/null || true
+rm -f ~/.git-credentials 2>/dev/null || true
 
 # Set git identity if not set
 git config user.email "dequackdealer@aegis.os" 2>/dev/null || true
@@ -46,22 +46,23 @@ echo "=========================================="
 echo ""
 echo "Pushing to: https://github.com/DeQuackDealer/AegisOS"
 
-# Push using credential helper (no password prompt)
-if git push https://github.com/DeQuackDealer/AegisOS.git main --force; then
+# Use token directly in URL (most reliable method)
+PUSH_URL="https://DeQuackDealer:${GITHUB_PAT}@github.com/DeQuackDealer/AegisOS.git"
+
+if git push "${PUSH_URL}" main --force 2>&1; then
+    echo ""
     echo "Push: SUCCESS"
 else
+    echo ""
     echo "Push: FAILED"
     echo ""
     echo "Troubleshooting:"
-    echo "1. Make sure your token has 'repo' permissions"
-    echo "2. For Fine-grained tokens, ensure it has access to DeQuackDealer/AegisOS"
-    echo "3. Try creating a Classic token instead"
-    rm -f ~/.git-credentials
+    echo "1. Make sure you're using a CLASSIC token (not fine-grained)"
+    echo "2. Token needs 'repo' scope checked"
+    echo "3. Token must not be expired"
+    echo "4. Make sure the repo exists: https://github.com/DeQuackDealer/AegisOS"
     exit 1
 fi
-
-# Clean up credentials file
-rm -f ~/.git-credentials
 
 echo ""
 echo "=========================================="
