@@ -1,0 +1,1190 @@
+#!/usr/bin/env python3
+"""
+Aegis OS OOBE (Out of Box Experience) Wizard
+First-boot setup wizard that runs once after installation
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import subprocess
+import os
+import threading
+import time
+import json
+
+AEGIS_BLUE = "#3b82f6"
+AEGIS_ORANGE = "#ff6600"
+AEGIS_DARK_BG = "#1a1a2e"
+AEGIS_DARKER_BG = "#0f0f1a"
+AEGIS_CARD_BG = "#252540"
+AEGIS_TEXT = "#e0e0e0"
+AEGIS_TEXT_DIM = "#888888"
+AEGIS_GREEN = "#22c55e"
+
+OOBE_MARKER = "/etc/aegis/.oobe-complete"
+
+CSS = f"""
+window {{
+    background-color: {AEGIS_DARK_BG};
+}}
+
+.main-container {{
+    background-color: {AEGIS_DARK_BG};
+}}
+
+.header-bar {{
+    background: linear-gradient(135deg, {AEGIS_DARKER_BG} 0%, {AEGIS_DARK_BG} 100%);
+    border-bottom: 2px solid {AEGIS_BLUE};
+    padding: 20px;
+}}
+
+.title-label {{
+    color: {AEGIS_BLUE};
+    font-size: 32px;
+    font-weight: bold;
+}}
+
+.subtitle-label {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 14px;
+}}
+
+.step-indicator {{
+    background-color: {AEGIS_CARD_BG};
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px;
+}}
+
+.step-dot {{
+    min-width: 12px;
+    min-height: 12px;
+    border-radius: 6px;
+    background-color: {AEGIS_TEXT_DIM};
+}}
+
+.step-dot-active {{
+    background-color: {AEGIS_BLUE};
+}}
+
+.step-dot-completed {{
+    background-color: {AEGIS_ORANGE};
+}}
+
+.step-label {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 12px;
+}}
+
+.step-label-active {{
+    color: {AEGIS_BLUE};
+    font-weight: bold;
+}}
+
+.content-area {{
+    background-color: {AEGIS_DARK_BG};
+    padding: 30px;
+}}
+
+.card {{
+    background-color: {AEGIS_CARD_BG};
+    border-radius: 12px;
+    padding: 25px;
+    margin: 10px;
+}}
+
+.section-title {{
+    color: {AEGIS_TEXT};
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 15px;
+}}
+
+.section-subtitle {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 14px;
+    margin-bottom: 20px;
+}}
+
+.input-label {{
+    color: {AEGIS_TEXT};
+    font-size: 13px;
+    margin-bottom: 5px;
+}}
+
+entry {{
+    background-color: {AEGIS_DARKER_BG};
+    color: {AEGIS_TEXT};
+    border: 1px solid {AEGIS_TEXT_DIM};
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+}}
+
+entry:focus {{
+    border-color: {AEGIS_BLUE};
+}}
+
+.network-row {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+    padding: 12px 15px;
+    margin: 5px 0;
+    border: 2px solid transparent;
+}}
+
+.network-row:hover {{
+    border-color: {AEGIS_BLUE};
+}}
+
+.network-row-selected {{
+    border-color: {AEGIS_ORANGE};
+    background-color: rgba(255, 102, 0, 0.1);
+}}
+
+.network-row-connected {{
+    border-color: {AEGIS_GREEN};
+    background-color: rgba(34, 197, 94, 0.1);
+}}
+
+.network-name {{
+    color: {AEGIS_TEXT};
+    font-size: 14px;
+    font-weight: bold;
+}}
+
+.network-info {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 12px;
+}}
+
+.nav-button {{
+    background-color: {AEGIS_CARD_BG};
+    color: {AEGIS_TEXT};
+    border: 1px solid {AEGIS_TEXT_DIM};
+    border-radius: 8px;
+    padding: 12px 30px;
+    font-size: 14px;
+    font-weight: bold;
+}}
+
+.nav-button:hover {{
+    background-color: {AEGIS_TEXT_DIM};
+    color: {AEGIS_DARKER_BG};
+}}
+
+.nav-button-primary {{
+    background-color: {AEGIS_BLUE};
+    color: white;
+    border: none;
+}}
+
+.nav-button-primary:hover {{
+    background-color: #2563eb;
+}}
+
+.nav-button-success {{
+    background-color: {AEGIS_GREEN};
+    color: white;
+    border: none;
+}}
+
+.warning-label {{
+    color: {AEGIS_ORANGE};
+    font-size: 12px;
+}}
+
+.error-label {{
+    color: #ef4444;
+    font-size: 12px;
+}}
+
+.success-label {{
+    color: {AEGIS_GREEN};
+    font-size: 12px;
+}}
+
+.progress-bar {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+}}
+
+.progress-bar progress {{
+    background-color: {AEGIS_BLUE};
+    border-radius: 8px;
+}}
+
+.gpu-card {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+    padding: 15px;
+    margin: 5px 0;
+    border-left: 4px solid {AEGIS_BLUE};
+}}
+
+.gpu-name {{
+    color: {AEGIS_TEXT};
+    font-size: 16px;
+    font-weight: bold;
+}}
+
+.gpu-info {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 12px;
+}}
+
+.feature-row {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+    padding: 12px 15px;
+    margin: 5px 0;
+}}
+
+.feature-enabled {{
+    color: {AEGIS_GREEN};
+}}
+
+.feature-disabled {{
+    color: {AEGIS_TEXT_DIM};
+}}
+
+checkbutton {{
+    color: {AEGIS_TEXT};
+}}
+
+.welcome-icon {{
+    font-size: 64px;
+}}
+
+.completion-icon {{
+    color: {AEGIS_GREEN};
+    font-size: 72px;
+}}
+
+.big-text {{
+    color: {AEGIS_TEXT};
+    font-size: 18px;
+}}
+
+.highlight-text {{
+    color: {AEGIS_ORANGE};
+    font-weight: bold;
+}}
+"""
+
+class AegisOOBE(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Aegis OS Setup")
+        self.set_default_size(900, 650)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_resizable(True)
+        self.set_decorated(True)
+        
+        self.current_step = 0
+        self.steps = [
+            "Welcome",
+            "Network",
+            "Updates",
+            "License",
+            "Gaming",
+            "Complete"
+        ]
+        
+        self.selected_network = None
+        self.license_key = ""
+        self.skip_updates = False
+        self.detected_gpus = []
+        self.gaming_services_enabled = True
+        
+        self.apply_css()
+        self.build_ui()
+        
+    def apply_css(self):
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+    def build_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.get_style_context().add_class("main-container")
+        self.add(main_box)
+        
+        header = self.create_header()
+        main_box.pack_start(header, False, False, 0)
+        
+        step_indicator = self.create_step_indicator()
+        main_box.pack_start(step_indicator, False, False, 0)
+        
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.content_stack.set_transition_duration(300)
+        
+        self.content_stack.add_named(self.create_welcome_page(), "welcome")
+        self.content_stack.add_named(self.create_network_page(), "network")
+        self.content_stack.add_named(self.create_updates_page(), "updates")
+        self.content_stack.add_named(self.create_license_page(), "license")
+        self.content_stack.add_named(self.create_gaming_page(), "gaming")
+        self.content_stack.add_named(self.create_complete_page(), "complete")
+        
+        main_box.pack_start(self.content_stack, True, True, 0)
+        
+        nav_bar = self.create_navigation()
+        main_box.pack_start(nav_bar, False, False, 0)
+        
+        self.update_step_indicator()
+        
+    def create_header(self):
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.get_style_context().add_class("header-bar")
+        header.set_spacing(15)
+        
+        logo_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        logo_box.set_valign(Gtk.Align.CENTER)
+        
+        title = Gtk.Label(label="AEGIS OS")
+        title.get_style_context().add_class("title-label")
+        title.set_halign(Gtk.Align.START)
+        logo_box.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="First-Time Setup")
+        subtitle.get_style_context().add_class("subtitle-label")
+        subtitle.set_halign(Gtk.Align.START)
+        logo_box.pack_start(subtitle, False, False, 0)
+        
+        header.pack_start(logo_box, False, False, 0)
+        
+        edition = self.detect_edition()
+        edition_label = Gtk.Label(label=edition)
+        edition_label.get_style_context().add_class("subtitle-label")
+        edition_label.set_halign(Gtk.Align.END)
+        header.pack_end(edition_label, False, False, 0)
+        
+        return header
+        
+    def detect_edition(self):
+        if os.path.exists("/etc/aegis/edition"):
+            try:
+                with open("/etc/aegis/edition") as f:
+                    return f.read().strip()
+            except:
+                pass
+        if os.path.exists("/etc/aegis-freemium-marker"):
+            return "Freemium Edition"
+        return "Gaming Edition"
+        
+    def create_step_indicator(self):
+        self.step_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.step_box.get_style_context().add_class("step-indicator")
+        self.step_box.set_halign(Gtk.Align.CENTER)
+        self.step_box.set_spacing(10)
+        
+        self.step_dots = []
+        self.step_labels = []
+        
+        for i, step in enumerate(self.steps):
+            step_item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            step_item.set_spacing(5)
+            step_item.set_halign(Gtk.Align.CENTER)
+            
+            dot = Gtk.DrawingArea()
+            dot.set_size_request(12, 12)
+            dot.get_style_context().add_class("step-dot")
+            self.step_dots.append(dot)
+            step_item.pack_start(dot, False, False, 0)
+            
+            label = Gtk.Label(label=step)
+            label.get_style_context().add_class("step-label")
+            self.step_labels.append(label)
+            step_item.pack_start(label, False, False, 0)
+            
+            self.step_box.pack_start(step_item, False, False, 15)
+            
+            if i < len(self.steps) - 1:
+                line = Gtk.DrawingArea()
+                line.set_size_request(30, 2)
+                line.set_valign(Gtk.Align.CENTER)
+                self.step_box.pack_start(line, False, False, 0)
+        
+        return self.step_box
+        
+    def update_step_indicator(self):
+        for i, (dot, label) in enumerate(zip(self.step_dots, self.step_labels)):
+            dot.get_style_context().remove_class("step-dot-active")
+            dot.get_style_context().remove_class("step-dot-completed")
+            label.get_style_context().remove_class("step-label-active")
+            
+            if i < self.current_step:
+                dot.get_style_context().add_class("step-dot-completed")
+            elif i == self.current_step:
+                dot.get_style_context().add_class("step-dot-active")
+                label.get_style_context().add_class("step-label-active")
+                
+    def create_welcome_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(20)
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_valign(Gtk.Align.CENTER)
+        
+        icon = Gtk.Label(label="🛡️")
+        icon.get_style_context().add_class("welcome-icon")
+        card.pack_start(icon, False, False, 10)
+        
+        title = Gtk.Label(label="Welcome to Aegis OS")
+        title.get_style_context().add_class("section-title")
+        card.pack_start(title, False, False, 0)
+        
+        desc = Gtk.Label()
+        desc.set_markup(
+            f'<span color="{AEGIS_TEXT}">Let\'s get your system ready for the ultimate gaming experience.</span>\n\n'
+            f'<span color="{AEGIS_TEXT_DIM}">This wizard will help you:</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Connect to the internet</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Check for system updates</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Activate your license</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Configure gaming optimizations</span>'
+        )
+        desc.set_justify(Gtk.Justification.CENTER)
+        desc.set_line_wrap(True)
+        card.pack_start(desc, False, False, 0)
+        
+        ready_label = Gtk.Label()
+        ready_label.set_markup(f'<span color="{AEGIS_ORANGE}" weight="bold">Click Next to begin setup</span>')
+        card.pack_start(ready_label, False, False, 20)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def create_network_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Connect to Network")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Select a network to connect to the internet. This is required for updates and license activation.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        subtitle.set_line_wrap(True)
+        card.pack_start(subtitle, False, False, 0)
+        
+        self.connection_status = Gtk.Label()
+        self.connection_status.set_halign(Gtk.Align.START)
+        card.pack_start(self.connection_status, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(250)
+        
+        self.network_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.network_list.set_spacing(5)
+        scroll.add(self.network_list)
+        card.pack_start(scroll, True, True, 0)
+        
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        button_box.set_spacing(10)
+        
+        refresh_btn = Gtk.Button(label="↻ Refresh")
+        refresh_btn.get_style_context().add_class("nav-button")
+        refresh_btn.connect("clicked", self.refresh_networks)
+        button_box.pack_start(refresh_btn, False, False, 0)
+        
+        card.pack_start(button_box, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        GLib.idle_add(self.refresh_networks)
+        
+        return page
+        
+    def refresh_networks(self, widget=None):
+        for child in self.network_list.get_children():
+            self.network_list.remove(child)
+            
+        if self.check_internet_connection():
+            self.connection_status.set_markup(f'<span color="{AEGIS_GREEN}">✓ Connected to the internet</span>')
+        else:
+            self.connection_status.set_markup(f'<span color="{AEGIS_TEXT_DIM}">Not connected</span>')
+        
+        try:
+            result = subprocess.run(
+                ["ip", "link", "show"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.split('\n'):
+                if ': eth' in line or ': enp' in line or ': eno' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        iface = parts[1].strip()
+                        state = "UP" if "state UP" in line else "DOWN"
+                        row = self.create_network_row(iface, "Ethernet", state, "ethernet")
+                        self.network_list.pack_start(row, False, False, 0)
+        except:
+            pass
+            
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "device", "wifi", "list"],
+                capture_output=True, text=True, timeout=10
+            )
+            seen_ssids = set()
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split(':')
+                if len(parts) >= 3:
+                    ssid = parts[0]
+                    if not ssid or ssid in seen_ssids:
+                        continue
+                    seen_ssids.add(ssid)
+                    signal = parts[1] if len(parts) > 1 else "?"
+                    security = parts[2] if len(parts) > 2 else "Open"
+                    in_use = parts[3] if len(parts) > 3 else ""
+                    state = "connected" if in_use == "*" else "available"
+                    row = self.create_network_row(ssid, f"Signal: {signal}% • {security}", state, "wifi")
+                    self.network_list.pack_start(row, False, False, 0)
+        except:
+            no_wifi = Gtk.Label(label="No WiFi networks found or WiFi is disabled")
+            no_wifi.get_style_context().add_class("section-subtitle")
+            self.network_list.pack_start(no_wifi, False, False, 10)
+            
+        self.network_list.show_all()
+        
+    def create_network_row(self, name, info, state, net_type):
+        event_box = Gtk.EventBox()
+        
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row.get_style_context().add_class("network-row")
+        if state == "connected":
+            row.get_style_context().add_class("network-row-connected")
+        row.set_spacing(15)
+        
+        icon = Gtk.Label(label="📶" if net_type == "wifi" else "🔌")
+        row.pack_start(icon, False, False, 10)
+        
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        info_box.set_spacing(2)
+        
+        name_label = Gtk.Label(label=name)
+        name_label.get_style_context().add_class("network-name")
+        name_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(name_label, False, False, 0)
+        
+        detail_label = Gtk.Label(label=info)
+        detail_label.get_style_context().add_class("network-info")
+        detail_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(detail_label, False, False, 0)
+        
+        row.pack_start(info_box, True, True, 0)
+        
+        if state == "connected":
+            status = Gtk.Label(label="✓ Connected")
+            status.get_style_context().add_class("success-label")
+            row.pack_end(status, False, False, 10)
+        elif net_type == "wifi":
+            connect_btn = Gtk.Button(label="Connect")
+            connect_btn.get_style_context().add_class("nav-button-primary")
+            connect_btn.connect("clicked", self.on_connect_wifi, name)
+            row.pack_end(connect_btn, False, False, 10)
+        
+        event_box.add(row)
+        event_box.network_name = name
+        event_box.network_row = row
+        event_box.network_type = net_type
+        
+        return event_box
+        
+    def on_connect_wifi(self, widget, ssid):
+        dialog = Gtk.Dialog(
+            title=f"Connect to {ssid}",
+            parent=self,
+            flags=0
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            "Connect", Gtk.ResponseType.OK
+        )
+        dialog.set_default_size(300, 100)
+        
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_margin_start(20)
+        box.set_margin_end(20)
+        box.set_margin_top(20)
+        box.set_margin_bottom(10)
+        
+        label = Gtk.Label(label="Enter WiFi password:")
+        box.pack_start(label, False, False, 0)
+        
+        password_entry = Gtk.Entry()
+        password_entry.set_visibility(False)
+        password_entry.set_placeholder_text("Password")
+        box.pack_start(password_entry, False, False, 0)
+        
+        dialog.show_all()
+        response = dialog.run()
+        password = password_entry.get_text()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.OK and password:
+            try:
+                subprocess.run(
+                    ["nmcli", "device", "wifi", "connect", ssid, "password", password],
+                    capture_output=True, timeout=30
+                )
+                GLib.timeout_add(2000, self.refresh_networks)
+            except Exception as e:
+                self.show_error_dialog(f"Failed to connect: {str(e)}")
+                
+    def check_internet_connection(self):
+        try:
+            subprocess.run(
+                ["ping", "-c", "1", "-W", "2", "8.8.8.8"],
+                capture_output=True, timeout=5
+            )
+            return True
+        except:
+            return False
+            
+    def create_updates_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="System Updates")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Check for and install the latest system updates to ensure optimal performance and security.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        subtitle.set_line_wrap(True)
+        card.pack_start(subtitle, False, False, 0)
+        
+        self.update_status = Gtk.Label(label="Ready to check for updates")
+        self.update_status.get_style_context().add_class("big-text")
+        self.update_status.set_halign(Gtk.Align.START)
+        card.pack_start(self.update_status, False, False, 10)
+        
+        self.update_progress = Gtk.ProgressBar()
+        self.update_progress.get_style_context().add_class("progress-bar")
+        self.update_progress.set_show_text(True)
+        self.update_progress.set_fraction(0)
+        card.pack_start(self.update_progress, False, False, 0)
+        
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        button_box.set_spacing(15)
+        button_box.set_halign(Gtk.Align.START)
+        
+        self.check_updates_btn = Gtk.Button(label="Check for Updates")
+        self.check_updates_btn.get_style_context().add_class("nav-button-primary")
+        self.check_updates_btn.connect("clicked", self.on_check_updates)
+        button_box.pack_start(self.check_updates_btn, False, False, 0)
+        
+        self.skip_updates_check = Gtk.CheckButton(label="Skip updates (not recommended)")
+        self.skip_updates_check.connect("toggled", self.on_skip_updates_toggled)
+        button_box.pack_start(self.skip_updates_check, False, False, 0)
+        
+        card.pack_start(button_box, False, False, 10)
+        
+        note = Gtk.Label()
+        note.set_markup(f'<span color="{AEGIS_TEXT_DIM}">Note: Updates may take several minutes depending on your internet speed.</span>')
+        note.set_halign(Gtk.Align.START)
+        card.pack_start(note, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def on_check_updates(self, widget):
+        self.check_updates_btn.set_sensitive(False)
+        self.update_status.set_text("Checking for updates...")
+        self.update_progress.set_fraction(0.1)
+        
+        thread = threading.Thread(target=self.run_update_check)
+        thread.daemon = True
+        thread.start()
+        
+    def run_update_check(self):
+        try:
+            GLib.idle_add(self.update_progress.set_fraction, 0.2)
+            GLib.idle_add(self.update_status.set_text, "Synchronizing package databases...")
+            
+            subprocess.run(["pacman", "-Sy"], capture_output=True, timeout=120)
+            
+            GLib.idle_add(self.update_progress.set_fraction, 0.5)
+            GLib.idle_add(self.update_status.set_text, "Checking for available updates...")
+            
+            result = subprocess.run(
+                ["pacman", "-Qu"],
+                capture_output=True, text=True, timeout=60
+            )
+            
+            updates = [l for l in result.stdout.strip().split('\n') if l]
+            
+            if updates:
+                GLib.idle_add(self.update_status.set_text, f"Found {len(updates)} updates available")
+                GLib.idle_add(self.update_progress.set_fraction, 0.6)
+            else:
+                GLib.idle_add(self.update_status.set_text, "✓ System is up to date!")
+                GLib.idle_add(self.update_progress.set_fraction, 1.0)
+                GLib.idle_add(self.check_updates_btn.set_sensitive, True)
+                return
+                
+        except subprocess.TimeoutExpired:
+            GLib.idle_add(self.update_status.set_text, "Update check timed out. You can skip and update later.")
+            GLib.idle_add(self.check_updates_btn.set_sensitive, True)
+            return
+        except Exception as e:
+            GLib.idle_add(self.update_status.set_text, f"Error: {str(e)[:50]}")
+            GLib.idle_add(self.check_updates_btn.set_sensitive, True)
+            return
+            
+        GLib.idle_add(self.update_status.set_text, "✓ Update check complete")
+        GLib.idle_add(self.update_progress.set_fraction, 1.0)
+        GLib.idle_add(self.check_updates_btn.set_sensitive, True)
+        
+    def on_skip_updates_toggled(self, widget):
+        self.skip_updates = widget.get_active()
+        
+    def create_license_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="License Activation")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Enter your license key to unlock premium features, or continue with the free version.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        subtitle.set_line_wrap(True)
+        card.pack_start(subtitle, False, False, 0)
+        
+        input_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        input_box.set_spacing(10)
+        
+        key_label = Gtk.Label(label="License Key")
+        key_label.get_style_context().add_class("input-label")
+        key_label.set_halign(Gtk.Align.START)
+        input_box.pack_start(key_label, False, False, 0)
+        
+        key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        key_box.set_spacing(10)
+        
+        self.license_entry = Gtk.Entry()
+        self.license_entry.set_placeholder_text("XXXX-XXXX-XXXX-XXXX")
+        self.license_entry.set_hexpand(True)
+        self.license_entry.connect("changed", self.on_license_changed)
+        key_box.pack_start(self.license_entry, True, True, 0)
+        
+        self.activate_btn = Gtk.Button(label="Activate")
+        self.activate_btn.get_style_context().add_class("nav-button-primary")
+        self.activate_btn.set_sensitive(False)
+        self.activate_btn.connect("clicked", self.on_activate_license)
+        key_box.pack_start(self.activate_btn, False, False, 0)
+        
+        input_box.pack_start(key_box, False, False, 0)
+        
+        self.license_status = Gtk.Label()
+        self.license_status.set_halign(Gtk.Align.START)
+        input_box.pack_start(self.license_status, False, False, 0)
+        
+        card.pack_start(input_box, False, False, 0)
+        
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        card.pack_start(separator, False, False, 15)
+        
+        free_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        free_box.set_spacing(10)
+        
+        free_title = Gtk.Label()
+        free_title.set_markup(f'<span color="{AEGIS_TEXT}" weight="bold">Continue with Freemium</span>')
+        free_title.set_halign(Gtk.Align.START)
+        free_box.pack_start(free_title, False, False, 0)
+        
+        free_desc = Gtk.Label()
+        free_desc.set_markup(
+            f'<span color="{AEGIS_TEXT_DIM}">The free version includes:</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Basic gaming optimizations</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Steam and Proton support</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Community support</span>'
+        )
+        free_desc.set_halign(Gtk.Align.START)
+        free_box.pack_start(free_desc, False, False, 0)
+        
+        self.skip_license_check = Gtk.CheckButton(label="Continue without a license key")
+        self.skip_license_check.connect("toggled", self.on_skip_license_toggled)
+        free_box.pack_start(self.skip_license_check, False, False, 10)
+        
+        card.pack_start(free_box, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def on_license_changed(self, widget):
+        key = widget.get_text().strip()
+        self.activate_btn.set_sensitive(len(key) >= 10)
+        
+    def on_activate_license(self, widget):
+        key = self.license_entry.get_text().strip()
+        self.license_status.set_markup(f'<span color="{AEGIS_TEXT_DIM}">Activating license...</span>')
+        
+        try:
+            result = subprocess.run(
+                ["/usr/local/bin/aegis-license-manager", "--activate", key],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                self.license_status.set_markup(f'<span color="{AEGIS_GREEN}">✓ License activated successfully!</span>')
+                self.license_key = key
+            else:
+                self.license_status.set_markup(f'<span color="#ef4444">Invalid license key. Please check and try again.</span>')
+        except FileNotFoundError:
+            self.license_status.set_markup(f'<span color="{AEGIS_ORANGE}">License manager not found. Skipping activation.</span>')
+            self.license_key = key
+        except Exception as e:
+            self.license_status.set_markup(f'<span color="#ef4444">Activation failed: {str(e)[:40]}</span>')
+            
+    def on_skip_license_toggled(self, widget):
+        pass
+        
+    def create_gaming_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Gaming Setup")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Configure your system for optimal gaming performance.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        card.pack_start(subtitle, False, False, 0)
+        
+        gpu_title = Gtk.Label(label="Detected Graphics Hardware")
+        gpu_title.get_style_context().add_class("input-label")
+        gpu_title.set_halign(Gtk.Align.START)
+        card.pack_start(gpu_title, False, False, 5)
+        
+        self.gpu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.gpu_box.set_spacing(5)
+        card.pack_start(self.gpu_box, False, False, 0)
+        
+        services_title = Gtk.Label(label="Gaming Services")
+        services_title.get_style_context().add_class("input-label")
+        services_title.set_halign(Gtk.Align.START)
+        services_title.set_margin_top(15)
+        card.pack_start(services_title, False, False, 0)
+        
+        self.services_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.services_box.set_spacing(5)
+        
+        services = [
+            ("Gaming Optimizer", "aegis-gaming-optimizer", "CPU/GPU optimizations for gaming"),
+            ("Low Latency Audio", "pipewire-low-latency", "Optimized audio for gaming"),
+            ("Game Mode", "gamemode", "On-demand performance optimizations"),
+        ]
+        
+        for name, service, desc in services:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            row.get_style_context().add_class("feature-row")
+            row.set_spacing(10)
+            
+            check = Gtk.CheckButton()
+            check.set_active(True)
+            row.pack_start(check, False, False, 10)
+            
+            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            info_box.set_spacing(2)
+            
+            name_label = Gtk.Label(label=name)
+            name_label.get_style_context().add_class("network-name")
+            name_label.set_halign(Gtk.Align.START)
+            info_box.pack_start(name_label, False, False, 0)
+            
+            desc_label = Gtk.Label(label=desc)
+            desc_label.get_style_context().add_class("network-info")
+            desc_label.set_halign(Gtk.Align.START)
+            info_box.pack_start(desc_label, False, False, 0)
+            
+            row.pack_start(info_box, True, True, 0)
+            
+            self.services_box.pack_start(row, False, False, 0)
+            
+        card.pack_start(self.services_box, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        GLib.idle_add(self.detect_gpus)
+        
+        return page
+        
+    def detect_gpus(self):
+        for child in self.gpu_box.get_children():
+            self.gpu_box.remove(child)
+            
+        gpus_found = []
+        
+        try:
+            result = subprocess.run(
+                ["lspci", "-nn"],
+                capture_output=True, text=True, timeout=10
+            )
+            
+            for line in result.stdout.split('\n'):
+                line_lower = line.lower()
+                if 'vga' in line_lower or '3d' in line_lower or 'display' in line_lower:
+                    gpu_type = "Unknown"
+                    if 'nvidia' in line_lower:
+                        gpu_type = "NVIDIA"
+                    elif 'amd' in line_lower or 'radeon' in line_lower:
+                        gpu_type = "AMD"
+                    elif 'intel' in line_lower:
+                        gpu_type = "Intel"
+                        
+                    parts = line.split(':')
+                    if len(parts) >= 3:
+                        gpu_name = ':'.join(parts[2:]).strip()
+                        gpus_found.append((gpu_type, gpu_name))
+        except:
+            pass
+            
+        if not gpus_found:
+            gpus_found.append(("Unknown", "No GPU detected"))
+            
+        for gpu_type, gpu_name in gpus_found:
+            gpu_card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            gpu_card.get_style_context().add_class("gpu-card")
+            gpu_card.set_spacing(15)
+            
+            icon = "🎮"
+            if gpu_type == "NVIDIA":
+                icon = "🟢"
+            elif gpu_type == "AMD":
+                icon = "🔴"
+            elif gpu_type == "Intel":
+                icon = "🔵"
+                
+            icon_label = Gtk.Label(label=icon)
+            gpu_card.pack_start(icon_label, False, False, 10)
+            
+            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            info_box.set_spacing(2)
+            
+            type_label = Gtk.Label(label=gpu_type)
+            type_label.get_style_context().add_class("gpu-name")
+            type_label.set_halign(Gtk.Align.START)
+            info_box.pack_start(type_label, False, False, 0)
+            
+            name_label = Gtk.Label(label=gpu_name[:60] + "..." if len(gpu_name) > 60 else gpu_name)
+            name_label.get_style_context().add_class("gpu-info")
+            name_label.set_halign(Gtk.Align.START)
+            info_box.pack_start(name_label, False, False, 0)
+            
+            gpu_card.pack_start(info_box, True, True, 0)
+            
+            self.gpu_box.pack_start(gpu_card, False, False, 0)
+            
+        self.gpu_box.show_all()
+        
+    def create_complete_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(20)
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_valign(Gtk.Align.CENTER)
+        
+        icon = Gtk.Label()
+        icon.set_markup(f'<span font="72" color="{AEGIS_GREEN}">✓</span>')
+        card.pack_start(icon, False, False, 10)
+        
+        title = Gtk.Label(label="Setup Complete!")
+        title.get_style_context().add_class("section-title")
+        card.pack_start(title, False, False, 0)
+        
+        desc = Gtk.Label()
+        desc.set_markup(
+            f'<span color="{AEGIS_TEXT}">Your Aegis OS system is ready to use.</span>\n\n'
+            f'<span color="{AEGIS_TEXT_DIM}">You can now:</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Launch Steam and install your games</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Browse the Aegis App Store</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Customize your desktop</span>\n'
+            f'<span color="{AEGIS_TEXT}">• Explore system settings</span>'
+        )
+        desc.set_justify(Gtk.Justification.CENTER)
+        desc.set_line_wrap(True)
+        card.pack_start(desc, False, False, 0)
+        
+        enjoy_label = Gtk.Label()
+        enjoy_label.set_markup(f'<span color="{AEGIS_ORANGE}" weight="bold" size="large">Enjoy your gaming experience!</span>')
+        card.pack_start(enjoy_label, False, False, 20)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def create_navigation(self):
+        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        nav.set_spacing(10)
+        nav.set_margin_start(30)
+        nav.set_margin_end(30)
+        nav.set_margin_top(15)
+        nav.set_margin_bottom(15)
+        
+        self.back_btn = Gtk.Button(label="← Back")
+        self.back_btn.get_style_context().add_class("nav-button")
+        self.back_btn.connect("clicked", self.on_back)
+        nav.pack_start(self.back_btn, False, False, 0)
+        
+        spacer = Gtk.Box()
+        nav.pack_start(spacer, True, True, 0)
+        
+        self.skip_btn = Gtk.Button(label="Skip")
+        self.skip_btn.get_style_context().add_class("nav-button")
+        self.skip_btn.connect("clicked", self.on_skip)
+        nav.pack_start(self.skip_btn, False, False, 0)
+        
+        self.next_btn = Gtk.Button(label="Next →")
+        self.next_btn.get_style_context().add_class("nav-button-primary")
+        self.next_btn.connect("clicked", self.on_next)
+        nav.pack_start(self.next_btn, False, False, 0)
+        
+        self.update_navigation()
+        
+        return nav
+        
+    def update_navigation(self):
+        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < len(self.steps) - 1)
+        
+        if self.current_step == 0:
+            self.back_btn.set_visible(False)
+            self.skip_btn.set_visible(False)
+            self.next_btn.set_label("Get Started →")
+        elif self.current_step == 1:
+            self.back_btn.set_visible(True)
+            self.skip_btn.set_visible(True)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 2:
+            self.skip_btn.set_visible(True)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 3:
+            self.skip_btn.set_visible(True)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 4:
+            self.skip_btn.set_visible(False)
+            self.next_btn.set_label("Finish Setup →")
+        elif self.current_step == len(self.steps) - 1:
+            self.back_btn.set_visible(False)
+            self.skip_btn.set_visible(False)
+            self.next_btn.set_label("Launch Desktop")
+            self.next_btn.get_style_context().remove_class("nav-button-primary")
+            self.next_btn.get_style_context().add_class("nav-button-success")
+            
+    def on_back(self, widget):
+        if self.current_step > 0:
+            self.current_step -= 1
+            self.show_current_step()
+            
+    def on_skip(self, widget):
+        self.current_step += 1
+        self.show_current_step()
+        
+    def on_next(self, widget):
+        if self.current_step == len(self.steps) - 1:
+            self.complete_oobe()
+        else:
+            self.current_step += 1
+            self.show_current_step()
+            
+    def show_current_step(self):
+        pages = ["welcome", "network", "updates", "license", "gaming", "complete"]
+        if self.current_step < len(pages):
+            self.content_stack.set_visible_child_name(pages[self.current_step])
+        self.update_step_indicator()
+        self.update_navigation()
+        
+    def complete_oobe(self):
+        try:
+            os.makedirs("/etc/aegis", exist_ok=True)
+            with open(OOBE_MARKER, "w") as f:
+                f.write(f"OOBE completed: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except Exception as e:
+            print(f"Warning: Could not create OOBE marker: {e}")
+            
+        try:
+            subprocess.run(
+                ["systemctl", "disable", "aegis-oobe.service"],
+                capture_output=True
+            )
+        except:
+            pass
+            
+        self.destroy()
+        Gtk.main_quit()
+        
+    def show_error_dialog(self, message):
+        dialog = Gtk.MessageDialog(
+            parent=self,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Error"
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+
+
+def main():
+    if os.path.exists(OOBE_MARKER):
+        print("OOBE already completed. Exiting.")
+        return 0
+        
+    win = AegisOOBE()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())

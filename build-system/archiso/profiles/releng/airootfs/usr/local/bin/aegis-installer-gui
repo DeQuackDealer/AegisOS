@@ -1,0 +1,1321 @@
+#!/usr/bin/env python3
+"""
+Aegis OS GTK3 GUI Installer
+Modern, dark-themed installer with step-by-step wizard
+"""
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import subprocess
+import os
+import re
+import threading
+import time
+import shlex
+
+AEGIS_BLUE = "#3b82f6"
+AEGIS_ORANGE = "#ff6600"
+AEGIS_DARK_BG = "#1a1a2e"
+AEGIS_DARKER_BG = "#0f0f1a"
+AEGIS_CARD_BG = "#252540"
+AEGIS_TEXT = "#e0e0e0"
+AEGIS_TEXT_DIM = "#888888"
+
+CSS = f"""
+window {{
+    background-color: {AEGIS_DARK_BG};
+}}
+
+.main-container {{
+    background-color: {AEGIS_DARK_BG};
+}}
+
+.header-bar {{
+    background: linear-gradient(135deg, {AEGIS_DARKER_BG} 0%, {AEGIS_DARK_BG} 100%);
+    border-bottom: 2px solid {AEGIS_BLUE};
+    padding: 20px;
+}}
+
+.title-label {{
+    color: {AEGIS_BLUE};
+    font-size: 28px;
+    font-weight: bold;
+}}
+
+.subtitle-label {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 14px;
+}}
+
+.step-indicator {{
+    background-color: {AEGIS_CARD_BG};
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px;
+}}
+
+.step-dot {{
+    min-width: 12px;
+    min-height: 12px;
+    border-radius: 6px;
+    background-color: {AEGIS_TEXT_DIM};
+}}
+
+.step-dot-active {{
+    background-color: {AEGIS_BLUE};
+}}
+
+.step-dot-completed {{
+    background-color: {AEGIS_ORANGE};
+}}
+
+.step-label {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 12px;
+}}
+
+.step-label-active {{
+    color: {AEGIS_BLUE};
+    font-weight: bold;
+}}
+
+.content-area {{
+    background-color: {AEGIS_DARK_BG};
+    padding: 30px;
+}}
+
+.card {{
+    background-color: {AEGIS_CARD_BG};
+    border-radius: 12px;
+    padding: 25px;
+    margin: 10px;
+}}
+
+.section-title {{
+    color: {AEGIS_TEXT};
+    font-size: 22px;
+    font-weight: bold;
+    margin-bottom: 15px;
+}}
+
+.section-subtitle {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 14px;
+    margin-bottom: 20px;
+}}
+
+.input-label {{
+    color: {AEGIS_TEXT};
+    font-size: 13px;
+    margin-bottom: 5px;
+}}
+
+entry {{
+    background-color: {AEGIS_DARKER_BG};
+    color: {AEGIS_TEXT};
+    border: 1px solid {AEGIS_TEXT_DIM};
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+}}
+
+entry:focus {{
+    border-color: {AEGIS_BLUE};
+}}
+
+.disk-row {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+    padding: 15px;
+    margin: 5px 0;
+    border: 2px solid transparent;
+}}
+
+.disk-row:hover {{
+    border-color: {AEGIS_BLUE};
+}}
+
+.disk-row-selected {{
+    border-color: {AEGIS_ORANGE};
+    background-color: rgba(255, 102, 0, 0.1);
+}}
+
+.disk-name {{
+    color: {AEGIS_TEXT};
+    font-size: 16px;
+    font-weight: bold;
+}}
+
+.disk-info {{
+    color: {AEGIS_TEXT_DIM};
+    font-size: 12px;
+}}
+
+.nav-button {{
+    background-color: {AEGIS_CARD_BG};
+    color: {AEGIS_TEXT};
+    border: 1px solid {AEGIS_TEXT_DIM};
+    border-radius: 8px;
+    padding: 12px 30px;
+    font-size: 14px;
+    font-weight: bold;
+}}
+
+.nav-button:hover {{
+    background-color: {AEGIS_TEXT_DIM};
+    color: {AEGIS_DARKER_BG};
+}}
+
+.nav-button-primary {{
+    background-color: {AEGIS_BLUE};
+    color: white;
+    border: none;
+}}
+
+.nav-button-primary:hover {{
+    background-color: #2563eb;
+}}
+
+.nav-button-danger {{
+    background-color: {AEGIS_ORANGE};
+    color: white;
+    border: none;
+}}
+
+.warning-label {{
+    color: {AEGIS_ORANGE};
+    font-size: 12px;
+}}
+
+.error-label {{
+    color: #ef4444;
+    font-size: 12px;
+}}
+
+.success-label {{
+    color: #22c55e;
+    font-size: 12px;
+}}
+
+.progress-bar {{
+    background-color: {AEGIS_DARKER_BG};
+    border-radius: 8px;
+}}
+
+.progress-bar progress {{
+    background-color: {AEGIS_BLUE};
+    border-radius: 8px;
+}}
+
+.log-view {{
+    background-color: {AEGIS_DARKER_BG};
+    color: {AEGIS_TEXT};
+    font-family: monospace;
+    font-size: 11px;
+    border-radius: 8px;
+    padding: 10px;
+}}
+
+.license-text {{
+    background-color: {AEGIS_DARKER_BG};
+    color: {AEGIS_TEXT};
+    font-family: monospace;
+    font-size: 11px;
+    padding: 15px;
+    border-radius: 8px;
+}}
+
+checkbutton {{
+    color: {AEGIS_TEXT};
+}}
+
+combobox {{
+    background-color: {AEGIS_DARKER_BG};
+    color: {AEGIS_TEXT};
+    border-radius: 6px;
+}}
+
+.completion-icon {{
+    color: #22c55e;
+    font-size: 72px;
+}}
+"""
+
+LICENSE_TEXT = """
+AEGIS OS LICENSE AGREEMENT
+
+Copyright (c) 2024 Aegis OS Team
+
+This software is provided "as is", without warranty of any kind, express or implied.
+
+By installing Aegis OS, you agree to the following terms:
+
+1. USAGE RIGHTS
+   - You are granted a non-exclusive license to use Aegis OS for personal or commercial purposes.
+   - You may install Aegis OS on multiple machines.
+
+2. MODIFICATIONS
+   - You may modify the system for personal use.
+   - Redistribution of modified versions requires attribution.
+
+3. DISCLAIMER
+   - The developers are not liable for any data loss or damage.
+   - Use at your own risk.
+
+4. PRIVACY
+   - Aegis OS does not collect personal data.
+   - Optional telemetry can be disabled in settings.
+
+5. SUPPORT
+   - Community support is available through our forums.
+   - Premium editions include priority support.
+
+By clicking "I Accept", you agree to these terms and conditions.
+"""
+
+TIMEZONES = [
+    "UTC",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Toronto",
+    "America/Vancouver",
+    "America/Sao_Paulo",
+    "America/Mexico_City",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Europe/Rome",
+    "Europe/Madrid",
+    "Europe/Moscow",
+    "Europe/Istanbul",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Hong_Kong",
+    "Asia/Singapore",
+    "Asia/Seoul",
+    "Asia/Kolkata",
+    "Asia/Dubai",
+    "Australia/Sydney",
+    "Australia/Melbourne",
+    "Pacific/Auckland",
+]
+
+LOCALES = [
+    ("en_US.UTF-8", "English (US)"),
+    ("en_GB.UTF-8", "English (UK)"),
+    ("de_DE.UTF-8", "German"),
+    ("fr_FR.UTF-8", "French"),
+    ("es_ES.UTF-8", "Spanish"),
+    ("it_IT.UTF-8", "Italian"),
+    ("pt_BR.UTF-8", "Portuguese (Brazil)"),
+    ("ru_RU.UTF-8", "Russian"),
+    ("zh_CN.UTF-8", "Chinese (Simplified)"),
+    ("ja_JP.UTF-8", "Japanese"),
+    ("ko_KR.UTF-8", "Korean"),
+]
+
+class AegisInstaller(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Aegis OS Installer")
+        self.set_default_size(900, 700)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_resizable(True)
+        
+        self.current_step = 0
+        self.steps = [
+            "Welcome",
+            "Disk Selection", 
+            "User Setup",
+            "Region",
+            "Install",
+            "Complete"
+        ]
+        
+        self.selected_disk = None
+        self.username = ""
+        self.fullname = ""
+        self.password = ""
+        self.hostname = "aegis"
+        self.timezone = "UTC"
+        self.locale = "en_US.UTF-8"
+        self.license_accepted = False
+        self.installation_complete = False
+        
+        self.apply_css()
+        self.build_ui()
+        
+    def apply_css(self):
+        css_provider = Gtk.CssProvider()
+        css_provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+    def build_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_box.get_style_context().add_class("main-container")
+        self.add(main_box)
+        
+        header = self.create_header()
+        main_box.pack_start(header, False, False, 0)
+        
+        step_indicator = self.create_step_indicator()
+        main_box.pack_start(step_indicator, False, False, 0)
+        
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.content_stack.set_transition_duration(300)
+        
+        self.content_stack.add_named(self.create_welcome_page(), "welcome")
+        self.content_stack.add_named(self.create_disk_page(), "disk")
+        self.content_stack.add_named(self.create_user_page(), "user")
+        self.content_stack.add_named(self.create_region_page(), "region")
+        self.content_stack.add_named(self.create_install_page(), "install")
+        self.content_stack.add_named(self.create_complete_page(), "complete")
+        
+        main_box.pack_start(self.content_stack, True, True, 0)
+        
+        nav_bar = self.create_navigation()
+        main_box.pack_start(nav_bar, False, False, 0)
+        
+        self.update_step_indicator()
+        
+    def create_header(self):
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        header.get_style_context().add_class("header-bar")
+        header.set_spacing(15)
+        
+        logo_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        logo_box.set_valign(Gtk.Align.CENTER)
+        
+        title = Gtk.Label(label="AEGIS OS")
+        title.get_style_context().add_class("title-label")
+        title.set_halign(Gtk.Align.START)
+        logo_box.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Gaming OS • Installation Wizard")
+        subtitle.get_style_context().add_class("subtitle-label")
+        subtitle.set_halign(Gtk.Align.START)
+        logo_box.pack_start(subtitle, False, False, 0)
+        
+        header.pack_start(logo_box, False, False, 0)
+        
+        boot_mode = "UEFI" if os.path.isdir("/sys/firmware/efi") else "BIOS"
+        mode_label = Gtk.Label(label=f"Boot Mode: {boot_mode}")
+        mode_label.get_style_context().add_class("subtitle-label")
+        mode_label.set_halign(Gtk.Align.END)
+        header.pack_end(mode_label, False, False, 0)
+        
+        return header
+        
+    def create_step_indicator(self):
+        self.step_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.step_box.get_style_context().add_class("step-indicator")
+        self.step_box.set_halign(Gtk.Align.CENTER)
+        self.step_box.set_spacing(10)
+        
+        self.step_dots = []
+        self.step_labels = []
+        
+        for i, step in enumerate(self.steps):
+            step_item = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            step_item.set_spacing(5)
+            step_item.set_halign(Gtk.Align.CENTER)
+            
+            dot = Gtk.DrawingArea()
+            dot.set_size_request(12, 12)
+            dot.get_style_context().add_class("step-dot")
+            self.step_dots.append(dot)
+            step_item.pack_start(dot, False, False, 0)
+            
+            label = Gtk.Label(label=step)
+            label.get_style_context().add_class("step-label")
+            self.step_labels.append(label)
+            step_item.pack_start(label, False, False, 0)
+            
+            self.step_box.pack_start(step_item, False, False, 20)
+            
+            if i < len(self.steps) - 1:
+                line = Gtk.DrawingArea()
+                line.set_size_request(40, 2)
+                line.set_valign(Gtk.Align.CENTER)
+                self.step_box.pack_start(line, False, False, 0)
+        
+        return self.step_box
+        
+    def update_step_indicator(self):
+        for i, (dot, label) in enumerate(zip(self.step_dots, self.step_labels)):
+            dot.get_style_context().remove_class("step-dot-active")
+            dot.get_style_context().remove_class("step-dot-completed")
+            label.get_style_context().remove_class("step-label-active")
+            
+            if i < self.current_step:
+                dot.get_style_context().add_class("step-dot-completed")
+            elif i == self.current_step:
+                dot.get_style_context().add_class("step-dot-active")
+                label.get_style_context().add_class("step-label-active")
+                
+    def create_welcome_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Welcome to Aegis OS")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        edition = self.detect_edition()
+        edition_label = Gtk.Label(label=f"Edition: {edition}")
+        edition_label.get_style_context().add_class("section-subtitle")
+        edition_label.set_halign(Gtk.Align.START)
+        card.pack_start(edition_label, False, False, 0)
+        
+        desc = Gtk.Label(label="This wizard will guide you through installing Aegis OS on your computer.\nPlease read and accept the license agreement to continue.")
+        desc.set_line_wrap(True)
+        desc.set_halign(Gtk.Align.START)
+        card.pack_start(desc, False, False, 0)
+        
+        page.pack_start(card, False, False, 0)
+        
+        license_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        license_card.get_style_context().add_class("card")
+        license_card.set_spacing(10)
+        
+        license_title = Gtk.Label(label="License Agreement")
+        license_title.get_style_context().add_class("section-title")
+        license_title.set_halign(Gtk.Align.START)
+        license_card.pack_start(license_title, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(200)
+        
+        license_view = Gtk.TextView()
+        license_view.set_editable(False)
+        license_view.set_cursor_visible(False)
+        license_view.get_buffer().set_text(LICENSE_TEXT)
+        license_view.get_style_context().add_class("license-text")
+        scroll.add(license_view)
+        license_card.pack_start(scroll, True, True, 0)
+        
+        self.accept_check = Gtk.CheckButton(label="I accept the license agreement")
+        self.accept_check.connect("toggled", self.on_license_toggled)
+        license_card.pack_start(self.accept_check, False, False, 10)
+        
+        page.pack_start(license_card, True, True, 0)
+        
+        return page
+        
+    def detect_edition(self):
+        if os.path.exists("/etc/aegis/edition"):
+            try:
+                with open("/etc/aegis/edition") as f:
+                    return f.read().strip()
+            except:
+                pass
+        if os.path.exists("/etc/aegis-freemium-marker"):
+            return "Freemium Edition"
+        return "Gaming Edition"
+        
+    def on_license_toggled(self, widget):
+        self.license_accepted = widget.get_active()
+        self.update_navigation()
+        
+    def create_disk_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Select Installation Disk")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Choose the disk where Aegis OS will be installed. WARNING: All data on the selected disk will be erased!")
+        subtitle.get_style_context().add_class("warning-label")
+        subtitle.set_line_wrap(True)
+        subtitle.set_halign(Gtk.Align.START)
+        card.pack_start(subtitle, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(300)
+        
+        self.disk_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.disk_list.set_spacing(5)
+        scroll.add(self.disk_list)
+        card.pack_start(scroll, True, True, 0)
+        
+        refresh_btn = Gtk.Button(label="↻ Refresh Disk List")
+        refresh_btn.get_style_context().add_class("nav-button")
+        refresh_btn.connect("clicked", self.refresh_disks)
+        refresh_btn.set_halign(Gtk.Align.START)
+        card.pack_start(refresh_btn, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        self.refresh_disks()
+        
+        return page
+        
+    def refresh_disks(self, widget=None):
+        for child in self.disk_list.get_children():
+            self.disk_list.remove(child)
+            
+        try:
+            result = subprocess.run(
+                ["lsblk", "-d", "-o", "NAME,SIZE,MODEL,TYPE", "-n"],
+                capture_output=True, text=True
+            )
+            
+            for line in result.stdout.strip().split('\n'):
+                if not line or 'loop' in line or 'rom' in line.lower():
+                    continue
+                    
+                parts = line.split()
+                if len(parts) >= 2 and parts[-1] == 'disk':
+                    name = parts[0]
+                    size = parts[1] if len(parts) > 1 else "Unknown"
+                    model = ' '.join(parts[2:-1]) if len(parts) > 3 else "Unknown"
+                    
+                    row = self.create_disk_row(name, size, model)
+                    self.disk_list.pack_start(row, False, False, 0)
+                    
+            self.disk_list.show_all()
+        except Exception as e:
+            error_label = Gtk.Label(label=f"Error scanning disks: {str(e)}")
+            error_label.get_style_context().add_class("error-label")
+            self.disk_list.pack_start(error_label, False, False, 0)
+            self.disk_list.show_all()
+            
+    def create_disk_row(self, name, size, model):
+        event_box = Gtk.EventBox()
+        
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row.get_style_context().add_class("disk-row")
+        row.set_spacing(15)
+        
+        icon = Gtk.Label(label="💾")
+        icon.set_size_request(40, 40)
+        row.pack_start(icon, False, False, 10)
+        
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        info_box.set_spacing(3)
+        
+        name_label = Gtk.Label(label=f"/dev/{name}")
+        name_label.get_style_context().add_class("disk-name")
+        name_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(name_label, False, False, 0)
+        
+        detail_label = Gtk.Label(label=f"{size} • {model}")
+        detail_label.get_style_context().add_class("disk-info")
+        detail_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(detail_label, False, False, 0)
+        
+        row.pack_start(info_box, True, True, 0)
+        
+        event_box.add(row)
+        event_box.connect("button-press-event", self.on_disk_selected, name, row)
+        event_box.disk_name = name
+        event_box.disk_row = row
+        
+        return event_box
+        
+    def on_disk_selected(self, widget, event, name, row):
+        for child in self.disk_list.get_children():
+            child.disk_row.get_style_context().remove_class("disk-row-selected")
+            
+        row.get_style_context().add_class("disk-row-selected")
+        self.selected_disk = name
+        self.update_navigation()
+        
+    def create_user_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Create Your Account")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Set up your user account and system hostname.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        card.pack_start(subtitle, False, False, 0)
+        
+        grid = Gtk.Grid()
+        grid.set_column_spacing(20)
+        grid.set_row_spacing(15)
+        
+        fullname_label = Gtk.Label(label="Full Name")
+        fullname_label.get_style_context().add_class("input-label")
+        fullname_label.set_halign(Gtk.Align.START)
+        grid.attach(fullname_label, 0, 0, 1, 1)
+        
+        self.fullname_entry = Gtk.Entry()
+        self.fullname_entry.set_placeholder_text("John Doe")
+        self.fullname_entry.set_hexpand(True)
+        self.fullname_entry.connect("changed", self.on_user_input_changed)
+        grid.attach(self.fullname_entry, 0, 1, 1, 1)
+        
+        username_label = Gtk.Label(label="Username")
+        username_label.get_style_context().add_class("input-label")
+        username_label.set_halign(Gtk.Align.START)
+        grid.attach(username_label, 1, 0, 1, 1)
+        
+        self.username_entry = Gtk.Entry()
+        self.username_entry.set_placeholder_text("johndoe")
+        self.username_entry.set_hexpand(True)
+        self.username_entry.connect("changed", self.on_user_input_changed)
+        grid.attach(self.username_entry, 1, 1, 1, 1)
+        
+        self.username_error = Gtk.Label()
+        self.username_error.get_style_context().add_class("error-label")
+        self.username_error.set_halign(Gtk.Align.START)
+        grid.attach(self.username_error, 1, 2, 1, 1)
+        
+        password_label = Gtk.Label(label="Password")
+        password_label.get_style_context().add_class("input-label")
+        password_label.set_halign(Gtk.Align.START)
+        grid.attach(password_label, 0, 3, 1, 1)
+        
+        self.password_entry = Gtk.Entry()
+        self.password_entry.set_visibility(False)
+        self.password_entry.set_placeholder_text("••••••••")
+        self.password_entry.set_hexpand(True)
+        self.password_entry.connect("changed", self.on_user_input_changed)
+        grid.attach(self.password_entry, 0, 4, 1, 1)
+        
+        confirm_label = Gtk.Label(label="Confirm Password")
+        confirm_label.get_style_context().add_class("input-label")
+        confirm_label.set_halign(Gtk.Align.START)
+        grid.attach(confirm_label, 1, 3, 1, 1)
+        
+        self.confirm_entry = Gtk.Entry()
+        self.confirm_entry.set_visibility(False)
+        self.confirm_entry.set_placeholder_text("••••••••")
+        self.confirm_entry.set_hexpand(True)
+        self.confirm_entry.connect("changed", self.on_user_input_changed)
+        grid.attach(self.confirm_entry, 1, 4, 1, 1)
+        
+        self.password_error = Gtk.Label()
+        self.password_error.get_style_context().add_class("error-label")
+        self.password_error.set_halign(Gtk.Align.START)
+        grid.attach(self.password_error, 0, 5, 2, 1)
+        
+        hostname_label = Gtk.Label(label="Hostname")
+        hostname_label.get_style_context().add_class("input-label")
+        hostname_label.set_halign(Gtk.Align.START)
+        grid.attach(hostname_label, 0, 6, 1, 1)
+        
+        self.hostname_entry = Gtk.Entry()
+        self.hostname_entry.set_text("aegis")
+        self.hostname_entry.set_placeholder_text("aegis")
+        self.hostname_entry.set_hexpand(True)
+        self.hostname_entry.connect("changed", self.on_user_input_changed)
+        grid.attach(self.hostname_entry, 0, 7, 1, 1)
+        
+        card.pack_start(grid, True, True, 0)
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def on_user_input_changed(self, widget):
+        username = self.username_entry.get_text().strip()
+        password = self.password_entry.get_text()
+        confirm = self.confirm_entry.get_text()
+        
+        self.username_error.set_text("")
+        if username and not re.match(r'^[a-z_][a-z0-9_-]*$', username):
+            self.username_error.set_text("Username must start with letter, lowercase only")
+        elif len(username) > 32:
+            self.username_error.set_text("Username too long (max 32 chars)")
+            
+        self.password_error.set_text("")
+        if password and len(password) < 4:
+            self.password_error.set_text("Password must be at least 4 characters")
+        elif password and confirm and password != confirm:
+            self.password_error.set_text("Passwords do not match")
+            
+        self.update_navigation()
+        
+    def validate_user_input(self):
+        username = self.username_entry.get_text().strip()
+        password = self.password_entry.get_text()
+        confirm = self.confirm_entry.get_text()
+        
+        if not username:
+            return False
+        if not re.match(r'^[a-z_][a-z0-9_-]*$', username):
+            return False
+        if len(username) > 32:
+            return False
+        if len(password) < 4:
+            return False
+        if password != confirm:
+            return False
+            
+        return True
+        
+    def create_region_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Region Settings")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Select your timezone and language settings.")
+        subtitle.get_style_context().add_class("section-subtitle")
+        subtitle.set_halign(Gtk.Align.START)
+        card.pack_start(subtitle, False, False, 0)
+        
+        grid = Gtk.Grid()
+        grid.set_column_spacing(20)
+        grid.set_row_spacing(15)
+        
+        tz_label = Gtk.Label(label="Timezone")
+        tz_label.get_style_context().add_class("input-label")
+        tz_label.set_halign(Gtk.Align.START)
+        grid.attach(tz_label, 0, 0, 1, 1)
+        
+        self.tz_combo = Gtk.ComboBoxText()
+        for tz in TIMEZONES:
+            self.tz_combo.append_text(tz)
+        self.tz_combo.set_active(0)
+        self.tz_combo.set_hexpand(True)
+        grid.attach(self.tz_combo, 0, 1, 1, 1)
+        
+        locale_label = Gtk.Label(label="Language / Locale")
+        locale_label.get_style_context().add_class("input-label")
+        locale_label.set_halign(Gtk.Align.START)
+        grid.attach(locale_label, 1, 0, 1, 1)
+        
+        self.locale_combo = Gtk.ComboBoxText()
+        for code, name in LOCALES:
+            self.locale_combo.append_text(f"{name} ({code})")
+        self.locale_combo.set_active(0)
+        self.locale_combo.set_hexpand(True)
+        grid.attach(self.locale_combo, 1, 1, 1, 1)
+        
+        card.pack_start(grid, True, True, 0)
+        
+        summary_title = Gtk.Label(label="Installation Summary")
+        summary_title.get_style_context().add_class("section-title")
+        summary_title.set_halign(Gtk.Align.START)
+        summary_title.set_margin_top(30)
+        card.pack_start(summary_title, False, False, 0)
+        
+        self.summary_label = Gtk.Label()
+        self.summary_label.set_halign(Gtk.Align.START)
+        self.summary_label.set_line_wrap(True)
+        card.pack_start(self.summary_label, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def update_summary(self):
+        boot_mode = "UEFI" if os.path.isdir("/sys/firmware/efi") else "BIOS"
+        username = self.username_entry.get_text().strip()
+        hostname = self.hostname_entry.get_text().strip() or "aegis"
+        timezone = self.tz_combo.get_active_text() or "UTC"
+        locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
+        
+        summary = f"""
+Target Disk: /dev/{self.selected_disk}
+Boot Mode: {boot_mode}
+Username: {username}
+Hostname: {hostname}
+Timezone: {timezone}
+Locale: {locale}
+
+⚠️ All data on /dev/{self.selected_disk} will be permanently erased!
+"""
+        self.summary_label.set_text(summary)
+        
+    def create_install_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Installing Aegis OS")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        self.install_status = Gtk.Label(label="Preparing installation...")
+        self.install_status.get_style_context().add_class("section-subtitle")
+        self.install_status.set_halign(Gtk.Align.START)
+        card.pack_start(self.install_status, False, False, 0)
+        
+        self.progress_bar = Gtk.ProgressBar()
+        self.progress_bar.get_style_context().add_class("progress-bar")
+        self.progress_bar.set_show_text(True)
+        card.pack_start(self.progress_bar, False, False, 10)
+        
+        log_label = Gtk.Label(label="Installation Log")
+        log_label.get_style_context().add_class("input-label")
+        log_label.set_halign(Gtk.Align.START)
+        card.pack_start(log_label, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(250)
+        
+        self.log_buffer = Gtk.TextBuffer()
+        self.log_view = Gtk.TextView(buffer=self.log_buffer)
+        self.log_view.set_editable(False)
+        self.log_view.set_cursor_visible(False)
+        self.log_view.get_style_context().add_class("log-view")
+        scroll.add(self.log_view)
+        card.pack_start(scroll, True, True, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def create_complete_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_valign(Gtk.Align.CENTER)
+        
+        icon = Gtk.Label(label="✓")
+        icon.get_style_context().add_class("completion-icon")
+        icon.set_markup('<span font="72" color="#22c55e">✓</span>')
+        card.pack_start(icon, False, False, 20)
+        
+        title = Gtk.Label(label="Installation Complete!")
+        title.get_style_context().add_class("section-title")
+        card.pack_start(title, False, False, 0)
+        
+        self.complete_message = Gtk.Label()
+        self.complete_message.set_line_wrap(True)
+        self.complete_message.set_justify(Gtk.Justification.CENTER)
+        card.pack_start(self.complete_message, False, False, 0)
+        
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        button_box.set_halign(Gtk.Align.CENTER)
+        button_box.set_spacing(20)
+        
+        reboot_btn = Gtk.Button(label="🔄 Reboot Now")
+        reboot_btn.get_style_context().add_class("nav-button-primary")
+        reboot_btn.connect("clicked", self.on_reboot)
+        button_box.pack_start(reboot_btn, False, False, 0)
+        
+        close_btn = Gtk.Button(label="Close Installer")
+        close_btn.get_style_context().add_class("nav-button")
+        close_btn.connect("clicked", lambda w: Gtk.main_quit())
+        button_box.pack_start(close_btn, False, False, 0)
+        
+        card.pack_start(button_box, False, False, 20)
+        
+        page.pack_start(card, True, True, 0)
+        
+        return page
+        
+    def on_reboot(self, widget):
+        try:
+            subprocess.run(["reboot"], check=False)
+        except:
+            pass
+        Gtk.main_quit()
+        
+    def create_navigation(self):
+        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        nav.set_spacing(10)
+        nav.set_margin_start(30)
+        nav.set_margin_end(30)
+        nav.set_margin_top(15)
+        nav.set_margin_bottom(15)
+        
+        self.back_btn = Gtk.Button(label="← Back")
+        self.back_btn.get_style_context().add_class("nav-button")
+        self.back_btn.connect("clicked", self.on_back)
+        nav.pack_start(self.back_btn, False, False, 0)
+        
+        spacer = Gtk.Box()
+        nav.pack_start(spacer, True, True, 0)
+        
+        self.cancel_btn = Gtk.Button(label="Cancel")
+        self.cancel_btn.get_style_context().add_class("nav-button")
+        self.cancel_btn.connect("clicked", self.on_cancel)
+        nav.pack_start(self.cancel_btn, False, False, 0)
+        
+        self.next_btn = Gtk.Button(label="Next →")
+        self.next_btn.get_style_context().add_class("nav-button-primary")
+        self.next_btn.connect("clicked", self.on_next)
+        nav.pack_start(self.next_btn, False, False, 0)
+        
+        self.update_navigation()
+        
+        return nav
+        
+    def update_navigation(self):
+        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < 4)
+        
+        if self.current_step == 0:
+            self.next_btn.set_sensitive(self.license_accepted)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 1:
+            self.next_btn.set_sensitive(self.selected_disk is not None)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 2:
+            self.next_btn.set_sensitive(self.validate_user_input())
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 3:
+            self.next_btn.set_sensitive(True)
+            self.next_btn.set_label("Install →")
+            self.next_btn.get_style_context().remove_class("nav-button-primary")
+            self.next_btn.get_style_context().add_class("nav-button-danger")
+        elif self.current_step >= 4:
+            self.next_btn.set_sensitive(False)
+            self.back_btn.set_sensitive(False)
+            self.cancel_btn.set_sensitive(False)
+            
+    def on_back(self, widget):
+        if self.current_step > 0:
+            self.current_step -= 1
+            self.show_current_step()
+            
+    def on_next(self, widget):
+        if self.current_step < len(self.steps) - 1:
+            if self.current_step == 2:
+                self.username = self.username_entry.get_text().strip()
+                self.fullname = self.fullname_entry.get_text().strip()
+                self.password = self.password_entry.get_text()
+                self.hostname = self.hostname_entry.get_text().strip() or "aegis"
+                
+            if self.current_step == 3:
+                self.timezone = self.tz_combo.get_active_text() or "UTC"
+                self.locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
+                
+            self.current_step += 1
+            self.show_current_step()
+            
+            if self.current_step == 3:
+                self.update_summary()
+            elif self.current_step == 4:
+                self.start_installation()
+                
+    def on_cancel(self, widget):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Cancel Installation?"
+        )
+        dialog.format_secondary_text("Are you sure you want to cancel the installation?")
+        response = dialog.run()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.YES:
+            Gtk.main_quit()
+            
+    def show_current_step(self):
+        pages = ["welcome", "disk", "user", "region", "install", "complete"]
+        self.content_stack.set_visible_child_name(pages[self.current_step])
+        self.update_step_indicator()
+        self.update_navigation()
+        
+    def log(self, message):
+        GLib.idle_add(self._log_ui, message)
+        
+    def _log_ui(self, message):
+        end_iter = self.log_buffer.get_end_iter()
+        self.log_buffer.insert(end_iter, message + "\n")
+        mark = self.log_buffer.create_mark(None, self.log_buffer.get_end_iter(), False)
+        self.log_view.scroll_to_mark(mark, 0, False, 0, 0)
+        
+    def update_progress(self, fraction, status):
+        GLib.idle_add(self._update_progress_ui, fraction, status)
+        
+    def _update_progress_ui(self, fraction, status):
+        self.progress_bar.set_fraction(fraction)
+        self.progress_bar.set_text(f"{int(fraction * 100)}%")
+        self.install_status.set_text(status)
+        
+    def start_installation(self):
+        thread = threading.Thread(target=self.run_installation, daemon=True)
+        thread.start()
+        
+    def run_installation(self):
+        try:
+            self.do_installation()
+        except Exception as e:
+            self.log(f"ERROR: {str(e)}")
+            GLib.idle_add(self.show_error_dialog, str(e))
+            
+    def show_error_dialog(self, error):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Installation Failed"
+        )
+        dialog.format_secondary_text(f"An error occurred during installation:\n\n{error}")
+        dialog.run()
+        dialog.destroy()
+        
+    def run_cmd(self, cmd, desc=None):
+        if desc:
+            self.log(f"→ {desc}")
+        try:
+            result = subprocess.run(
+                cmd, shell=True, 
+                capture_output=True, text=True,
+                timeout=1800
+            )
+            if result.stdout.strip():
+                for line in result.stdout.strip().split('\n')[-5:]:
+                    self.log(f"  {line}")
+            if result.returncode != 0 and result.stderr.strip():
+                self.log(f"  Warning: {result.stderr.strip()[:200]}")
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            self.log(f"  Command timed out")
+            return False
+        except Exception as e:
+            self.log(f"  Error: {str(e)}")
+            return False
+            
+    def do_installation(self):
+        disk = self.selected_disk
+        is_uefi = os.path.isdir("/sys/firmware/efi")
+        is_nvme = disk.startswith("nvme")
+        
+        if is_nvme:
+            boot_part = f"/dev/{disk}p1"
+            root_part = f"/dev/{disk}p2" if is_uefi else f"/dev/{disk}p1"
+        else:
+            boot_part = f"/dev/{disk}1"
+            root_part = f"/dev/{disk}2" if is_uefi else f"/dev/{disk}1"
+            
+        self.update_progress(0.05, "Partitioning disk...")
+        self.log("=" * 50)
+        self.log("Starting Aegis OS Installation")
+        self.log("=" * 50)
+        self.log(f"Target: /dev/{disk}")
+        self.log(f"Boot mode: {'UEFI' if is_uefi else 'BIOS'}")
+        self.log(f"User: {self.username}")
+        self.log("")
+        
+        if is_uefi:
+            self.run_cmd(f"parted -s /dev/{disk} mklabel gpt", "Creating GPT partition table")
+            self.run_cmd(f"parted -s /dev/{disk} mkpart ESP fat32 1MiB 513MiB", "Creating EFI partition")
+            self.run_cmd(f"parted -s /dev/{disk} set 1 esp on", "Setting ESP flag")
+            self.run_cmd(f"parted -s /dev/{disk} mkpart primary ext4 513MiB 100%", "Creating root partition")
+        else:
+            self.run_cmd(f"parted -s /dev/{disk} mklabel msdos", "Creating MBR partition table")
+            self.run_cmd(f"parted -s /dev/{disk} mkpart primary ext4 1MiB 100%", "Creating root partition")
+            self.run_cmd(f"parted -s /dev/{disk} set 1 boot on", "Setting boot flag")
+            
+        time.sleep(2)
+        
+        self.update_progress(0.10, "Formatting partitions...")
+        if is_uefi:
+            self.run_cmd(f"mkfs.fat -F32 {boot_part}", "Formatting EFI partition")
+        self.run_cmd(f"mkfs.ext4 -F {root_part}", "Formatting root partition")
+        
+        self.update_progress(0.15, "Mounting partitions...")
+        self.run_cmd(f"mount {root_part} /mnt", "Mounting root partition")
+        if is_uefi:
+            self.run_cmd("mkdir -p /mnt/boot/efi", "Creating EFI mount point")
+            self.run_cmd(f"mount {boot_part} /mnt/boot/efi", "Mounting EFI partition")
+            
+        self.update_progress(0.20, "Installing base system (this may take a while)...")
+        self.log("Installing base packages...")
+        if not self.run_cmd("pacstrap -K /mnt base linux linux-firmware base-devel", "Installing base system"):
+            raise Exception("Failed to install base system. Check network connection.")
+            
+        self.update_progress(0.50, "Generating filesystem table...")
+        self.run_cmd("genfstab -U /mnt >> /mnt/etc/fstab", "Generating fstab")
+        
+        self.update_progress(0.55, "Configuring system...")
+        
+        # Use collected user credentials from the form (NOT hardcoded)
+        USERNAME = self.username    # from user input on User Setup page
+        PASSWORD = self.password    # from user input on User Setup page
+        FULLNAME = self.fullname    # from user input on User Setup page
+        HOSTNAME = self.hostname    # from user input on User Setup page
+        TIMEZONE = self.timezone    # from user selection on Region page
+        LOCALE = self.locale        # from user selection on Region page
+        
+        # Escape special characters for shell safety
+        escaped_fullname = FULLNAME.replace("'", "'\\''")
+        escaped_password = PASSWORD.replace("'", "'\\''")
+        
+        chroot_script = f'''#!/bin/bash
+set -e
+
+# Timezone and locale configuration
+ln -sf /usr/share/zoneinfo/{TIMEZONE} /etc/localtime
+hwclock --systohc
+
+echo "{LOCALE} UTF-8" >> /etc/locale.gen
+locale-gen
+echo "LANG={LOCALE}" > /etc/locale.conf
+
+# Hostname configuration
+echo "{HOSTNAME}" > /etc/hostname
+
+cat > /etc/hosts << HOSTS
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   {HOSTNAME}.localdomain {HOSTNAME}
+HOSTS
+
+# Network manager
+pacman -S --noconfirm networkmanager
+systemctl enable NetworkManager
+
+'''
+        
+        if is_uefi:
+            chroot_script += f'''
+# UEFI bootloader installation
+pacman -S --noconfirm grub efibootmgr
+grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Aegis --removable
+'''
+        else:
+            chroot_script += f'''
+# BIOS/Legacy bootloader installation
+pacman -S --noconfirm grub
+grub-install --target=i386-pc /dev/{disk}
+'''
+        
+        chroot_script += f'''
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# User creation with collected credentials from installer form
+# Username: {USERNAME} (from user input)
+# Fullname: {escaped_fullname} (from user input)
+useradd -m -G wheel,audio,video,storage,optical -s /bin/bash -c '{escaped_fullname}' {USERNAME}
+
+# Set password using chpasswd (password from user input)
+echo '{USERNAME}:{escaped_password}' | chpasswd
+
+# Configure sudo access for wheel group
+sed -i 's/^# *%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+grep -q "^%wheel ALL=(ALL:ALL) ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
+
+# Desktop environment
+pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
+systemctl enable lightdm
+
+echo "Configuration complete for user: {USERNAME}"
+'''
+        
+        with open("/mnt/tmp/aegis-setup.sh", "w") as f:
+            f.write(chroot_script)
+        os.chmod("/mnt/tmp/aegis-setup.sh", 0o755)
+        
+        self.update_progress(0.60, "Setting timezone and locale...")
+        self.log("Running system configuration...")
+        
+        result = subprocess.run(
+            ["arch-chroot", "/mnt", "/tmp/aegis-setup.sh"],
+            capture_output=True, text=True, timeout=1800
+        )
+        
+        if result.stdout:
+            for line in result.stdout.strip().split('\n')[-10:]:
+                self.log(f"  {line}")
+                
+        self.update_progress(0.85, "Installing Aegis components...")
+        self.run_cmd("cp -r /etc/aegis /mnt/etc/ 2>/dev/null || true", "Copying Aegis config")
+        self.run_cmd("cp /usr/local/bin/aegis-* /mnt/usr/local/bin/ 2>/dev/null || true", "Copying Aegis tools")
+        
+        self.update_progress(0.95, "Finishing installation...")
+        os.remove("/mnt/tmp/aegis-setup.sh")
+        self.run_cmd("umount -R /mnt", "Unmounting filesystems")
+        
+        self.update_progress(1.0, "Installation complete!")
+        self.log("")
+        self.log("=" * 50)
+        self.log("Installation completed successfully!")
+        self.log("=" * 50)
+        self.log(f"Username: {self.username}")
+        self.log("Please remove installation media and reboot.")
+        
+        self.installation_complete = True
+        GLib.idle_add(self.show_completion)
+        
+    def show_completion(self):
+        self.complete_message.set_text(
+            f"Aegis OS has been successfully installed.\n\n"
+            f"Username: {self.username}\n"
+            f"Hostname: {self.hostname}\n\n"
+            f"Please remove the installation media and reboot your computer.\n"
+            f"After first boot, activate your license with:\n"
+            f"  sudo aegis-activate YOUR-LICENSE-KEY"
+        )
+        self.current_step = 5
+        self.show_current_step()
+
+def check_root():
+    if os.geteuid() != 0:
+        dialog = Gtk.MessageDialog(
+            flags=0,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Root Required"
+        )
+        dialog.format_secondary_text(
+            "The Aegis OS Installer must be run as root.\n\n"
+            "Please run: sudo aegis-installer-gui"
+        )
+        dialog.run()
+        dialog.destroy()
+        return False
+    return True
+
+def main():
+    if not check_root():
+        return 1
+        
+    win = AegisInstaller()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+    return 0
+
+if __name__ == "__main__":
+    exit(main())

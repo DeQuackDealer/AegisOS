@@ -1,0 +1,16 @@
+[Unit]
+Description=Aegis OS Out of Box Experience (OOBE) Wizard
+After=graphical.target display-manager.service
+Wants=graphical.target
+ConditionPathExists=!/etc/aegis/.oobe-complete
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/local/bin/aegis-oobe-launcher
+Restart=no
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical.target

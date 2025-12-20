@@ -1,0 +1,49 @@
+#!/bin/bash
+# Aegis OOBE Launcher - finds logged in user and runs OOBE
+# This allows OOBE to work with any username, not just "aegis"
+
+OOBE_MARKER="/etc/aegis/.oobe-complete"
+
+if [ -f "$OOBE_MARKER" ]; then
+    exit 0
+fi
+
+DISPLAY_USER=""
+DISPLAY_NUM=":0"
+
+for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+        username=$(basename "$user_home")
+        if [ -f "$user_home/.Xauthority" ]; then
+            DISPLAY_USER="$username"
+            break
+        fi
+    fi
+done
+
+if [ -z "$DISPLAY_USER" ]; then
+    DISPLAY_USER=$(who | grep -E '\(:0\)|\(tty' | head -1 | awk '{print $1}')
+fi
+
+if [ -z "$DISPLAY_USER" ]; then
+    DISPLAY_USER=$(ls /home/ | head -1)
+fi
+
+if [ -z "$DISPLAY_USER" ]; then
+    echo "No user found for OOBE"
+    exit 1
+fi
+
+USER_HOME="/home/$DISPLAY_USER"
+XAUTH="$USER_HOME/.Xauthority"
+
+export DISPLAY="$DISPLAY_NUM"
+export XAUTHORITY="$XAUTH"
+export HOME="$USER_HOME"
+export USER="$DISPLAY_USER"
+
+exec sudo -u "$DISPLAY_USER" \
+    DISPLAY="$DISPLAY_NUM" \
+    XAUTHORITY="$XAUTH" \
+    HOME="$USER_HOME" \
+    /usr/local/bin/aegis-oobe

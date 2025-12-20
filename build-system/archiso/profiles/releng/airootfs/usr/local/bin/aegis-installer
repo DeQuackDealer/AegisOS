@@ -1,6 +1,6 @@
 #!/bin/bash
-# Aegis OS Installer - CLI Interface
-# For the full GUI installer, run: aegis-installer-gui
+# Aegis OS Installer - Smart Launcher
+# Launches GUI installer when X is available, falls back to CLI
 
 set -e
 
@@ -9,6 +9,30 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+# Check if we should launch GUI
+launch_gui() {
+    if [ -n "$DISPLAY" ] && command -v python3 &> /dev/null; then
+        if python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Try to launch GUI installer if available
+if [ "$1" != "--cli" ] && [ "$1" != "-c" ]; then
+    if launch_gui; then
+        echo -e "${GREEN}Launching Aegis OS GUI Installer...${NC}"
+        exec /usr/local/bin/aegis-installer-gui "$@"
+        exit $?
+    fi
+fi
+
+# Fall back to CLI installer
+echo -e "${YELLOW}GUI not available. Starting CLI installer...${NC}"
+echo -e "${YELLOW}Tip: Run with --cli to force CLI mode${NC}"
+echo ""
 
 echo -e "${CYAN}"
 echo "    ___    ______________  _____    ____  _____"
