@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""
+Aegis RGB Control - OpenRGB Integration for Gaming Peripherals
+Controls RGB lighting on keyboards, mice, motherboards, RAM, and GPUs
+"""
+
+import subprocess
+import json
+import os
+import sys
+from pathlib import Path
+from typing import List, Dict, Optional
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    from gi.repository import Gtk, Gdk, GLib
+    GTK_AVAILABLE = True
+except ImportError:
+    GTK_AVAILABLE = False
+
+CONFIG_DIR = Path.home() / ".config/aegis/rgb"
+PROFILES_DIR = CONFIG_DIR / "profiles"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+DEFAULT_CONFIG = {
+    "active_profile": "gaming",
+    "sync_all_devices": True,
+    "brightness": 100,
+    "speed": 50
+}
+
+PRESET_EFFECTS = {
+    "static": {"name": "Static", "desc": "Solid color"},
+    "breathing": {"name": "Breathing", "desc": "Pulsing glow"},
+    "rainbow": {"name": "Rainbow Wave", "desc": "Flowing rainbow"},
+    "spectrum": {"name": "Spectrum Cycle", "desc": "Color cycling"},
+    "rain": {"name": "Digital Rain", "desc": "Matrix-style rain"},
+    "reactive": {"name": "Reactive", "desc": "Lights up on keypress"},
+    "off": {"name": "Off", "desc": "Disable all RGB"}
+}
+
+GAMING_PROFILES = {
+    "gaming": {
+        "name": "Gaming Mode",
+        "effect": "reactive",
+        "color": "#ff6600",
+        "speed": 70,
+        "brightness": 100
+    },
+    "streaming": {
+        "name": "Streaming Mode",
+        "effect": "rainbow",
+        "color": "#8b5cf6",
+        "speed": 30,
+        "brightness": 80
+    },
+    "stealth": {
+        "name": "Stealth Mode",
+        "effect": "static",
+        "color": "#1a1a2e",
+        "speed": 0,
+        "brightness": 20
+    },
+    "off": {
+        "name": "RGB Off",
+        "effect": "off",
+        "color": "#000000",
+        "speed": 0,
+        "brightness": 0
+    }
+}
+
+class OpenRGBController:
+    def __init__(self):
+        self.devices = []
+        self.openrgb_available = self._check_openrgb()
+    
+    def _check_openrgb(self) -> bool:
+        try:
+            result = subprocess.run(["which", "openrgb"], capture_output=True)
+            return result.returncode == 0
+        except:
+            return False
+    
+    def _run_openrgb(self, args: List[str]) -> tuple:
+        try:
+            result = subprocess.run(
+                ["openrgb"] + args,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return result.returncode == 0, result.stdout
+        except subprocess.TimeoutExpired:
+            return False, "OpenRGB timed out"
+        except Exception as e:
+            return False, str(e)
+    
+    def detect_devices(self) -> List[Dict]:
+        if not self.openrgb_available:
+            return []
+        
+        success, output = self._run_openrgb(["--list-devices"])
+        if not success:
+            return []
+        
+        devices = []
+        current_device = None
+        
+        for line in output.split('\n'):
+            if line.startswith('Device'):
+                if current_device:
+                    devices.append(current_device)
+                idx = line.split(':')[0].replace('Device ', '')
+                current_device = {"index": int(idx) if idx.isdigit() else 0, "name": "", "type": "unknown", "zones": []}
+            elif current_device and 'Name:' in line:
+                current_device["name"] = line.split('Name:')[1].strip()
+            elif current_device and 'Type:' in line:
+                current_device["type"] = line.split('Type:')[1].strip().lower()
+        
+        if current_device:
+            devices.append(current_device)
+        
+        self.devices = devices
+        return devices
+    
+    def set_color(self, color: str, device_index: int = -1) -> bool:
+        color = color.lstrip('#')
+        r, g, b = int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16)
+        
+        args = ["-c", f"{r:02x}{g:02x}{b:02x}", "-m", "static"]
+        if device_index >= 0:
+            args = ["-d", str(device_index)] + args
+        
+        success, _ = self._run_openrgb(args)
+        return success
+    
+    def set_effect(self, effect: str, device_index: int = -1) -> bool:
+        if effect == "off":
+            return self.set_brightness(0, device_index)
+        
+        effect_map = {
+            "static": "static",
+            "breathing": "breathing",
+            "rainbow": "rainbow wave",
+            "spectrum": "spectrum cycle",
+            "rain": "digital rain",
+            "reactive": "reactive"
+        }
+        
+        mode = effect_map.get(effect, "static")
+        args = ["-m", mode]
+        if device_index >= 0:
+            args = ["-d", str(device_index)] + args
+        
+        success, _ = self._run_openrgb(args)
+        return success
+    
+    def set_brightness(self, brightness: int, device_index: int = -1) -> bool:
+        args = ["-b", str(brightness)]
+        if device_index >= 0:
+            args = ["-d", str(device_index)] + args
+        
+        success, _ = self._run_openrgb(args)
+        return success
+    
+    def apply_profile(self, profile: Dict) -> bool:
+        success = True
+        if "color" in profile:
+            success = success and self.set_color(profile["color"])
+        if "effect" in profile:
+            success = success and self.set_effect(profile["effect"])
+        if "brightness" in profile:
+            success = success and self.set_brightness(profile["brightness"])
+        return success
+
+class AegisRGBControl:
+    def __init__(self):
+        self.controller = OpenRGBController()
+        self.config = self._load_config()
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def _load_config(self) -> Dict:
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE) as f:
+                    return {**DEFAULT_CONFIG, **json.load(f)}
+            except:
+                pass
+        return DEFAULT_CONFIG.copy()
+    
+    def _save_config(self):
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def apply_gaming_profile(self, profile_name: str) -> bool:
+        if profile_name in GAMING_PROFILES:
+            profile = GAMING_PROFILES[profile_name]
+            success = self.controller.apply_profile(profile)
+            if success:
+                self.config["active_profile"] = profile_name
+                self._save_config()
+            return success
+        return False
+    
+    def list_devices(self):
+        devices = self.controller.detect_devices()
+        if not devices:
+            print("No RGB devices detected. Make sure OpenRGB is running.")
+            return
+        
+        print(f"Found {len(devices)} RGB device(s):\n")
+        for dev in devices:
+            print(f"  [{dev['index']}] {dev['name']} ({dev['type']})")
+    
+    def cli_mode(self, args: List[str]):
+        if not args:
+            self.show_help()
+            return
+        
+        cmd = args[0]
+        
+        if cmd == "list":
+            self.list_devices()
+        elif cmd == "profile":
+            if len(args) < 2:
+                print("Available profiles:")
+                for name, prof in GAMING_PROFILES.items():
+                    print(f"  {name}: {prof['name']}")
+            else:
+                profile = args[1]
+                if self.apply_gaming_profile(profile):
+                    print(f"Applied profile: {GAMING_PROFILES[profile]['name']}")
+                else:
+                    print(f"Failed to apply profile: {profile}")
+        elif cmd == "color":
+            if len(args) < 2:
+                print("Usage: aegis-rgb-control color #RRGGBB")
+            else:
+                color = args[1]
+                if self.controller.set_color(color):
+                    print(f"Set color to: {color}")
+                else:
+                    print("Failed to set color")
+        elif cmd == "effect":
+            if len(args) < 2:
+                print("Available effects:")
+                for name, info in PRESET_EFFECTS.items():
+                    print(f"  {name}: {info['desc']}")
+            else:
+                effect = args[1]
+                if self.controller.set_effect(effect):
+                    print(f"Set effect: {effect}")
+                else:
+                    print("Failed to set effect")
+        elif cmd == "off":
+            if self.controller.set_brightness(0):
+                print("RGB lighting disabled")
+            else:
+                print("Failed to disable RGB")
+        elif cmd == "gui":
+            if GTK_AVAILABLE:
+                self.run_gui()
+            else:
+                print("GTK not available. Install: sudo pacman -S gtk3 python-gobject")
+        else:
+            self.show_help()
+    
+    def show_help(self):
+        print("Aegis RGB Control - OpenRGB Integration")
+        print("\nUsage: aegis-rgb-control <command> [options]")
+        print("\nCommands:")
+        print("  list              List detected RGB devices")
+        print("  profile <name>    Apply a gaming profile")
+        print("  color <#RRGGBB>   Set a solid color")
+        print("  effect <name>     Set an effect")
+        print("  off               Disable all RGB lighting")
+        print("  gui               Launch graphical interface")
+        print("\nProfiles: gaming, streaming, stealth, off")
+        print("Effects: static, breathing, rainbow, spectrum, rain, reactive, off")
+    
+    def run_gui(self):
+        if not GTK_AVAILABLE:
+            print("GTK not available")
+            return
+        
+        win = RGBControlWindow(self)
+        win.connect("destroy", Gtk.main_quit)
+        win.show_all()
+        Gtk.main()
+
+class RGBControlWindow(Gtk.Window):
+    def __init__(self, controller: AegisRGBControl):
+        super().__init__(title="Aegis RGB Control")
+        self.controller = controller
+        self.set_default_size(500, 400)
+        self.set_border_width(20)
+        
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            window { background: #1a1a2e; }
+            label { color: white; }
+            button { background: #3b82f6; color: white; border-radius: 8px; padding: 10px; }
+            button:hover { background: #2563eb; }
+        """)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.add(vbox)
+        
+        title = Gtk.Label()
+        title.set_markup("<span size='xx-large' weight='bold' color='#ff6600'>Aegis RGB Control</span>")
+        vbox.pack_start(title, False, False, 10)
+        
+        subtitle = Gtk.Label(label="OpenRGB Integration for Gaming Peripherals")
+        vbox.pack_start(subtitle, False, False, 0)
+        
+        profiles_frame = Gtk.Frame(label=" Quick Profiles ")
+        profiles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        profiles_box.set_margin_top(10)
+        profiles_box.set_margin_bottom(10)
+        profiles_box.set_margin_start(10)
+        profiles_box.set_margin_end(10)
+        
+        for name, prof in GAMING_PROFILES.items():
+            btn = Gtk.Button(label=prof["name"])
+            btn.connect("clicked", lambda b, n=name: self._apply_profile(n))
+            profiles_box.pack_start(btn, True, True, 0)
+        
+        profiles_frame.add(profiles_box)
+        vbox.pack_start(profiles_frame, False, False, 10)
+        
+        devices = self.controller.controller.detect_devices()
+        devices_label = Gtk.Label()
+        devices_label.set_markup(f"<span color='#22c55e'>Detected {len(devices)} RGB device(s)</span>")
+        vbox.pack_start(devices_label, False, False, 10)
+        
+        status = Gtk.Label()
+        status.set_markup(f"<span color='#888'>Active: {self.controller.config.get('active_profile', 'none')}</span>")
+        self.status_label = status
+        vbox.pack_start(status, False, False, 10)
+    
+    def _apply_profile(self, name: str):
+        if self.controller.apply_gaming_profile(name):
+            self.status_label.set_markup(f"<span color='#22c55e'>Applied: {GAMING_PROFILES[name]['name']}</span>")
+        else:
+            self.status_label.set_markup("<span color='#ef4444'>Failed to apply profile</span>")
+
+def main():
+    app = AegisRGBControl()
+    
+    if len(sys.argv) > 1:
+        app.cli_mode(sys.argv[1:])
+    elif GTK_AVAILABLE:
+        app.run_gui()
+    else:
+        app.show_help()
+
+if __name__ == "__main__":
+    main()
