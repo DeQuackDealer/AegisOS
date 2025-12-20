@@ -66,6 +66,7 @@ def print_header():
     slow_print("  AEGIS OS INSTALLER BUILD SYSTEM", delay=0.02)
     print("=" * 64)
     time.sleep(DELAY_SHORT)
+    
     print(f"  Build Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Python:     {sys.version.split()[0]}")
     print(f"  Platform:   {sys.platform}")
@@ -108,7 +109,7 @@ def print_location_info():
 def install_pyinstaller():
     """Install PyInstaller using pip"""
     print()
-    print("  → Downloading and installing PyInstaller...")
+    print("  → Downloading and installing PyInstaller...")    
     print("    This may take a minute...")
     time.sleep(DELAY_SHORT)
     
