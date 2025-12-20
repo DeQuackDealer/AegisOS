@@ -37,20 +37,18 @@ Preferred communication style: Simple, everyday language.
 
 ## Gamer Edition - Flagship Product ($49 lifetime / $10 annual)
 
-### 11 Integrated System Services (Background Daemons)
+### 9 Integrated System Services (Background Daemons)
 All services run automatically via systemd - no user configuration needed:
 
 1. **Adaptive RAM Guardian** - Memory reclamation, leak detection, gaming process prioritization
 2. **StreamForge Capture Stack** - Kernel-mode capture, NDI dual-PC streaming, AV1 encoding, Replay Buffer
-3. **Latency FastPath** - IRQ affinity steering, 1000Hz USB polling, CPU governor auto-switching
+3. **Latency FastPath** - IRQ affinity steering, 1000Hz USB polling, CPU governor auto-switching, input optimization
 4. **VRAM Heatmap Balancer** - Real-time GPU memory monitoring, shader cache cleanup
 5. **NetBoost Network Optimizer** - QoS for gaming traffic, BBR congestion control
 6. **Shader Pre-Cache Engine** - Background DXVK/VKD3D shader compilation
 7. **Audio Zero-Latency** - PipeWire optimization, Spatial Audio, AI Noise Suppression, EQ presets
 8. **Thermal Guard** - Smart temperature monitoring, automatic fan curve adjustment
-9. **Input Optimizer** - 8000Hz mouse polling, mouse debounce, flat acceleration, USB IRQ pinning
-10. **Display Optimizer** - VRR/FreeSync/G-Sync, Frame Generation (FSR 3/AFMF/DLSS FG), HDR, Integer Scaling
-11. **Kernel Optimizer** - CPU core isolation, LAVD scheduler, tickless kernel mode
+9. **Gamer Performance** - Display optimization, kernel tuning, VRR/FreeSync, performance profiles
 
 ### OS-Level Features
 - **Kernel**: BORE Scheduler, BFQ I/O, Transparent Huge Pages, NUMA-Aware Allocation
@@ -98,7 +96,7 @@ Stripe integration using manual secrets (STRIPE_SECRET_KEY_LIVE, STRIPE_PUBLISHA
 ## AegisOSRepo Structure
 Raw source code repository with 2 branches:
 - **basic branch**: Core foundation (Freemium base) - Proton/Wine integration, basic gaming
-- **gamer branch**: Premium features ($49) - Dual GPU, 8 services, StreamForge, etc.
+- **gamer branch**: Premium features ($49) - Dual GPU, 9 services, StreamForge, etc.
 
 Located at: `AegisOSRepo/` directory
 
