@@ -1,0 +1,173 @@
+#!/bin/bash
+# Aegis OS Installer - CLI Interface
+# For the full GUI installer, run: aegis-installer-gui
+
+set -e
+
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${CYAN}"
+echo "    ___    ______________  _____    ____  _____"
+echo "   /   |  / ____/ ____/  |/  /\ \  / / / / /   /"
+echo "  / /| | / __/ / / __/ /|_/ /  \ \/ / /_/ / /| |"
+echo " / ___ |/ /___/ /_/ / /  / /    \  / __  / ___ |"
+echo "/_/  |_/_____/\____/_/  /_/      \/_/ /_/_/  |_|"
+echo -e "${NC}"
+echo ""
+echo -e "${GREEN}Aegis OS Installer${NC}"
+echo "==================="
+echo ""
+
+# Check for root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${RED}Please run as root: sudo aegis-installer${NC}"
+    exit 1
+fi
+
+# List disks
+echo "Available disks:"
+lsblk -d -o NAME,SIZE,MODEL | grep -v loop
+echo ""
+
+read -p "Enter target disk (e.g., sda, nvme0n1): " TARGET_DISK
+
+if [ ! -b "/dev/$TARGET_DISK" ]; then
+    echo -e "${RED}Error: /dev/$TARGET_DISK not found${NC}"
+    exit 1
+fi
+
+echo ""
+echo -e "${YELLOW}WARNING: This will ERASE ALL DATA on /dev/$TARGET_DISK${NC}"
+read -p "Type 'YES' to continue: " CONFIRM
+
+if [ "$CONFIRM" != "YES" ]; then
+    echo "Installation cancelled."
+    exit 0
+fi
+
+# Partition the disk
+echo ""
+echo -e "${CYAN}Partitioning disk...${NC}"
+
+# Detect if UEFI or BIOS
+if [ -d /sys/firmware/efi ]; then
+    BOOT_MODE="UEFI"
+    echo "Detected UEFI boot mode"
+    
+    # GPT partitioning for UEFI
+    parted -s /dev/$TARGET_DISK mklabel gpt
+    parted -s /dev/$TARGET_DISK mkpart ESP fat32 1MiB 513MiB
+    parted -s /dev/$TARGET_DISK set 1 esp on
+    parted -s /dev/$TARGET_DISK mkpart primary ext4 513MiB 100%
+    
+    # Format
+    if [[ "$TARGET_DISK" == nvme* ]]; then
+        mkfs.fat -F32 /dev/${TARGET_DISK}p1
+        mkfs.ext4 -F /dev/${TARGET_DISK}p2
+        BOOT_PART="/dev/${TARGET_DISK}p1"
+        ROOT_PART="/dev/${TARGET_DISK}p2"
+    else
+        mkfs.fat -F32 /dev/${TARGET_DISK}1
+        mkfs.ext4 -F /dev/${TARGET_DISK}2
+        BOOT_PART="/dev/${TARGET_DISK}1"
+        ROOT_PART="/dev/${TARGET_DISK}2"
+    fi
+else
+    BOOT_MODE="BIOS"
+    echo "Detected BIOS boot mode"
+    
+    # MBR partitioning for BIOS
+    parted -s /dev/$TARGET_DISK mklabel msdos
+    parted -s /dev/$TARGET_DISK mkpart primary ext4 1MiB 100%
+    parted -s /dev/$TARGET_DISK set 1 boot on
+    
+    if [[ "$TARGET_DISK" == nvme* ]]; then
+        mkfs.ext4 -F /dev/${TARGET_DISK}p1
+        ROOT_PART="/dev/${TARGET_DISK}p1"
+    else
+        mkfs.ext4 -F /dev/${TARGET_DISK}1
+        ROOT_PART="/dev/${TARGET_DISK}1"
+    fi
+    BOOT_PART=""
+fi
+
+# Mount partitions
+echo -e "${CYAN}Mounting partitions...${NC}"
+mount $ROOT_PART /mnt
+
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    mkdir -p /mnt/boot/efi
+    mount $BOOT_PART /mnt/boot/efi
+fi
+
+# Install base system
+echo -e "${CYAN}Installing base system (this may take a while)...${NC}"
+pacstrap -K /mnt base linux linux-firmware base-devel
+
+# Generate fstab
+echo -e "${CYAN}Generating fstab...${NC}"
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# Configure system
+echo -e "${CYAN}Configuring system...${NC}"
+arch-chroot /mnt /bin/bash <<EOF
+# Set timezone
+ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+hwclock --systohc
+
+# Locale
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+# Hostname
+echo "aegis" > /etc/hostname
+
+# Network
+pacman -S --noconfirm networkmanager
+systemctl enable NetworkManager
+
+# Bootloader
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    pacman -S --noconfirm grub efibootmgr
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Aegis
+else
+    pacman -S --noconfirm grub
+    grub-install --target=i386-pc /dev/$TARGET_DISK
+fi
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# Create aegis user
+useradd -m -G wheel -s /bin/bash aegis
+echo "aegis:aegis" | chpasswd
+echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
+
+# Install desktop environment
+pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
+systemctl enable lightdm
+EOF
+
+# Copy Aegis-specific files
+echo -e "${CYAN}Installing Aegis OS components...${NC}"
+cp -r /etc/aegis /mnt/etc/ 2>/dev/null || true
+cp /usr/local/bin/aegis-* /mnt/usr/local/bin/ 2>/dev/null || true
+
+# Unmount
+echo -e "${CYAN}Finishing installation...${NC}"
+umount -R /mnt
+
+echo ""
+echo -e "${GREEN}================================================${NC}"
+echo -e "${GREEN}Aegis OS installation complete!${NC}"
+echo -e "${GREEN}================================================${NC}"
+echo ""
+echo "Please remove the installation media and reboot."
+echo "Default login: aegis / aegis"
+echo ""
+echo "After first boot, activate your license with:"
+echo "  sudo aegis-activate YOUR-LICENSE-KEY"
+echo ""
