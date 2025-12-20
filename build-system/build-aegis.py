@@ -5,16 +5,19 @@ Generates bootable ISO images for all Aegis OS editions using archiso
 
 Based on SteamOS architecture - Arch Linux with custom packages and configuration.
 
-Supports two modes:
-- Simulation Mode: For development/testing (works on Replit)
+IMPORTANT: For REAL, BOOTABLE ISOs, use one of these methods:
+  1. GitHub Actions workflow (recommended) - push to repo and run workflow
+  2. build.sh on Arch Linux - sudo ./build.sh gamer
+
+This script has two modes:
+- Simulation Mode (default): Creates profile structure for testing (NOT bootable)
 - Real Build Mode: Full ISO build on Arch Linux systems with root access
 
 Usage:
-    python3 build-aegis.py --edition freemium [--simulate] [--verbose]
-    python3 build-aegis.py --edition freemium --real-build
+    python3 build-aegis.py --edition freemium --real-build    # Real bootable ISO
+    python3 build-aegis.py --edition freemium                 # Simulation only (NOT bootable)
     python3 build-aegis.py --check-deps
     python3 build-aegis.py --list-editions
-    python3 build-aegis.py --edition all --simulate
 """
 
 import os

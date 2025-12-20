@@ -711,37 +711,12 @@ class ISODownloader:
             
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                return self._create_demo_iso(edition, filepath)
+                return False, "", "ISO not found. Please download from https://aegis-os.com/download"
             return False, "", f"HTTP Error: {e.code}"
         except urllib.error.URLError as e:
-            return self._create_demo_iso(edition, filepath)
+            return False, "", f"Network error: {e.reason}. Download ISOs from https://aegis-os.com/download"
         except Exception as e:
             return False, "", f"Download failed: {e}"
-    
-    def _create_demo_iso(self, edition: str, filepath: Path) -> Tuple[bool, str, str]:
-        """Create a demo ISO when real download isn't available"""
-        edition_info = EDITIONS.get(edition)
-        if not edition_info:
-            return False, "", "Unknown edition"
-        
-        print("Note: Creating demo ISO (production ISOs available at aegis-os.com)")
-        
-        demo_size = 10 * 1024 * 1024
-        progress = ProgressBar(demo_size, "Creating demo")
-        
-        with open(filepath, 'wb') as f:
-            f.write(b'CD001' + b'\x01')
-            f.write(f"AEGIS OS {edition.upper()} DEMO".encode().ljust(32))
-            f.write(b'\x00' * (2048 - 38))
-            
-            for i in range(demo_size // 2048 - 1):
-                f.write(os.urandom(2048))
-                progress.update((i + 1) * 2048)
-        
-        progress.finish()
-        
-        print(f"\nDemo ISO created: {filepath}")
-        return True, str(filepath), "Demo ISO created"
     
     def verify_checksum(self, filepath: str, expected: str) -> Tuple[bool, str]:
         """Verify ISO checksum"""
@@ -765,10 +740,6 @@ class ISODownloader:
             progress.finish()
             
             actual = sha256.hexdigest()
-            
-            if expected.startswith("a1b2c3"):
-                print("Note: Demo checksum - skipping strict verification")
-                return True, actual
             
             if actual == expected:
                 print("Checksum verified successfully!")
