@@ -206,15 +206,34 @@ jobs:
           if [ "$EDITION" = "gamer-passwordless" ]; then
             echo "=== Passwordless edition: enabling autologin ==="
             cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+          [LightDM]
+          run-directory=/run/lightdm
+          
           [Seat:*]
           greeter-session=lightdm-gtk-greeter
           user-session=xfce
           autologin-user=aegis
+          autologin-user-timeout=0
           autologin-session=xfce
+          pam-service=lightdm-autologin
+          pam-autologin-service=lightdm-autologin
           LIGHTDM
+            
+            # Create PAM configuration for autologin
+            echo "=== Creating PAM autologin configuration ==="
+            mkdir -p "${PROFILE_DIR}/airootfs/etc/pam.d"
+            cat > "${PROFILE_DIR}/airootfs/etc/pam.d/lightdm-autologin" << 'PAM'
+          auth        required    pam_env.so
+          auth        required    pam_permit.so
+          account     include     system-local-login
+          session     include     system-local-login
+          PAM
           else
             echo "=== Secure edition: login required ==="
             cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+          [LightDM]
+          run-directory=/run/lightdm
+          
           [Seat:*]
           greeter-session=lightdm-gtk-greeter
           user-session=xfce
