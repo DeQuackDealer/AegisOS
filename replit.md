@@ -111,6 +111,12 @@ Located at: `AegisOSRepo/` directory
 - **Upscaling**: FSR 3.0/DLSS/XeSS/Anime4K with per-game profiles
 - **System Tuning**: sysctl optimizations, security limits, udev rules for gaming
 
+## UI & Login System (Updated December 2025)
+- **Passwordless Login**: aegis user configured with locked password (!), auto-login via getty, and passwordless sudo
+- **Modern Gaming UI Theme**: Dark color palette (#0a0a0f background, cyan/green/purple accents) across all applications
+- **Card-based Layouts**: aegis-welcome and aegis-security-center use modern card-based designs with visual hierarchy
+- **TIER_LIMIT**: Set to "gamer" for full feature access in security and system applications
+
 ## External Dependencies
 * **archiso**: ISO build system
 * **Flask, PyJWT, SendGrid, Stripe**: Web & payment
