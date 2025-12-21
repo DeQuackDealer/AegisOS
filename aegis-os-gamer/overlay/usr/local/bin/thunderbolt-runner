@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Thunderbolt Runner - Zeus-themed Game Launcher for Aegis OS Gamer Edition
-Electric blue and gold themed unified game launcher
+Electric blue and gold themed unified game launcher with full Aegis gaming features
+Version 2.0 - Major Enhancement with Settings Panel
 """
 
 import os
@@ -11,8 +12,10 @@ import subprocess
 import threading
 import sqlite3
 import re
+import shutil
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 
 try:
     import gi
@@ -26,8 +29,369 @@ CONFIG_DIR = Path.home() / ".config" / "thunderbolt-runner"
 CACHE_DIR = Path.home() / ".cache" / "thunderbolt-runner"
 FAVORITES_FILE = CONFIG_DIR / "favorites.json"
 RECENT_FILE = CONFIG_DIR / "recent.json"
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
+GAME_PROFILES_DIR = CONFIG_DIR / "game-profiles"
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
+
+
+class GPUInfo:
+    def __init__(self, index: int, name: str, vendor: str, pci_bus: str):
+        self.index = index
+        self.name = name
+        self.vendor = vendor
+        self.pci_bus = pci_bus
+    
+    def is_nvidia(self) -> bool:
+        return "nvidia" in self.vendor.lower() or "nvidia" in self.name.lower()
+    
+    def is_amd(self) -> bool:
+        return "amd" in self.vendor.lower() or "radeon" in self.name.lower()
+    
+    def is_intel(self) -> bool:
+        return "intel" in self.vendor.lower() or "arc" in self.name.lower()
+
+
+class StorageInfo:
+    def __init__(self, path: str, label: str, total: int, used: int, free: int, is_removable: bool):
+        self.path = path
+        self.label = label
+        self.total = total
+        self.used = used
+        self.free = free
+        self.is_removable = is_removable
+    
+    def get_usage_percent(self) -> float:
+        if self.total > 0:
+            return (self.used / self.total) * 100
+        return 0
+
+
+class SystemDetector:
+    @staticmethod
+    def detect_gpus() -> List[GPUInfo]:
+        gpus = []
+        try:
+            result = subprocess.run(["lspci"], capture_output=True, text=True)
+            lines = result.stdout.split("\n")
+            idx = 0
+            for line in lines:
+                if "VGA" in line or "3D controller" in line:
+                    parts = line.split(": ", 1)
+                    if len(parts) >= 2:
+                        pci_bus = parts[0].split()[0]
+                        name = parts[1].strip()
+                        vendor = "Unknown"
+                        if "NVIDIA" in name.upper():
+                            vendor = "NVIDIA"
+                        elif "AMD" in name.upper() or "ATI" in name.upper() or "Radeon" in name:
+                            vendor = "AMD"
+                        elif "Intel" in name:
+                            vendor = "Intel"
+                        gpus.append(GPUInfo(idx, name, vendor, pci_bus))
+                        idx += 1
+        except Exception:
+            pass
+        return gpus
+    
+    @staticmethod
+    def detect_storage() -> List[StorageInfo]:
+        storage = []
+        try:
+            result = subprocess.run(["df", "-B1", "--output=target,size,used,avail"], 
+                                   capture_output=True, text=True)
+            lines = result.stdout.strip().split("\n")[1:]
+            
+            removable_paths = []
+            user = os.environ.get("USER", "")
+            for base in [f"/run/media/{user}", f"/media/{user}", "/media", "/mnt"]:
+                if os.path.exists(base):
+                    for item in os.listdir(base):
+                        full_path = os.path.join(base, item)
+                        if os.path.isdir(full_path) and item not in ["cdrom", "floppy"]:
+                            removable_paths.append(full_path)
+            
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 4:
+                    path = parts[0]
+                    try:
+                        total = int(parts[1])
+                        used = int(parts[2])
+                        free = int(parts[3])
+                        label = os.path.basename(path) or path
+                        is_removable = any(path.startswith(rp) or path == rp for rp in removable_paths)
+                        
+                        if total > 1024*1024*1024 and (is_removable or path.startswith("/home") or path == "/"):
+                            storage.append(StorageInfo(path, label, total, used, free, is_removable))
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
+        return storage
+    
+    @staticmethod
+    def check_tool_available(tool: str) -> bool:
+        return shutil.which(tool) is not None
+    
+    @staticmethod
+    def has_mangohud() -> bool:
+        return SystemDetector.check_tool_available("mangohud")
+    
+    @staticmethod
+    def has_gamemode() -> bool:
+        return SystemDetector.check_tool_available("gamemoderun")
+
+
+class ThunderboltSettings:
+    DEFAULT_SETTINGS = {
+        "storage": {
+            "custom_directories": [],
+            "auto_scan_sd": True
+        },
+        "dual_gpu": {
+            "enabled": False,
+            "primary_gpu": 0,
+            "secondary_gpu": 1,
+            "split_ratio": 60,
+            "overlap_pixels": 8
+        },
+        "upscaling": {
+            "fsr_enabled": False,
+            "fsr_preset": "Quality",
+            "dlss_enabled": False,
+            "dlss_preset": "Quality",
+            "xess_enabled": False,
+            "xess_preset": "Quality",
+            "anime4k_enabled": False,
+            "neural_upscaler_enabled": False,
+            "sharpening": 0.5
+        },
+        "performance": {
+            "ram_guardian": "Off",
+            "latency_fastpath": "Balanced",
+            "cpu_governor": "schedutil",
+            "gamemode_enabled": True,
+            "mangohud_enabled": True,
+            "mangohud_preset": "default",
+            "shader_precache": True,
+            "vrr_freesync": False
+        },
+        "streaming": {
+            "replay_buffer": False,
+            "replay_duration": 120,
+            "ndi_streaming": False,
+            "encoder": "auto",
+            "recording_quality": "High",
+            "noise_suppression": False
+        }
+    }
+    
+    def __init__(self):
+        self.settings = self.load()
+    
+    def load(self) -> dict:
+        if SETTINGS_FILE.exists():
+            try:
+                with open(SETTINGS_FILE) as f:
+                    loaded = json.load(f)
+                merged = self._deep_merge(self.DEFAULT_SETTINGS.copy(), loaded)
+                return merged
+            except Exception:
+                pass
+        return self.DEFAULT_SETTINGS.copy()
+    
+    def _deep_merge(self, base: dict, override: dict) -> dict:
+        result = base.copy()
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+    
+    def save(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(self.settings, f, indent=2)
+    
+    def get(self, category: str, key: str):
+        return self.settings.get(category, {}).get(key)
+    
+    def set(self, category: str, key: str, value):
+        if category not in self.settings:
+            self.settings[category] = {}
+        self.settings[category][key] = value
+        self.save()
+    
+    def get_category(self, category: str) -> dict:
+        return self.settings.get(category, {})
+    
+    def build_launch_env(self, game_name: Optional[str] = None) -> dict:
+        env = os.environ.copy()
+        
+        game_profile = self.load_game_profile(game_name) if game_name else None
+        
+        perf = self.settings.get("performance", {})
+        upscale = self.settings.get("upscaling", {})
+        dual = self.settings.get("dual_gpu", {})
+        stream = self.settings.get("streaming", {})
+        
+        if game_profile:
+            perf = {**perf, **game_profile.get("performance", {})}
+            upscale = {**upscale, **game_profile.get("upscaling", {})}
+        
+        if perf.get("gamemode_enabled"):
+            env["ENABLE_GAMEMODE"] = "1"
+        
+        if perf.get("mangohud_enabled"):
+            env["MANGOHUD"] = "1"
+            preset = perf.get("mangohud_preset", "default")
+            if preset == "minimal":
+                env["MANGOHUD_CONFIG"] = "fps,frametime"
+            elif preset == "full":
+                env["MANGOHUD_CONFIG"] = "full"
+        
+        governor = perf.get("cpu_governor", "schedutil")
+        env["AEGIS_CPU_GOVERNOR"] = governor
+        
+        ram_mode = perf.get("ram_guardian", "Off")
+        if ram_mode != "Off":
+            env["AEGIS_RAM_GUARDIAN"] = ram_mode.lower()
+        
+        latency = perf.get("latency_fastpath", "Balanced")
+        env["AEGIS_LATENCY_MODE"] = latency.lower()
+        
+        if perf.get("shader_precache"):
+            env["__GL_SHADER_DISK_CACHE"] = "1"
+            env["__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"] = "1"
+        
+        if perf.get("vrr_freesync"):
+            env["ENABLE_VRR"] = "1"
+            env["vblank_mode"] = "0"
+        
+        if upscale.get("fsr_enabled"):
+            env["WINE_FULLSCREEN_FSR"] = "1"
+            preset_map = {"Ultra Quality": "0", "Quality": "1", "Balanced": "2", "Performance": "3"}
+            env["WINE_FULLSCREEN_FSR_MODE"] = preset_map.get(upscale.get("fsr_preset", "Quality"), "1")
+        
+        if upscale.get("dlss_enabled"):
+            env["PROTON_ENABLE_NVAPI"] = "1"
+            env["DXVK_ENABLE_NVAPI"] = "1"
+        
+        if upscale.get("xess_enabled"):
+            env["ENABLE_XESS"] = "1"
+        
+        if upscale.get("anime4k_enabled"):
+            env["AEGIS_ANIME4K"] = "1"
+        
+        if upscale.get("neural_upscaler_enabled"):
+            env["AEGIS_NEURAL_UPSCALE"] = "1"
+        
+        sharpening = upscale.get("sharpening", 0.5)
+        env["WINE_FULLSCREEN_FSR_STRENGTH"] = str(int(sharpening * 5))
+        
+        if dual.get("enabled"):
+            env["AEGIS_DUAL_GPU"] = "1"
+            env["AEGIS_DUAL_GPU_PRIMARY"] = str(dual.get("primary_gpu", 0))
+            env["AEGIS_DUAL_GPU_SECONDARY"] = str(dual.get("secondary_gpu", 1))
+            env["AEGIS_DUAL_GPU_SPLIT"] = str(dual.get("split_ratio", 60))
+            env["AEGIS_DUAL_GPU_OVERLAP"] = str(dual.get("overlap_pixels", 8))
+        
+        if stream.get("replay_buffer"):
+            env["AEGIS_REPLAY_BUFFER"] = "1"
+            env["AEGIS_REPLAY_DURATION"] = str(stream.get("replay_duration", 120))
+        
+        if stream.get("ndi_streaming"):
+            env["AEGIS_NDI_STREAMING"] = "1"
+        
+        if stream.get("noise_suppression"):
+            env["AEGIS_NOISE_SUPPRESSION"] = "1"
+        
+        encoder = stream.get("encoder", "auto")
+        if encoder != "auto":
+            env["AEGIS_ENCODER"] = encoder
+        
+        env["WINEFSYNC"] = "1"
+        env["WINEESYNC"] = "1"
+        env["__GL_THREADED_OPTIMIZATIONS"] = "1"
+        env["mesa_glthread"] = "true"
+        
+        return env
+    
+    def load_game_profile(self, game_name: str) -> Optional[dict]:
+        safe_name = re.sub(r'[^\w\-]', '_', game_name)
+        profile_file = GAME_PROFILES_DIR / f"{safe_name}.json"
+        if profile_file.exists():
+            try:
+                with open(profile_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return None
+    
+    def save_game_profile(self, game_name: str, profile: dict):
+        GAME_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r'[^\w\-]', '_', game_name)
+        profile_file = GAME_PROFILES_DIR / f"{safe_name}.json"
+        with open(profile_file, "w") as f:
+            json.dump(profile, f, indent=2)
+    
+    def apply_quick_optimize(self) -> str:
+        gpus = SystemDetector.detect_gpus()
+        
+        detected_nvidia = any(g.is_nvidia() for g in gpus)
+        detected_amd = any(g.is_amd() for g in gpus)
+        detected_intel = any(g.is_intel() for g in gpus)
+        
+        applied = []
+        
+        self.settings["performance"]["gamemode_enabled"] = True
+        applied.append("GameMode: ON")
+        
+        if SystemDetector.has_mangohud():
+            self.settings["performance"]["mangohud_enabled"] = True
+            self.settings["performance"]["mangohud_preset"] = "default"
+            applied.append("MangoHUD: ON")
+        
+        self.settings["performance"]["cpu_governor"] = "performance"
+        applied.append("CPU Governor: performance")
+        
+        self.settings["performance"]["shader_precache"] = True
+        applied.append("Shader Pre-Cache: ON")
+        
+        self.settings["performance"]["ram_guardian"] = "Balanced"
+        applied.append("RAM Guardian: Balanced")
+        
+        self.settings["performance"]["latency_fastpath"] = "Ultra"
+        applied.append("Latency FastPath: Ultra")
+        
+        if detected_nvidia:
+            self.settings["upscaling"]["dlss_enabled"] = True
+            self.settings["upscaling"]["dlss_preset"] = "Quality"
+            applied.append("DLSS: Quality (NVIDIA detected)")
+        elif detected_amd:
+            self.settings["upscaling"]["fsr_enabled"] = True
+            self.settings["upscaling"]["fsr_preset"] = "Quality"
+            applied.append("FSR 3.0: Quality (AMD detected)")
+        elif detected_intel:
+            self.settings["upscaling"]["xess_enabled"] = True
+            self.settings["upscaling"]["xess_preset"] = "Quality"
+            applied.append("XeSS: Quality (Intel Arc detected)")
+        else:
+            self.settings["upscaling"]["fsr_enabled"] = True
+            self.settings["upscaling"]["fsr_preset"] = "Quality"
+            applied.append("FSR 3.0: Quality (fallback)")
+        
+        if len(gpus) >= 2:
+            self.settings["dual_gpu"]["enabled"] = True
+            self.settings["dual_gpu"]["primary_gpu"] = 0
+            self.settings["dual_gpu"]["secondary_gpu"] = 1
+            applied.append(f"Dual GPU: Enabled ({gpus[0].vendor} + {gpus[1].vendor})")
+        
+        self.save()
+        return "\n".join(applied)
+
 
 class Game:
     def __init__(self, name, exe_path, source, icon=None, appid=None):
@@ -66,9 +430,11 @@ class Game:
         game.favorite = data.get("favorite", False)
         return game
 
+
 class GameScanner:
-    def __init__(self):
+    def __init__(self, settings: ThunderboltSettings):
         self.games = []
+        self.settings = settings
     
     def scan_steam(self):
         steam_paths = [
@@ -167,6 +533,11 @@ class GameScanner:
             Path.home() / "Games",
             Path.home() / ".local/share/applications"
         ]
+        
+        custom_dirs = self.settings.get("storage", "custom_directories") or []
+        for custom in custom_dirs:
+            if os.path.isdir(custom):
+                native_paths.append(Path(custom))
         
         for path in native_paths:
             if not path.exists():
@@ -272,7 +643,8 @@ class GameScanner:
         self.scan_lutris()
         self.scan_gog()
         self.scan_native()
-        self.scan_sdcard()
+        if self.settings.get("storage", "auto_scan_sd"):
+            self.scan_sdcard()
         return self.games
     
     def _parse_vdf_value(self, content, key):
@@ -285,6 +657,861 @@ class GameScanner:
                 return line.split("=", 1)[1].strip()
         return None
 
+
+class PerGameSettingsDialog(Gtk.Dialog):
+    def __init__(self, parent, game: Game, settings: ThunderboltSettings):
+        super().__init__(title=f"⚡ Configure: {game.name}", transient_for=parent, modal=True)
+        self.game = game
+        self.settings = settings
+        self.set_default_size(500, 450)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("Save", Gtk.ResponseType.OK)
+        
+        profile = settings.load_game_profile(game.name) or {}
+        
+        content = self.get_content_area()
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(15)
+        content.set_margin_bottom(15)
+        content.set_spacing(15)
+        
+        title = Gtk.Label()
+        title.set_markup(f'<span font="16" foreground="#FFD700">⚡</span> <span font="14" weight="bold" foreground="#00BFFF">{game.name}</span>')
+        title.set_halign(Gtk.Align.START)
+        content.pack_start(title, False, False, 0)
+        
+        upscale_frame = self._create_frame("Upscaling Override")
+        upscale_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        upscale_box.set_margin_start(10)
+        upscale_box.set_margin_end(10)
+        upscale_box.set_margin_top(10)
+        upscale_box.set_margin_bottom(10)
+        
+        self.use_custom_upscale = Gtk.CheckButton(label="Use custom upscaling for this game")
+        self.use_custom_upscale.set_active(profile.get("upscaling", {}).get("custom", False))
+        upscale_box.pack_start(self.use_custom_upscale, False, False, 0)
+        
+        up_settings = profile.get("upscaling", {})
+        
+        fsr_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.fsr_check = Gtk.CheckButton(label="FSR 3.0")
+        self.fsr_check.set_active(up_settings.get("fsr_enabled", False))
+        fsr_box.pack_start(self.fsr_check, False, False, 0)
+        self.fsr_combo = Gtk.ComboBoxText()
+        for p in ["Ultra Quality", "Quality", "Balanced", "Performance"]:
+            self.fsr_combo.append_text(p)
+        self.fsr_combo.set_active(["Ultra Quality", "Quality", "Balanced", "Performance"].index(up_settings.get("fsr_preset", "Quality")))
+        fsr_box.pack_start(self.fsr_combo, False, False, 0)
+        upscale_box.pack_start(fsr_box, False, False, 0)
+        
+        self.dlss_check = Gtk.CheckButton(label="DLSS (NVIDIA)")
+        self.dlss_check.set_active(up_settings.get("dlss_enabled", False))
+        upscale_box.pack_start(self.dlss_check, False, False, 0)
+        
+        self.anime4k_check = Gtk.CheckButton(label="Anime4K (for anime games/emulators)")
+        self.anime4k_check.set_active(up_settings.get("anime4k_enabled", False))
+        upscale_box.pack_start(self.anime4k_check, False, False, 0)
+        
+        upscale_frame.add(upscale_box)
+        content.pack_start(upscale_frame, False, False, 0)
+        
+        perf_frame = self._create_frame("Performance Override")
+        perf_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        perf_box.set_margin_start(10)
+        perf_box.set_margin_end(10)
+        perf_box.set_margin_top(10)
+        perf_box.set_margin_bottom(10)
+        
+        perf_settings = profile.get("performance", {})
+        
+        self.use_custom_perf = Gtk.CheckButton(label="Use custom performance for this game")
+        self.use_custom_perf.set_active(perf_settings.get("custom", False))
+        perf_box.pack_start(self.use_custom_perf, False, False, 0)
+        
+        governor_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        governor_box.pack_start(Gtk.Label(label="CPU Governor:"), False, False, 0)
+        self.governor_combo = Gtk.ComboBoxText()
+        for g in ["powersave", "schedutil", "performance"]:
+            self.governor_combo.append_text(g)
+        current_gov = perf_settings.get("cpu_governor", "schedutil")
+        self.governor_combo.set_active(["powersave", "schedutil", "performance"].index(current_gov) if current_gov in ["powersave", "schedutil", "performance"] else 1)
+        governor_box.pack_start(self.governor_combo, False, False, 0)
+        perf_box.pack_start(governor_box, False, False, 0)
+        
+        self.gamemode_check = Gtk.CheckButton(label="Enable GameMode")
+        self.gamemode_check.set_active(perf_settings.get("gamemode_enabled", True))
+        perf_box.pack_start(self.gamemode_check, False, False, 0)
+        
+        self.mangohud_check = Gtk.CheckButton(label="Enable MangoHUD")
+        self.mangohud_check.set_active(perf_settings.get("mangohud_enabled", True))
+        perf_box.pack_start(self.mangohud_check, False, False, 0)
+        
+        perf_frame.add(perf_box)
+        content.pack_start(perf_frame, False, False, 0)
+        
+        self.show_all()
+    
+    def _create_frame(self, title: str) -> Gtk.Frame:
+        frame = Gtk.Frame()
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#00BFFF" weight="bold">{title}</span>')
+        frame.set_label_widget(label)
+        return frame
+    
+    def get_profile(self) -> dict:
+        return {
+            "upscaling": {
+                "custom": self.use_custom_upscale.get_active(),
+                "fsr_enabled": self.fsr_check.get_active(),
+                "fsr_preset": self.fsr_combo.get_active_text(),
+                "dlss_enabled": self.dlss_check.get_active(),
+                "anime4k_enabled": self.anime4k_check.get_active()
+            },
+            "performance": {
+                "custom": self.use_custom_perf.get_active(),
+                "cpu_governor": self.governor_combo.get_active_text(),
+                "gamemode_enabled": self.gamemode_check.get_active(),
+                "mangohud_enabled": self.mangohud_check.get_active()
+            }
+        }
+
+
+class SettingsDialog(Gtk.Dialog):
+    def __init__(self, parent, settings: ThunderboltSettings):
+        super().__init__(title="⚡ Thunderbolt Settings", transient_for=parent, modal=True)
+        self.settings = settings
+        self.set_default_size(800, 650)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("Apply", Gtk.ResponseType.APPLY)
+        self.add_button("OK", Gtk.ResponseType.OK)
+        
+        self._apply_dialog_css()
+        
+        content = self.get_content_area()
+        content.set_margin_start(15)
+        content.set_margin_end(15)
+        content.set_margin_top(15)
+        content.set_margin_bottom(10)
+        
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        bolt = Gtk.Label()
+        bolt.set_markup('<span font="24" foreground="#FFD700">⚡</span>')
+        header.pack_start(bolt, False, False, 0)
+        title = Gtk.Label()
+        title.set_markup('<span font="16" weight="bold" foreground="#00BFFF">Thunderbolt Settings</span>')
+        header.pack_start(title, False, False, 0)
+        content.pack_start(header, False, False, 10)
+        
+        self.notebook = Gtk.Notebook()
+        self.notebook.set_tab_pos(Gtk.PositionType.LEFT)
+        
+        self._create_storage_tab()
+        self._create_dual_gpu_tab()
+        self._create_upscaling_tab()
+        self._create_performance_tab()
+        self._create_streaming_tab()
+        
+        content.pack_start(self.notebook, True, True, 0)
+        
+        self.show_all()
+    
+    def _apply_dialog_css(self):
+        css = b"""
+        notebook tab {
+            background-color: rgba(26, 26, 46, 0.9);
+            color: #94a3b8;
+            padding: 12px 16px;
+            border: none;
+            min-width: 140px;
+        }
+        notebook tab:checked {
+            background: linear-gradient(135deg, rgba(30, 144, 255, 0.3), rgba(0, 191, 255, 0.2));
+            color: #00BFFF;
+            border-left: 3px solid #FFD700;
+        }
+        notebook tab:hover {
+            background-color: rgba(30, 144, 255, 0.2);
+        }
+        notebook header {
+            background-color: rgba(10, 10, 15, 0.95);
+            border-right: 1px solid #1E90FF;
+        }
+        .settings-frame {
+            border: 1px solid rgba(30, 144, 255, 0.3);
+            border-radius: 8px;
+            background-color: rgba(26, 26, 46, 0.5);
+        }
+        .settings-label {
+            color: #e2e8f0;
+        }
+        .gold-label {
+            color: #FFD700;
+        }
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+        )
+    
+    def _create_tab_label(self, icon: str, text: str) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        icon_label = Gtk.Label(label=icon)
+        text_label = Gtk.Label(label=text)
+        box.pack_start(icon_label, False, False, 0)
+        box.pack_start(text_label, False, False, 0)
+        box.show_all()
+        return box
+    
+    def _create_storage_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        page.set_margin_start(20)
+        page.set_margin_end(20)
+        page.set_margin_top(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#FFD700">💾 SD Card & Storage</span>')
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, 0)
+        
+        drives_frame = Gtk.Frame(label="Detected Removable Drives")
+        drives_frame.get_style_context().add_class("settings-frame")
+        drives_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        drives_box.set_margin_start(10)
+        drives_box.set_margin_end(10)
+        drives_box.set_margin_top(10)
+        drives_box.set_margin_bottom(10)
+        
+        storage_list = SystemDetector.detect_storage()
+        removable_drives = [s for s in storage_list if s.is_removable]
+        
+        if removable_drives:
+            for drive in removable_drives:
+                drive_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                icon = Gtk.Label(label="💿")
+                name = Gtk.Label(label=f"{drive.label} ({drive.path})")
+                name.set_halign(Gtk.Align.START)
+                
+                used_gb = drive.used / (1024**3)
+                total_gb = drive.total / (1024**3)
+                free_gb = drive.free / (1024**3)
+                
+                progress = Gtk.ProgressBar()
+                progress.set_fraction(drive.get_usage_percent() / 100)
+                progress.set_text(f"{used_gb:.1f} GB / {total_gb:.1f} GB ({free_gb:.1f} GB free)")
+                progress.set_show_text(True)
+                progress.set_size_request(200, -1)
+                
+                drive_box.pack_start(icon, False, False, 0)
+                drive_box.pack_start(name, True, True, 0)
+                drive_box.pack_start(progress, False, False, 0)
+                drives_box.pack_start(drive_box, False, False, 0)
+        else:
+            no_drives = Gtk.Label(label="No removable drives detected")
+            no_drives.set_halign(Gtk.Align.START)
+            drives_box.pack_start(no_drives, False, False, 0)
+        
+        scan_btn = Gtk.Button(label="🔄 Scan SD Card")
+        scan_btn.connect("clicked", self._on_scan_sd)
+        drives_box.pack_start(scan_btn, False, False, 10)
+        
+        drives_frame.add(drives_box)
+        page.pack_start(drives_frame, False, False, 0)
+        
+        custom_frame = Gtk.Frame(label="Custom Game Directories")
+        custom_frame.get_style_context().add_class("settings-frame")
+        custom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        custom_box.set_margin_start(10)
+        custom_box.set_margin_end(10)
+        custom_box.set_margin_top(10)
+        custom_box.set_margin_bottom(10)
+        
+        self.custom_dirs_list = Gtk.ListBox()
+        self.custom_dirs_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
+        custom_dirs = self.settings.get("storage", "custom_directories") or []
+        for d in custom_dirs:
+            row = Gtk.ListBoxRow()
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row_box.pack_start(Gtk.Label(label=d), True, True, 5)
+            row.add(row_box)
+            row.directory = d
+            self.custom_dirs_list.add(row)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_min_content_height(100)
+        scroll.set_max_content_height(150)
+        scroll.add(self.custom_dirs_list)
+        custom_box.pack_start(scroll, True, True, 0)
+        
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        add_btn = Gtk.Button(label="➕ Add Directory")
+        add_btn.connect("clicked", self._on_add_directory)
+        remove_btn = Gtk.Button(label="➖ Remove")
+        remove_btn.connect("clicked", self._on_remove_directory)
+        btn_box.pack_start(add_btn, False, False, 0)
+        btn_box.pack_start(remove_btn, False, False, 0)
+        custom_box.pack_start(btn_box, False, False, 5)
+        
+        custom_frame.add(custom_box)
+        page.pack_start(custom_frame, True, True, 0)
+        
+        auto_scan = Gtk.CheckButton(label="Automatically scan SD cards on startup")
+        auto_scan.set_active(self.settings.get("storage", "auto_scan_sd"))
+        auto_scan.connect("toggled", lambda w: self.settings.set("storage", "auto_scan_sd", w.get_active()))
+        page.pack_start(auto_scan, False, False, 0)
+        
+        self.notebook.append_page(page, self._create_tab_label("💾", "Storage"))
+    
+    def _create_dual_gpu_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        page.set_margin_start(20)
+        page.set_margin_end(20)
+        page.set_margin_top(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#FFD700">🎮 Dual GPU Rendering</span>')
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, 0)
+        
+        gpus = SystemDetector.detect_gpus()
+        
+        self.dual_gpu_enabled = Gtk.CheckButton(label="Enable Dual GPU Split-Frame Rendering")
+        self.dual_gpu_enabled.set_active(self.settings.get("dual_gpu", "enabled"))
+        page.pack_start(self.dual_gpu_enabled, False, False, 0)
+        
+        config_frame = Gtk.Frame(label="GPU Configuration")
+        config_frame.get_style_context().add_class("settings-frame")
+        config_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        config_box.set_margin_start(15)
+        config_box.set_margin_end(15)
+        config_box.set_margin_top(10)
+        config_box.set_margin_bottom(10)
+        
+        if len(gpus) >= 2:
+            primary_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            primary_box.pack_start(Gtk.Label(label="Primary GPU:"), False, False, 0)
+            self.primary_gpu_combo = Gtk.ComboBoxText()
+            for gpu in gpus:
+                self.primary_gpu_combo.append_text(f"{gpu.index}: {gpu.name[:40]}")
+            self.primary_gpu_combo.set_active(self.settings.get("dual_gpu", "primary_gpu") or 0)
+            primary_box.pack_start(self.primary_gpu_combo, True, True, 0)
+            config_box.pack_start(primary_box, False, False, 0)
+            
+            secondary_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            secondary_box.pack_start(Gtk.Label(label="Secondary GPU:"), False, False, 0)
+            self.secondary_gpu_combo = Gtk.ComboBoxText()
+            for gpu in gpus:
+                self.secondary_gpu_combo.append_text(f"{gpu.index}: {gpu.name[:40]}")
+            self.secondary_gpu_combo.set_active(min(self.settings.get("dual_gpu", "secondary_gpu") or 1, len(gpus)-1))
+            secondary_box.pack_start(self.secondary_gpu_combo, True, True, 0)
+            config_box.pack_start(secondary_box, False, False, 0)
+        else:
+            no_gpu = Gtk.Label()
+            no_gpu.set_markup('<span foreground="#ff6b6b">⚠️ Dual GPU requires 2+ GPUs. Only 1 detected.</span>')
+            no_gpu.set_halign(Gtk.Align.START)
+            config_box.pack_start(no_gpu, False, False, 0)
+            self.dual_gpu_enabled.set_sensitive(False)
+            self.primary_gpu_combo = None
+            self.secondary_gpu_combo = None
+        
+        split_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        split_box.pack_start(Gtk.Label(label="Split Ratio:"), False, False, 0)
+        self.split_ratio_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 30, 80, 5)
+        self.split_ratio_scale.set_value(self.settings.get("dual_gpu", "split_ratio") or 60)
+        self.split_ratio_scale.set_size_request(200, -1)
+        self.split_ratio_scale.connect("value-changed", self._update_split_preview)
+        split_box.pack_start(self.split_ratio_scale, True, True, 0)
+        self.split_label = Gtk.Label(label="60/40")
+        split_box.pack_start(self.split_label, False, False, 0)
+        config_box.pack_start(split_box, False, False, 0)
+        
+        overlap_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        overlap_box.pack_start(Gtk.Label(label="Overlap Pixels:"), False, False, 0)
+        self.overlap_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 4, 16, 1)
+        self.overlap_scale.set_value(self.settings.get("dual_gpu", "overlap_pixels") or 8)
+        self.overlap_scale.set_size_request(200, -1)
+        overlap_box.pack_start(self.overlap_scale, True, True, 0)
+        config_box.pack_start(overlap_box, False, False, 0)
+        
+        preview_frame = Gtk.Frame(label="Render Split Preview")
+        self.preview_area = Gtk.DrawingArea()
+        self.preview_area.set_size_request(-1, 80)
+        self.preview_area.connect("draw", self._draw_split_preview)
+        preview_frame.add(self.preview_area)
+        config_box.pack_start(preview_frame, False, False, 10)
+        
+        config_frame.add(config_box)
+        page.pack_start(config_frame, False, False, 0)
+        
+        self.notebook.append_page(page, self._create_tab_label("🎮", "Dual GPU"))
+    
+    def _update_split_preview(self, scale):
+        val = int(scale.get_value())
+        self.split_label.set_text(f"{val}/{100-val}")
+        self.preview_area.queue_draw()
+    
+    def _draw_split_preview(self, widget, cr):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        split = int(self.split_ratio_scale.get_value()) / 100
+        split_x = int(width * split)
+        
+        cr.set_source_rgb(0.12, 0.56, 1.0)
+        cr.rectangle(0, 0, split_x, height)
+        cr.fill()
+        
+        cr.set_source_rgb(1.0, 0.84, 0.0)
+        cr.rectangle(split_x, 0, width - split_x, height)
+        cr.fill()
+        
+        overlap = int(self.overlap_scale.get_value())
+        cr.set_source_rgba(0.5, 1.0, 0.5, 0.5)
+        cr.rectangle(split_x - overlap//2, 0, overlap, height)
+        cr.fill()
+        
+        cr.set_source_rgb(1, 1, 1)
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(12)
+        cr.move_to(10, height//2 + 5)
+        cr.show_text("Primary GPU")
+        cr.move_to(split_x + 10, height//2 + 5)
+        cr.show_text("Secondary GPU")
+        
+        return False
+    
+    def _create_upscaling_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        page.set_margin_start(20)
+        page.set_margin_end(20)
+        page.set_margin_top(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#FFD700">⚡ UPSCALERS</span>')
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, 0)
+        
+        gpus = SystemDetector.detect_gpus()
+        has_nvidia = any(g.is_nvidia() for g in gpus)
+        has_intel = any(g.is_intel() for g in gpus)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        upscale_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        
+        fsr_frame = self._create_upscaler_frame("FSR 3.0", "AMD FidelityFX Super Resolution", 
+            "fsr_enabled", "fsr_preset", ["Ultra Quality", "Quality", "Balanced", "Performance"])
+        upscale_box.pack_start(fsr_frame, False, False, 0)
+        
+        dlss_frame = self._create_upscaler_frame("DLSS", "NVIDIA Deep Learning Super Sampling" + (" ✓" if has_nvidia else " (NVIDIA GPU required)"),
+            "dlss_enabled", "dlss_preset", ["Ultra Quality", "Quality", "Balanced", "Performance"],
+            sensitive=has_nvidia)
+        upscale_box.pack_start(dlss_frame, False, False, 0)
+        
+        xess_frame = self._create_upscaler_frame("XeSS", "Intel Xe Super Sampling" + (" ✓" if has_intel else " (Intel Arc recommended)"),
+            "xess_enabled", "xess_preset", ["Ultra Quality", "Quality", "Balanced", "Performance"])
+        upscale_box.pack_start(xess_frame, False, False, 0)
+        
+        extras_frame = Gtk.Frame(label="Additional Upscalers")
+        extras_frame.get_style_context().add_class("settings-frame")
+        extras_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        extras_box.set_margin_start(15)
+        extras_box.set_margin_end(15)
+        extras_box.set_margin_top(10)
+        extras_box.set_margin_bottom(10)
+        
+        self.anime4k_check = Gtk.CheckButton(label="🌸 Anime4K (for anime games/emulators)")
+        self.anime4k_check.set_active(self.settings.get("upscaling", "anime4k_enabled"))
+        extras_box.pack_start(self.anime4k_check, False, False, 0)
+        
+        self.neural_check = Gtk.CheckButton(label="🧠 Aegis Neural Upscaler")
+        self.neural_check.set_active(self.settings.get("upscaling", "neural_upscaler_enabled"))
+        extras_box.pack_start(self.neural_check, False, False, 0)
+        
+        extras_frame.add(extras_box)
+        upscale_box.pack_start(extras_frame, False, False, 0)
+        
+        sharp_frame = Gtk.Frame(label="Global Sharpening")
+        sharp_frame.get_style_context().add_class("settings-frame")
+        sharp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        sharp_box.set_margin_start(15)
+        sharp_box.set_margin_end(15)
+        sharp_box.set_margin_top(10)
+        sharp_box.set_margin_bottom(10)
+        
+        sharp_box.pack_start(Gtk.Label(label="Soft"), False, False, 0)
+        self.sharpening_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 1, 0.1)
+        self.sharpening_scale.set_value(self.settings.get("upscaling", "sharpening") or 0.5)
+        self.sharpening_scale.set_size_request(300, -1)
+        sharp_box.pack_start(self.sharpening_scale, True, True, 0)
+        sharp_box.pack_start(Gtk.Label(label="Sharp"), False, False, 0)
+        
+        sharp_frame.add(sharp_box)
+        upscale_box.pack_start(sharp_frame, False, False, 0)
+        
+        scroll.add(upscale_box)
+        page.pack_start(scroll, True, True, 0)
+        
+        self.notebook.append_page(page, self._create_tab_label("⚡", "Upscaling"))
+    
+    def _create_upscaler_frame(self, name: str, desc: str, enable_key: str, preset_key: str, 
+                               presets: list, sensitive: bool = True) -> Gtk.Frame:
+        frame = Gtk.Frame(label=name)
+        frame.get_style_context().add_class("settings-frame")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(10)
+        box.set_margin_bottom(10)
+        
+        desc_label = Gtk.Label(label=desc)
+        desc_label.set_halign(Gtk.Align.START)
+        desc_label.set_opacity(0.7)
+        box.pack_start(desc_label, False, False, 0)
+        
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        check = Gtk.CheckButton(label="Enable")
+        check.set_active(self.settings.get("upscaling", enable_key))
+        check.set_sensitive(sensitive)
+        row.pack_start(check, False, False, 0)
+        
+        row.pack_start(Gtk.Label(label="Preset:"), False, False, 0)
+        combo = Gtk.ComboBoxText()
+        for p in presets:
+            combo.append_text(p)
+        current = self.settings.get("upscaling", preset_key) or presets[1]
+        idx = presets.index(current) if current in presets else 1
+        combo.set_active(idx)
+        combo.set_sensitive(sensitive)
+        row.pack_start(combo, False, False, 0)
+        
+        box.pack_start(row, False, False, 0)
+        frame.add(box)
+        
+        setattr(self, f"{enable_key}_check", check)
+        setattr(self, f"{preset_key}_combo", combo)
+        
+        return frame
+    
+    def _create_performance_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        page.set_margin_start(20)
+        page.set_margin_end(20)
+        page.set_margin_top(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#FFD700">🚀 Performance</span>')
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        
+        perf_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        
+        system_frame = Gtk.Frame(label="System Optimization")
+        system_frame.get_style_context().add_class("settings-frame")
+        system_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        system_box.set_margin_start(15)
+        system_box.set_margin_end(15)
+        system_box.set_margin_top(10)
+        system_box.set_margin_bottom(10)
+        
+        ram_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        ram_row.pack_start(Gtk.Label(label="RAM Guardian:"), False, False, 0)
+        self.ram_guardian_combo = Gtk.ComboBoxText()
+        for mode in ["Off", "Gentle", "Balanced", "Aggressive"]:
+            self.ram_guardian_combo.append_text(mode)
+        current_ram = self.settings.get("performance", "ram_guardian") or "Off"
+        self.ram_guardian_combo.set_active(["Off", "Gentle", "Balanced", "Aggressive"].index(current_ram) if current_ram in ["Off", "Gentle", "Balanced", "Aggressive"] else 0)
+        ram_row.pack_start(self.ram_guardian_combo, False, False, 0)
+        system_box.pack_start(ram_row, False, False, 0)
+        
+        latency_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        latency_row.pack_start(Gtk.Label(label="Latency FastPath:"), False, False, 0)
+        self.latency_combo = Gtk.ComboBoxText()
+        for mode in ["Eco", "Balanced", "Ultra"]:
+            self.latency_combo.append_text(mode)
+        current_lat = self.settings.get("performance", "latency_fastpath") or "Balanced"
+        self.latency_combo.set_active(["Eco", "Balanced", "Ultra"].index(current_lat) if current_lat in ["Eco", "Balanced", "Ultra"] else 1)
+        latency_row.pack_start(self.latency_combo, False, False, 0)
+        system_box.pack_start(latency_row, False, False, 0)
+        
+        governor_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        governor_row.pack_start(Gtk.Label(label="CPU Governor:"), False, False, 0)
+        self.governor_combo = Gtk.ComboBoxText()
+        for g in ["powersave", "schedutil", "performance"]:
+            self.governor_combo.append_text(g)
+        current_gov = self.settings.get("performance", "cpu_governor") or "schedutil"
+        self.governor_combo.set_active(["powersave", "schedutil", "performance"].index(current_gov) if current_gov in ["powersave", "schedutil", "performance"] else 1)
+        governor_row.pack_start(self.governor_combo, False, False, 0)
+        system_box.pack_start(governor_row, False, False, 0)
+        
+        system_frame.add(system_box)
+        perf_box.pack_start(system_frame, False, False, 0)
+        
+        tools_frame = Gtk.Frame(label="Gaming Tools")
+        tools_frame.get_style_context().add_class("settings-frame")
+        tools_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        tools_box.set_margin_start(15)
+        tools_box.set_margin_end(15)
+        tools_box.set_margin_top(10)
+        tools_box.set_margin_bottom(10)
+        
+        gamemode_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.gamemode_check = Gtk.CheckButton(label="GameMode")
+        self.gamemode_check.set_active(self.settings.get("performance", "gamemode_enabled"))
+        gamemode_status = " ✓ Installed" if SystemDetector.has_gamemode() else " ⚠️ Not installed"
+        gamemode_row.pack_start(self.gamemode_check, False, False, 0)
+        gamemode_row.pack_start(Gtk.Label(label=gamemode_status), False, False, 0)
+        tools_box.pack_start(gamemode_row, False, False, 0)
+        
+        mangohud_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.mangohud_check = Gtk.CheckButton(label="MangoHUD")
+        self.mangohud_check.set_active(self.settings.get("performance", "mangohud_enabled"))
+        mangohud_status = " ✓ Installed" if SystemDetector.has_mangohud() else " ⚠️ Not installed"
+        mangohud_row.pack_start(self.mangohud_check, False, False, 0)
+        mangohud_row.pack_start(Gtk.Label(label=mangohud_status), False, False, 0)
+        
+        self.mangohud_preset_combo = Gtk.ComboBoxText()
+        for p in ["minimal", "default", "full"]:
+            self.mangohud_preset_combo.append_text(p)
+        current_mango = self.settings.get("performance", "mangohud_preset") or "default"
+        self.mangohud_preset_combo.set_active(["minimal", "default", "full"].index(current_mango) if current_mango in ["minimal", "default", "full"] else 1)
+        mangohud_row.pack_end(self.mangohud_preset_combo, False, False, 0)
+        mangohud_row.pack_end(Gtk.Label(label="Preset:"), False, False, 5)
+        tools_box.pack_start(mangohud_row, False, False, 0)
+        
+        self.shader_check = Gtk.CheckButton(label="Shader Pre-Cache")
+        self.shader_check.set_active(self.settings.get("performance", "shader_precache"))
+        tools_box.pack_start(self.shader_check, False, False, 0)
+        
+        self.vrr_check = Gtk.CheckButton(label="VRR/FreeSync")
+        self.vrr_check.set_active(self.settings.get("performance", "vrr_freesync"))
+        tools_box.pack_start(self.vrr_check, False, False, 0)
+        
+        tools_frame.add(tools_box)
+        perf_box.pack_start(tools_frame, False, False, 0)
+        
+        scroll.add(perf_box)
+        page.pack_start(scroll, True, True, 0)
+        
+        self.notebook.append_page(page, self._create_tab_label("🚀", "Performance"))
+    
+    def _create_streaming_tab(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        page.set_margin_start(20)
+        page.set_margin_end(20)
+        page.set_margin_top(20)
+        
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#FFD700">📹 StreamForge</span>')
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, 0)
+        
+        replay_frame = Gtk.Frame(label="Replay Buffer")
+        replay_frame.get_style_context().add_class("settings-frame")
+        replay_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        replay_box.set_margin_start(15)
+        replay_box.set_margin_end(15)
+        replay_box.set_margin_top(10)
+        replay_box.set_margin_bottom(10)
+        
+        self.replay_check = Gtk.CheckButton(label="Enable Replay Buffer (save last X seconds)")
+        self.replay_check.set_active(self.settings.get("streaming", "replay_buffer"))
+        replay_box.pack_start(self.replay_check, False, False, 0)
+        
+        duration_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        duration_row.pack_start(Gtk.Label(label="Duration (seconds):"), False, False, 0)
+        self.replay_duration_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 30, 300, 30)
+        self.replay_duration_scale.set_value(self.settings.get("streaming", "replay_duration") or 120)
+        self.replay_duration_scale.set_size_request(300, -1)
+        duration_row.pack_start(self.replay_duration_scale, True, True, 0)
+        replay_box.pack_start(duration_row, False, False, 0)
+        
+        replay_frame.add(replay_box)
+        page.pack_start(replay_frame, False, False, 0)
+        
+        stream_frame = Gtk.Frame(label="Streaming")
+        stream_frame.get_style_context().add_class("settings-frame")
+        stream_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        stream_box.set_margin_start(15)
+        stream_box.set_margin_end(15)
+        stream_box.set_margin_top(10)
+        stream_box.set_margin_bottom(10)
+        
+        self.ndi_check = Gtk.CheckButton(label="NDI Streaming (for dual-PC setups)")
+        self.ndi_check.set_active(self.settings.get("streaming", "ndi_streaming"))
+        stream_box.pack_start(self.ndi_check, False, False, 0)
+        
+        encoder_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        encoder_row.pack_start(Gtk.Label(label="Encoder:"), False, False, 0)
+        self.encoder_combo = Gtk.ComboBoxText()
+        gpus = SystemDetector.detect_gpus()
+        encoders = ["auto"]
+        if any(g.is_nvidia() for g in gpus):
+            encoders.append("NVENC")
+        if any(g.is_amd() for g in gpus):
+            encoders.append("AMF")
+        if any(g.is_intel() for g in gpus):
+            encoders.append("QSV")
+        encoders.append("x264")
+        for e in encoders:
+            self.encoder_combo.append_text(e)
+        current_enc = self.settings.get("streaming", "encoder") or "auto"
+        self.encoder_combo.set_active(encoders.index(current_enc) if current_enc in encoders else 0)
+        encoder_row.pack_start(self.encoder_combo, False, False, 0)
+        stream_box.pack_start(encoder_row, False, False, 0)
+        
+        quality_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        quality_row.pack_start(Gtk.Label(label="Recording Quality:"), False, False, 0)
+        self.quality_combo = Gtk.ComboBoxText()
+        for q in ["Low", "Medium", "High", "Ultra"]:
+            self.quality_combo.append_text(q)
+        current_q = self.settings.get("streaming", "recording_quality") or "High"
+        self.quality_combo.set_active(["Low", "Medium", "High", "Ultra"].index(current_q) if current_q in ["Low", "Medium", "High", "Ultra"] else 2)
+        quality_row.pack_start(self.quality_combo, False, False, 0)
+        stream_box.pack_start(quality_row, False, False, 0)
+        
+        stream_frame.add(stream_box)
+        page.pack_start(stream_frame, False, False, 0)
+        
+        audio_frame = Gtk.Frame(label="Audio")
+        audio_frame.get_style_context().add_class("settings-frame")
+        audio_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        audio_box.set_margin_start(15)
+        audio_box.set_margin_end(15)
+        audio_box.set_margin_top(10)
+        audio_box.set_margin_bottom(10)
+        
+        self.noise_check = Gtk.CheckButton(label="🎤 AI Noise Suppression")
+        self.noise_check.set_active(self.settings.get("streaming", "noise_suppression"))
+        audio_box.pack_start(self.noise_check, False, False, 0)
+        
+        audio_frame.add(audio_box)
+        page.pack_start(audio_frame, False, False, 0)
+        
+        self.notebook.append_page(page, self._create_tab_label("📹", "Streaming"))
+    
+    def _on_scan_sd(self, button):
+        storage = SystemDetector.detect_storage()
+        removable = [s for s in storage if s.is_removable]
+        msg = f"Found {len(removable)} removable drive(s)." if removable else "No removable drives found."
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text=msg
+        )
+        dialog.run()
+        dialog.destroy()
+    
+    def _on_add_directory(self, button):
+        dialog = Gtk.FileChooserDialog(
+            title="Select Game Directory",
+            parent=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+        )
+        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            path = dialog.get_filename()
+            dirs = self.settings.get("storage", "custom_directories") or []
+            if path not in dirs:
+                dirs.append(path)
+                self.settings.set("storage", "custom_directories", dirs)
+                
+                row = Gtk.ListBoxRow()
+                row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                row_box.pack_start(Gtk.Label(label=path), True, True, 5)
+                row.add(row_box)
+                row.directory = path
+                self.custom_dirs_list.add(row)
+                self.custom_dirs_list.show_all()
+        
+        dialog.destroy()
+    
+    def _on_remove_directory(self, button):
+        row = self.custom_dirs_list.get_selected_row()
+        if row and hasattr(row, 'directory'):
+            dirs = self.settings.get("storage", "custom_directories") or []
+            if row.directory in dirs:
+                dirs.remove(row.directory)
+                self.settings.set("storage", "custom_directories", dirs)
+            self.custom_dirs_list.remove(row)
+    
+    def apply_settings(self):
+        if hasattr(self, 'dual_gpu_enabled'):
+            self.settings.set("dual_gpu", "enabled", self.dual_gpu_enabled.get_active())
+        if hasattr(self, 'primary_gpu_combo') and self.primary_gpu_combo:
+            self.settings.set("dual_gpu", "primary_gpu", self.primary_gpu_combo.get_active())
+        if hasattr(self, 'secondary_gpu_combo') and self.secondary_gpu_combo:
+            self.settings.set("dual_gpu", "secondary_gpu", self.secondary_gpu_combo.get_active())
+        if hasattr(self, 'split_ratio_scale'):
+            self.settings.set("dual_gpu", "split_ratio", int(self.split_ratio_scale.get_value()))
+        if hasattr(self, 'overlap_scale'):
+            self.settings.set("dual_gpu", "overlap_pixels", int(self.overlap_scale.get_value()))
+        
+        if hasattr(self, 'fsr_enabled_check'):
+            self.settings.set("upscaling", "fsr_enabled", self.fsr_enabled_check.get_active())
+        if hasattr(self, 'fsr_preset_combo'):
+            self.settings.set("upscaling", "fsr_preset", self.fsr_preset_combo.get_active_text())
+        if hasattr(self, 'dlss_enabled_check'):
+            self.settings.set("upscaling", "dlss_enabled", self.dlss_enabled_check.get_active())
+        if hasattr(self, 'dlss_preset_combo'):
+            self.settings.set("upscaling", "dlss_preset", self.dlss_preset_combo.get_active_text())
+        if hasattr(self, 'xess_enabled_check'):
+            self.settings.set("upscaling", "xess_enabled", self.xess_enabled_check.get_active())
+        if hasattr(self, 'xess_preset_combo'):
+            self.settings.set("upscaling", "xess_preset", self.xess_preset_combo.get_active_text())
+        if hasattr(self, 'anime4k_check'):
+            self.settings.set("upscaling", "anime4k_enabled", self.anime4k_check.get_active())
+        if hasattr(self, 'neural_check'):
+            self.settings.set("upscaling", "neural_upscaler_enabled", self.neural_check.get_active())
+        if hasattr(self, 'sharpening_scale'):
+            self.settings.set("upscaling", "sharpening", self.sharpening_scale.get_value())
+        
+        if hasattr(self, 'ram_guardian_combo'):
+            self.settings.set("performance", "ram_guardian", self.ram_guardian_combo.get_active_text())
+        if hasattr(self, 'latency_combo'):
+            self.settings.set("performance", "latency_fastpath", self.latency_combo.get_active_text())
+        if hasattr(self, 'governor_combo'):
+            self.settings.set("performance", "cpu_governor", self.governor_combo.get_active_text())
+        if hasattr(self, 'gamemode_check'):
+            self.settings.set("performance", "gamemode_enabled", self.gamemode_check.get_active())
+        if hasattr(self, 'mangohud_check'):
+            self.settings.set("performance", "mangohud_enabled", self.mangohud_check.get_active())
+        if hasattr(self, 'mangohud_preset_combo'):
+            self.settings.set("performance", "mangohud_preset", self.mangohud_preset_combo.get_active_text())
+        if hasattr(self, 'shader_check'):
+            self.settings.set("performance", "shader_precache", self.shader_check.get_active())
+        if hasattr(self, 'vrr_check'):
+            self.settings.set("performance", "vrr_freesync", self.vrr_check.get_active())
+        
+        if hasattr(self, 'replay_check'):
+            self.settings.set("streaming", "replay_buffer", self.replay_check.get_active())
+        if hasattr(self, 'replay_duration_scale'):
+            self.settings.set("streaming", "replay_duration", int(self.replay_duration_scale.get_value()))
+        if hasattr(self, 'ndi_check'):
+            self.settings.set("streaming", "ndi_streaming", self.ndi_check.get_active())
+        if hasattr(self, 'encoder_combo'):
+            self.settings.set("streaming", "encoder", self.encoder_combo.get_active_text())
+        if hasattr(self, 'quality_combo'):
+            self.settings.set("streaming", "recording_quality", self.quality_combo.get_active_text())
+        if hasattr(self, 'noise_check'):
+            self.settings.set("streaming", "noise_suppression", self.noise_check.get_active())
+        
+        self.settings.save()
+
+
 class ThunderboltRunner(Gtk.Window):
     def __init__(self):
         super().__init__(title="⚡ Thunderbolt Runner")
@@ -293,9 +1520,11 @@ class ThunderboltRunner(Gtk.Window):
         
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        GAME_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
         
+        self.settings = ThunderboltSettings()
         self.games = []
-        self.scanner = GameScanner()
+        self.scanner = GameScanner(self.settings)
         self.current_filter = "all"
         self.console_mode = False
         self.favorites = self.load_favorites()
@@ -439,6 +1668,30 @@ class ThunderboltRunner(Gtk.Window):
             background: linear-gradient(135deg, #00BFFF, #1E90FF);
             box-shadow: 0 0 15px rgba(0, 191, 255, 0.6);
         }
+        .optimize-button {
+            background: linear-gradient(135deg, #FFD700, #FFA500);
+            color: #0a0a0f;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-weight: bold;
+        }
+        .optimize-button:hover {
+            background: linear-gradient(135deg, #FFA500, #FF8C00);
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+        }
+        .settings-button {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 18px;
+            font-weight: bold;
+        }
+        .settings-button:hover {
+            background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.6);
+        }
         .console-button {
             background: linear-gradient(135deg, #9333ea, #7c3aed);
             color: white;
@@ -526,10 +1779,20 @@ class ThunderboltRunner(Gtk.Window):
         
         buttons_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         
-        scan_btn = Gtk.Button(label="⚡ Scan Games")
+        optimize_btn = Gtk.Button(label="⚡ Quick Optimize")
+        optimize_btn.get_style_context().add_class("optimize-button")
+        optimize_btn.connect("clicked", self.on_quick_optimize)
+        buttons_box.pack_start(optimize_btn, False, False, 0)
+        
+        scan_btn = Gtk.Button(label="🔄 Scan Games")
         scan_btn.get_style_context().add_class("action-button")
         scan_btn.connect("clicked", self.on_scan_clicked)
         buttons_box.pack_start(scan_btn, False, False, 0)
+        
+        settings_btn = Gtk.Button(label="⚙️ Settings")
+        settings_btn.get_style_context().add_class("settings-button")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        buttons_box.pack_start(settings_btn, False, False, 0)
         
         self.console_btn = Gtk.ToggleButton(label="🎮 Console Mode")
         self.console_btn.get_style_context().add_class("console-button")
@@ -558,6 +1821,7 @@ class ThunderboltRunner(Gtk.Window):
             ("🎲 GOG", "GOG"),
             ("🐧 Native", "Native"),
             ("📂 Lutris", "Lutris"),
+            ("💿 SD Card", "SD Card"),
         ]
         
         self.filter_buttons = {}
@@ -692,6 +1956,9 @@ class ThunderboltRunner(Gtk.Window):
             elif self.current_filter == "recent":
                 if game.name in self.recent_games:
                     filtered.append(game)
+            elif self.current_filter == "SD Card":
+                if "SD" in game.source:
+                    filtered.append(game)
             elif self.current_filter in game.source:
                 filtered.append(game)
         
@@ -717,6 +1984,7 @@ class ThunderboltRunner(Gtk.Window):
             "GOG": "GOG",
             "Native": "Native Linux",
             "Lutris": "Lutris",
+            "SD Card": "SD Card Games",
             "recent": "Recently Played",
             "favorites": "Favorites"
         }
@@ -725,6 +1993,9 @@ class ThunderboltRunner(Gtk.Window):
         )
     
     def create_game_card(self, game):
+        event_box = Gtk.EventBox()
+        event_box.connect("button-press-event", self.on_game_card_click, game)
+        
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         card.get_style_context().add_class("game-card")
         card.set_size_request(200, 260)
@@ -754,6 +2025,7 @@ class ThunderboltRunner(Gtk.Window):
             "GOG": "🎲",
             "Native": "🐧",
             "Lutris": "📂",
+            "SD": "💿",
         }
         icon = "⚡"
         for src, ico in source_icons.items():
@@ -782,7 +2054,54 @@ class ThunderboltRunner(Gtk.Window):
         play_btn.connect("clicked", self.on_play_clicked, game)
         card.pack_end(play_btn, False, False, 5)
         
-        return card
+        event_box.add(card)
+        return event_box
+    
+    def on_game_card_click(self, widget, event, game):
+        if event.button == 3:
+            menu = Gtk.Menu()
+            
+            launch_item = Gtk.MenuItem(label="⚡ Launch")
+            launch_item.connect("activate", lambda w: self.launch_game(game))
+            menu.append(launch_item)
+            
+            menu.append(Gtk.SeparatorMenuItem())
+            
+            configure_item = Gtk.MenuItem(label="⚙️ Configure...")
+            configure_item.connect("activate", lambda w: self.show_game_settings(game))
+            menu.append(configure_item)
+            
+            if game.favorite or game.name in self.favorites:
+                fav_item = Gtk.MenuItem(label="☆ Remove from Favorites")
+            else:
+                fav_item = Gtk.MenuItem(label="⭐ Add to Favorites")
+            fav_item.connect("activate", lambda w: self.toggle_favorite(game))
+            menu.append(fav_item)
+            
+            menu.show_all()
+            menu.popup_at_pointer(event)
+            return True
+        return False
+    
+    def show_game_settings(self, game):
+        dialog = PerGameSettingsDialog(self, game, self.settings)
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            profile = dialog.get_profile()
+            self.settings.save_game_profile(game.name, profile)
+        
+        dialog.destroy()
+    
+    def toggle_favorite(self, game):
+        if game.name in self.favorites:
+            self.favorites.remove(game.name)
+            game.favorite = False
+        else:
+            self.favorites.add(game.name)
+            game.favorite = True
+        self.save_favorites()
+        self.refresh_grid()
     
     def on_favorite_clicked(self, button, game, fav_btn):
         if game.name in self.favorites:
@@ -804,13 +2123,7 @@ class ThunderboltRunner(Gtk.Window):
     def launch_game(self, game):
         self.save_recent(game.name)
         
-        env = os.environ.copy()
-        env["ENABLE_GAMEMODE"] = "1"
-        env["MANGOHUD"] = "1"
-        env["WINEFSYNC"] = "1"
-        env["WINEESYNC"] = "1"
-        env["__GL_THREADED_OPTIMIZATIONS"] = "1"
-        env["mesa_glthread"] = "true"
+        env = self.settings.build_launch_env(game.name)
         
         subprocess.run(["systemctl", "--user", "start", "aegis-gaming-mode.target"], 
                        capture_output=True, env=env)
@@ -850,6 +2163,31 @@ class ThunderboltRunner(Gtk.Window):
     def on_scan_clicked(self, button):
         self.scan_games()
     
+    def on_settings_clicked(self, button):
+        dialog = SettingsDialog(self, self.settings)
+        response = dialog.run()
+        
+        if response in (Gtk.ResponseType.OK, Gtk.ResponseType.APPLY):
+            dialog.apply_settings()
+            if response == Gtk.ResponseType.APPLY:
+                return
+        
+        dialog.destroy()
+    
+    def on_quick_optimize(self, button):
+        applied = self.settings.apply_quick_optimize()
+        
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="⚡ Quick Optimize Applied!"
+        )
+        dialog.format_secondary_text(applied)
+        dialog.run()
+        dialog.destroy()
+    
     def on_console_toggled(self, button):
         self.console_mode = button.get_active()
         if self.console_mode:
@@ -875,13 +2213,18 @@ class ThunderboltRunner(Gtk.Window):
             elif event.keyval == Gdk.KEY_r:
                 self.scan_games()
                 return True
+            elif event.keyval == Gdk.KEY_comma:
+                self.on_settings_clicked(None)
+                return True
         return False
+
 
 def main():
     app = ThunderboltRunner()
     app.connect("destroy", Gtk.main_quit)
     app.show_all()
     Gtk.main()
+
 
 if __name__ == "__main__":
     main()

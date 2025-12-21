@@ -123,11 +123,26 @@ Located at: `AegisOSRepo/` directory
 - **TIER_LIMIT**: Set to "gamer" for full feature access in security and system applications
 - **Build Options**: post-build.sh accepts PASSWORD_MODE parameter ("passwordless" or "password")
 
-## Thunderbolt Runner (Aegis Game Launcher)
+## Thunderbolt Runner (Aegis Game Launcher) v2.0
 - **Zeus Thunderbolt Theme**: Electric blue (#00BFFF, #1E90FF) and gold (#FFD700) color scheme
-- **Features**: Unified game library (Steam, Epic, GOG, Lutris, native), favorites, recent games
+- **Unified Library**: Steam, Epic, GOG, Lutris, native games + SD card/external drives
 - **Console Mode**: Controller-friendly fullscreen mode (F11)
 - **Location**: `/usr/local/bin/thunderbolt-runner`
+
+### Settings Panel (5 Tabs):
+1. **SD Card & Storage**: Manage external drives, scan removable media
+2. **Dual GPU Rendering**: Split-frame rendering with 60/40 split, overlap blending
+3. **Upscalers**: FSR 3.0, DLSS 3.5 (NVIDIA), XeSS (Intel), Anime4K, Aegis Neural
+4. **Performance**: RAM Guardian, Latency FastPath, CPU Governor, GameMode, MangoHUD
+5. **Streaming (StreamForge)**: Replay Buffer, NDI, encoder selection, noise suppression
+
+### Quick Optimize:
+- One-click optimization based on detected GPU
+- Auto-enables recommended upscaler, GameMode, optimal settings
+
+### Per-Game Settings:
+- Right-click any game → Configure
+- Override upscaler, performance profile per game
 
 ## External Dependencies
 * **archiso**: ISO build system
