@@ -29,12 +29,13 @@ show_usage() {
     echo "Usage: $0 [OPTIONS] [EDITION]"
     echo ""
     echo "Editions:"
-    echo "  freemium    - Free edition (default)"
-    echo "  basic       - Basic edition (\$19)"
-    echo "  gamer       - Gamer edition (\$49)"
-    echo "  workplace   - Workplace edition"
-    echo "  aidev       - AI Developer edition"
-    echo "  server      - Server edition"
+    echo "  freemium              - Free edition (default)"
+    echo "  basic                 - Basic edition (\$19)"
+    echo "  gamer                 - Gamer edition (\$49)"
+    echo "  gamer-passwordless    - Gamer edition (TESTING ONLY - no login security)"
+    echo "  workplace             - Workplace edition"
+    echo "  aidev                 - AI Developer edition"
+    echo "  server                - Server edition"
     echo ""
     echo "Options:"
     echo "  -h, --help      Show this help"
@@ -212,7 +213,7 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
-        freemium|basic|gamer|workplace|aidev|server|gamer-ai)
+        freemium|basic|gamer|gamer-passwordless|workplace|aidev|server|gamer-ai)
             EDITION="$1"
             shift
             ;;

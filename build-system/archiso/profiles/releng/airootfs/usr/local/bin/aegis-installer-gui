@@ -305,6 +305,7 @@ LICENSE_KEY_PATTERN = r'^AEGIS-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$'
 EDITION_PREFIXES = {
     "BASIC": "Basic Edition",
     "GAMER": "Gamer Edition",
+    "GAMERP": "Gamer Passwordless Edition",
     "AIDEV": "AI Developer Edition",
     "SERVER": "Server Edition",
     "WORK": "Workplace Edition",
@@ -508,6 +509,10 @@ class AegisInstaller(Gtk.Window):
         if os.path.exists("/etc/aegis-freemium-marker"):
             return "Freemium Edition"
         return "Gaming Edition"
+    
+    def is_passwordless_edition(self):
+        edition = self.detect_edition().lower()
+        return "passwordless" in edition or edition == "gamer-passwordless"
     
     def create_license_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -880,12 +885,25 @@ Locale: {locale}
         card.get_style_context().add_class("card")
         card.set_spacing(15)
         
-        title = Gtk.Label(label="Create Your Account")
+        is_passwordless = self.is_passwordless_edition()
+        
+        if is_passwordless:
+            title = Gtk.Label(label="Create Your Account (Passwordless Testing Edition)")
+        else:
+            title = Gtk.Label(label="Create Your Account")
         title.get_style_context().add_class("section-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 0)
         
-        subtitle = Gtk.Label(label="Set up your user account for Aegis OS.")
+        if is_passwordless:
+            subtitle = Gtk.Label(label="TESTING ONLY - No password required. Autologin will be enabled.")
+            warning = Gtk.Label()
+            warning.set_markup("<span foreground='#ff6b6b' weight='bold'>WARNING: This edition has NO login security. For testing only!</span>")
+            warning.set_halign(Gtk.Align.START)
+            warning.set_margin_top(10)
+            card.pack_start(warning, False, False, 0)
+        else:
+            subtitle = Gtk.Label(label="Set up your user account for Aegis OS.")
         subtitle.get_style_context().add_class("section-subtitle")
         subtitle.set_halign(Gtk.Align.START)
         card.pack_start(subtitle, False, False, 0)
@@ -976,6 +994,7 @@ Locale: {locale}
         username = self.username_entry.get_text().strip()
         password = self.password_entry.get_text()
         confirm = self.confirm_entry.get_text()
+        is_passwordless = self.is_passwordless_edition()
         
         errors = []
         
@@ -984,19 +1003,23 @@ Locale: {locale}
         elif not re.match(r'^[a-z][a-z0-9_-]{0,31}$', username):
             errors.append("Username must be lowercase, start with a letter, and contain only letters, numbers, - or _")
         
-        if not password:
-            errors.append("Password is required")
-        elif len(password) < 4:
-            errors.append("Password must be at least 4 characters")
-        
-        if password and confirm and password != confirm:
-            errors.append("Passwords do not match")
+        if not is_passwordless:
+            if not password:
+                errors.append("Password is required")
+            elif len(password) < 4:
+                errors.append("Password must be at least 4 characters")
+            
+            if password and confirm and password != confirm:
+                errors.append("Passwords do not match")
         
         if errors:
             self.user_validation_label.set_markup(f"<span foreground='#ff6b6b'>{errors[0]}</span>")
             return False
         else:
-            self.user_validation_label.set_markup("<span foreground='#51cf66'>Account details are valid</span>")
+            if is_passwordless:
+                self.user_validation_label.set_markup("<span foreground='#51cf66'>Passwordless edition - autologin enabled</span>")
+            else:
+                self.user_validation_label.set_markup("<span foreground='#51cf66'>Account details are valid</span>")
             return True
     
     def update_user_summary(self):
@@ -1401,24 +1424,66 @@ grub-install --target=i386-pc /dev/{disk}
         USERNAME = self.username
         DISPLAY_NAME = self.display_name
         PASSWORD = self.password
+        IS_PASSWORDLESS = self.is_passwordless_edition()
         
         chroot_script += f'''
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# Create user account with password
+# Create user account
 useradd -m -G wheel,audio,video,storage,optical,games,input -s /bin/bash -c "{DISPLAY_NAME}" {USERNAME}
+'''
+        
+        if IS_PASSWORDLESS:
+            chroot_script += f'''
+# Passwordless testing edition - set empty password and configure autologin
+passwd -d {USERNAME}
+
+# Configure NOPASSWD sudo for testing edition ONLY
+sed -i 's/^# *%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) NOPASSWD: ALL/' /etc/sudoers
+grep -q "^%wheel ALL=(ALL:ALL) NOPASSWD: ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Add autologin group and user
+groupadd -r autologin 2>/dev/null || true
+gpasswd -a {USERNAME} autologin
+'''
+        else:
+            chroot_script += f'''
+# Set user password
 echo "{USERNAME}:{PASSWORD}" | chpasswd
 
 # Configure sudo access for wheel group (password required for security)
 sed -i 's/^# *%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 grep -q "^%wheel ALL=(ALL:ALL) ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
-
+'''
+        
+        chroot_script += f'''
 # Desktop environment
 pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
 systemctl enable lightdm
 
-# Configure LightDM for standard login (no autologin - secure by default)
+# Configure LightDM
 mkdir -p /etc/lightdm
+'''
+        
+        if IS_PASSWORDLESS:
+            chroot_script += f'''
+# Passwordless testing edition - enable autologin
+cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
+[LightDM]
+run-directory=/run/lightdm
+
+[Seat:*]
+autologin-user={USERNAME}
+autologin-user-timeout=0
+autologin-session=xfce
+user-session=xfce
+greeter-session=lightdm-gtk-greeter
+greeter-hide-users=false
+LIGHTDM_EOF
+'''
+        else:
+            chroot_script += '''
+# Secure edition - standard login required
 cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
 [LightDM]
 run-directory=/run/lightdm
@@ -1428,6 +1493,9 @@ user-session=xfce
 greeter-session=lightdm-gtk-greeter
 greeter-hide-users=false
 LIGHTDM_EOF
+'''
+        
+        chroot_script += f'''
 
 # Configure the greeter styling
 cat > /etc/lightdm/lightdm-gtk-greeter.conf << GREETER_EOF
