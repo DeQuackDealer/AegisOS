@@ -240,38 +240,21 @@ combobox {{
     color: #22c55e;
     font-size: 72px;
 }}
-"""
 
-LICENSE_TEXT = """
-AEGIS OS LICENSE AGREEMENT
+.edition-label {{
+    color: {AEGIS_ORANGE};
+    font-size: 16px;
+    font-weight: bold;
+}}
 
-Copyright (c) 2024 Aegis OS Team
+.license-valid {{
+    color: #22c55e;
+    font-weight: bold;
+}}
 
-This software is provided "as is", without warranty of any kind, express or implied.
-
-By installing Aegis OS, you agree to the following terms:
-
-1. USAGE RIGHTS
-   - You are granted a non-exclusive license to use Aegis OS for personal or commercial purposes.
-   - You may install Aegis OS on multiple machines.
-
-2. MODIFICATIONS
-   - You may modify the system for personal use.
-   - Redistribution of modified versions requires attribution.
-
-3. DISCLAIMER
-   - The developers are not liable for any data loss or damage.
-   - Use at your own risk.
-
-4. PRIVACY
-   - Aegis OS does not collect personal data.
-   - Optional telemetry can be disabled in settings.
-
-5. SUPPORT
-   - Community support is available through our forums.
-   - Premium editions include priority support.
-
-By clicking "I Accept", you agree to these terms and conditions.
+.license-invalid {{
+    color: #ef4444;
+}}
 """
 
 TIMEZONES = [
@@ -317,6 +300,17 @@ LOCALES = [
     ("ko_KR.UTF-8", "Korean"),
 ]
 
+LICENSE_KEY_PATTERN = r'^AEGIS-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$'
+
+EDITION_PREFIXES = {
+    "BASIC": "Basic Edition",
+    "GAMER": "Gamer Edition",
+    "AIDEV": "AI Developer Edition",
+    "SERVER": "Server Edition",
+    "WORK": "Workplace Edition",
+    "PRO": "Pro Edition",
+}
+
 class AegisInstaller(Gtk.Window):
     def __init__(self):
         super().__init__(title="Aegis OS Installer")
@@ -327,8 +321,9 @@ class AegisInstaller(Gtk.Window):
         self.current_step = 0
         self.steps = [
             "Welcome",
-            "Disk Selection", 
+            "License",
             "User Setup",
+            "Disk Selection",
             "Region",
             "Install",
             "Complete"
@@ -341,7 +336,10 @@ class AegisInstaller(Gtk.Window):
         self.hostname = "aegis"
         self.timezone = "UTC"
         self.locale = "en_US.UTF-8"
-        self.license_accepted = False
+        self.license_key = ""
+        self.license_validated = False
+        self.is_freemium = False
+        self.edition_name = "Freemium Edition"
         self.installation_complete = False
         
         self.apply_css()
@@ -372,8 +370,9 @@ class AegisInstaller(Gtk.Window):
         self.content_stack.set_transition_duration(300)
         
         self.content_stack.add_named(self.create_welcome_page(), "welcome")
-        self.content_stack.add_named(self.create_disk_page(), "disk")
+        self.content_stack.add_named(self.create_license_page(), "license")
         self.content_stack.add_named(self.create_user_page(), "user")
+        self.content_stack.add_named(self.create_disk_page(), "disk")
         self.content_stack.add_named(self.create_region_page(), "region")
         self.content_stack.add_named(self.create_install_page(), "install")
         self.content_stack.add_named(self.create_complete_page(), "complete")
@@ -438,11 +437,11 @@ class AegisInstaller(Gtk.Window):
             self.step_labels.append(label)
             step_item.pack_start(label, False, False, 0)
             
-            self.step_box.pack_start(step_item, False, False, 20)
+            self.step_box.pack_start(step_item, False, False, 15)
             
             if i < len(self.steps) - 1:
                 line = Gtk.DrawingArea()
-                line.set_size_request(40, 2)
+                line.set_size_request(30, 2)
                 line.set_valign(Gtk.Align.CENTER)
                 self.step_box.pack_start(line, False, False, 0)
         
@@ -468,51 +467,34 @@ class AegisInstaller(Gtk.Window):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         card.get_style_context().add_class("card")
         card.set_spacing(15)
+        card.set_valign(Gtk.Align.CENTER)
         
         title = Gtk.Label(label="Welcome to Aegis OS")
         title.get_style_context().add_class("section-title")
-        title.set_halign(Gtk.Align.START)
+        title.set_halign(Gtk.Align.CENTER)
         card.pack_start(title, False, False, 0)
         
         edition = self.detect_edition()
         edition_label = Gtk.Label(label=f"Edition: {edition}")
         edition_label.get_style_context().add_class("section-subtitle")
-        edition_label.set_halign(Gtk.Align.START)
+        edition_label.set_halign(Gtk.Align.CENTER)
         card.pack_start(edition_label, False, False, 0)
         
-        desc = Gtk.Label(label="This wizard will guide you through installing Aegis OS on your computer.\nPlease read and accept the license agreement to continue.")
+        desc = Gtk.Label()
+        desc.set_markup(
+            "This wizard will guide you through installing <b>Aegis OS</b> on your computer.\n\n"
+            "• Optimized for gaming performance\n"
+            "• Windows-like interface with XFCE\n"
+            "• Pre-configured with gaming tools\n"
+            "• Easy to use and customize\n\n"
+            "Click <b>Next</b> to continue with the installation."
+        )
         desc.set_line_wrap(True)
-        desc.set_halign(Gtk.Align.START)
-        card.pack_start(desc, False, False, 0)
+        desc.set_halign(Gtk.Align.CENTER)
+        desc.set_justify(Gtk.Justification.CENTER)
+        card.pack_start(desc, False, False, 20)
         
-        page.pack_start(card, False, False, 0)
-        
-        license_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        license_card.get_style_context().add_class("card")
-        license_card.set_spacing(10)
-        
-        license_title = Gtk.Label(label="License Agreement")
-        license_title.get_style_context().add_class("section-title")
-        license_title.set_halign(Gtk.Align.START)
-        license_card.pack_start(license_title, False, False, 0)
-        
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_min_content_height(200)
-        
-        license_view = Gtk.TextView()
-        license_view.set_editable(False)
-        license_view.set_cursor_visible(False)
-        license_view.get_buffer().set_text(LICENSE_TEXT)
-        license_view.get_style_context().add_class("license-text")
-        scroll.add(license_view)
-        license_card.pack_start(scroll, True, True, 0)
-        
-        self.accept_check = Gtk.CheckButton(label="I accept the license agreement")
-        self.accept_check.connect("toggled", self.on_license_toggled)
-        license_card.pack_start(self.accept_check, False, False, 10)
-        
-        page.pack_start(license_card, True, True, 0)
+        page.pack_start(card, True, True, 0)
         
         return page
         
@@ -526,12 +508,8 @@ class AegisInstaller(Gtk.Window):
         if os.path.exists("/etc/aegis-freemium-marker"):
             return "Freemium Edition"
         return "Gaming Edition"
-        
-    def on_license_toggled(self, widget):
-        self.license_accepted = widget.get_active()
-        self.update_navigation()
-        
-    def create_disk_page(self):
+    
+    def create_license_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         page.get_style_context().add_class("content-area")
         page.set_spacing(20)
@@ -540,108 +518,140 @@ class AegisInstaller(Gtk.Window):
         card.get_style_context().add_class("card")
         card.set_spacing(15)
         
-        title = Gtk.Label(label="Select Installation Disk")
+        title = Gtk.Label(label="License Key")
         title.get_style_context().add_class("section-title")
         title.set_halign(Gtk.Align.START)
         card.pack_start(title, False, False, 0)
         
-        subtitle = Gtk.Label(label="Choose the disk where Aegis OS will be installed. WARNING: All data on the selected disk will be erased!")
-        subtitle.get_style_context().add_class("warning-label")
-        subtitle.set_line_wrap(True)
+        subtitle = Gtk.Label(label="Enter your license key to unlock premium features, or continue with the free edition.")
+        subtitle.get_style_context().add_class("section-subtitle")
         subtitle.set_halign(Gtk.Align.START)
+        subtitle.set_line_wrap(True)
         card.pack_start(subtitle, False, False, 0)
         
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_min_content_height(300)
+        license_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        license_box.set_spacing(10)
         
-        self.disk_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.disk_list.set_spacing(5)
-        scroll.add(self.disk_list)
-        card.pack_start(scroll, True, True, 0)
+        license_label = Gtk.Label(label="License Key:")
+        license_label.get_style_context().add_class("input-label")
+        license_box.pack_start(license_label, False, False, 0)
         
-        refresh_btn = Gtk.Button(label="↻ Refresh Disk List")
-        refresh_btn.get_style_context().add_class("nav-button")
-        refresh_btn.connect("clicked", self.refresh_disks)
-        refresh_btn.set_halign(Gtk.Align.START)
-        card.pack_start(refresh_btn, False, False, 0)
+        self.license_entry = Gtk.Entry()
+        self.license_entry.set_placeholder_text("AEGIS-XXXX-XXXX-XXXX-XXXX")
+        self.license_entry.set_hexpand(True)
+        self.license_entry.set_width_chars(30)
+        self.license_entry.connect("changed", self.on_license_changed)
+        license_box.pack_start(self.license_entry, True, True, 0)
         
-        page.pack_start(card, True, True, 0)
+        self.validate_btn = Gtk.Button(label="Validate")
+        self.validate_btn.get_style_context().add_class("nav-button-primary")
+        self.validate_btn.connect("clicked", self.on_validate_license)
+        license_box.pack_start(self.validate_btn, False, False, 0)
         
-        self.refresh_disks()
+        card.pack_start(license_box, False, False, 10)
+        
+        self.license_status_label = Gtk.Label()
+        self.license_status_label.set_halign(Gtk.Align.START)
+        card.pack_start(self.license_status_label, False, False, 0)
+        
+        self.edition_display = Gtk.Label()
+        self.edition_display.get_style_context().add_class("edition-label")
+        self.edition_display.set_halign(Gtk.Align.START)
+        card.pack_start(self.edition_display, False, False, 5)
+        
+        format_hint = Gtk.Label()
+        format_hint.set_markup("<small>Format: AEGIS-XXXX-XXXX-XXXX-XXXX (e.g., AEGIS-BASIC-1234-ABCD-5678)</small>")
+        format_hint.get_style_context().add_class("section-subtitle")
+        format_hint.set_halign(Gtk.Align.START)
+        card.pack_start(format_hint, False, False, 10)
+        
+        page.pack_start(card, False, False, 0)
+        
+        freemium_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        freemium_card.get_style_context().add_class("card")
+        freemium_card.set_spacing(15)
+        
+        freemium_title = Gtk.Label(label="No License Key?")
+        freemium_title.get_style_context().add_class("section-title")
+        freemium_title.set_halign(Gtk.Align.START)
+        freemium_card.pack_start(freemium_title, False, False, 0)
+        
+        freemium_desc = Gtk.Label()
+        freemium_desc.set_markup(
+            "You can continue with the <b>Freemium Edition</b> which includes:\n"
+            "• Full desktop environment\n"
+            "• Basic gaming optimizations\n"
+            "• Community support\n\n"
+            "Premium features can be unlocked later by purchasing a license."
+        )
+        freemium_desc.set_line_wrap(True)
+        freemium_desc.set_halign(Gtk.Align.START)
+        freemium_card.pack_start(freemium_desc, False, False, 0)
+        
+        self.freemium_btn = Gtk.Button(label="Continue with Freemium Edition")
+        self.freemium_btn.get_style_context().add_class("nav-button")
+        self.freemium_btn.connect("clicked", self.on_freemium_selected)
+        self.freemium_btn.set_halign(Gtk.Align.START)
+        freemium_card.pack_start(self.freemium_btn, False, False, 10)
+        
+        page.pack_start(freemium_card, False, False, 0)
         
         return page
-        
-    def refresh_disks(self, widget=None):
-        for child in self.disk_list.get_children():
-            self.disk_list.remove(child)
-            
-        try:
-            result = subprocess.run(
-                ["lsblk", "-d", "-o", "NAME,SIZE,MODEL,TYPE", "-n"],
-                capture_output=True, text=True
-            )
-            
-            for line in result.stdout.strip().split('\n'):
-                if not line or 'loop' in line or 'rom' in line.lower():
-                    continue
-                    
-                parts = line.split()
-                if len(parts) >= 2 and parts[-1] == 'disk':
-                    name = parts[0]
-                    size = parts[1] if len(parts) > 1 else "Unknown"
-                    model = ' '.join(parts[2:-1]) if len(parts) > 3 else "Unknown"
-                    
-                    row = self.create_disk_row(name, size, model)
-                    self.disk_list.pack_start(row, False, False, 0)
-                    
-            self.disk_list.show_all()
-        except Exception as e:
-            error_label = Gtk.Label(label=f"Error scanning disks: {str(e)}")
-            error_label.get_style_context().add_class("error-label")
-            self.disk_list.pack_start(error_label, False, False, 0)
-            self.disk_list.show_all()
-            
-    def create_disk_row(self, name, size, model):
-        event_box = Gtk.EventBox()
-        
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        row.get_style_context().add_class("disk-row")
-        row.set_spacing(15)
-        
-        icon = Gtk.Label(label="💾")
-        icon.set_size_request(40, 40)
-        row.pack_start(icon, False, False, 10)
-        
-        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        info_box.set_spacing(3)
-        
-        name_label = Gtk.Label(label=f"/dev/{name}")
-        name_label.get_style_context().add_class("disk-name")
-        name_label.set_halign(Gtk.Align.START)
-        info_box.pack_start(name_label, False, False, 0)
-        
-        detail_label = Gtk.Label(label=f"{size} • {model}")
-        detail_label.get_style_context().add_class("disk-info")
-        detail_label.set_halign(Gtk.Align.START)
-        info_box.pack_start(detail_label, False, False, 0)
-        
-        row.pack_start(info_box, True, True, 0)
-        
-        event_box.add(row)
-        event_box.connect("button-press-event", self.on_disk_selected, name, row)
-        event_box.disk_name = name
-        event_box.disk_row = row
-        
-        return event_box
-        
-    def on_disk_selected(self, widget, event, name, row):
-        for child in self.disk_list.get_children():
-            child.disk_row.get_style_context().remove_class("disk-row-selected")
-            
-        row.get_style_context().add_class("disk-row-selected")
-        self.selected_disk = name
+    
+    def on_license_changed(self, widget):
+        text = widget.get_text().upper()
+        if text != widget.get_text():
+            widget.set_text(text)
+            widget.set_position(-1)
+        self.license_validated = False
+        self.is_freemium = False
+        self.license_status_label.set_text("")
+        self.edition_display.set_text("")
         self.update_navigation()
+    
+    def validate_license_format(self, key):
+        return bool(re.match(LICENSE_KEY_PATTERN, key))
+    
+    def get_edition_from_key(self, key):
+        if not key or len(key) < 6:
+            return "Unknown Edition"
+        parts = key.split("-")
+        if len(parts) >= 2:
+            prefix = parts[1]
+            return EDITION_PREFIXES.get(prefix, f"{prefix} Edition")
+        return "Unknown Edition"
+    
+    def on_validate_license(self, widget):
+        key = self.license_entry.get_text().strip().upper()
+        
+        if self.validate_license_format(key):
+            self.license_key = key
+            self.license_validated = True
+            self.is_freemium = False
+            self.edition_name = self.get_edition_from_key(key)
+            
+            self.license_status_label.set_markup('<span color="#22c55e">✓ License key format is valid</span>')
+            self.edition_display.set_text(f"Edition: {self.edition_name}")
+        else:
+            self.license_validated = False
+            self.license_key = ""
+            self.license_status_label.set_markup('<span color="#ef4444">✗ Invalid license key format</span>')
+            self.edition_display.set_text("")
+        
+        self.update_navigation()
+    
+    def on_freemium_selected(self, widget):
+        self.license_key = ""
+        self.license_validated = False
+        self.is_freemium = True
+        self.edition_name = "Freemium Edition"
+        
+        self.license_status_label.set_markup('<span color="#22c55e">✓ Freemium Edition selected</span>')
+        self.edition_display.set_text("Edition: Freemium Edition")
+        self.license_entry.set_text("")
+        
+        self.current_step = 2
+        self.show_current_step()
         
     def create_user_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -775,6 +785,118 @@ class AegisInstaller(Gtk.Window):
             return False
             
         return True
+    
+    def create_disk_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.get_style_context().add_class("content-area")
+        page.set_spacing(20)
+        
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.get_style_context().add_class("card")
+        card.set_spacing(15)
+        
+        title = Gtk.Label(label="Select Installation Disk")
+        title.get_style_context().add_class("section-title")
+        title.set_halign(Gtk.Align.START)
+        card.pack_start(title, False, False, 0)
+        
+        subtitle = Gtk.Label(label="Choose the disk where Aegis OS will be installed. WARNING: All data on the selected disk will be erased!")
+        subtitle.get_style_context().add_class("warning-label")
+        subtitle.set_line_wrap(True)
+        subtitle.set_halign(Gtk.Align.START)
+        card.pack_start(subtitle, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(300)
+        
+        self.disk_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.disk_list.set_spacing(5)
+        scroll.add(self.disk_list)
+        card.pack_start(scroll, True, True, 0)
+        
+        refresh_btn = Gtk.Button(label="↻ Refresh Disk List")
+        refresh_btn.get_style_context().add_class("nav-button")
+        refresh_btn.connect("clicked", self.refresh_disks)
+        refresh_btn.set_halign(Gtk.Align.START)
+        card.pack_start(refresh_btn, False, False, 0)
+        
+        page.pack_start(card, True, True, 0)
+        
+        self.refresh_disks()
+        
+        return page
+        
+    def refresh_disks(self, widget=None):
+        for child in self.disk_list.get_children():
+            self.disk_list.remove(child)
+            
+        try:
+            result = subprocess.run(
+                ["lsblk", "-d", "-o", "NAME,SIZE,MODEL,TYPE", "-n"],
+                capture_output=True, text=True
+            )
+            
+            for line in result.stdout.strip().split('\n'):
+                if not line or 'loop' in line or 'rom' in line.lower():
+                    continue
+                    
+                parts = line.split()
+                if len(parts) >= 2 and parts[-1] == 'disk':
+                    name = parts[0]
+                    size = parts[1] if len(parts) > 1 else "Unknown"
+                    model = ' '.join(parts[2:-1]) if len(parts) > 3 else "Unknown"
+                    
+                    row = self.create_disk_row(name, size, model)
+                    self.disk_list.pack_start(row, False, False, 0)
+                    
+            self.disk_list.show_all()
+        except Exception as e:
+            error_label = Gtk.Label(label=f"Error scanning disks: {str(e)}")
+            error_label.get_style_context().add_class("error-label")
+            self.disk_list.pack_start(error_label, False, False, 0)
+            self.disk_list.show_all()
+            
+    def create_disk_row(self, name, size, model):
+        event_box = Gtk.EventBox()
+        
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        row.get_style_context().add_class("disk-row")
+        row.set_spacing(15)
+        
+        icon = Gtk.Label(label="💾")
+        icon.set_size_request(40, 40)
+        row.pack_start(icon, False, False, 10)
+        
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        info_box.set_spacing(3)
+        
+        name_label = Gtk.Label(label=f"/dev/{name}")
+        name_label.get_style_context().add_class("disk-name")
+        name_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(name_label, False, False, 0)
+        
+        detail_label = Gtk.Label(label=f"{size} • {model}")
+        detail_label.get_style_context().add_class("disk-info")
+        detail_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(detail_label, False, False, 0)
+        
+        row.pack_start(info_box, True, True, 0)
+        
+        event_box.add(row)
+        event_box.connect("button-press-event", self.on_disk_selected, name, row)
+        event_box.disk_name = name
+        event_box.disk_row = row
+        
+        return event_box
+        
+    def on_disk_selected(self, widget, event, name, row):
+        for child in self.disk_list.get_children():
+            child.disk_row.get_style_context().remove_class("disk-row-selected")
+            
+        row.get_style_context().add_class("disk-row-selected")
+        self.selected_disk = name
+        self.update_navigation()
         
     def create_region_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -847,7 +969,11 @@ class AegisInstaller(Gtk.Window):
         timezone = self.tz_combo.get_active_text() or "UTC"
         locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
         
+        license_info = self.license_key if self.license_key else "Freemium (No License)"
+        
         summary = f"""
+Edition: {self.edition_name}
+License: {license_info}
 Target Disk: /dev/{self.selected_disk}
 Boot Mode: {boot_mode}
 Username: {username}
@@ -987,23 +1113,29 @@ Locale: {locale}
         return nav
         
     def update_navigation(self):
-        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < 4)
+        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < 5)
+        
+        self.next_btn.get_style_context().remove_class("nav-button-danger")
+        self.next_btn.get_style_context().add_class("nav-button-primary")
         
         if self.current_step == 0:
-            self.next_btn.set_sensitive(self.license_accepted)
+            self.next_btn.set_sensitive(True)
             self.next_btn.set_label("Next →")
         elif self.current_step == 1:
-            self.next_btn.set_sensitive(self.selected_disk is not None)
+            self.next_btn.set_sensitive(self.license_validated or self.is_freemium)
             self.next_btn.set_label("Next →")
         elif self.current_step == 2:
             self.next_btn.set_sensitive(self.validate_user_input())
             self.next_btn.set_label("Next →")
         elif self.current_step == 3:
+            self.next_btn.set_sensitive(self.selected_disk is not None)
+            self.next_btn.set_label("Next →")
+        elif self.current_step == 4:
             self.next_btn.set_sensitive(True)
             self.next_btn.set_label("Install →")
             self.next_btn.get_style_context().remove_class("nav-button-primary")
             self.next_btn.get_style_context().add_class("nav-button-danger")
-        elif self.current_step >= 4:
+        elif self.current_step >= 5:
             self.next_btn.set_sensitive(False)
             self.back_btn.set_sensitive(False)
             self.cancel_btn.set_sensitive(False)
@@ -1021,16 +1153,16 @@ Locale: {locale}
                 self.password = self.password_entry.get_text()
                 self.hostname = self.hostname_entry.get_text().strip() or "aegis"
                 
-            if self.current_step == 3:
+            if self.current_step == 4:
                 self.timezone = self.tz_combo.get_active_text() or "UTC"
                 self.locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
                 
             self.current_step += 1
             self.show_current_step()
             
-            if self.current_step == 3:
+            if self.current_step == 4:
                 self.update_summary()
-            elif self.current_step == 4:
+            elif self.current_step == 5:
                 self.start_installation()
                 
     def on_cancel(self, widget):
@@ -1049,7 +1181,7 @@ Locale: {locale}
             Gtk.main_quit()
             
     def show_current_step(self):
-        pages = ["welcome", "disk", "user", "region", "install", "complete"]
+        pages = ["welcome", "license", "user", "disk", "region", "install", "complete"]
         self.content_stack.set_visible_child_name(pages[self.current_step])
         self.update_step_indicator()
         self.update_navigation()
@@ -1132,6 +1264,8 @@ Locale: {locale}
         self.log("=" * 50)
         self.log("Starting Aegis OS Installation")
         self.log("=" * 50)
+        self.log(f"Edition: {self.edition_name}")
+        self.log(f"License: {self.license_key if self.license_key else 'Freemium'}")
         self.log(f"Target: /dev/{disk}")
         self.log(f"Boot mode: {'UEFI' if is_uefi else 'BIOS'}")
         self.log(f"User: {self.username}")
@@ -1170,17 +1304,18 @@ Locale: {locale}
         
         self.update_progress(0.55, "Configuring system...")
         
-        # Use collected user credentials from the form (NOT hardcoded)
-        USERNAME = self.username    # from user input on User Setup page
-        PASSWORD = self.password    # from user input on User Setup page
-        FULLNAME = self.fullname    # from user input on User Setup page
-        HOSTNAME = self.hostname    # from user input on User Setup page
-        TIMEZONE = self.timezone    # from user selection on Region page
-        LOCALE = self.locale        # from user selection on Region page
+        USERNAME = self.username
+        PASSWORD = self.password
+        FULLNAME = self.fullname
+        HOSTNAME = self.hostname
+        TIMEZONE = self.timezone
+        LOCALE = self.locale
+        LICENSE_KEY = self.license_key
+        EDITION = self.edition_name
         
-        # Escape special characters for shell safety
         escaped_fullname = FULLNAME.replace("'", "'\\''")
         escaped_password = PASSWORD.replace("'", "'\\''")
+        escaped_license = LICENSE_KEY.replace("'", "'\\''") if LICENSE_KEY else ""
         
         chroot_script = f'''#!/bin/bash
 set -e
@@ -1225,11 +1360,9 @@ grub-install --target=i386-pc /dev/{disk}
 grub-mkconfig -o /boot/grub/grub.cfg
 
 # User creation with collected credentials from installer form
-# Username: {USERNAME} (from user input)
-# Fullname: {escaped_fullname} (from user input)
 useradd -m -G wheel,audio,video,storage,optical -s /bin/bash -c '{escaped_fullname}' {USERNAME}
 
-# Set password using chpasswd (password from user input)
+# Set password using chpasswd
 echo '{USERNAME}:{escaped_password}' | chpasswd
 
 # Configure sudo access for wheel group
@@ -1240,6 +1373,25 @@ grep -q "^%wheel ALL=(ALL:ALL) ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) A
 pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
 systemctl enable lightdm
 
+# Save license key if provided
+mkdir -p /etc/aegis
+echo "{EDITION}" > /etc/aegis/edition
+'''
+        
+        if LICENSE_KEY:
+            chroot_script += f'''
+# Save license key to installed system
+echo '{escaped_license}' > /etc/aegis/license.key
+chmod 600 /etc/aegis/license.key
+'''
+        else:
+            chroot_script += '''
+# Freemium installation - no license key
+echo "FREEMIUM" > /etc/aegis/license.key
+chmod 644 /etc/aegis/license.key
+'''
+        
+        chroot_script += f'''
 echo "Configuration complete for user: {USERNAME}"
 '''
         
@@ -1272,6 +1424,7 @@ echo "Configuration complete for user: {USERNAME}"
         self.log("=" * 50)
         self.log("Installation completed successfully!")
         self.log("=" * 50)
+        self.log(f"Edition: {self.edition_name}")
         self.log(f"Username: {self.username}")
         self.log("Please remove installation media and reboot.")
         
@@ -1279,15 +1432,22 @@ echo "Configuration complete for user: {USERNAME}"
         GLib.idle_add(self.show_completion)
         
     def show_completion(self):
+        license_info = ""
+        if self.license_key:
+            license_info = f"License Key: {self.license_key}\n"
+        else:
+            license_info = "Edition: Freemium\n"
+            
         self.complete_message.set_text(
             f"Aegis OS has been successfully installed.\n\n"
+            f"Edition: {self.edition_name}\n"
+            f"{license_info}"
             f"Username: {self.username}\n"
             f"Hostname: {self.hostname}\n\n"
             f"Please remove the installation media and reboot your computer.\n"
-            f"After first boot, activate your license with:\n"
-            f"  sudo aegis-activate YOUR-LICENSE-KEY"
+            f"You will need to enter your password at login."
         )
-        self.current_step = 5
+        self.current_step = 6
         self.show_current_step()
 
 def check_root():
