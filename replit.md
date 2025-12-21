@@ -115,10 +115,19 @@ Located at: `AegisOSRepo/` directory
 - **Dual Login Modes**: Two Gamer edition variants available in GitHub Actions workflow:
   - `gamer`: Password-protected (default password: "aegis"), requires password for sudo
   - `gamer-passwordless`: No password, auto-login via getty, NOPASSWD sudo
-- **Modern Gaming UI Theme**: Dark color palette (#0a0a0f background, cyan/green/purple accents) across all applications
-- **Card-based Layouts**: aegis-welcome and aegis-security-center use modern card-based designs with visual hierarchy
+- **Aegis-Win11 Theme**: Windows 10 layout + Windows 11 aesthetics
+  - Rounded corners (8-12px), Fluent Design, Mica-style effects
+  - Dark mode: #202020 background, #0078D4 accent, #60CDFF highlights
+  - Papirus-Dark icons, Noto Sans typography
+- **XFCE Panel**: Windows 10-style taskbar (40px bottom panel, start button left, tray right)
 - **TIER_LIMIT**: Set to "gamer" for full feature access in security and system applications
 - **Build Options**: post-build.sh accepts PASSWORD_MODE parameter ("passwordless" or "password")
+
+## Thunderbolt Runner (Aegis Game Launcher)
+- **Zeus Thunderbolt Theme**: Electric blue (#00BFFF, #1E90FF) and gold (#FFD700) color scheme
+- **Features**: Unified game library (Steam, Epic, GOG, Lutris, native), favorites, recent games
+- **Console Mode**: Controller-friendly fullscreen mode (F11)
+- **Location**: `/usr/local/bin/thunderbolt-runner`
 
 ## External Dependencies
 * **archiso**: ISO build system

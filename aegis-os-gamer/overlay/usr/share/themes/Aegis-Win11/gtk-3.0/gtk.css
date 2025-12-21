@@ -1,0 +1,1312 @@
+/*
+ * Aegis-Win11 GTK Theme
+ * Windows 10/11 Hybrid Design for Aegis OS
+ * Version: 1.0.0
+ * 
+ * Features:
+ * - Windows 10 layout with Windows 11 aesthetics
+ * - Mica-style transparency effects
+ * - Fluent Design rounded corners (8-12px)
+ * - Modern dark mode colors
+ * 
+ * Color Palette:
+ * - Primary Accent: #0078D4 (Windows Blue)
+ * - Secondary Accent: #60CDFF (Fluent Highlight)
+ * - Background: #202020
+ * - Elevated Surface: #2D2D2D
+ * - Primary Text: #FFFFFF
+ * - Secondary Text: #C5C5C5
+ */
+
+/* ==================== Color Variables ==================== */
+@define-color accent_color #0078D4;
+@define-color accent_hover #1A8AE0;
+@define-color accent_active #005A9E;
+@define-color accent_light #60CDFF;
+@define-color accent_subtle alpha(#0078D4, 0.15);
+
+@define-color bg_color #202020;
+@define-color base_color #2D2D2D;
+@define-color surface_color #3D3D3D;
+@define-color surface_hover #4A4A4A;
+@define-color surface_active #353535;
+
+@define-color text_color #FFFFFF;
+@define-color text_secondary #C5C5C5;
+@define-color text_tertiary #9D9D9D;
+@define-color text_disabled #6D6D6D;
+
+@define-color border_color #404040;
+@define-color border_subtle #353535;
+@define-color border_hover #505050;
+@define-color separator_color #383838;
+
+@define-color selected_bg_color @accent_color;
+@define-color selected_fg_color #FFFFFF;
+
+@define-color success_color #6CCB5F;
+@define-color warning_color #FCE100;
+@define-color error_color #FF6B6B;
+
+@define-color titlebar_bg #202020;
+@define-color titlebar_fg #FFFFFF;
+@define-color titlebar_inactive_bg #2D2D2D;
+@define-color titlebar_inactive_fg #808080;
+
+@define-color mica_bg alpha(#202020, 0.85);
+@define-color card_shadow alpha(black, 0.25);
+
+/* ==================== Global Styles ==================== */
+* {
+    -gtk-icon-style: symbolic;
+    outline-color: alpha(@accent_color, 0.5);
+    outline-offset: -2px;
+    outline-style: solid;
+    outline-width: 2px;
+    transition: all 150ms ease-out;
+}
+
+*:focus {
+    outline-color: @accent_color;
+}
+
+/* ==================== Typography ==================== */
+* {
+    font-family: "Noto Sans", "Liberation Sans", "Segoe UI Variable", "Segoe UI", sans-serif;
+    font-size: 10pt;
+}
+
+.large-text { font-size: 12pt; }
+.small-text { font-size: 9pt; }
+.title { font-weight: 600; font-size: 14pt; }
+.heading { font-weight: 600; font-size: 12pt; }
+.caption { font-size: 9pt; color: @text_secondary; }
+.dim-label { color: @text_secondary; }
+.monospace { font-family: "Cascadia Code", "JetBrains Mono", "Consolas", monospace; }
+
+/* ==================== Window ==================== */
+window {
+    background-color: @bg_color;
+    color: @text_color;
+}
+
+window.background {
+    background-color: @bg_color;
+}
+
+window.dialog {
+    background-color: @base_color;
+    border-radius: 8px;
+}
+
+window.tooltip,
+tooltip,
+tooltip.background {
+    background-color: @base_color;
+    color: @text_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 6px 10px;
+    box-shadow: 0 4px 16px @card_shadow;
+}
+
+decoration {
+    border-radius: 8px;
+    box-shadow: 0 8px 32px alpha(black, 0.35), 0 0 0 1px @border_subtle;
+}
+
+decoration:backdrop {
+    box-shadow: 0 4px 16px alpha(black, 0.25), 0 0 0 1px @border_subtle;
+}
+
+/* ==================== Header Bar / Title Bar ==================== */
+headerbar {
+    background: @titlebar_bg;
+    border-bottom: 1px solid @border_color;
+    color: @titlebar_fg;
+    padding: 6px 8px;
+    min-height: 32px;
+    border-radius: 8px 8px 0 0;
+}
+
+headerbar:backdrop {
+    background: @titlebar_inactive_bg;
+    color: @titlebar_inactive_fg;
+}
+
+headerbar .title {
+    font-weight: 600;
+    font-size: 10pt;
+    color: @titlebar_fg;
+}
+
+headerbar .subtitle {
+    font-size: 9pt;
+    color: @text_secondary;
+}
+
+headerbar button {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    min-height: 24px;
+    color: @text_color;
+}
+
+headerbar button:hover {
+    background-color: alpha(@text_color, 0.08);
+}
+
+headerbar button:active {
+    background-color: alpha(@text_color, 0.12);
+}
+
+/* Window Control Buttons - Windows 11 Style */
+headerbar button.titlebutton,
+windowcontrols button {
+    min-width: 46px;
+    min-height: 32px;
+    padding: 0;
+    margin: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+headerbar button.titlebutton:hover,
+windowcontrols button:hover {
+    background-color: alpha(@text_color, 0.08);
+}
+
+headerbar button.titlebutton.close:hover,
+windowcontrols button.close:hover {
+    background-color: @error_color;
+    color: white;
+}
+
+headerbar button.titlebutton.close:active,
+windowcontrols button.close:active {
+    background-color: shade(@error_color, 0.85);
+}
+
+/* ==================== Buttons - Windows 11 Style ==================== */
+button {
+    background: @surface_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 8px 16px;
+    min-height: 28px;
+    color: @text_color;
+    box-shadow: 0 1px 3px alpha(black, 0.1);
+}
+
+button:hover {
+    background: @surface_hover;
+    border-color: @border_hover;
+    box-shadow: 0 2px 6px alpha(black, 0.15);
+}
+
+button:active,
+button:checked {
+    background: @surface_active;
+    border-color: @accent_color;
+    box-shadow: none;
+}
+
+button:disabled {
+    background: @bg_color;
+    color: @text_disabled;
+    border-color: @border_subtle;
+    box-shadow: none;
+}
+
+button.suggested-action {
+    background: @accent_color;
+    border-color: shade(@accent_color, 0.9);
+    color: white;
+    box-shadow: 0 2px 8px alpha(@accent_color, 0.35);
+}
+
+button.suggested-action:hover {
+    background: @accent_hover;
+    box-shadow: 0 4px 12px alpha(@accent_color, 0.4);
+}
+
+button.suggested-action:active {
+    background: @accent_active;
+    box-shadow: none;
+}
+
+button.destructive-action {
+    background: @error_color;
+    border-color: shade(@error_color, 0.9);
+    color: white;
+}
+
+button.destructive-action:hover {
+    background: shade(@error_color, 1.1);
+}
+
+button.flat {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+button.flat:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+button.circular {
+    border-radius: 50%;
+    padding: 8px;
+    min-width: 36px;
+    min-height: 36px;
+}
+
+/* ==================== Entry / Text Input - Windows 11 Style ==================== */
+entry {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 8px 12px;
+    min-height: 28px;
+    color: @text_color;
+    caret-color: @accent_light;
+}
+
+entry:focus {
+    border-color: @accent_color;
+    border-bottom-width: 2px;
+    border-bottom-color: @accent_color;
+    box-shadow: 0 0 0 2px alpha(@accent_color, 0.15);
+}
+
+entry:disabled {
+    background: @bg_color;
+    color: @text_disabled;
+    border-color: @border_subtle;
+}
+
+entry selection {
+    background-color: @accent_color;
+    color: white;
+}
+
+entry placeholder,
+entry image.left {
+    color: @text_tertiary;
+}
+
+/* ==================== Scrollbars - Windows 11 Style ==================== */
+scrollbar {
+    background: transparent;
+}
+
+scrollbar trough {
+    background: @bg_color;
+    border-radius: 6px;
+}
+
+scrollbar slider {
+    background-color: #606060;
+    border-radius: 6px;
+    min-width: 6px;
+    min-height: 6px;
+    margin: 2px;
+}
+
+scrollbar slider:hover {
+    background-color: #808080;
+    min-width: 8px;
+    min-height: 8px;
+    margin: 1px;
+}
+
+scrollbar slider:active {
+    background-color: @accent_color;
+}
+
+scrollbar.horizontal slider {
+    min-width: 40px;
+}
+
+scrollbar.vertical slider {
+    min-height: 40px;
+}
+
+/* Overlay scrollbars */
+scrollbar.overlay-indicator {
+    background: transparent;
+}
+
+scrollbar.overlay-indicator:not(.hovering) slider {
+    min-width: 4px;
+    min-height: 4px;
+    background-color: alpha(#808080, 0.7);
+}
+
+/* ==================== Checkboxes & Radio Buttons ==================== */
+checkbutton check,
+radiobutton radio {
+    min-width: 18px;
+    min-height: 18px;
+    margin: 4px;
+    background: @base_color;
+    border: 2px solid @border_hover;
+    border-radius: 4px;
+}
+
+radiobutton radio {
+    border-radius: 50%;
+}
+
+checkbutton check:hover,
+radiobutton radio:hover {
+    background: @surface_color;
+    border-color: @accent_color;
+}
+
+checkbutton check:checked,
+radiobutton radio:checked {
+    background: @accent_color;
+    border-color: @accent_color;
+    color: white;
+}
+
+checkbutton check:checked {
+    -gtk-icon-source: -gtk-icontheme("object-select-symbolic");
+}
+
+checkbutton check:indeterminate {
+    background: @accent_color;
+    border-color: @accent_color;
+    -gtk-icon-source: -gtk-icontheme("list-remove-symbolic");
+}
+
+/* ==================== Switch - Windows 11 Style ==================== */
+switch {
+    min-width: 46px;
+    min-height: 22px;
+    background: #606060;
+    border: 2px solid #606060;
+    border-radius: 12px;
+}
+
+switch:hover {
+    background: #707070;
+    border-color: #707070;
+}
+
+switch:checked {
+    background: @accent_color;
+    border-color: @accent_color;
+}
+
+switch slider {
+    min-width: 14px;
+    min-height: 14px;
+    background: white;
+    border-radius: 50%;
+    margin: 2px;
+}
+
+switch:checked slider {
+    margin-left: 22px;
+}
+
+/* ==================== Menus - Windows 11 Acrylic Style ==================== */
+menu,
+.menu,
+.context-menu {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 8px 32px @card_shadow;
+}
+
+menu menuitem,
+.menu menuitem {
+    padding: 8px 12px;
+    min-height: 24px;
+    border-radius: 4px;
+    margin: 2px 4px;
+    color: @text_color;
+}
+
+menu menuitem:hover,
+.menu menuitem:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+menu menuitem:selected,
+.menu menuitem:selected {
+    background: @accent_subtle;
+    color: @text_color;
+}
+
+menu separator,
+.menu separator {
+    background: @separator_color;
+    margin: 4px 12px;
+    min-height: 1px;
+}
+
+menu arrow,
+.menu arrow {
+    min-width: 16px;
+    min-height: 16px;
+    color: @text_secondary;
+}
+
+menubar {
+    background: @bg_color;
+    border-bottom: 1px solid @border_color;
+}
+
+menubar > menuitem {
+    padding: 6px 12px;
+    border-radius: 4px;
+    margin: 2px;
+    color: @text_color;
+}
+
+menubar > menuitem:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+/* ==================== Popover - Windows 11 Flyout Style ==================== */
+popover,
+popover.background {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px @card_shadow;
+}
+
+popover > contents {
+    padding: 8px;
+}
+
+popover > arrow {
+    background: @base_color;
+    border: 1px solid @border_color;
+}
+
+popover separator {
+    background: @separator_color;
+    margin: 6px 0;
+}
+
+/* ==================== Notebook / Tabs - Windows 11 Style ==================== */
+notebook {
+    background: @base_color;
+}
+
+notebook > header {
+    background: @bg_color;
+    border-bottom: 1px solid @border_color;
+    padding: 0 8px;
+}
+
+notebook > header.top {
+    border-bottom: 1px solid @border_color;
+}
+
+notebook > header.bottom {
+    border-top: 1px solid @border_color;
+}
+
+notebook > header.left {
+    border-right: 1px solid @border_color;
+}
+
+notebook > header.right {
+    border-left: 1px solid @border_color;
+}
+
+notebook > header tab {
+    padding: 8px 16px;
+    margin: 4px 2px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: @text_secondary;
+}
+
+notebook > header tab:hover {
+    background: alpha(@text_color, 0.06);
+    color: @text_color;
+}
+
+notebook > header tab:checked {
+    background: @base_color;
+    color: @text_color;
+    box-shadow: 0 2px 8px alpha(black, 0.1);
+}
+
+notebook > header tab:checked {
+    border-bottom: 2px solid @accent_color;
+}
+
+notebook > stack {
+    background: @base_color;
+    border-radius: 0 0 8px 8px;
+}
+
+/* ==================== List & Tree Views ==================== */
+list,
+listview,
+treeview {
+    background: @base_color;
+    color: @text_color;
+    border-radius: 8px;
+}
+
+list row,
+listview row,
+treeview row {
+    padding: 6px 12px;
+    min-height: 32px;
+    border-radius: 4px;
+    margin: 1px 4px;
+}
+
+list row:hover,
+listview row:hover,
+treeview row:hover {
+    background: alpha(@text_color, 0.04);
+}
+
+list row:selected,
+listview row:selected,
+treeview row:selected {
+    background: @accent_subtle;
+    color: @text_color;
+}
+
+list row:selected:hover,
+listview row:selected:hover,
+treeview row:selected:hover {
+    background: alpha(@accent_color, 0.25);
+}
+
+treeview header button {
+    background: @surface_color;
+    border: none;
+    border-right: 1px solid @border_color;
+    border-bottom: 1px solid @border_color;
+    padding: 8px 12px;
+    font-weight: 500;
+    color: @text_color;
+    border-radius: 0;
+}
+
+treeview header button:hover {
+    background: @surface_hover;
+}
+
+treeview header button:first-child {
+    border-radius: 8px 0 0 0;
+}
+
+treeview header button:last-child {
+    border-radius: 0 8px 0 0;
+    border-right: none;
+}
+
+/* ==================== Progress Bar ==================== */
+progressbar {
+    min-height: 4px;
+}
+
+progressbar trough {
+    background: @surface_color;
+    border-radius: 4px;
+}
+
+progressbar progress {
+    background: @accent_color;
+    border-radius: 4px;
+}
+
+progressbar.horizontal progress {
+    min-width: 4px;
+}
+
+progressbar.vertical progress {
+    min-height: 4px;
+}
+
+/* ==================== Scale / Slider ==================== */
+scale {
+    padding: 12px 0;
+}
+
+scale trough {
+    background: @surface_color;
+    min-height: 4px;
+    min-width: 4px;
+    border-radius: 4px;
+}
+
+scale highlight {
+    background: @accent_color;
+    border-radius: 4px;
+}
+
+scale slider {
+    min-width: 20px;
+    min-height: 20px;
+    background: white;
+    border: 2px solid @accent_color;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px alpha(black, 0.2);
+}
+
+scale slider:hover {
+    background: @accent_light;
+    border-color: @accent_hover;
+}
+
+scale slider:active {
+    background: @accent_color;
+    border-color: @accent_color;
+}
+
+scale marks mark {
+    color: @text_tertiary;
+}
+
+/* ==================== Spinbutton ==================== */
+spinbutton {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+}
+
+spinbutton:focus-within {
+    border-color: @accent_color;
+}
+
+spinbutton entry {
+    border: none;
+    background: transparent;
+    border-radius: 8px 0 0 8px;
+}
+
+spinbutton button {
+    border: none;
+    border-radius: 0;
+    min-width: 28px;
+    background: transparent;
+    margin: 2px;
+}
+
+spinbutton button:first-child {
+    border-radius: 0 0 0 6px;
+}
+
+spinbutton button:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+spinbutton button:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+/* ==================== Combo Box ==================== */
+combobox button {
+    padding: 6px 12px;
+    border-radius: 8px;
+}
+
+combobox arrow {
+    min-width: 16px;
+    min-height: 16px;
+    color: @text_secondary;
+    -gtk-icon-source: -gtk-icontheme("pan-down-symbolic");
+}
+
+dropdown button {
+    padding: 6px 12px;
+    border-radius: 8px;
+}
+
+dropdown arrow {
+    min-width: 16px;
+    min-height: 16px;
+    color: @text_secondary;
+}
+
+/* ==================== Frame ==================== */
+frame {
+    border: 1px solid @border_color;
+    border-radius: 8px;
+}
+
+frame > label {
+    margin: 4px 12px;
+    color: @text_secondary;
+    font-weight: 500;
+}
+
+/* ==================== Separator ==================== */
+separator {
+    background: @separator_color;
+    min-width: 1px;
+    min-height: 1px;
+}
+
+separator.horizontal {
+    margin: 6px 0;
+}
+
+separator.vertical {
+    margin: 0 6px;
+}
+
+/* ==================== Sidebar - Windows 11 Navigation Pane ==================== */
+.sidebar,
+.navigation-sidebar {
+    background: @bg_color;
+    border-right: 1px solid @border_color;
+}
+
+.sidebar list {
+    background: transparent;
+}
+
+.sidebar row {
+    padding: 10px 16px;
+    margin: 2px 8px;
+    border-radius: 4px;
+    color: @text_color;
+}
+
+.sidebar row:hover {
+    background: alpha(@text_color, 0.06);
+}
+
+.sidebar row:selected {
+    background: @accent_subtle;
+    color: @text_color;
+}
+
+.sidebar row:selected:hover {
+    background: alpha(@accent_color, 0.25);
+}
+
+/* ==================== Toolbar ==================== */
+toolbar {
+    background: @bg_color;
+    border-bottom: 1px solid @border_color;
+    padding: 4px 8px;
+}
+
+toolbar button {
+    margin: 2px;
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+toolbar separator {
+    background: @separator_color;
+    margin: 4px 8px;
+}
+
+/* ==================== Statusbar ==================== */
+statusbar {
+    background: @bg_color;
+    border-top: 1px solid @border_color;
+    padding: 4px 12px;
+    color: @text_secondary;
+}
+
+/* ==================== Dialog ==================== */
+dialog,
+messagedialog {
+    background: @base_color;
+    border-radius: 8px;
+}
+
+dialog headerbar,
+messagedialog headerbar {
+    background: @bg_color;
+    border-radius: 8px 8px 0 0;
+}
+
+messagedialog .dialog-action-area button {
+    min-width: 88px;
+    margin: 4px;
+}
+
+/* ==================== Infobar ==================== */
+infobar {
+    border: none;
+    border-radius: 8px;
+    margin: 4px;
+}
+
+infobar.info {
+    background: alpha(@accent_color, 0.15);
+    color: @text_color;
+}
+
+infobar.warning {
+    background: alpha(@warning_color, 0.15);
+    color: @text_color;
+}
+
+infobar.error {
+    background: alpha(@error_color, 0.15);
+    color: @text_color;
+}
+
+infobar.question {
+    background: alpha(@accent_light, 0.15);
+    color: @text_color;
+}
+
+/* ==================== File Chooser ==================== */
+placessidebar {
+    background: @bg_color;
+}
+
+placessidebar row {
+    padding: 8px 16px;
+    margin: 2px 8px;
+    border-radius: 4px;
+    color: @text_color;
+}
+
+placessidebar row:selected {
+    background: @accent_subtle;
+}
+
+placessidebar row:hover {
+    background: alpha(@text_color, 0.06);
+}
+
+filechooser .path-bar button {
+    padding: 4px 8px;
+    margin: 2px;
+    border-radius: 4px;
+}
+
+filechooser .path-bar button:checked {
+    background: @accent_subtle;
+}
+
+/* ==================== Calendar ==================== */
+calendar {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 8px;
+    color: @text_color;
+}
+
+calendar:selected {
+    background: @accent_color;
+    color: white;
+    border-radius: 4px;
+}
+
+calendar.header {
+    background: transparent;
+    font-weight: 600;
+}
+
+calendar.button {
+    background: transparent;
+    color: @text_color;
+    border-radius: 4px;
+}
+
+calendar.button:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+calendar:indeterminate {
+    color: @text_tertiary;
+}
+
+/* ==================== Expander ==================== */
+expander arrow {
+    min-width: 16px;
+    min-height: 16px;
+    color: @text_secondary;
+}
+
+expander:hover arrow {
+    color: @accent_color;
+}
+
+expander title {
+    padding: 4px 0;
+}
+
+/* ==================== Link ==================== */
+link,
+*:link {
+    color: @accent_light;
+}
+
+link:hover,
+*:link:hover {
+    color: shade(@accent_light, 1.15);
+}
+
+link:visited,
+*:link:visited {
+    color: shade(@accent_color, 0.9);
+}
+
+/* ==================== Selection ==================== */
+selection {
+    background: @accent_color;
+    color: white;
+}
+
+/* ==================== Revealer ==================== */
+revealer > * {
+    transition: all 200ms ease-out;
+}
+
+/* ==================== Stack ==================== */
+stack > * {
+    transition: all 200ms ease-out;
+}
+
+stackswitcher button {
+    padding: 8px 16px;
+}
+
+stackswitcher button:checked {
+    background: @accent_subtle;
+    border-bottom: 2px solid @accent_color;
+}
+
+/* ==================== Thunar File Manager ==================== */
+.thunar .sidebar {
+    background: @bg_color;
+}
+
+.thunar .standard-view {
+    background: @base_color;
+}
+
+.thunar .path-bar button {
+    padding: 4px 10px;
+    margin: 2px;
+    border-radius: 4px;
+    color: @text_color;
+}
+
+.thunar .path-bar button:checked {
+    background: @accent_subtle;
+}
+
+/* ==================== XFCE Panel - Windows 10 Style Taskbar ==================== */
+.xfce4-panel {
+    background: #1A1A1A;
+    background-image: none;
+    border-top: 1px solid #2D2D2D;
+    font-weight: 400;
+    color: @text_color;
+}
+
+.xfce4-panel.horizontal {
+    border-top: 1px solid #3D3D3D;
+}
+
+.xfce4-panel.vertical {
+    border-left: 1px solid #3D3D3D;
+}
+
+.xfce4-panel button {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 4px 8px;
+    color: @text_color;
+}
+
+.xfce4-panel button:hover {
+    background: alpha(white, 0.1);
+}
+
+.xfce4-panel button:active,
+.xfce4-panel button:checked {
+    background: alpha(white, 0.15);
+    border-bottom: 2px solid @accent_color;
+}
+
+.xfce4-panel .tasklist button {
+    padding: 0 12px;
+    border-bottom: 2px solid transparent;
+}
+
+.xfce4-panel .tasklist button:checked {
+    background: alpha(white, 0.1);
+    border-bottom: 2px solid @accent_color;
+}
+
+.xfce4-panel .tasklist button:hover {
+    background: alpha(white, 0.15);
+}
+
+/* ==================== XFCE Whisker Menu - Windows 10 Start Menu Style ==================== */
+.whiskermenu-window {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px @card_shadow;
+}
+
+.whiskermenu-window entry {
+    margin: 12px;
+    border-radius: 8px;
+}
+
+.whiskermenu-window .view,
+.whiskermenu-window iconview,
+.whiskermenu-window treeview {
+    background: @base_color;
+    color: @text_color;
+}
+
+.whiskermenu-window .category-button {
+    padding: 10px 16px;
+    border-radius: 4px;
+    margin: 2px 8px;
+    color: @text_color;
+}
+
+.whiskermenu-window .category-button:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+.whiskermenu-window .category-button:checked {
+    background: @accent_subtle;
+    color: @text_color;
+}
+
+.whiskermenu-window button.flat {
+    padding: 10px 16px;
+    border-radius: 4px;
+}
+
+.whiskermenu-window button.flat:hover {
+    background: alpha(@text_color, 0.08);
+}
+
+/* ==================== XFCE Desktop Icons ==================== */
+.xfdesktop-icon-view {
+    color: white;
+    text-shadow: 0 1px 3px alpha(black, 0.8), 0 2px 6px alpha(black, 0.4);
+}
+
+.xfdesktop-icon-view:selected,
+.xfdesktop-icon-view:active {
+    background: alpha(@accent_color, 0.5);
+    border-radius: 8px;
+}
+
+/* ==================== OSD - Windows 11 Style ==================== */
+.osd {
+    background: alpha(@base_color, 0.9);
+    color: white;
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid @border_color;
+    box-shadow: 0 8px 32px @card_shadow;
+}
+
+.osd button {
+    background: alpha(white, 0.1);
+    border: 1px solid alpha(white, 0.15);
+    border-radius: 8px;
+}
+
+.osd button:hover {
+    background: alpha(white, 0.2);
+}
+
+.osd progressbar trough {
+    background: alpha(white, 0.15);
+}
+
+.osd progressbar progress {
+    background: @accent_color;
+}
+
+/* ==================== Notification - Windows 11 Toast Style ==================== */
+.notification {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 8px 32px @card_shadow;
+}
+
+.notification .notification-title {
+    font-weight: 600;
+    color: @text_color;
+}
+
+.notification .notification-body {
+    color: @text_secondary;
+}
+
+/* ==================== Libhandy / Libadwaita Widgets ==================== */
+.card,
+card {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px @card_shadow;
+}
+
+row.activatable {
+    border-radius: 8px;
+    margin: 2px 4px;
+}
+
+row.activatable:hover {
+    background: alpha(@text_color, 0.04);
+}
+
+row.activatable:selected {
+    background: @accent_subtle;
+}
+
+/* Action Row */
+row.expander {
+    background: transparent;
+}
+
+row.expander list {
+    background: alpha(@bg_color, 0.5);
+    border-radius: 0 0 8px 8px;
+}
+
+/* ==================== Aegis OS Branding ==================== */
+.aegis-accent {
+    color: @accent_color;
+}
+
+.aegis-accent-light {
+    color: @accent_light;
+}
+
+.aegis-header {
+    background: linear-gradient(135deg, @accent_color, @accent_light);
+    color: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+}
+
+.aegis-button {
+    background: @accent_color;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 500;
+    box-shadow: 0 2px 8px alpha(@accent_color, 0.35);
+}
+
+.aegis-button:hover {
+    background: @accent_hover;
+    box-shadow: 0 4px 12px alpha(@accent_color, 0.4);
+}
+
+.aegis-button:active {
+    background: @accent_active;
+    box-shadow: none;
+}
+
+.aegis-card {
+    background: @base_color;
+    border: 1px solid @border_color;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 16px @card_shadow;
+}
+
+.aegis-surface {
+    background: @surface_color;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.aegis-gaming-accent {
+    color: #00D4FF;
+}
+
+.aegis-gaming-header {
+    background: linear-gradient(135deg, #0078D4, #00D4FF);
+    color: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+}
+
+/* ==================== Mica Effect Simulation ==================== */
+.mica-effect,
+.background-mica {
+    background: alpha(@bg_color, 0.85);
+}
+
+/* ==================== High Contrast Focus Indicators ==================== */
+*:focus-visible {
+    outline: 2px solid @accent_color;
+    outline-offset: 2px;
+}
+
+button:focus-visible,
+entry:focus-visible {
+    outline: 2px solid @accent_color;
+    outline-offset: -2px;
+}
+
+/* ==================== Animations ==================== */
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+.pulse {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* ==================== Symbolic Icons ==================== */
+image,
+.image {
+    color: @text_color;
+}
+
+image:disabled,
+.image:disabled {
+    color: @text_disabled;
+}
+
+.symbolic {
+    color: @text_color;
+}
+
+.accent-symbolic {
+    color: @accent_color;
+}
+
+/* ==================== GTK4 Specific ==================== */
+window.solid-csd {
+    border-radius: 8px;
+}
+
+window.solid-csd decoration {
+    border-radius: 8px;
+}

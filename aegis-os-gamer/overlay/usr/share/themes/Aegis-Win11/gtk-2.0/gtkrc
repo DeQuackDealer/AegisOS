@@ -1,0 +1,158 @@
+# Aegis-Win11 GTK2 Theme
+# Windows 10/11 Hybrid Design for Aegis OS
+# Basic GTK2 compatibility layer
+
+gtk-color-scheme = "bg_color:#202020\nfg_color:#FFFFFF\nbase_color:#2D2D2D\ntext_color:#FFFFFF\nselected_bg_color:#0078D4\nselected_fg_color:#FFFFFF\ntooltip_bg_color:#2D2D2D\ntooltip_fg_color:#FFFFFF"
+
+style "default" {
+    font_name = "Noto Sans 10"
+    
+    bg[NORMAL]        = @bg_color
+    bg[PRELIGHT]      = shade(1.1, @bg_color)
+    bg[ACTIVE]        = shade(0.9, @bg_color)
+    bg[SELECTED]      = @selected_bg_color
+    bg[INSENSITIVE]   = @bg_color
+    
+    fg[NORMAL]        = @fg_color
+    fg[PRELIGHT]      = @fg_color
+    fg[ACTIVE]        = @fg_color
+    fg[SELECTED]      = @selected_fg_color
+    fg[INSENSITIVE]   = mix(0.5, @fg_color, @bg_color)
+    
+    base[NORMAL]      = @base_color
+    base[PRELIGHT]    = shade(1.05, @base_color)
+    base[ACTIVE]      = @selected_bg_color
+    base[SELECTED]    = @selected_bg_color
+    base[INSENSITIVE] = shade(0.95, @base_color)
+    
+    text[NORMAL]      = @text_color
+    text[PRELIGHT]    = @text_color
+    text[ACTIVE]      = @selected_fg_color
+    text[SELECTED]    = @selected_fg_color
+    text[INSENSITIVE] = mix(0.5, @text_color, @base_color)
+    
+    engine "murrine" {
+        animation           = TRUE
+        colorize_scrollbar  = TRUE
+        contrast            = 0.8
+        focusstyle          = 3
+        glazestyle          = 0
+        gradient_shades     = {1.0, 1.0, 1.0, 1.0}
+        highlight_shade     = 1.0
+        lightborder_shade   = 1.1
+        lightborderstyle    = 1
+        listviewheaderstyle = 1
+        listviewstyle       = 2
+        menubarstyle        = 0
+        menuitemstyle       = 0
+        menustyle           = 0
+        progressbarstyle    = 0
+        reliefstyle         = 2
+        rgba                = TRUE
+        roundness           = 8
+        scrollbarstyle      = 0
+        separatorstyle      = 1
+        sliderstyle         = 0
+        stepperstyle        = 1
+        textstyle           = 0
+        toolbarstyle        = 0
+    }
+}
+
+style "button" {
+    bg[NORMAL]   = "#3D3D3D"
+    bg[PRELIGHT] = "#4A4A4A"
+    bg[ACTIVE]   = "#0078D4"
+    
+    engine "murrine" {
+        roundness = 8
+        gradient_shades = {1.02, 1.0, 1.0, 0.98}
+    }
+}
+
+style "entry" {
+    bg[NORMAL]   = "#2D2D2D"
+    base[NORMAL] = "#2D2D2D"
+    
+    engine "murrine" {
+        roundness = 8
+        focus_color = "#0078D4"
+    }
+}
+
+style "menu" {
+    bg[NORMAL] = "#2D2D2D"
+    fg[NORMAL] = "#FFFFFF"
+    
+    engine "murrine" {
+        roundness = 8
+    }
+}
+
+style "menuitem" {
+    bg[PRELIGHT] = "#0078D4"
+    fg[PRELIGHT] = "#FFFFFF"
+    
+    engine "murrine" {
+        roundness = 4
+    }
+}
+
+style "scrollbar" {
+    bg[NORMAL]   = "#404040"
+    bg[PRELIGHT] = "#606060"
+    bg[ACTIVE]   = "#0078D4"
+    
+    engine "murrine" {
+        roundness = 4
+    }
+}
+
+style "progressbar" {
+    bg[NORMAL]   = "#3D3D3D"
+    bg[SELECTED] = "#0078D4"
+    
+    engine "murrine" {
+        roundness = 4
+        gradient_shades = {1.0, 1.0, 1.0, 1.0}
+    }
+}
+
+style "notebook" {
+    bg[NORMAL]   = "#2D2D2D"
+    bg[ACTIVE]   = "#3D3D3D"
+    bg[SELECTED] = "#0078D4"
+    
+    engine "murrine" {
+        roundness = 8
+    }
+}
+
+style "tooltips" {
+    bg[NORMAL] = @tooltip_bg_color
+    fg[NORMAL] = @tooltip_fg_color
+    
+    engine "murrine" {
+        roundness = 8
+    }
+}
+
+style "panel" {
+    bg[NORMAL]   = "#1A1A1A"
+    bg[PRELIGHT] = "#2D2D2D"
+    fg[NORMAL]   = "#FFFFFF"
+}
+
+class "GtkWidget" style "default"
+class "GtkButton" style "button"
+class "GtkEntry" style "entry"
+class "GtkTextView" style "entry"
+class "GtkMenu" style "menu"
+class "GtkMenuItem" style "menuitem"
+class "GtkScrollbar" style "scrollbar"
+class "GtkProgressBar" style "progressbar"
+class "GtkNotebook" style "notebook"
+widget "gtk-tooltip*" style "tooltips"
+widget "*PanelWidget*" style "panel"
+widget "*PanelApplet*" style "panel"
+class "PanelApp*" style "panel"
