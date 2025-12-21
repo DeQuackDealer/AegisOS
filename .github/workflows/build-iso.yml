@@ -368,6 +368,17 @@ jobs:
           aegis:x:1000:
           GROUP
           
+          # For passwordless edition, add autologin group (required by LightDM PAM)
+          if [ "$EDITION" = "gamer-passwordless" ]; then
+            echo "=== Adding autologin group for passwordless login ==="
+            cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'AUTOLOGINGRP'
+          autologin:x:969:aegis
+          AUTOLOGINGRP
+            cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'AUTOLOGINGSHADOW'
+          autologin:!::aegis
+          AUTOLOGINGSHADOW
+          fi
+          
           cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
           aegis:!::
           GSHADOW
