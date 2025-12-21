@@ -410,19 +410,31 @@ jobs:
             cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
           aegis:x:1000:
           autologin:x:969:aegis
+          vboxsf:x:109:aegis
           GROUP
             cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
           aegis:!::
           autologin:!::aegis
+          vboxsf:!::aegis
           GSHADOW
           else
             cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
           aegis:x:1000:
+          vboxsf:x:109:aegis
           GROUP
             cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
           aegis:!::
+          vboxsf:!::aegis
           GSHADOW
           fi
+          
+          # Create VirtualBox modules-load configuration
+          mkdir -p "${PROFILE_DIR}/airootfs/etc/modules-load.d"
+          cat > "${PROFILE_DIR}/airootfs/etc/modules-load.d/virtualbox.conf" << 'VBOXMODS'
+          vboxguest
+          vboxsf
+          vboxvideo
+          VBOXMODS
           
           mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
           mkdir -p "${PROFILE_DIR}/airootfs/home/aegis/.config"
@@ -480,6 +492,10 @@ jobs:
             "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants/lightdm.service" 2>/dev/null || true
           ln -sf /usr/lib/systemd/system/aegis-setup.service \
             "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/aegis-setup.service" 2>/dev/null || true
+          
+          # Enable VirtualBox guest service for VM compatibility
+          ln -sf /usr/lib/systemd/system/vboxservice.service \
+            "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/vboxservice.service" 2>/dev/null || true
           
           if [ -d "${REPO_DIR}/build-system/overlays/common" ]; then
             echo "Copying common overlays..."
@@ -579,6 +595,7 @@ jobs:
           fastfetch
           sudo
           bash-completion
+          virtualbox-guest-utils
           BASEPKGS
           
           # Edition-specific packages
