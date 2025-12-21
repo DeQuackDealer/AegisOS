@@ -3,39 +3,79 @@
 set -e
 
 TARGET_DIR=$1
+PASSWORD_MODE=${2:-"passwordless"}  # "passwordless" or "password" (default: passwordless)
 
-echo "Setting up Aegis OS Gamer Edition..."
+if [ "$PASSWORD_MODE" = "passwordless" ]; then
+    echo "Setting up Aegis OS Gamer Edition (Passwordless)..."
+    EDITION_SUFFIX="-passwordless"
+else
+    echo "Setting up Aegis OS Gamer Edition (Password Protected)..."
+    EDITION_SUFFIX=""
+fi
 
 # Create aegis user in passwd (using 'x' placeholder pointing to shadow)
 echo "aegis:x:1000:1000:Aegis User:/home/aegis:/bin/bash" >> $TARGET_DIR/etc/passwd
 echo "aegis:x:1000:" >> $TARGET_DIR/etc/group
 
-# Create shadow entry with disabled/empty password for passwordless login
-# Using '!' as password field means account has no password and password login is disabled
-# The user can still login via auto-login getty without any password prompt
-echo "aegis:!:19722:0:99999:7:::" >> $TARGET_DIR/etc/shadow
+# Create shadow entry based on password mode
+if [ "$PASSWORD_MODE" = "passwordless" ]; then
+    # Empty password field allows login without password (with autologin)
+    echo "aegis::19722:0:99999:7:::" >> $TARGET_DIR/etc/shadow
+    echo "aegis:!::" >> $TARGET_DIR/etc/gshadow
+    
+    # Add autologin group for display managers
+    echo "autologin:x:969:aegis" >> $TARGET_DIR/etc/group
+    echo "autologin:!::aegis" >> $TARGET_DIR/etc/gshadow
+else
+    # Password-protected mode: set default password "aegis" (users should change it)
+    # Generate SHA-512 hash with random salt at build time for security
+    if command -v openssl >/dev/null 2>&1; then
+        DEFAULT_PASS_HASH=$(openssl passwd -6 "aegis")
+    elif command -v mkpasswd >/dev/null 2>&1; then
+        DEFAULT_PASS_HASH=$(mkpasswd -m sha-512 "aegis")
+    else
+        # Fallback: use chpasswd in chroot to set password
+        echo "aegis:aegis" | chroot $TARGET_DIR chpasswd
+        DEFAULT_PASS_HASH=""
+    fi
+    if [ -n "$DEFAULT_PASS_HASH" ]; then
+        echo "aegis:${DEFAULT_PASS_HASH}:19722:0:99999:7:::" >> $TARGET_DIR/etc/shadow
+    fi
+    echo "aegis:!::" >> $TARGET_DIR/etc/gshadow
+fi
 
 # Set proper permissions on shadow file
 chmod 640 $TARGET_DIR/etc/shadow
 
-# Create gshadow entry
-echo "aegis:!::" >> $TARGET_DIR/etc/gshadow
-
 mkdir -p $TARGET_DIR/home/aegis
 chroot $TARGET_DIR chown -R 1000:1000 /home/aegis
 
-# Set up passwordless sudo for aegis user
+# Set up sudo configuration based on password mode
 mkdir -p $TARGET_DIR/etc/sudoers.d
-echo "aegis ALL=(ALL) NOPASSWD: ALL" > $TARGET_DIR/etc/sudoers.d/aegis
+if [ "$PASSWORD_MODE" = "passwordless" ]; then
+    echo "aegis ALL=(ALL) NOPASSWD: ALL" > $TARGET_DIR/etc/sudoers.d/aegis
+else
+    echo "# Aegis user requires password for sudo (secure mode)" > $TARGET_DIR/etc/sudoers.d/aegis
+    echo "aegis ALL=(ALL) ALL" >> $TARGET_DIR/etc/sudoers.d/aegis
+fi
 chmod 440 $TARGET_DIR/etc/sudoers.d/aegis
 
-# Set up auto-login for XFCE via getty (no password required)
+# Set up auto-login for XFCE via getty (only for passwordless mode)
 mkdir -p $TARGET_DIR/etc/systemd/system/getty@tty1.service.d
-cat > $TARGET_DIR/etc/systemd/system/getty@tty1.service.d/override.conf << 'EOF'
+if [ "$PASSWORD_MODE" = "passwordless" ]; then
+    cat > $TARGET_DIR/etc/systemd/system/getty@tty1.service.d/override.conf << 'EOF'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin aegis --noclear %I $TERM
 EOF
+else
+    # Standard login prompt for password-protected mode
+    cat > $TARGET_DIR/etc/systemd/system/getty@tty1.service.d/override.conf << 'EOF'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --noclear %I $TERM
+EOF
+fi
 
 # Enable services
 chroot $TARGET_DIR systemctl enable aegis-system-monitor
@@ -95,13 +135,33 @@ mkdir -p $TARGET_DIR/var/lib/aegis
 mkdir -p $TARGET_DIR/var/log
 mkdir -p $TARGET_DIR/etc/aegis
 
-# Set up Aegis branding
-echo "AEGIS_OS_VERSION=1.0.0-gamer" >> $TARGET_DIR/etc/os-release
-echo "AEGIS_OS_CODENAME=Genesis" >> $TARGET_DIR/etc/os-release
-echo "AEGIS_OS_EDITION=Gamer" >> $TARGET_DIR/etc/os-release
+# Set up Aegis branding based on password mode
+if [ "$PASSWORD_MODE" = "passwordless" ]; then
+    echo "AEGIS_OS_VERSION=1.0.0-gamer-passwordless" >> $TARGET_DIR/etc/os-release
+    echo "AEGIS_OS_CODENAME=Genesis" >> $TARGET_DIR/etc/os-release
+    echo "AEGIS_OS_EDITION=Gamer-Passwordless" >> $TARGET_DIR/etc/os-release
+    
+    # Create issue file for passwordless edition
+    cat > $TARGET_DIR/etc/issue << 'EOF'
 
-# Create issue file with Aegis branding
-cat > $TARGET_DIR/etc/issue << 'EOF'
+    ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
+    █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
+    
+Aegis OS Gamer Edition (Passwordless) - Genesis
+The Gold Standard for Gaming
+
+Login: aegis (no password required)
+Web: https://aegis-os.com
+
+EOF
+    echo "Aegis OS Gamer Edition (Passwordless) build complete!"
+else
+    echo "AEGIS_OS_VERSION=1.0.0-gamer" >> $TARGET_DIR/etc/os-release
+    echo "AEGIS_OS_CODENAME=Genesis" >> $TARGET_DIR/etc/os-release
+    echo "AEGIS_OS_EDITION=Gamer" >> $TARGET_DIR/etc/os-release
+    
+    # Create issue file for password-protected edition
+    cat > $TARGET_DIR/etc/issue << 'EOF'
 
     ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
     █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
@@ -109,9 +169,10 @@ cat > $TARGET_DIR/etc/issue << 'EOF'
 Aegis OS Gamer Edition - Genesis
 The Gold Standard for Gaming
 
-Login: aegis (no password required)
+Login: aegis / Password: aegis
+(Please change your password after first login)
 Web: https://aegis-os.com
 
 EOF
-
-echo "Aegis OS Gamer Edition build complete!"
+    echo "Aegis OS Gamer Edition build complete!"
+fi

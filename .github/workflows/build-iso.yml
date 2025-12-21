@@ -35,7 +35,7 @@ jobs:
         id: set-matrix
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.edition }}" = "all" ]; then
-            echo 'matrix=["freemium","basic","gamer","workplace","aidev","gamer-ai","server"]' >> $GITHUB_OUTPUT
+            echo 'matrix=["freemium","basic","gamer","gamer-passwordless","workplace","aidev","gamer-ai","server"]' >> $GITHUB_OUTPUT
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo 'matrix=["${{ github.event.inputs.edition }}"]' >> $GITHUB_OUTPUT
           else
@@ -361,17 +361,17 @@ jobs:
           PASSWD
           
           # For passwordless edition: empty password field allows login without password
-          # For secure editions: locked account (!) - password set during installation
+          # For secure editions: set default password "aegis" (users should change it)
           if [ "$EDITION" = "gamer-passwordless" ]; then
             echo "=== Passwordless edition: setting empty password for aegis ==="
             cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
           aegis::19000:0:99999:7:::
           SHADOW
           else
-            echo "=== Secure edition: locked account until installation ==="
-            cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
-          aegis:!:19000:0:99999:7:::
-          SHADOW
+            echo "=== Secure edition: setting default password 'aegis' ==="
+            # Generate SHA-512 hash with random salt for security
+            DEFAULT_PASS_HASH=$(openssl passwd -6 "aegis")
+            echo "aegis:${DEFAULT_PASS_HASH}:19000:0:99999:7:::" >> "${PROFILE_DIR}/airootfs/etc/shadow"
           fi
           
           # For passwordless edition, add autologin group and wheel membership
@@ -405,12 +405,12 @@ jobs:
           echo "=== Configuring sudo for aegis user ==="
           mkdir -p "${PROFILE_DIR}/airootfs/etc/sudoers.d"
           if [ "$EDITION" = "gamer-passwordless" ]; then
-            echo "=== Passwordless edition: NOPASSWD sudo (TESTING ONLY) ==="
+            echo "=== Passwordless edition: NOPASSWD sudo ==="
             echo "aegis ALL=(ALL) NOPASSWD: ALL" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
           else
             echo "=== Secure edition: password required for sudo ==="
-            echo "# Aegis user requires password for sudo (secure by default)" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
-            echo "# Password will be set during installation" >> "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+            echo "# Aegis user requires password for sudo (default password: aegis)" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+            echo "aegis ALL=(ALL) ALL" >> "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
           fi
           chmod 440 "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
           
