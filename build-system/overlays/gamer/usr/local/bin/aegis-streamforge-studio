@@ -1,0 +1,2429 @@
+#!/usr/bin/env python3
+"""
+Aegis StreamForge Studio v1.0.0
+Professional streaming and recording suite for Aegis OS Gamer Edition
+
+Features:
+  - One-click streaming to Twitch/YouTube/Custom RTMP
+  - Game capture using wlroots/pipewire screen capture
+  - Audio mixing (game audio + microphone)
+  - Scene management with multiple layouts
+  - Webcam overlay support with positioning
+  - Replay buffer (save last X seconds instantly)
+  - Hardware encoding detection (VAAPI/NVENC/AMF)
+  - Bitrate and resolution presets
+  - Secure stream key management with keyring
+"""
+
+import os
+import sys
+import json
+import subprocess
+import threading
+import time
+import signal
+import hashlib
+import base64
+import shutil
+import re
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Tuple
+from enum import Enum
+import secrets
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
+except ImportError:
+    print("GTK3 not found. Install with: sudo pacman -S python-gobject gtk3")
+    sys.exit(1)
+
+try:
+    import keyring
+    KEYRING_AVAILABLE = True
+except ImportError:
+    KEYRING_AVAILABLE = False
+
+VERSION = "1.0.0"
+APP_NAME = "Aegis StreamForge Studio"
+APP_ID = "com.aegis.streamforge"
+
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "streamforge"
+DATA_DIR = Path.home() / ".local" / "share" / "aegis" / "streamforge"
+RECORDINGS_DIR = Path.home() / "Videos" / "StreamForge"
+REPLAY_DIR = Path.home() / "Videos" / "StreamForge" / "Replays"
+SCENES_DIR = CONFIG_DIR / "scenes"
+LOG_DIR = Path.home() / ".local" / "share" / "aegis" / "logs"
+
+CONFIG_FILE = CONFIG_DIR / "config.json"
+STREAM_KEYS_SERVICE = "aegis-streamforge"
+
+AEGIS_BG = "#1a1a2e"
+AEGIS_BG_LIGHT = "#25253d"
+AEGIS_BG_DARK = "#12121f"
+AEGIS_BLUE = "#3b82f6"
+AEGIS_BLUE_HOVER = "#2563eb"
+AEGIS_ORANGE = "#ff6600"
+AEGIS_ORANGE_HOVER = "#e65c00"
+AEGIS_TEXT = "#e2e8f0"
+AEGIS_TEXT_DIM = "#94a3b8"
+AEGIS_SUCCESS = "#22c55e"
+AEGIS_WARNING = "#f59e0b"
+AEGIS_ERROR = "#ef4444"
+AEGIS_BORDER = "#334155"
+
+
+class StreamPlatform(Enum):
+    TWITCH = "twitch"
+    YOUTUBE = "youtube"
+    CUSTOM = "custom"
+
+
+class EncoderType(Enum):
+    SOFTWARE = "libx264"
+    VAAPI = "h264_vaapi"
+    NVENC = "h264_nvenc"
+    AMF = "h264_amf"
+    QSV = "h264_qsv"
+
+
+class CaptureSource(Enum):
+    SCREEN = "screen"
+    WINDOW = "window"
+    REGION = "region"
+    GAME = "game"
+
+
+QUALITY_PRESETS = {
+    "720p30": {"width": 1280, "height": 720, "fps": 30, "bitrate": 3000, "audio_bitrate": 128},
+    "720p60": {"width": 1280, "height": 720, "fps": 60, "bitrate": 4500, "audio_bitrate": 160},
+    "1080p30": {"width": 1920, "height": 1080, "fps": 30, "bitrate": 4500, "audio_bitrate": 160},
+    "1080p60": {"width": 1920, "height": 1080, "fps": 60, "bitrate": 6000, "audio_bitrate": 192},
+    "1440p30": {"width": 2560, "height": 1440, "fps": 30, "bitrate": 8000, "audio_bitrate": 192},
+    "1440p60": {"width": 2560, "height": 1440, "fps": 60, "bitrate": 12000, "audio_bitrate": 256},
+    "4k30": {"width": 3840, "height": 2160, "fps": 30, "bitrate": 15000, "audio_bitrate": 256},
+    "4k60": {"width": 3840, "height": 2160, "fps": 60, "bitrate": 25000, "audio_bitrate": 320},
+}
+
+PLATFORM_RTMP = {
+    StreamPlatform.TWITCH: "rtmp://live.twitch.tv/app/",
+    StreamPlatform.YOUTUBE: "rtmp://a.rtmp.youtube.com/live2/",
+    StreamPlatform.CUSTOM: "",
+}
+
+
+class SecureKeyManager:
+    """Manages secure storage of stream keys using system keyring or encrypted file"""
+    
+    def __init__(self):
+        self.keys_file = CONFIG_DIR / ".stream_keys.enc"
+        self.use_keyring = KEYRING_AVAILABLE
+        
+    def _get_machine_key(self) -> bytes:
+        """Generate a machine-specific encryption key"""
+        machine_id = ""
+        try:
+            with open("/etc/machine-id", "r") as f:
+                machine_id = f.read().strip()
+        except Exception:
+            machine_id = str(os.getuid()) + os.uname().nodename
+        
+        key_hash = hashlib.pbkdf2_hmac(
+            'sha256',
+            machine_id.encode(),
+            b'aegis-streamforge-salt',
+            100000
+        )
+        return key_hash
+    
+    def _simple_encrypt(self, data: str) -> str:
+        """Simple XOR encryption with machine key"""
+        key = self._get_machine_key()
+        encrypted = bytearray()
+        data_bytes = data.encode()
+        for i, byte in enumerate(data_bytes):
+            encrypted.append(byte ^ key[i % len(key)])
+        return base64.b64encode(encrypted).decode()
+    
+    def _simple_decrypt(self, data: str) -> str:
+        """Simple XOR decryption with machine key"""
+        key = self._get_machine_key()
+        encrypted = base64.b64decode(data.encode())
+        decrypted = bytearray()
+        for i, byte in enumerate(encrypted):
+            decrypted.append(byte ^ key[i % len(key)])
+        return decrypted.decode()
+    
+    def store_key(self, platform: str, key: str) -> bool:
+        """Store a stream key securely"""
+        try:
+            if self.use_keyring:
+                keyring.set_password(STREAM_KEYS_SERVICE, platform, key)
+                return True
+        except Exception:
+            pass
+        
+        try:
+            keys = self._load_file_keys()
+            keys[platform] = self._simple_encrypt(key)
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.keys_file, "w") as f:
+                json.dump(keys, f)
+            os.chmod(self.keys_file, 0o600)
+            return True
+        except Exception as e:
+            print(f"Failed to store key: {e}")
+            return False
+    
+    def get_key(self, platform: str) -> Optional[str]:
+        """Retrieve a stream key"""
+        try:
+            if self.use_keyring:
+                key = keyring.get_password(STREAM_KEYS_SERVICE, platform)
+                if key:
+                    return key
+        except Exception:
+            pass
+        
+        try:
+            keys = self._load_file_keys()
+            if platform in keys:
+                return self._simple_decrypt(keys[platform])
+        except Exception:
+            pass
+        return None
+    
+    def delete_key(self, platform: str) -> bool:
+        """Delete a stored stream key"""
+        try:
+            if self.use_keyring:
+                keyring.delete_password(STREAM_KEYS_SERVICE, platform)
+        except Exception:
+            pass
+        
+        try:
+            keys = self._load_file_keys()
+            if platform in keys:
+                del keys[platform]
+                with open(self.keys_file, "w") as f:
+                    json.dump(keys, f)
+                return True
+        except Exception:
+            pass
+        return False
+    
+    def _load_file_keys(self) -> Dict[str, str]:
+        """Load keys from encrypted file"""
+        if self.keys_file.exists():
+            try:
+                with open(self.keys_file, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+    
+    def list_platforms(self) -> List[str]:
+        """List platforms with stored keys"""
+        platforms = set()
+        
+        try:
+            keys = self._load_file_keys()
+            platforms.update(keys.keys())
+        except Exception:
+            pass
+        
+        return list(platforms)
+
+
+class HardwareDetector:
+    """Detects available hardware encoders"""
+    
+    def __init__(self):
+        self.available_encoders: List[EncoderType] = []
+        self.gpu_info: Dict[str, Any] = {}
+        self.detect()
+    
+    def detect(self):
+        """Detect available hardware encoders"""
+        self.available_encoders = [EncoderType.SOFTWARE]
+        
+        if self._check_vaapi():
+            self.available_encoders.append(EncoderType.VAAPI)
+            self.gpu_info["vaapi"] = True
+        
+        if self._check_nvenc():
+            self.available_encoders.append(EncoderType.NVENC)
+            self.gpu_info["nvenc"] = True
+        
+        if self._check_amf():
+            self.available_encoders.append(EncoderType.AMF)
+            self.gpu_info["amf"] = True
+        
+        if self._check_qsv():
+            self.available_encoders.append(EncoderType.QSV)
+            self.gpu_info["qsv"] = True
+    
+    def _check_vaapi(self) -> bool:
+        """Check for VAAPI support (AMD/Intel)"""
+        try:
+            result = subprocess.run(
+                ["vainfo"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and "VAEntrypointEncSlice" in result.stdout:
+                return True
+        except Exception:
+            pass
+        
+        if Path("/dev/dri/renderD128").exists():
+            return True
+        return False
+    
+    def _check_nvenc(self) -> bool:
+        """Check for NVENC support (NVIDIA)"""
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "-L"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and "GPU" in result.stdout:
+                ffmpeg_check = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-encoders"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if "h264_nvenc" in ffmpeg_check.stdout:
+                    return True
+        except Exception:
+            pass
+        return False
+    
+    def _check_amf(self) -> bool:
+        """Check for AMD AMF support"""
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if "h264_amf" in result.stdout:
+                if Path("/dev/dri/renderD128").exists():
+                    return True
+        except Exception:
+            pass
+        return False
+    
+    def _check_qsv(self) -> bool:
+        """Check for Intel QuickSync support"""
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if "h264_qsv" in result.stdout:
+                return True
+        except Exception:
+            pass
+        return False
+    
+    def get_best_encoder(self) -> EncoderType:
+        """Get the best available encoder"""
+        priority = [EncoderType.NVENC, EncoderType.AMF, EncoderType.VAAPI, 
+                   EncoderType.QSV, EncoderType.SOFTWARE]
+        for enc in priority:
+            if enc in self.available_encoders:
+                return enc
+        return EncoderType.SOFTWARE
+    
+    def get_encoder_display_name(self, encoder: EncoderType) -> str:
+        """Get human-readable encoder name"""
+        names = {
+            EncoderType.SOFTWARE: "Software (x264)",
+            EncoderType.VAAPI: "VAAPI (AMD/Intel)",
+            EncoderType.NVENC: "NVENC (NVIDIA)",
+            EncoderType.AMF: "AMF (AMD)",
+            EncoderType.QSV: "QuickSync (Intel)"
+        }
+        return names.get(encoder, "Unknown")
+
+
+class AudioMixer:
+    """Audio source management and mixing"""
+    
+    def __init__(self):
+        self.sources: Dict[str, Dict] = {}
+        self.pipewire_available = self._check_pipewire()
+        self.refresh_sources()
+    
+    def _check_pipewire(self) -> bool:
+        """Check if PipeWire is available"""
+        try:
+            result = subprocess.run(
+                ["pw-cli", "info"],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def refresh_sources(self):
+        """Refresh available audio sources"""
+        self.sources = {}
+        
+        if self.pipewire_available:
+            self._get_pipewire_sources()
+        else:
+            self._get_pulseaudio_sources()
+    
+    def _get_pipewire_sources(self):
+        """Get audio sources from PipeWire"""
+        try:
+            result = subprocess.run(
+                ["pw-cli", "list-objects"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                self.sources["desktop"] = {
+                    "name": "Desktop Audio",
+                    "type": "monitor",
+                    "volume": 100,
+                    "muted": False
+                }
+                self.sources["mic"] = {
+                    "name": "Microphone",
+                    "type": "input",
+                    "volume": 100,
+                    "muted": False
+                }
+        except Exception:
+            pass
+        
+        self._get_default_sources()
+    
+    def _get_pulseaudio_sources(self):
+        """Get audio sources from PulseAudio"""
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "sources", "short"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line:
+                        parts = line.split('\t')
+                        if len(parts) >= 2:
+                            source_id = parts[0]
+                            source_name = parts[1]
+                            
+                            if "monitor" in source_name.lower():
+                                self.sources["desktop"] = {
+                                    "name": "Desktop Audio",
+                                    "id": source_name,
+                                    "type": "monitor",
+                                    "volume": 100,
+                                    "muted": False
+                                }
+                            elif "input" in source_name.lower() or "mic" in source_name.lower():
+                                self.sources["mic"] = {
+                                    "name": "Microphone",
+                                    "id": source_name,
+                                    "type": "input",
+                                    "volume": 100,
+                                    "muted": False
+                                }
+        except Exception:
+            pass
+        
+        self._get_default_sources()
+    
+    def _get_default_sources(self):
+        """Ensure default sources exist"""
+        if "desktop" not in self.sources:
+            self.sources["desktop"] = {
+                "name": "Desktop Audio",
+                "type": "monitor",
+                "volume": 100,
+                "muted": False
+            }
+        if "mic" not in self.sources:
+            self.sources["mic"] = {
+                "name": "Microphone",
+                "type": "input",
+                "volume": 100,
+                "muted": False
+            }
+    
+    def set_volume(self, source_key: str, volume: int):
+        """Set volume for a source (0-100)"""
+        if source_key in self.sources:
+            self.sources[source_key]["volume"] = max(0, min(100, volume))
+    
+    def toggle_mute(self, source_key: str) -> bool:
+        """Toggle mute for a source"""
+        if source_key in self.sources:
+            self.sources[source_key]["muted"] = not self.sources[source_key]["muted"]
+            return self.sources[source_key]["muted"]
+        return False
+    
+    def get_ffmpeg_audio_inputs(self) -> List[str]:
+        """Get FFmpeg audio input arguments"""
+        inputs = []
+        
+        for key, source in self.sources.items():
+            if not source.get("muted", False):
+                if self.pipewire_available:
+                    if source["type"] == "monitor":
+                        inputs.extend(["-f", "pulse", "-i", "default"])
+                    elif source["type"] == "input":
+                        inputs.extend(["-f", "pulse", "-i", "default"])
+                else:
+                    if "id" in source:
+                        inputs.extend(["-f", "pulse", "-i", source["id"]])
+        
+        return inputs
+
+
+class Scene:
+    """Represents a streaming scene with sources"""
+    
+    def __init__(self, name: str):
+        self.name = name
+        self.id = secrets.token_hex(8)
+        self.sources: List[Dict] = []
+        self.background_color = AEGIS_BG
+        self.created_at = datetime.now().isoformat()
+    
+    def add_source(self, source_type: str, settings: Dict):
+        """Add a source to the scene"""
+        source = {
+            "id": secrets.token_hex(8),
+            "type": source_type,
+            "settings": settings,
+            "position": {"x": 0, "y": 0},
+            "size": {"width": 1920, "height": 1080},
+            "visible": True,
+            "order": len(self.sources)
+        }
+        self.sources.append(source)
+        return source
+    
+    def remove_source(self, source_id: str):
+        """Remove a source from the scene"""
+        self.sources = [s for s in self.sources if s["id"] != source_id]
+        self._reorder_sources()
+    
+    def _reorder_sources(self):
+        """Reorder source indices"""
+        for i, source in enumerate(self.sources):
+            source["order"] = i
+    
+    def move_source(self, source_id: str, x: int, y: int):
+        """Move a source position"""
+        for source in self.sources:
+            if source["id"] == source_id:
+                source["position"] = {"x": x, "y": y}
+                break
+    
+    def resize_source(self, source_id: str, width: int, height: int):
+        """Resize a source"""
+        for source in self.sources:
+            if source["id"] == source_id:
+                source["size"] = {"width": width, "height": height}
+                break
+    
+    def to_dict(self) -> Dict:
+        """Convert scene to dictionary"""
+        return {
+            "name": self.name,
+            "id": self.id,
+            "sources": self.sources,
+            "background_color": self.background_color,
+            "created_at": self.created_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'Scene':
+        """Create scene from dictionary"""
+        scene = cls(data["name"])
+        scene.id = data.get("id", secrets.token_hex(8))
+        scene.sources = data.get("sources", [])
+        scene.background_color = data.get("background_color", AEGIS_BG)
+        scene.created_at = data.get("created_at", datetime.now().isoformat())
+        return scene
+
+
+class SceneManager:
+    """Manages streaming scenes"""
+    
+    def __init__(self):
+        self.scenes: List[Scene] = []
+        self.active_scene: Optional[Scene] = None
+        self.scenes_file = CONFIG_DIR / "scenes.json"
+        self.load_scenes()
+    
+    def load_scenes(self):
+        """Load scenes from file"""
+        if self.scenes_file.exists():
+            try:
+                with open(self.scenes_file, "r") as f:
+                    data = json.load(f)
+                    self.scenes = [Scene.from_dict(s) for s in data.get("scenes", [])]
+                    active_id = data.get("active_scene_id")
+                    if active_id:
+                        for scene in self.scenes:
+                            if scene.id == active_id:
+                                self.active_scene = scene
+                                break
+            except Exception as e:
+                print(f"Failed to load scenes: {e}")
+        
+        if not self.scenes:
+            self._create_default_scenes()
+    
+    def save_scenes(self):
+        """Save scenes to file"""
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            data = {
+                "scenes": [s.to_dict() for s in self.scenes],
+                "active_scene_id": self.active_scene.id if self.active_scene else None
+            }
+            with open(self.scenes_file, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save scenes: {e}")
+    
+    def _create_default_scenes(self):
+        """Create default scenes"""
+        game_scene = Scene("Game Only")
+        game_scene.add_source("game_capture", {"capture_mode": "fullscreen"})
+        self.scenes.append(game_scene)
+        
+        cam_scene = Scene("Game + Webcam")
+        cam_scene.add_source("game_capture", {"capture_mode": "fullscreen"})
+        cam_scene.add_source("webcam", {"device": "/dev/video0"})
+        cam_scene.sources[-1]["position"] = {"x": 1600, "y": 800}
+        cam_scene.sources[-1]["size"] = {"width": 320, "height": 240}
+        self.scenes.append(cam_scene)
+        
+        brb_scene = Scene("BRB Screen")
+        brb_scene.add_source("image", {"path": "", "text": "Be Right Back!"})
+        self.scenes.append(brb_scene)
+        
+        self.active_scene = self.scenes[0]
+        self.save_scenes()
+    
+    def create_scene(self, name: str) -> Scene:
+        """Create a new scene"""
+        scene = Scene(name)
+        self.scenes.append(scene)
+        self.save_scenes()
+        return scene
+    
+    def delete_scene(self, scene_id: str) -> bool:
+        """Delete a scene"""
+        for i, scene in enumerate(self.scenes):
+            if scene.id == scene_id:
+                if self.active_scene == scene:
+                    self.active_scene = self.scenes[0] if len(self.scenes) > 1 else None
+                self.scenes.pop(i)
+                self.save_scenes()
+                return True
+        return False
+    
+    def set_active_scene(self, scene_id: str) -> bool:
+        """Set the active scene"""
+        for scene in self.scenes:
+            if scene.id == scene_id:
+                self.active_scene = scene
+                self.save_scenes()
+                return True
+        return False
+
+
+class ReplayBuffer:
+    """Manages replay buffer for instant saves"""
+    
+    def __init__(self, duration_seconds: int = 60):
+        self.duration = duration_seconds
+        self.buffer_file = Path("/tmp") / "streamforge_replay_buffer.mkv"
+        self.is_recording = False
+        self.process: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+    
+    def set_duration(self, seconds: int):
+        """Set replay buffer duration"""
+        self.duration = max(15, min(300, seconds))
+    
+    def start(self, encoder: EncoderType, capture_settings: Dict) -> bool:
+        """Start recording to replay buffer"""
+        with self._lock:
+            if self.is_recording:
+                return True
+            
+            cmd = self._build_ffmpeg_command(encoder, capture_settings)
+            try:
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                self.is_recording = True
+                return True
+            except Exception as e:
+                print(f"Failed to start replay buffer: {e}")
+                return False
+    
+    def stop(self):
+        """Stop replay buffer recording"""
+        with self._lock:
+            if self.process:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                self.process = None
+            self.is_recording = False
+    
+    def save_replay(self) -> Optional[str]:
+        """Save current replay buffer to file"""
+        if not self.buffer_file.exists():
+            return None
+        
+        REPLAY_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = REPLAY_DIR / f"replay_{timestamp}.mkv"
+        
+        try:
+            shutil.copy2(self.buffer_file, output_file)
+            return str(output_file)
+        except Exception as e:
+            print(f"Failed to save replay: {e}")
+            return None
+    
+    def _build_ffmpeg_command(self, encoder: EncoderType, settings: Dict) -> List[str]:
+        """Build FFmpeg command for replay buffer"""
+        cmd = ["ffmpeg", "-y"]
+        
+        cmd.extend(["-f", "x11grab", "-framerate", "60"])
+        cmd.extend(["-video_size", "1920x1080"])
+        cmd.extend(["-i", ":0.0"])
+        
+        cmd.extend(["-f", "pulse", "-i", "default"])
+        
+        encoder_args = self._get_encoder_args(encoder)
+        cmd.extend(encoder_args)
+        
+        cmd.extend(["-f", "segment", "-segment_time", str(self.duration)])
+        cmd.extend(["-segment_wrap", "2"])
+        cmd.extend(["-reset_timestamps", "1"])
+        cmd.append(str(self.buffer_file))
+        
+        return cmd
+    
+    def _get_encoder_args(self, encoder: EncoderType) -> List[str]:
+        """Get encoder-specific FFmpeg arguments"""
+        if encoder == EncoderType.NVENC:
+            return ["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll",
+                   "-b:v", "8M", "-c:a", "aac", "-b:a", "192k"]
+        elif encoder == EncoderType.VAAPI:
+            return ["-vaapi_device", "/dev/dri/renderD128",
+                   "-c:v", "h264_vaapi", "-b:v", "8M",
+                   "-c:a", "aac", "-b:a", "192k"]
+        elif encoder == EncoderType.AMF:
+            return ["-c:v", "h264_amf", "-quality", "speed",
+                   "-b:v", "8M", "-c:a", "aac", "-b:a", "192k"]
+        else:
+            return ["-c:v", "libx264", "-preset", "ultrafast",
+                   "-tune", "zerolatency", "-b:v", "8M",
+                   "-c:a", "aac", "-b:a", "192k"]
+
+
+class StreamEngine:
+    """Core streaming/recording engine using FFmpeg"""
+    
+    def __init__(self, hw_detector: HardwareDetector, audio_mixer: AudioMixer):
+        self.hw_detector = hw_detector
+        self.audio_mixer = audio_mixer
+        self.is_streaming = False
+        self.is_recording = False
+        self.stream_process: Optional[subprocess.Popen] = None
+        self.record_process: Optional[subprocess.Popen] = None
+        self.stream_start_time: Optional[datetime] = None
+        self.record_start_time: Optional[datetime] = None
+        self._lock = threading.Lock()
+        
+        self.current_settings: Dict = {
+            "quality_preset": "1080p60",
+            "encoder": self.hw_detector.get_best_encoder(),
+            "platform": StreamPlatform.TWITCH,
+            "custom_rtmp_url": "",
+            "capture_source": CaptureSource.SCREEN,
+        }
+    
+    def start_stream(self, stream_key: str, platform: StreamPlatform, 
+                     custom_url: str = "") -> Tuple[bool, str]:
+        """Start streaming to platform"""
+        with self._lock:
+            if self.is_streaming:
+                return False, "Already streaming"
+            
+            rtmp_url = self._get_rtmp_url(platform, stream_key, custom_url)
+            if not rtmp_url:
+                return False, "Invalid RTMP URL or stream key"
+            
+            cmd = self._build_stream_command(rtmp_url)
+            
+            try:
+                self.stream_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                self.is_streaming = True
+                self.stream_start_time = datetime.now()
+                
+                threading.Thread(target=self._monitor_stream, daemon=True).start()
+                
+                return True, "Stream started successfully"
+            except Exception as e:
+                return False, f"Failed to start stream: {e}"
+    
+    def stop_stream(self) -> bool:
+        """Stop streaming"""
+        with self._lock:
+            if self.stream_process:
+                self.stream_process.terminate()
+                try:
+                    self.stream_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.stream_process.kill()
+                self.stream_process = None
+            self.is_streaming = False
+            self.stream_start_time = None
+            return True
+    
+    def start_recording(self, output_path: Optional[str] = None) -> Tuple[bool, str]:
+        """Start local recording"""
+        with self._lock:
+            if self.is_recording:
+                return False, "Already recording"
+            
+            RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            
+            if output_path is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = str(RECORDINGS_DIR / f"recording_{timestamp}.mkv")
+            
+            cmd = self._build_record_command(output_path)
+            
+            try:
+                self.record_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                self.is_recording = True
+                self.record_start_time = datetime.now()
+                return True, f"Recording to {output_path}"
+            except Exception as e:
+                return False, f"Failed to start recording: {e}"
+    
+    def stop_recording(self) -> Optional[str]:
+        """Stop recording and return file path"""
+        with self._lock:
+            if self.record_process:
+                self.record_process.send_signal(signal.SIGINT)
+                try:
+                    self.record_process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.record_process.kill()
+                self.record_process = None
+            self.is_recording = False
+            self.record_start_time = None
+            return None
+    
+    def get_stream_duration(self) -> str:
+        """Get current stream duration as string"""
+        if self.stream_start_time:
+            delta = datetime.now() - self.stream_start_time
+            hours, remainder = divmod(int(delta.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return "00:00:00"
+    
+    def get_record_duration(self) -> str:
+        """Get current recording duration as string"""
+        if self.record_start_time:
+            delta = datetime.now() - self.record_start_time
+            hours, remainder = divmod(int(delta.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return "00:00:00"
+    
+    def _get_rtmp_url(self, platform: StreamPlatform, key: str, custom_url: str) -> str:
+        """Build full RTMP URL"""
+        if platform == StreamPlatform.CUSTOM:
+            if custom_url:
+                return f"{custom_url.rstrip('/')}/{key}" if key else custom_url
+            return ""
+        
+        base_url = PLATFORM_RTMP.get(platform, "")
+        return f"{base_url}{key}" if base_url and key else ""
+    
+    def _build_stream_command(self, rtmp_url: str) -> List[str]:
+        """Build FFmpeg command for streaming"""
+        preset = QUALITY_PRESETS.get(self.current_settings["quality_preset"], QUALITY_PRESETS["1080p60"])
+        encoder = self.current_settings["encoder"]
+        
+        cmd = ["ffmpeg", "-y"]
+        
+        cmd.extend(["-f", "x11grab"])
+        cmd.extend(["-framerate", str(preset["fps"])])
+        cmd.extend(["-video_size", f"{preset['width']}x{preset['height']}"])
+        cmd.extend(["-i", os.environ.get("DISPLAY", ":0")])
+        
+        cmd.extend(["-f", "pulse", "-ac", "2", "-i", "default"])
+        
+        if encoder == EncoderType.NVENC:
+            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-tune", "ll",
+                       "-b:v", f"{preset['bitrate']}k", "-maxrate", f"{int(preset['bitrate'] * 1.5)}k",
+                       "-bufsize", f"{preset['bitrate'] * 2}k"])
+        elif encoder == EncoderType.VAAPI:
+            cmd.extend(["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload",
+                       "-c:v", "h264_vaapi", "-b:v", f"{preset['bitrate']}k"])
+        elif encoder == EncoderType.AMF:
+            cmd.extend(["-c:v", "h264_amf", "-quality", "speed",
+                       "-b:v", f"{preset['bitrate']}k"])
+        else:
+            cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                       "-b:v", f"{preset['bitrate']}k", "-maxrate", f"{int(preset['bitrate'] * 1.5)}k",
+                       "-bufsize", f"{preset['bitrate'] * 2}k"])
+        
+        cmd.extend(["-c:a", "aac", "-b:a", f"{preset['audio_bitrate']}k", "-ar", "48000"])
+        
+        cmd.extend(["-f", "flv", rtmp_url])
+        
+        return cmd
+    
+    def _build_record_command(self, output_path: str) -> List[str]:
+        """Build FFmpeg command for recording"""
+        preset = QUALITY_PRESETS.get(self.current_settings["quality_preset"], QUALITY_PRESETS["1080p60"])
+        encoder = self.current_settings["encoder"]
+        
+        cmd = ["ffmpeg", "-y"]
+        
+        cmd.extend(["-f", "x11grab"])
+        cmd.extend(["-framerate", str(preset["fps"])])
+        cmd.extend(["-video_size", f"{preset['width']}x{preset['height']}"])
+        cmd.extend(["-i", os.environ.get("DISPLAY", ":0")])
+        
+        cmd.extend(["-f", "pulse", "-ac", "2", "-i", "default"])
+        
+        if encoder == EncoderType.NVENC:
+            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p2", "-crf", "18"])
+        elif encoder == EncoderType.VAAPI:
+            cmd.extend(["-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload",
+                       "-c:v", "h264_vaapi", "-qp", "20"])
+        elif encoder == EncoderType.AMF:
+            cmd.extend(["-c:v", "h264_amf", "-quality", "quality", "-qp_i", "18", "-qp_p", "20"])
+        else:
+            cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
+        
+        cmd.extend(["-c:a", "flac"])
+        
+        cmd.append(output_path)
+        
+        return cmd
+    
+    def _monitor_stream(self):
+        """Monitor stream process for errors"""
+        if self.stream_process:
+            stdout, stderr = self.stream_process.communicate()
+            if self.stream_process.returncode != 0:
+                print(f"Stream ended with error: {stderr.decode()[-500:]}")
+
+
+class WebcamManager:
+    """Manages webcam devices"""
+    
+    def __init__(self):
+        self.devices: List[Dict] = []
+        self.refresh_devices()
+    
+    def refresh_devices(self):
+        """Refresh list of available webcam devices"""
+        self.devices = []
+        
+        for i in range(10):
+            device_path = f"/dev/video{i}"
+            if Path(device_path).exists():
+                info = self._get_device_info(device_path)
+                if info:
+                    self.devices.append(info)
+    
+    def _get_device_info(self, device_path: str) -> Optional[Dict]:
+        """Get information about a video device"""
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", device_path, "--info"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                name = "Unknown Camera"
+                for line in result.stdout.split('\n'):
+                    if "Card type" in line:
+                        name = line.split(':')[1].strip()
+                        break
+                
+                return {
+                    "path": device_path,
+                    "name": name,
+                    "capabilities": self._get_device_capabilities(device_path)
+                }
+        except Exception:
+            return {
+                "path": device_path,
+                "name": f"Camera {device_path}",
+                "capabilities": ["640x480"]
+            }
+        return None
+    
+    def _get_device_capabilities(self, device_path: str) -> List[str]:
+        """Get supported resolutions for device"""
+        caps = []
+        try:
+            result = subprocess.run(
+                ["v4l2-ctl", "-d", device_path, "--list-formats-ext"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    match = re.search(r'(\d+)x(\d+)', line)
+                    if match:
+                        res = f"{match.group(1)}x{match.group(2)}"
+                        if res not in caps:
+                            caps.append(res)
+        except Exception:
+            pass
+        
+        return caps if caps else ["640x480", "1280x720", "1920x1080"]
+
+
+class SettingsManager:
+    """Manages application settings"""
+    
+    DEFAULT_SETTINGS = {
+        "quality_preset": "1080p60",
+        "encoder": "auto",
+        "platform": "twitch",
+        "custom_rtmp_url": "",
+        "replay_buffer_enabled": True,
+        "replay_buffer_duration": 60,
+        "audio": {
+            "desktop_volume": 100,
+            "mic_volume": 100,
+            "desktop_muted": False,
+            "mic_muted": False
+        },
+        "hotkeys": {
+            "start_stream": "Ctrl+Shift+S",
+            "stop_stream": "Ctrl+Shift+X",
+            "start_record": "Ctrl+Shift+R",
+            "save_replay": "Ctrl+Shift+B"
+        },
+        "output": {
+            "recording_path": str(RECORDINGS_DIR),
+            "replay_path": str(REPLAY_DIR),
+            "file_format": "mkv"
+        },
+        "webcam": {
+            "device": "/dev/video0",
+            "resolution": "1280x720",
+            "position": "bottom-right"
+        }
+    }
+    
+    def __init__(self):
+        self.settings = self.load()
+    
+    def load(self) -> Dict:
+        """Load settings from file"""
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    loaded = json.load(f)
+                    merged = self._deep_merge(self.DEFAULT_SETTINGS.copy(), loaded)
+                    return merged
+            except Exception:
+                pass
+        return self.DEFAULT_SETTINGS.copy()
+    
+    def save(self):
+        """Save settings to file"""
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(self.settings, f, indent=2)
+        except Exception as e:
+            print(f"Failed to save settings: {e}")
+    
+    def get(self, key: str, default=None):
+        """Get a setting value"""
+        keys = key.split(".")
+        value = self.settings
+        for k in keys:
+            if isinstance(value, dict) and k in value:
+                value = value[k]
+            else:
+                return default
+        return value
+    
+    def set(self, key: str, value):
+        """Set a setting value"""
+        keys = key.split(".")
+        target = self.settings
+        for k in keys[:-1]:
+            if k not in target:
+                target[k] = {}
+            target = target[k]
+        target[keys[-1]] = value
+        self.save()
+    
+    def _deep_merge(self, base: Dict, override: Dict) -> Dict:
+        """Deep merge two dictionaries"""
+        result = base.copy()
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+
+class StreamForgeApp(Gtk.Window):
+    """Main StreamForge Studio Application"""
+    
+    def __init__(self):
+        super().__init__(title=APP_NAME)
+        
+        self.settings = SettingsManager()
+        self.key_manager = SecureKeyManager()
+        self.hw_detector = HardwareDetector()
+        self.audio_mixer = AudioMixer()
+        self.scene_manager = SceneManager()
+        self.webcam_manager = WebcamManager()
+        self.stream_engine = StreamEngine(self.hw_detector, self.audio_mixer)
+        self.replay_buffer = ReplayBuffer(self.settings.get("replay_buffer_duration", 60))
+        
+        self.set_default_size(1200, 800)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        
+        self._apply_css()
+        self._build_ui()
+        self._setup_signals()
+        self._start_update_timer()
+        
+        self.connect("destroy", self.on_quit)
+        self.show_all()
+    
+    def _apply_css(self):
+        """Apply dark Aegis theme CSS"""
+        css = f"""
+        window {{
+            background-color: {AEGIS_BG};
+        }}
+        
+        .main-header {{
+            background-color: {AEGIS_BG_DARK};
+            padding: 10px 20px;
+            border-bottom: 1px solid {AEGIS_BORDER};
+        }}
+        
+        .header-title {{
+            color: {AEGIS_TEXT};
+            font-size: 20px;
+            font-weight: bold;
+        }}
+        
+        .sidebar {{
+            background-color: {AEGIS_BG_DARK};
+            border-right: 1px solid {AEGIS_BORDER};
+            padding: 10px;
+        }}
+        
+        .content-area {{
+            background-color: {AEGIS_BG};
+            padding: 15px;
+        }}
+        
+        .panel {{
+            background-color: {AEGIS_BG_LIGHT};
+            border-radius: 8px;
+            padding: 15px;
+            margin: 5px;
+        }}
+        
+        .panel-title {{
+            color: {AEGIS_BLUE};
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }}
+        
+        .status-label {{
+            color: {AEGIS_TEXT_DIM};
+            font-size: 12px;
+        }}
+        
+        .live-indicator {{
+            background-color: {AEGIS_ERROR};
+            color: white;
+            font-weight: bold;
+            padding: 5px 15px;
+            border-radius: 4px;
+        }}
+        
+        .recording-indicator {{
+            background-color: {AEGIS_ORANGE};
+            color: white;
+            font-weight: bold;
+            padding: 5px 15px;
+            border-radius: 4px;
+        }}
+        
+        .stream-btn {{
+            background: linear-gradient(135deg, {AEGIS_ERROR}, #dc2626);
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 6px;
+            min-width: 150px;
+        }}
+        
+        .stream-btn:hover {{
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+        }}
+        
+        .record-btn {{
+            background: linear-gradient(135deg, {AEGIS_ORANGE}, {AEGIS_ORANGE_HOVER});
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 6px;
+            min-width: 150px;
+        }}
+        
+        .record-btn:hover {{
+            background: linear-gradient(135deg, {AEGIS_ORANGE_HOVER}, #cc5200);
+        }}
+        
+        .action-btn {{
+            background: linear-gradient(135deg, {AEGIS_BLUE}, {AEGIS_BLUE_HOVER});
+            color: white;
+            font-weight: bold;
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+        }}
+        
+        .action-btn:hover {{
+            background: linear-gradient(135deg, {AEGIS_BLUE_HOVER}, #1d4ed8);
+        }}
+        
+        .scene-btn {{
+            background-color: {AEGIS_BG_DARK};
+            color: {AEGIS_TEXT};
+            border: 1px solid {AEGIS_BORDER};
+            border-radius: 4px;
+            padding: 10px;
+            margin: 3px;
+        }}
+        
+        .scene-btn:hover {{
+            background-color: {AEGIS_BG_LIGHT};
+            border-color: {AEGIS_BLUE};
+        }}
+        
+        .scene-btn.active {{
+            background-color: {AEGIS_BLUE};
+            border-color: {AEGIS_BLUE};
+        }}
+        
+        .audio-slider trough {{
+            background-color: {AEGIS_BG_DARK};
+            border-radius: 4px;
+            min-height: 8px;
+        }}
+        
+        .audio-slider highlight {{
+            background-color: {AEGIS_BLUE};
+            border-radius: 4px;
+        }}
+        
+        .audio-slider slider {{
+            background-color: {AEGIS_TEXT};
+            border-radius: 50%;
+            min-width: 16px;
+            min-height: 16px;
+        }}
+        
+        entry {{
+            background-color: {AEGIS_BG_DARK};
+            color: {AEGIS_TEXT};
+            border: 1px solid {AEGIS_BORDER};
+            border-radius: 4px;
+            padding: 8px;
+        }}
+        
+        entry:focus {{
+            border-color: {AEGIS_BLUE};
+        }}
+        
+        combobox button {{
+            background-color: {AEGIS_BG_DARK};
+            color: {AEGIS_TEXT};
+            border: 1px solid {AEGIS_BORDER};
+            border-radius: 4px;
+            padding: 8px;
+        }}
+        
+        combobox button:hover {{
+            border-color: {AEGIS_BLUE};
+        }}
+        
+        notebook {{
+            background-color: {AEGIS_BG};
+        }}
+        
+        notebook tab {{
+            background-color: {AEGIS_BG_DARK};
+            color: {AEGIS_TEXT_DIM};
+            padding: 8px 15px;
+            border: none;
+        }}
+        
+        notebook tab:checked {{
+            background-color: {AEGIS_BG_LIGHT};
+            color: {AEGIS_BLUE};
+            border-bottom: 2px solid {AEGIS_BLUE};
+        }}
+        
+        .preview-area {{
+            background-color: #000000;
+            border-radius: 8px;
+            border: 2px solid {AEGIS_BORDER};
+        }}
+        
+        .stats-value {{
+            color: {AEGIS_SUCCESS};
+            font-size: 18px;
+            font-weight: bold;
+        }}
+        
+        .mute-btn {{
+            background-color: transparent;
+            border: none;
+            padding: 5px;
+        }}
+        
+        .mute-btn.muted {{
+            color: {AEGIS_ERROR};
+        }}
+        
+        scrolledwindow {{
+            background-color: transparent;
+        }}
+        
+        .source-item {{
+            background-color: {AEGIS_BG_DARK};
+            border: 1px solid {AEGIS_BORDER};
+            border-radius: 4px;
+            padding: 8px;
+            margin: 3px 0;
+        }}
+        
+        .source-item:hover {{
+            border-color: {AEGIS_BLUE};
+        }}
+        """.encode()
+        
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+    
+    def _build_ui(self):
+        """Build the main UI"""
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(main_box)
+        
+        main_box.pack_start(self._create_header(), False, False, 0)
+        
+        content_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        main_box.pack_start(content_box, True, True, 0)
+        
+        content_box.pack_start(self._create_sidebar(), False, False, 0)
+        content_box.pack_start(self._create_main_content(), True, True, 0)
+        content_box.pack_start(self._create_right_panel(), False, False, 0)
+    
+    def _create_header(self) -> Gtk.Box:
+        """Create the header bar"""
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        header.get_style_context().add_class("main-header")
+        
+        logo_label = Gtk.Label()
+        logo_label.set_markup(f'<span font="18" weight="bold" foreground="{AEGIS_BLUE}">🎬 StreamForge Studio</span>')
+        header.pack_start(logo_label, False, False, 0)
+        
+        self.live_label = Gtk.Label(label="OFFLINE")
+        self.live_label.set_name("status-offline")
+        header.pack_start(self.live_label, False, False, 20)
+        
+        self.stream_time_label = Gtk.Label(label="00:00:00")
+        self.stream_time_label.get_style_context().add_class("status-label")
+        header.pack_start(self.stream_time_label, False, False, 0)
+        
+        spacer = Gtk.Box()
+        header.pack_start(spacer, True, True, 0)
+        
+        hw_info = self.hw_detector.get_encoder_display_name(self.hw_detector.get_best_encoder())
+        hw_label = Gtk.Label()
+        hw_label.set_markup(f'<span foreground="{AEGIS_TEXT_DIM}">Encoder: </span><span foreground="{AEGIS_SUCCESS}">{hw_info}</span>')
+        header.pack_end(hw_label, False, False, 10)
+        
+        settings_btn = Gtk.Button(label="⚙️ Settings")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        header.pack_end(settings_btn, False, False, 0)
+        
+        return header
+    
+    def _create_sidebar(self) -> Gtk.Box:
+        """Create the left sidebar with scenes"""
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        sidebar.get_style_context().add_class("sidebar")
+        sidebar.set_size_request(200, -1)
+        
+        scenes_label = Gtk.Label()
+        scenes_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Scenes</span>')
+        scenes_label.set_halign(Gtk.Align.START)
+        sidebar.pack_start(scenes_label, False, False, 5)
+        
+        self.scenes_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        sidebar.pack_start(self.scenes_box, False, False, 0)
+        
+        self._refresh_scenes_list()
+        
+        add_scene_btn = Gtk.Button(label="+ Add Scene")
+        add_scene_btn.get_style_context().add_class("action-btn")
+        add_scene_btn.connect("clicked", self.on_add_scene)
+        sidebar.pack_start(add_scene_btn, False, False, 10)
+        
+        separator = Gtk.Separator()
+        sidebar.pack_start(separator, False, False, 10)
+        
+        sources_label = Gtk.Label()
+        sources_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Sources</span>')
+        sources_label.set_halign(Gtk.Align.START)
+        sidebar.pack_start(sources_label, False, False, 5)
+        
+        self.sources_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.sources_box)
+        scroll.set_min_content_height(200)
+        sidebar.pack_start(scroll, True, True, 0)
+        
+        self._refresh_sources_list()
+        
+        source_btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        
+        add_game_btn = Gtk.Button(label="🎮")
+        add_game_btn.set_tooltip_text("Add Game Capture")
+        add_game_btn.connect("clicked", lambda b: self.on_add_source("game_capture"))
+        source_btns.pack_start(add_game_btn, True, True, 0)
+        
+        add_screen_btn = Gtk.Button(label="🖥️")
+        add_screen_btn.set_tooltip_text("Add Screen Capture")
+        add_screen_btn.connect("clicked", lambda b: self.on_add_source("screen_capture"))
+        source_btns.pack_start(add_screen_btn, True, True, 0)
+        
+        add_cam_btn = Gtk.Button(label="📷")
+        add_cam_btn.set_tooltip_text("Add Webcam")
+        add_cam_btn.connect("clicked", lambda b: self.on_add_source("webcam"))
+        source_btns.pack_start(add_cam_btn, True, True, 0)
+        
+        add_img_btn = Gtk.Button(label="🖼️")
+        add_img_btn.set_tooltip_text("Add Image/Text")
+        add_img_btn.connect("clicked", lambda b: self.on_add_source("image"))
+        source_btns.pack_start(add_img_btn, True, True, 0)
+        
+        sidebar.pack_start(source_btns, False, False, 5)
+        
+        return sidebar
+    
+    def _create_main_content(self) -> Gtk.Box:
+        """Create the main content area with preview"""
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        content.get_style_context().add_class("content-area")
+        
+        preview_frame = Gtk.Frame()
+        preview_frame.get_style_context().add_class("preview-area")
+        
+        self.preview_area = Gtk.DrawingArea()
+        self.preview_area.set_size_request(854, 480)
+        self.preview_area.connect("draw", self.on_preview_draw)
+        preview_frame.add(self.preview_area)
+        
+        content.pack_start(preview_frame, True, True, 0)
+        
+        controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        controls_box.set_halign(Gtk.Align.CENTER)
+        controls_box.set_margin_top(15)
+        
+        self.stream_btn = Gtk.Button(label="▶️ Start Streaming")
+        self.stream_btn.get_style_context().add_class("stream-btn")
+        self.stream_btn.connect("clicked", self.on_stream_toggle)
+        controls_box.pack_start(self.stream_btn, False, False, 0)
+        
+        self.record_btn = Gtk.Button(label="⏺️ Start Recording")
+        self.record_btn.get_style_context().add_class("record-btn")
+        self.record_btn.connect("clicked", self.on_record_toggle)
+        controls_box.pack_start(self.record_btn, False, False, 0)
+        
+        self.replay_btn = Gtk.Button(label="💾 Save Replay")
+        self.replay_btn.get_style_context().add_class("action-btn")
+        self.replay_btn.connect("clicked", self.on_save_replay)
+        self.replay_btn.set_sensitive(self.settings.get("replay_buffer_enabled", True))
+        controls_box.pack_start(self.replay_btn, False, False, 0)
+        
+        content.pack_start(controls_box, False, False, 0)
+        
+        return content
+    
+    def _create_right_panel(self) -> Gtk.Box:
+        """Create the right panel with audio mixer and settings"""
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        panel.set_size_request(280, -1)
+        panel.set_margin_start(10)
+        panel.set_margin_end(10)
+        panel.set_margin_top(10)
+        panel.set_margin_bottom(10)
+        
+        audio_panel = self._create_audio_panel()
+        panel.pack_start(audio_panel, False, False, 0)
+        
+        stream_panel = self._create_stream_settings_panel()
+        panel.pack_start(stream_panel, False, False, 0)
+        
+        stats_panel = self._create_stats_panel()
+        panel.pack_start(stats_panel, False, False, 0)
+        
+        return panel
+    
+    def _create_audio_panel(self) -> Gtk.Box:
+        """Create the audio mixer panel"""
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        panel.get_style_context().add_class("panel")
+        
+        title = Gtk.Label()
+        title.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">🔊 Audio Mixer</span>')
+        title.set_halign(Gtk.Align.START)
+        panel.pack_start(title, False, False, 0)
+        
+        desktop_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        desktop_label = Gtk.Label(label="Desktop")
+        desktop_label.set_width_chars(8)
+        desktop_box.pack_start(desktop_label, False, False, 0)
+        
+        self.desktop_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.desktop_slider.set_value(self.settings.get("audio.desktop_volume", 100))
+        self.desktop_slider.set_draw_value(False)
+        self.desktop_slider.get_style_context().add_class("audio-slider")
+        self.desktop_slider.connect("value-changed", self.on_desktop_volume_changed)
+        desktop_box.pack_start(self.desktop_slider, True, True, 0)
+        
+        self.desktop_mute_btn = Gtk.Button(label="🔊")
+        self.desktop_mute_btn.connect("clicked", self.on_desktop_mute_toggle)
+        desktop_box.pack_start(self.desktop_mute_btn, False, False, 0)
+        
+        panel.pack_start(desktop_box, False, False, 0)
+        
+        mic_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        mic_label = Gtk.Label(label="Mic")
+        mic_label.set_width_chars(8)
+        mic_box.pack_start(mic_label, False, False, 0)
+        
+        self.mic_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.mic_slider.set_value(self.settings.get("audio.mic_volume", 100))
+        self.mic_slider.set_draw_value(False)
+        self.mic_slider.get_style_context().add_class("audio-slider")
+        self.mic_slider.connect("value-changed", self.on_mic_volume_changed)
+        mic_box.pack_start(self.mic_slider, True, True, 0)
+        
+        self.mic_mute_btn = Gtk.Button(label="🎤")
+        self.mic_mute_btn.connect("clicked", self.on_mic_mute_toggle)
+        mic_box.pack_start(self.mic_mute_btn, False, False, 0)
+        
+        panel.pack_start(mic_box, False, False, 0)
+        
+        return panel
+    
+    def _create_stream_settings_panel(self) -> Gtk.Box:
+        """Create the stream settings panel"""
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        panel.get_style_context().add_class("panel")
+        
+        title = Gtk.Label()
+        title.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">📡 Stream Settings</span>')
+        title.set_halign(Gtk.Align.START)
+        panel.pack_start(title, False, False, 0)
+        
+        platform_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        platform_label = Gtk.Label(label="Platform:")
+        platform_label.set_width_chars(10)
+        platform_box.pack_start(platform_label, False, False, 0)
+        
+        self.platform_combo = Gtk.ComboBoxText()
+        self.platform_combo.append("twitch", "Twitch")
+        self.platform_combo.append("youtube", "YouTube")
+        self.platform_combo.append("custom", "Custom RTMP")
+        self.platform_combo.set_active_id(self.settings.get("platform", "twitch"))
+        self.platform_combo.connect("changed", self.on_platform_changed)
+        platform_box.pack_start(self.platform_combo, True, True, 0)
+        
+        panel.pack_start(platform_box, False, False, 0)
+        
+        key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        key_label = Gtk.Label(label="Stream Key:")
+        key_label.set_width_chars(10)
+        key_box.pack_start(key_label, False, False, 0)
+        
+        self.key_entry = Gtk.Entry()
+        self.key_entry.set_visibility(False)
+        self.key_entry.set_placeholder_text("Enter stream key...")
+        current_platform = self.settings.get("platform", "twitch")
+        stored_key = self.key_manager.get_key(current_platform)
+        if stored_key:
+            self.key_entry.set_text(stored_key)
+        self.key_entry.connect("changed", self.on_key_changed)
+        key_box.pack_start(self.key_entry, True, True, 0)
+        
+        show_key_btn = Gtk.Button(label="👁️")
+        show_key_btn.connect("clicked", self.on_toggle_key_visibility)
+        key_box.pack_start(show_key_btn, False, False, 0)
+        
+        panel.pack_start(key_box, False, False, 0)
+        
+        quality_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        quality_label = Gtk.Label(label="Quality:")
+        quality_label.set_width_chars(10)
+        quality_box.pack_start(quality_label, False, False, 0)
+        
+        self.quality_combo = Gtk.ComboBoxText()
+        for preset in QUALITY_PRESETS.keys():
+            self.quality_combo.append(preset, preset)
+        self.quality_combo.set_active_id(self.settings.get("quality_preset", "1080p60"))
+        self.quality_combo.connect("changed", self.on_quality_changed)
+        quality_box.pack_start(self.quality_combo, True, True, 0)
+        
+        panel.pack_start(quality_box, False, False, 0)
+        
+        encoder_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        encoder_label = Gtk.Label(label="Encoder:")
+        encoder_label.set_width_chars(10)
+        encoder_box.pack_start(encoder_label, False, False, 0)
+        
+        self.encoder_combo = Gtk.ComboBoxText()
+        self.encoder_combo.append("auto", "Auto (Best Available)")
+        for enc in self.hw_detector.available_encoders:
+            display_name = self.hw_detector.get_encoder_display_name(enc)
+            self.encoder_combo.append(enc.value, display_name)
+        self.encoder_combo.set_active_id(self.settings.get("encoder", "auto"))
+        self.encoder_combo.connect("changed", self.on_encoder_changed)
+        encoder_box.pack_start(self.encoder_combo, True, True, 0)
+        
+        panel.pack_start(encoder_box, False, False, 0)
+        
+        return panel
+    
+    def _create_stats_panel(self) -> Gtk.Box:
+        """Create the statistics panel"""
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        panel.get_style_context().add_class("panel")
+        
+        title = Gtk.Label()
+        title.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">📊 Statistics</span>')
+        title.set_halign(Gtk.Align.START)
+        panel.pack_start(title, False, False, 0)
+        
+        stats_grid = Gtk.Grid()
+        stats_grid.set_column_spacing(15)
+        stats_grid.set_row_spacing(8)
+        
+        fps_title = Gtk.Label(label="FPS")
+        fps_title.get_style_context().add_class("status-label")
+        stats_grid.attach(fps_title, 0, 0, 1, 1)
+        
+        self.fps_label = Gtk.Label(label="--")
+        self.fps_label.get_style_context().add_class("stats-value")
+        stats_grid.attach(self.fps_label, 0, 1, 1, 1)
+        
+        bitrate_title = Gtk.Label(label="Bitrate")
+        bitrate_title.get_style_context().add_class("status-label")
+        stats_grid.attach(bitrate_title, 1, 0, 1, 1)
+        
+        self.bitrate_label = Gtk.Label(label="-- kbps")
+        self.bitrate_label.get_style_context().add_class("stats-value")
+        stats_grid.attach(self.bitrate_label, 1, 1, 1, 1)
+        
+        dropped_title = Gtk.Label(label="Dropped")
+        dropped_title.get_style_context().add_class("status-label")
+        stats_grid.attach(dropped_title, 2, 0, 1, 1)
+        
+        self.dropped_label = Gtk.Label(label="0")
+        self.dropped_label.get_style_context().add_class("stats-value")
+        stats_grid.attach(self.dropped_label, 2, 1, 1, 1)
+        
+        panel.pack_start(stats_grid, False, False, 0)
+        
+        return panel
+    
+    def _refresh_scenes_list(self):
+        """Refresh the scenes list in the sidebar"""
+        for child in self.scenes_box.get_children():
+            child.destroy()
+        
+        for scene in self.scene_manager.scenes:
+            btn = Gtk.Button(label=scene.name)
+            btn.get_style_context().add_class("scene-btn")
+            if scene == self.scene_manager.active_scene:
+                btn.get_style_context().add_class("active")
+            btn.connect("clicked", self.on_scene_clicked, scene.id)
+            self.scenes_box.pack_start(btn, False, False, 0)
+        
+        self.scenes_box.show_all()
+    
+    def _refresh_sources_list(self):
+        """Refresh the sources list for current scene"""
+        for child in self.sources_box.get_children():
+            child.destroy()
+        
+        if self.scene_manager.active_scene:
+            for source in self.scene_manager.active_scene.sources:
+                source_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+                source_box.get_style_context().add_class("source-item")
+                
+                icon = "🎮" if source["type"] == "game_capture" else \
+                       "🖥️" if source["type"] == "screen_capture" else \
+                       "📷" if source["type"] == "webcam" else "🖼️"
+                
+                label = Gtk.Label(label=f"{icon} {source['type']}")
+                source_box.pack_start(label, True, True, 0)
+                
+                visible_btn = Gtk.Button(label="👁️" if source["visible"] else "👁️‍🗨️")
+                visible_btn.connect("clicked", self.on_toggle_source_visibility, source["id"])
+                source_box.pack_start(visible_btn, False, False, 0)
+                
+                del_btn = Gtk.Button(label="🗑️")
+                del_btn.connect("clicked", self.on_delete_source, source["id"])
+                source_box.pack_start(del_btn, False, False, 0)
+                
+                self.sources_box.pack_start(source_box, False, False, 0)
+        
+        self.sources_box.show_all()
+    
+    def _setup_signals(self):
+        """Setup signal handlers"""
+        pass
+    
+    def _start_update_timer(self):
+        """Start timer for updating UI elements"""
+        GLib.timeout_add(1000, self._update_ui)
+    
+    def _update_ui(self) -> bool:
+        """Update UI elements periodically"""
+        if self.stream_engine.is_streaming:
+            self.stream_time_label.set_text(self.stream_engine.get_stream_duration())
+            self.live_label.set_markup(f'<span background="{AEGIS_ERROR}" foreground="white" weight="bold"> 🔴 LIVE </span>')
+        else:
+            self.stream_time_label.set_text("00:00:00")
+            self.live_label.set_markup(f'<span foreground="{AEGIS_TEXT_DIM}">OFFLINE</span>')
+        
+        if self.stream_engine.is_streaming:
+            preset = QUALITY_PRESETS.get(self.settings.get("quality_preset", "1080p60"), {})
+            self.fps_label.set_text(str(preset.get("fps", 60)))
+            self.bitrate_label.set_text(f"{preset.get('bitrate', 6000)} kbps")
+        
+        return True
+    
+    def on_preview_draw(self, widget, cr):
+        """Draw the preview area"""
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgb(0, 0, 0)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        cr.set_source_rgb(0.23, 0.51, 0.96)
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(24)
+        text = "Preview Area"
+        extents = cr.text_extents(text)
+        cr.move_to((width - extents.width) / 2, (height + extents.height) / 2)
+        cr.show_text(text)
+        
+        if self.stream_engine.is_streaming:
+            cr.set_source_rgb(0.94, 0.27, 0.27)
+            cr.arc(width - 30, 30, 10, 0, 2 * 3.14159)
+            cr.fill()
+    
+    def on_stream_toggle(self, button):
+        """Toggle streaming on/off"""
+        if self.stream_engine.is_streaming:
+            self.stream_engine.stop_stream()
+            button.set_label("▶️ Start Streaming")
+        else:
+            platform_id = self.platform_combo.get_active_id()
+            platform = StreamPlatform(platform_id)
+            stream_key = self.key_entry.get_text()
+            
+            if not stream_key:
+                self._show_error("Stream key is required")
+                return
+            
+            self.key_manager.store_key(platform_id, stream_key)
+            
+            custom_url = ""
+            if platform == StreamPlatform.CUSTOM:
+                custom_url = self.settings.get("custom_rtmp_url", "")
+            
+            success, message = self.stream_engine.start_stream(stream_key, platform, custom_url)
+            
+            if success:
+                button.set_label("⏹️ Stop Streaming")
+                
+                if self.settings.get("replay_buffer_enabled", True):
+                    encoder = self.stream_engine.current_settings["encoder"]
+                    self.replay_buffer.start(encoder, {})
+            else:
+                self._show_error(message)
+    
+    def on_record_toggle(self, button):
+        """Toggle recording on/off"""
+        if self.stream_engine.is_recording:
+            self.stream_engine.stop_recording()
+            button.set_label("⏺️ Start Recording")
+        else:
+            success, message = self.stream_engine.start_recording()
+            if success:
+                button.set_label("⏹️ Stop Recording")
+            else:
+                self._show_error(message)
+    
+    def on_save_replay(self, button):
+        """Save the replay buffer"""
+        if not self.replay_buffer.is_recording:
+            self._show_info("Replay buffer is not active. Start streaming first.")
+            return
+        
+        saved_path = self.replay_buffer.save_replay()
+        if saved_path:
+            self._show_info(f"Replay saved to:\n{saved_path}")
+        else:
+            self._show_error("Failed to save replay")
+    
+    def on_scene_clicked(self, button, scene_id):
+        """Handle scene selection"""
+        self.scene_manager.set_active_scene(scene_id)
+        self._refresh_scenes_list()
+        self._refresh_sources_list()
+        self.preview_area.queue_draw()
+    
+    def on_add_scene(self, button):
+        """Add a new scene"""
+        dialog = Gtk.Dialog(title="New Scene", transient_for=self, modal=True)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Create", Gtk.ResponseType.OK)
+        
+        content = dialog.get_content_area()
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(20)
+        content.set_margin_bottom(20)
+        
+        label = Gtk.Label(label="Scene Name:")
+        content.pack_start(label, False, False, 5)
+        
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("Enter scene name...")
+        content.pack_start(entry, False, False, 5)
+        
+        dialog.show_all()
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            name = entry.get_text().strip()
+            if name:
+                self.scene_manager.create_scene(name)
+                self._refresh_scenes_list()
+        
+        dialog.destroy()
+    
+    def on_add_source(self, source_type: str):
+        """Add a source to the current scene"""
+        if not self.scene_manager.active_scene:
+            self._show_error("No scene selected")
+            return
+        
+        settings = {}
+        
+        if source_type == "webcam":
+            self.webcam_manager.refresh_devices()
+            if self.webcam_manager.devices:
+                settings = {"device": self.webcam_manager.devices[0]["path"]}
+            else:
+                self._show_error("No webcam devices found")
+                return
+        
+        self.scene_manager.active_scene.add_source(source_type, settings)
+        self.scene_manager.save_scenes()
+        self._refresh_sources_list()
+    
+    def on_toggle_source_visibility(self, button, source_id):
+        """Toggle source visibility"""
+        if self.scene_manager.active_scene:
+            for source in self.scene_manager.active_scene.sources:
+                if source["id"] == source_id:
+                    source["visible"] = not source["visible"]
+                    self.scene_manager.save_scenes()
+                    self._refresh_sources_list()
+                    break
+    
+    def on_delete_source(self, button, source_id):
+        """Delete a source"""
+        if self.scene_manager.active_scene:
+            self.scene_manager.active_scene.remove_source(source_id)
+            self.scene_manager.save_scenes()
+            self._refresh_sources_list()
+    
+    def on_desktop_volume_changed(self, slider):
+        """Handle desktop volume change"""
+        volume = int(slider.get_value())
+        self.audio_mixer.set_volume("desktop", volume)
+        self.settings.set("audio.desktop_volume", volume)
+    
+    def on_mic_volume_changed(self, slider):
+        """Handle mic volume change"""
+        volume = int(slider.get_value())
+        self.audio_mixer.set_volume("mic", volume)
+        self.settings.set("audio.mic_volume", volume)
+    
+    def on_desktop_mute_toggle(self, button):
+        """Toggle desktop audio mute"""
+        muted = self.audio_mixer.toggle_mute("desktop")
+        button.set_label("🔇" if muted else "🔊")
+        self.settings.set("audio.desktop_muted", muted)
+    
+    def on_mic_mute_toggle(self, button):
+        """Toggle microphone mute"""
+        muted = self.audio_mixer.toggle_mute("mic")
+        button.set_label("🔇" if muted else "🎤")
+        self.settings.set("audio.mic_muted", muted)
+    
+    def on_platform_changed(self, combo):
+        """Handle platform selection change"""
+        platform = combo.get_active_id()
+        self.settings.set("platform", platform)
+        
+        stored_key = self.key_manager.get_key(platform)
+        self.key_entry.set_text(stored_key if stored_key else "")
+    
+    def on_key_changed(self, entry):
+        """Handle stream key change"""
+        pass
+    
+    def on_toggle_key_visibility(self, button):
+        """Toggle stream key visibility"""
+        visible = self.key_entry.get_visibility()
+        self.key_entry.set_visibility(not visible)
+        button.set_label("👁️" if visible else "🙈")
+    
+    def on_quality_changed(self, combo):
+        """Handle quality preset change"""
+        preset = combo.get_active_id()
+        self.settings.set("quality_preset", preset)
+        self.stream_engine.current_settings["quality_preset"] = preset
+    
+    def on_encoder_changed(self, combo):
+        """Handle encoder selection change"""
+        encoder_id = combo.get_active_id()
+        self.settings.set("encoder", encoder_id)
+        
+        if encoder_id == "auto":
+            self.stream_engine.current_settings["encoder"] = self.hw_detector.get_best_encoder()
+        else:
+            for enc in EncoderType:
+                if enc.value == encoder_id:
+                    self.stream_engine.current_settings["encoder"] = enc
+                    break
+    
+    def on_settings_clicked(self, button):
+        """Open settings dialog"""
+        dialog = SettingsDialog(self, self.settings, self.hw_detector, 
+                               self.replay_buffer, self.webcam_manager)
+        dialog.run()
+        dialog.destroy()
+    
+    def _show_error(self, message: str):
+        """Show error dialog"""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.OK,
+            text="Error"
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+    
+    def _show_info(self, message: str):
+        """Show info dialog"""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="Information"
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
+    
+    def on_quit(self, widget):
+        """Handle application quit"""
+        if self.stream_engine.is_streaming:
+            self.stream_engine.stop_stream()
+        if self.stream_engine.is_recording:
+            self.stream_engine.stop_recording()
+        if self.replay_buffer.is_recording:
+            self.replay_buffer.stop()
+        
+        Gtk.main_quit()
+
+
+class SettingsDialog(Gtk.Dialog):
+    """Settings dialog for StreamForge Studio"""
+    
+    def __init__(self, parent, settings: SettingsManager, hw_detector: HardwareDetector,
+                 replay_buffer: ReplayBuffer, webcam_manager: WebcamManager):
+        super().__init__(title="Settings", transient_for=parent, modal=True)
+        
+        self.settings = settings
+        self.hw_detector = hw_detector
+        self.replay_buffer = replay_buffer
+        self.webcam_manager = webcam_manager
+        
+        self.set_default_size(600, 500)
+        self.add_button("Close", Gtk.ResponseType.CLOSE)
+        
+        content = self.get_content_area()
+        content.set_margin_start(15)
+        content.set_margin_end(15)
+        content.set_margin_top(15)
+        content.set_margin_bottom(15)
+        
+        notebook = Gtk.Notebook()
+        
+        notebook.append_page(self._create_output_tab(), Gtk.Label(label="Output"))
+        notebook.append_page(self._create_replay_tab(), Gtk.Label(label="Replay Buffer"))
+        notebook.append_page(self._create_webcam_tab(), Gtk.Label(label="Webcam"))
+        notebook.append_page(self._create_hotkeys_tab(), Gtk.Label(label="Hotkeys"))
+        notebook.append_page(self._create_advanced_tab(), Gtk.Label(label="Advanced"))
+        
+        content.pack_start(notebook, True, True, 0)
+        
+        self.show_all()
+    
+    def _create_output_tab(self) -> Gtk.Box:
+        """Create output settings tab"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        rec_label = Gtk.Label()
+        rec_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Recording Path</span>')
+        rec_label.set_halign(Gtk.Align.START)
+        box.pack_start(rec_label, False, False, 0)
+        
+        rec_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.rec_path_entry = Gtk.Entry()
+        self.rec_path_entry.set_text(self.settings.get("output.recording_path", str(RECORDINGS_DIR)))
+        rec_box.pack_start(self.rec_path_entry, True, True, 0)
+        
+        rec_browse_btn = Gtk.Button(label="Browse...")
+        rec_browse_btn.connect("clicked", self.on_browse_rec_path)
+        rec_box.pack_start(rec_browse_btn, False, False, 0)
+        
+        box.pack_start(rec_box, False, False, 0)
+        
+        format_label = Gtk.Label()
+        format_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Recording Format</span>')
+        format_label.set_halign(Gtk.Align.START)
+        format_label.set_margin_top(15)
+        box.pack_start(format_label, False, False, 0)
+        
+        self.format_combo = Gtk.ComboBoxText()
+        self.format_combo.append("mkv", "MKV (Recommended)")
+        self.format_combo.append("mp4", "MP4")
+        self.format_combo.append("flv", "FLV")
+        self.format_combo.append("ts", "MPEG-TS")
+        self.format_combo.set_active_id(self.settings.get("output.file_format", "mkv"))
+        self.format_combo.connect("changed", self.on_format_changed)
+        box.pack_start(self.format_combo, False, False, 0)
+        
+        return box
+    
+    def _create_replay_tab(self) -> Gtk.Box:
+        """Create replay buffer settings tab"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        enable_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        enable_label = Gtk.Label(label="Enable Replay Buffer")
+        enable_box.pack_start(enable_label, False, False, 0)
+        
+        self.replay_switch = Gtk.Switch()
+        self.replay_switch.set_active(self.settings.get("replay_buffer_enabled", True))
+        self.replay_switch.connect("state-set", self.on_replay_toggle)
+        enable_box.pack_end(self.replay_switch, False, False, 0)
+        
+        box.pack_start(enable_box, False, False, 0)
+        
+        duration_label = Gtk.Label()
+        duration_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Buffer Duration (seconds)</span>')
+        duration_label.set_halign(Gtk.Align.START)
+        duration_label.set_margin_top(15)
+        box.pack_start(duration_label, False, False, 0)
+        
+        self.duration_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 15, 300, 15)
+        self.duration_slider.set_value(self.settings.get("replay_buffer_duration", 60))
+        self.duration_slider.set_draw_value(True)
+        self.duration_slider.connect("value-changed", self.on_duration_changed)
+        box.pack_start(self.duration_slider, False, False, 0)
+        
+        info_label = Gtk.Label()
+        info_label.set_markup(f'<span foreground="{AEGIS_TEXT_DIM}" size="small">'
+                             f'Longer buffers use more disk space. 60-120 seconds recommended.</span>')
+        info_label.set_halign(Gtk.Align.START)
+        box.pack_start(info_label, False, False, 0)
+        
+        return box
+    
+    def _create_webcam_tab(self) -> Gtk.Box:
+        """Create webcam settings tab"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        device_label = Gtk.Label()
+        device_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Webcam Device</span>')
+        device_label.set_halign(Gtk.Align.START)
+        box.pack_start(device_label, False, False, 0)
+        
+        self.webcam_combo = Gtk.ComboBoxText()
+        self.webcam_manager.refresh_devices()
+        for device in self.webcam_manager.devices:
+            self.webcam_combo.append(device["path"], f"{device['name']} ({device['path']})")
+        
+        current_device = self.settings.get("webcam.device", "/dev/video0")
+        self.webcam_combo.set_active_id(current_device)
+        self.webcam_combo.connect("changed", self.on_webcam_changed)
+        box.pack_start(self.webcam_combo, False, False, 0)
+        
+        res_label = Gtk.Label()
+        res_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Resolution</span>')
+        res_label.set_halign(Gtk.Align.START)
+        res_label.set_margin_top(15)
+        box.pack_start(res_label, False, False, 0)
+        
+        self.webcam_res_combo = Gtk.ComboBoxText()
+        self.webcam_res_combo.append("640x480", "640x480")
+        self.webcam_res_combo.append("1280x720", "1280x720 (HD)")
+        self.webcam_res_combo.append("1920x1080", "1920x1080 (Full HD)")
+        self.webcam_res_combo.set_active_id(self.settings.get("webcam.resolution", "1280x720"))
+        self.webcam_res_combo.connect("changed", self.on_webcam_res_changed)
+        box.pack_start(self.webcam_res_combo, False, False, 0)
+        
+        pos_label = Gtk.Label()
+        pos_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Default Position</span>')
+        pos_label.set_halign(Gtk.Align.START)
+        pos_label.set_margin_top(15)
+        box.pack_start(pos_label, False, False, 0)
+        
+        self.webcam_pos_combo = Gtk.ComboBoxText()
+        self.webcam_pos_combo.append("top-left", "Top Left")
+        self.webcam_pos_combo.append("top-right", "Top Right")
+        self.webcam_pos_combo.append("bottom-left", "Bottom Left")
+        self.webcam_pos_combo.append("bottom-right", "Bottom Right")
+        self.webcam_pos_combo.set_active_id(self.settings.get("webcam.position", "bottom-right"))
+        self.webcam_pos_combo.connect("changed", self.on_webcam_pos_changed)
+        box.pack_start(self.webcam_pos_combo, False, False, 0)
+        
+        refresh_btn = Gtk.Button(label="🔄 Refresh Devices")
+        refresh_btn.connect("clicked", self.on_refresh_webcams)
+        refresh_btn.set_margin_top(20)
+        box.pack_start(refresh_btn, False, False, 0)
+        
+        return box
+    
+    def _create_hotkeys_tab(self) -> Gtk.Box:
+        """Create hotkeys settings tab"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        info_label = Gtk.Label()
+        info_label.set_markup(f'<span foreground="{AEGIS_TEXT_DIM}">'
+                             f'Configure global hotkeys for quick actions</span>')
+        info_label.set_halign(Gtk.Align.START)
+        box.pack_start(info_label, False, False, 0)
+        
+        hotkeys = [
+            ("Start/Stop Stream", "start_stream", "Ctrl+Shift+S"),
+            ("Start/Stop Recording", "start_record", "Ctrl+Shift+R"),
+            ("Save Replay", "save_replay", "Ctrl+Shift+B"),
+            ("Mute Microphone", "mute_mic", "Ctrl+Shift+M"),
+        ]
+        
+        for label_text, key, default in hotkeys:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_margin_top(10)
+            
+            label = Gtk.Label(label=label_text)
+            label.set_width_chars(20)
+            label.set_halign(Gtk.Align.START)
+            row.pack_start(label, False, False, 0)
+            
+            entry = Gtk.Entry()
+            entry.set_text(self.settings.get(f"hotkeys.{key}", default))
+            entry.set_placeholder_text("Press key combination...")
+            row.pack_start(entry, True, True, 0)
+            
+            box.pack_start(row, False, False, 0)
+        
+        note_label = Gtk.Label()
+        note_label.set_markup(f'<span foreground="{AEGIS_WARNING}" size="small">'
+                             f'Note: Global hotkeys require additional system configuration</span>')
+        note_label.set_halign(Gtk.Align.START)
+        note_label.set_margin_top(20)
+        box.pack_start(note_label, False, False, 0)
+        
+        return box
+    
+    def _create_advanced_tab(self) -> Gtk.Box:
+        """Create advanced settings tab"""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        box.set_margin_start(15)
+        box.set_margin_end(15)
+        box.set_margin_top(15)
+        
+        hw_label = Gtk.Label()
+        hw_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Hardware Detection</span>')
+        hw_label.set_halign(Gtk.Align.START)
+        box.pack_start(hw_label, False, False, 0)
+        
+        hw_info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        hw_info_box.set_margin_start(15)
+        
+        for enc in self.hw_detector.available_encoders:
+            enc_name = self.hw_detector.get_encoder_display_name(enc)
+            status_label = Gtk.Label()
+            status_label.set_markup(f'<span foreground="{AEGIS_SUCCESS}">✓</span> {enc_name}')
+            status_label.set_halign(Gtk.Align.START)
+            hw_info_box.pack_start(status_label, False, False, 0)
+        
+        box.pack_start(hw_info_box, False, False, 0)
+        
+        custom_rtmp_label = Gtk.Label()
+        custom_rtmp_label.set_markup(f'<span foreground="{AEGIS_BLUE}" weight="bold">Custom RTMP URL</span>')
+        custom_rtmp_label.set_halign(Gtk.Align.START)
+        custom_rtmp_label.set_margin_top(20)
+        box.pack_start(custom_rtmp_label, False, False, 0)
+        
+        self.custom_rtmp_entry = Gtk.Entry()
+        self.custom_rtmp_entry.set_text(self.settings.get("custom_rtmp_url", ""))
+        self.custom_rtmp_entry.set_placeholder_text("rtmp://your-server.com/live")
+        self.custom_rtmp_entry.connect("changed", self.on_custom_rtmp_changed)
+        box.pack_start(self.custom_rtmp_entry, False, False, 0)
+        
+        reset_btn = Gtk.Button(label="🔄 Reset All Settings")
+        reset_btn.set_margin_top(30)
+        reset_btn.connect("clicked", self.on_reset_settings)
+        box.pack_start(reset_btn, False, False, 0)
+        
+        version_label = Gtk.Label()
+        version_label.set_markup(f'<span foreground="{AEGIS_TEXT_DIM}" size="small">'
+                                f'StreamForge Studio v{VERSION}</span>')
+        version_label.set_halign(Gtk.Align.CENTER)
+        version_label.set_margin_top(20)
+        box.pack_end(version_label, False, False, 0)
+        
+        return box
+    
+    def on_browse_rec_path(self, button):
+        """Browse for recording path"""
+        dialog = Gtk.FileChooserDialog(
+            title="Select Recording Folder",
+            parent=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Select", Gtk.ResponseType.OK)
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            path = dialog.get_filename()
+            self.rec_path_entry.set_text(path)
+            self.settings.set("output.recording_path", path)
+        
+        dialog.destroy()
+    
+    def on_format_changed(self, combo):
+        """Handle format change"""
+        self.settings.set("output.file_format", combo.get_active_id())
+    
+    def on_replay_toggle(self, switch, state):
+        """Handle replay buffer toggle"""
+        self.settings.set("replay_buffer_enabled", state)
+    
+    def on_duration_changed(self, slider):
+        """Handle duration change"""
+        duration = int(slider.get_value())
+        self.settings.set("replay_buffer_duration", duration)
+        self.replay_buffer.set_duration(duration)
+    
+    def on_webcam_changed(self, combo):
+        """Handle webcam selection change"""
+        device = combo.get_active_id()
+        if device:
+            self.settings.set("webcam.device", device)
+    
+    def on_webcam_res_changed(self, combo):
+        """Handle webcam resolution change"""
+        self.settings.set("webcam.resolution", combo.get_active_id())
+    
+    def on_webcam_pos_changed(self, combo):
+        """Handle webcam position change"""
+        self.settings.set("webcam.position", combo.get_active_id())
+    
+    def on_refresh_webcams(self, button):
+        """Refresh webcam device list"""
+        self.webcam_manager.refresh_devices()
+        self.webcam_combo.remove_all()
+        for device in self.webcam_manager.devices:
+            self.webcam_combo.append(device["path"], f"{device['name']} ({device['path']})")
+    
+    def on_custom_rtmp_changed(self, entry):
+        """Handle custom RTMP URL change"""
+        self.settings.set("custom_rtmp_url", entry.get_text())
+    
+    def on_reset_settings(self, button):
+        """Reset all settings to defaults"""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text="Reset Settings?"
+        )
+        dialog.format_secondary_text("This will reset all settings to their default values.")
+        
+        response = dialog.run()
+        dialog.destroy()
+        
+        if response == Gtk.ResponseType.YES:
+            self.settings.settings = SettingsManager.DEFAULT_SETTINGS.copy()
+            self.settings.save()
+
+
+def check_dependencies() -> Tuple[bool, List[str]]:
+    """Check for required system dependencies"""
+    missing = []
+    
+    try:
+        result = subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
+        if result.returncode != 0:
+            missing.append("ffmpeg")
+    except Exception:
+        missing.append("ffmpeg")
+    
+    try:
+        result = subprocess.run(["pw-cli", "info"], capture_output=True, timeout=5)
+    except Exception:
+        pass
+    
+    try:
+        result = subprocess.run(["pactl", "info"], capture_output=True, timeout=5)
+    except Exception:
+        missing.append("pulseaudio or pipewire-pulse")
+    
+    return len(missing) == 0, missing
+
+
+def main():
+    """Main entry point"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    REPLAY_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    deps_ok, missing = check_dependencies()
+    if not deps_ok:
+        print(f"Missing dependencies: {', '.join(missing)}")
+        print("Install with: sudo pacman -S ffmpeg pipewire pipewire-pulse")
+    
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    
+    app = StreamForgeApp()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

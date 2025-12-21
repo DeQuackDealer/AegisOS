@@ -1,0 +1,1886 @@
+#!/usr/bin/env python3
+"""
+Aegis Desktop Style Manager - Complete Desktop Customization for Gamers
+Full GTK3 application with 12 pre-built layouts, theme management,
+icon packs, cursors, fonts, panel configuration, and live preview.
+Works with XFCE (Aegis OS default desktop environment)
+"""
+
+import os
+import sys
+import json
+import subprocess
+import shutil
+import threading
+import time
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any
+
+try:
+    import gi
+    gi.require_version('Gtk', '3.0')
+    gi.require_version('Gdk', '3.0')
+    from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
+except ImportError:
+    print("GTK3 not found. Install with: sudo pacman -S python-gobject gtk3")
+    sys.exit(1)
+
+APP_VERSION = "1.0.0"
+APP_NAME = "Aegis Desktop Style Manager"
+
+CONFIG_DIR = Path.home() / ".config" / "aegis" / "desktop-style"
+THEMES_DIR = Path.home() / ".themes"
+ICONS_DIR = Path.home() / ".icons"
+CURSORS_DIR = Path.home() / ".icons"
+FONTS_DIR = Path.home() / ".fonts"
+EXPORT_DIR = Path.home() / "Documents" / "AegisThemes"
+SYSTEM_THEMES_DIR = Path("/usr/share/themes")
+SYSTEM_ICONS_DIR = Path("/usr/share/icons")
+WALLPAPER_DIR = Path.home() / ".local" / "share" / "aegis" / "wallpapers"
+
+AEGIS_COLORS = {
+    "bg_dark": "#1a1a2e",
+    "bg_medium": "#16213e",
+    "bg_light": "#0f3460",
+    "accent_blue": "#3b82f6",
+    "accent_orange": "#ff6600",
+    "accent_purple": "#8b5cf6",
+    "accent_green": "#22c55e",
+    "accent_red": "#ef4444",
+    "accent_cyan": "#06b6d4",
+    "text_primary": "#f8fafc",
+    "text_secondary": "#94a3b8",
+    "border": "#334155"
+}
+
+DESKTOP_LAYOUTS = {
+    "gaming_dark": {
+        "name": "Gaming Dark",
+        "description": "Dark theme optimized for gaming with blue accents",
+        "gtk_theme": "Arc-Dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Arc-Dark",
+        "panel_position": "bottom",
+        "panel_size": 40,
+        "panel_transparency": 85,
+        "accent_color": "#3b82f6"
+    },
+    "gaming_neon": {
+        "name": "Gaming Neon",
+        "description": "Vibrant neon colors with high contrast",
+        "gtk_theme": "Arc-Dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Bibata-Modern-Ice",
+        "wm_theme": "Arc-Dark",
+        "panel_position": "bottom",
+        "panel_size": 44,
+        "panel_transparency": 75,
+        "accent_color": "#ff6600"
+    },
+    "cyberpunk": {
+        "name": "Cyberpunk",
+        "description": "Futuristic purple and cyan aesthetic",
+        "gtk_theme": "Arc-Dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Bibata-Modern-Classic",
+        "wm_theme": "Arc-Dark",
+        "panel_position": "bottom",
+        "panel_size": 42,
+        "panel_transparency": 70,
+        "accent_color": "#8b5cf6"
+    },
+    "stealth": {
+        "name": "Stealth",
+        "description": "Minimal dark theme with subtle accents",
+        "gtk_theme": "Adwaita-dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Adwaita-dark",
+        "panel_position": "top",
+        "panel_size": 28,
+        "panel_transparency": 95,
+        "accent_color": "#64748b"
+    },
+    "retro_arcade": {
+        "name": "Retro Arcade",
+        "description": "Classic arcade inspired with warm colors",
+        "gtk_theme": "Arc-Darker",
+        "icon_theme": "Papirus",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Arc-Darker",
+        "panel_position": "bottom",
+        "panel_size": 48,
+        "panel_transparency": 90,
+        "accent_color": "#f59e0b"
+    },
+    "windows_10": {
+        "name": "Windows 10 Style",
+        "description": "Familiar Windows 10-like layout",
+        "gtk_theme": "Arc",
+        "icon_theme": "Papirus",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Arc",
+        "panel_position": "bottom",
+        "panel_size": 40,
+        "panel_transparency": 95,
+        "accent_color": "#0078d4"
+    },
+    "macos_style": {
+        "name": "macOS Style",
+        "description": "Clean macOS-inspired design",
+        "gtk_theme": "Arc",
+        "icon_theme": "Papirus",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Arc",
+        "panel_position": "top",
+        "panel_size": 28,
+        "panel_transparency": 80,
+        "accent_color": "#007aff"
+    },
+    "minimal_focus": {
+        "name": "Minimal Focus",
+        "description": "Distraction-free minimal layout",
+        "gtk_theme": "Adwaita-dark",
+        "icon_theme": "Adwaita",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Adwaita-dark",
+        "panel_position": "top",
+        "panel_size": 24,
+        "panel_transparency": 100,
+        "accent_color": "#22c55e"
+    },
+    "stream_mode": {
+        "name": "Stream Mode",
+        "description": "Optimized for streaming with clean visuals",
+        "gtk_theme": "Arc-Dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Bibata-Modern-Ice",
+        "wm_theme": "Arc-Dark",
+        "panel_position": "bottom",
+        "panel_size": 36,
+        "panel_transparency": 90,
+        "accent_color": "#9146ff"
+    },
+    "high_contrast": {
+        "name": "High Contrast",
+        "description": "Maximum visibility and readability",
+        "gtk_theme": "HighContrast",
+        "icon_theme": "HighContrast",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "HighContrast",
+        "panel_position": "bottom",
+        "panel_size": 48,
+        "panel_transparency": 100,
+        "accent_color": "#ffffff"
+    },
+    "rgb_gamer": {
+        "name": "RGB Gamer",
+        "description": "Full RGB experience with dynamic colors",
+        "gtk_theme": "Arc-Dark",
+        "icon_theme": "Papirus-Dark",
+        "cursor_theme": "Bibata-Modern-Classic",
+        "wm_theme": "Arc-Dark",
+        "panel_position": "bottom",
+        "panel_size": 46,
+        "panel_transparency": 65,
+        "accent_color": "#ff0080"
+    },
+    "professional": {
+        "name": "Professional",
+        "description": "Clean professional workspace layout",
+        "gtk_theme": "Arc",
+        "icon_theme": "Papirus",
+        "cursor_theme": "Adwaita",
+        "wm_theme": "Arc",
+        "panel_position": "top",
+        "panel_size": 32,
+        "panel_transparency": 95,
+        "accent_color": "#1e40af"
+    }
+}
+
+ICON_PACKS = [
+    {"id": "papirus", "name": "Papirus", "description": "Modern icon theme with SVG support"},
+    {"id": "papirus-dark", "name": "Papirus Dark", "description": "Dark variant of Papirus"},
+    {"id": "adwaita", "name": "Adwaita", "description": "GNOME default icon theme"},
+    {"id": "breeze", "name": "Breeze", "description": "KDE Plasma icon theme"},
+    {"id": "breeze-dark", "name": "Breeze Dark", "description": "Dark variant of Breeze"},
+    {"id": "numix", "name": "Numix", "description": "Modern flat icon theme"},
+    {"id": "numix-circle", "name": "Numix Circle", "description": "Numix with circular icons"},
+    {"id": "tela", "name": "Tela", "description": "Flat colorful icon theme"},
+    {"id": "fluent", "name": "Fluent", "description": "Windows 11 style icons"},
+    {"id": "candy-icons", "name": "Candy Icons", "description": "Colorful gradient icons"},
+    {"id": "kora", "name": "Kora", "description": "SVG icon theme"},
+    {"id": "qogir", "name": "Qogir", "description": "Flat design icon theme"}
+]
+
+CURSOR_THEMES = [
+    {"id": "adwaita", "name": "Adwaita", "description": "GNOME default cursor"},
+    {"id": "bibata-modern-ice", "name": "Bibata Modern Ice", "description": "Modern white cursor"},
+    {"id": "bibata-modern-classic", "name": "Bibata Modern Classic", "description": "Modern black cursor"},
+    {"id": "bibata-modern-amber", "name": "Bibata Modern Amber", "description": "Modern amber cursor"},
+    {"id": "breeze", "name": "Breeze", "description": "KDE default cursor"},
+    {"id": "breeze-snow", "name": "Breeze Snow", "description": "White KDE cursor"},
+    {"id": "capitaine", "name": "Capitaine", "description": "macOS-style cursor"},
+    {"id": "dmz-white", "name": "DMZ White", "description": "Simple white cursor"},
+    {"id": "dmz-black", "name": "DMZ Black", "description": "Simple black cursor"},
+    {"id": "comix", "name": "Comix", "description": "Comic style cursor"}
+]
+
+FONT_CATEGORIES = {
+    "sans": ["Inter", "Roboto", "Open Sans", "Noto Sans", "Ubuntu", "Cantarell", "Source Sans Pro"],
+    "monospace": ["JetBrains Mono", "Fira Code", "Source Code Pro", "Hack", "Ubuntu Mono", "Cascadia Code"],
+    "gaming": ["Orbitron", "Rajdhani", "Exo 2", "Press Start 2P", "Audiowide", "Russo One"]
+}
+
+
+class ThemeManager:
+    """Manages theme detection, application, and configuration"""
+    
+    def __init__(self):
+        self.config_file = CONFIG_DIR / "settings.json"
+        self.current_settings = self.load_settings()
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        
+    def load_settings(self) -> Dict:
+        if self.config_file.exists():
+            try:
+                with open(self.config_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {
+            "current_layout": "gaming_dark",
+            "gtk_theme": "Arc-Dark",
+            "icon_theme": "Papirus-Dark",
+            "cursor_theme": "Adwaita",
+            "cursor_size": 24,
+            "wm_theme": "Arc-Dark",
+            "font_name": "Inter",
+            "font_size": 10,
+            "monospace_font": "JetBrains Mono",
+            "accent_color": "#3b82f6",
+            "panel_position": "bottom",
+            "panel_size": 40,
+            "panel_transparency": 85,
+            "desktop_icons": True,
+            "show_home": True,
+            "show_trash": True
+        }
+        
+    def save_settings(self):
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(self.config_file, "w") as f:
+            json.dump(self.current_settings, f, indent=2)
+            
+    def get_available_gtk_themes(self) -> List[str]:
+        themes = set()
+        for theme_dir in [THEMES_DIR, SYSTEM_THEMES_DIR]:
+            if theme_dir.exists():
+                for item in theme_dir.iterdir():
+                    if item.is_dir():
+                        gtk3_dir = item / "gtk-3.0"
+                        if gtk3_dir.exists():
+                            themes.add(item.name)
+        return sorted(list(themes))
+        
+    def get_available_icon_themes(self) -> List[str]:
+        themes = set()
+        for icon_dir in [ICONS_DIR, SYSTEM_ICONS_DIR]:
+            if icon_dir.exists():
+                for item in icon_dir.iterdir():
+                    if item.is_dir():
+                        index_file = item / "index.theme"
+                        if index_file.exists():
+                            themes.add(item.name)
+        themes.discard("default")
+        themes.discard("hicolor")
+        return sorted(list(themes))
+        
+    def get_available_cursor_themes(self) -> List[str]:
+        themes = set()
+        for cursor_dir in [CURSORS_DIR, SYSTEM_ICONS_DIR]:
+            if cursor_dir.exists():
+                for item in cursor_dir.iterdir():
+                    if item.is_dir():
+                        cursors_subdir = item / "cursors"
+                        if cursors_subdir.exists():
+                            themes.add(item.name)
+        return sorted(list(themes))
+        
+    def apply_gtk_theme(self, theme_name: str):
+        self.current_settings["gtk_theme"] = theme_name
+        self._run_xfconf("xsettings", "/Net/ThemeName", theme_name)
+        self._run_gsettings("org.gnome.desktop.interface", "gtk-theme", theme_name)
+        self.save_settings()
+        
+    def apply_icon_theme(self, theme_name: str):
+        self.current_settings["icon_theme"] = theme_name
+        self._run_xfconf("xsettings", "/Net/IconThemeName", theme_name)
+        self._run_gsettings("org.gnome.desktop.interface", "icon-theme", theme_name)
+        self.save_settings()
+        
+    def apply_cursor_theme(self, theme_name: str, size: int = 24):
+        self.current_settings["cursor_theme"] = theme_name
+        self.current_settings["cursor_size"] = size
+        self._run_xfconf("xsettings", "/Gtk/CursorThemeName", theme_name)
+        self._run_xfconf("xsettings", "/Gtk/CursorThemeSize", str(size), value_type="int")
+        self._run_gsettings("org.gnome.desktop.interface", "cursor-theme", theme_name)
+        self._run_gsettings("org.gnome.desktop.interface", "cursor-size", str(size))
+        self.save_settings()
+        
+    def apply_wm_theme(self, theme_name: str):
+        self.current_settings["wm_theme"] = theme_name
+        self._run_xfconf("xfwm4", "/general/theme", theme_name)
+        self.save_settings()
+        
+    def apply_font(self, font_name: str, font_size: int = 10):
+        self.current_settings["font_name"] = font_name
+        self.current_settings["font_size"] = font_size
+        font_string = f"{font_name} {font_size}"
+        self._run_xfconf("xsettings", "/Gtk/FontName", font_string)
+        self._run_gsettings("org.gnome.desktop.interface", "font-name", font_string)
+        self.save_settings()
+        
+    def apply_monospace_font(self, font_name: str):
+        self.current_settings["monospace_font"] = font_name
+        self._run_gsettings("org.gnome.desktop.interface", "monospace-font-name", f"{font_name} 10")
+        self.save_settings()
+        
+    def apply_panel_settings(self, position: str, size: int, transparency: int):
+        self.current_settings["panel_position"] = position
+        self.current_settings["panel_size"] = size
+        self.current_settings["panel_transparency"] = transparency
+        
+        pos_code = "p=8;x=0;y=0" if position == "bottom" else "p=2;x=0;y=0"
+        self._run_xfconf("xfce4-panel", "/panels/panel-1/position", pos_code)
+        self._run_xfconf("xfce4-panel", "/panels/panel-1/size", str(size), value_type="int")
+        self._run_xfconf("xfce4-panel", "/panels/panel-1/background-alpha", str(transparency), value_type="int")
+        
+        subprocess.run(["xfce4-panel", "-r"], capture_output=True, timeout=5)
+        self.save_settings()
+        
+    def apply_desktop_icons(self, show_icons: bool, show_home: bool, show_trash: bool):
+        self.current_settings["desktop_icons"] = show_icons
+        self.current_settings["show_home"] = show_home
+        self.current_settings["show_trash"] = show_trash
+        
+        self._run_xfconf("xfce4-desktop", "/desktop-icons/style", "2" if show_icons else "0", value_type="int")
+        self._run_xfconf("xfce4-desktop", "/desktop-icons/file-icons/show-home", str(show_home).lower(), value_type="bool")
+        self._run_xfconf("xfce4-desktop", "/desktop-icons/file-icons/show-trash", str(show_trash).lower(), value_type="bool")
+        self.save_settings()
+        
+    def apply_layout(self, layout_id: str):
+        if layout_id not in DESKTOP_LAYOUTS:
+            return False
+            
+        layout = DESKTOP_LAYOUTS[layout_id]
+        self.current_settings["current_layout"] = layout_id
+        
+        self.apply_gtk_theme(layout["gtk_theme"])
+        self.apply_icon_theme(layout["icon_theme"])
+        self.apply_cursor_theme(layout["cursor_theme"])
+        self.apply_wm_theme(layout["wm_theme"])
+        self.apply_panel_settings(
+            layout["panel_position"],
+            layout["panel_size"],
+            layout["panel_transparency"]
+        )
+        self.current_settings["accent_color"] = layout["accent_color"]
+        self.save_settings()
+        return True
+        
+    def export_theme(self, filepath: str, theme_name: str = "Custom Theme"):
+        export_data = {
+            "name": theme_name,
+            "version": APP_VERSION,
+            "created": datetime.now().isoformat(),
+            "settings": self.current_settings.copy()
+        }
+        with open(filepath, "w") as f:
+            json.dump(export_data, f, indent=2)
+            
+    def import_theme(self, filepath: str) -> bool:
+        try:
+            with open(filepath) as f:
+                data = json.load(f)
+            if "settings" in data:
+                self.current_settings.update(data["settings"])
+                self.save_settings()
+                self._apply_all_current_settings()
+                return True
+        except Exception:
+            pass
+        return False
+        
+    def _apply_all_current_settings(self):
+        s = self.current_settings
+        self.apply_gtk_theme(s.get("gtk_theme", "Arc-Dark"))
+        self.apply_icon_theme(s.get("icon_theme", "Papirus-Dark"))
+        self.apply_cursor_theme(s.get("cursor_theme", "Adwaita"), s.get("cursor_size", 24))
+        self.apply_wm_theme(s.get("wm_theme", "Arc-Dark"))
+        self.apply_font(s.get("font_name", "Inter"), s.get("font_size", 10))
+        self.apply_panel_settings(
+            s.get("panel_position", "bottom"),
+            s.get("panel_size", 40),
+            s.get("panel_transparency", 85)
+        )
+        
+    def _run_xfconf(self, channel: str, prop: str, value: str, value_type: str = "string"):
+        try:
+            cmd = ["xfconf-query", "-c", channel, "-p", prop, "-s", value]
+            if value_type != "string":
+                cmd.extend(["-t", value_type])
+            subprocess.run(cmd, capture_output=True, timeout=5)
+        except Exception:
+            pass
+            
+    def _run_gsettings(self, schema: str, key: str, value: str):
+        try:
+            subprocess.run(["gsettings", "set", schema, key, value], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+class PreviewPanel(Gtk.Box):
+    """Live preview panel showing current theme settings"""
+    
+    def __init__(self, theme_manager: ThemeManager):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.theme_manager = theme_manager
+        self.set_margin_start(15)
+        self.set_margin_end(15)
+        self.set_margin_top(15)
+        self.set_margin_bottom(15)
+        
+        self._build_preview()
+        
+    def _build_preview(self):
+        title = Gtk.Label()
+        title.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Live Preview</span>')
+        title.set_halign(Gtk.Align.START)
+        self.pack_start(title, False, False, 0)
+        
+        preview_frame = Gtk.Frame()
+        preview_frame.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
+        
+        self.preview_area = Gtk.DrawingArea()
+        self.preview_area.set_size_request(280, 180)
+        self.preview_area.connect("draw", self._on_draw_preview)
+        preview_frame.add(self.preview_area)
+        self.pack_start(preview_frame, False, False, 10)
+        
+        info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        
+        self.layout_label = Gtk.Label()
+        self.layout_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(self.layout_label, False, False, 0)
+        
+        self.theme_label = Gtk.Label()
+        self.theme_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(self.theme_label, False, False, 0)
+        
+        self.icon_label = Gtk.Label()
+        self.icon_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(self.icon_label, False, False, 0)
+        
+        self.font_label = Gtk.Label()
+        self.font_label.set_halign(Gtk.Align.START)
+        info_box.pack_start(self.font_label, False, False, 0)
+        
+        self.pack_start(info_box, False, False, 0)
+        self.update_preview()
+        
+    def _on_draw_preview(self, widget, cr):
+        settings = self.theme_manager.current_settings
+        
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgb(0.1, 0.1, 0.18)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        accent = settings.get("accent_color", "#3b82f6")
+        r, g, b = self._hex_to_rgb(accent)
+        
+        panel_pos = settings.get("panel_position", "bottom")
+        panel_size = settings.get("panel_size", 40)
+        transparency = settings.get("panel_transparency", 85) / 100.0
+        
+        scaled_panel_size = int(panel_size * 0.4)
+        
+        cr.set_source_rgba(0.1, 0.15, 0.25, transparency)
+        if panel_pos == "bottom":
+            cr.rectangle(0, height - scaled_panel_size, width, scaled_panel_size)
+        else:
+            cr.rectangle(0, 0, width, scaled_panel_size)
+        cr.fill()
+        
+        cr.set_source_rgba(r, g, b, 0.8)
+        if panel_pos == "bottom":
+            cr.rectangle(10, height - scaled_panel_size + 4, 20, scaled_panel_size - 8)
+        else:
+            cr.rectangle(10, 4, 20, scaled_panel_size - 8)
+        cr.fill()
+        
+        cr.set_source_rgba(0.2, 0.25, 0.35, 0.9)
+        cr.rectangle(20, 30, 100, 80)
+        cr.fill()
+        cr.set_source_rgba(r, g, b, 1.0)
+        cr.rectangle(20, 30, 100, 3)
+        cr.fill()
+        
+        cr.set_source_rgba(0.15, 0.2, 0.3, 0.9)
+        cr.rectangle(140, 50, 120, 100)
+        cr.fill()
+        cr.set_source_rgba(r, g, b, 1.0)
+        cr.rectangle(140, 50, 120, 3)
+        cr.fill()
+        
+        cr.set_source_rgb(0.9, 0.9, 0.9)
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(8)
+        cr.move_to(30, 60)
+        cr.show_text("Window 1")
+        cr.move_to(160, 80)
+        cr.show_text("Window 2")
+        
+        return False
+        
+    def _hex_to_rgb(self, hex_color: str) -> Tuple[float, float, float]:
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        
+    def update_preview(self):
+        settings = self.theme_manager.current_settings
+        layout_id = settings.get("current_layout", "gaming_dark")
+        layout_name = DESKTOP_LAYOUTS.get(layout_id, {}).get("name", "Custom")
+        
+        self.layout_label.set_markup(f'<span foreground="#94a3b8">Layout:</span> <span foreground="#f8fafc">{layout_name}</span>')
+        self.theme_label.set_markup(f'<span foreground="#94a3b8">Theme:</span> <span foreground="#f8fafc">{settings.get("gtk_theme", "Arc-Dark")}</span>')
+        self.icon_label.set_markup(f'<span foreground="#94a3b8">Icons:</span> <span foreground="#f8fafc">{settings.get("icon_theme", "Papirus-Dark")}</span>')
+        self.font_label.set_markup(f'<span foreground="#94a3b8">Font:</span> <span foreground="#f8fafc">{settings.get("font_name", "Inter")} {settings.get("font_size", 10)}</span>')
+        
+        self.preview_area.queue_draw()
+
+
+class LayoutsPage(Gtk.Box):
+    """Page for selecting pre-built desktop layouts"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Desktop Layouts</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        desc = Gtk.Label()
+        desc.set_markup('<span foreground="#94a3b8">Choose from 12 pre-configured desktop styles optimized for gaming</span>')
+        desc.set_halign(Gtk.Align.START)
+        self.pack_start(desc, False, False, 0)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_vexpand(True)
+        
+        grid = Gtk.FlowBox()
+        grid.set_valign(Gtk.Align.START)
+        grid.set_max_children_per_line(3)
+        grid.set_min_children_per_line(2)
+        grid.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        grid.set_homogeneous(True)
+        grid.set_row_spacing(15)
+        grid.set_column_spacing(15)
+        
+        current_layout = self.theme_manager.current_settings.get("current_layout", "gaming_dark")
+        
+        for layout_id, layout in DESKTOP_LAYOUTS.items():
+            card = self._create_layout_card(layout_id, layout, layout_id == current_layout)
+            grid.add(card)
+            
+        grid.connect("child-activated", self._on_layout_selected)
+        
+        scroll.add(grid)
+        self.pack_start(scroll, True, True, 0)
+        
+    def _create_layout_card(self, layout_id: str, layout: Dict, is_active: bool) -> Gtk.Box:
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card.set_size_request(180, 140)
+        card.layout_id = layout_id
+        
+        if is_active:
+            card.get_style_context().add_class("layout-card-active")
+        else:
+            card.get_style_context().add_class("layout-card")
+        
+        preview = Gtk.DrawingArea()
+        preview.set_size_request(160, 80)
+        preview.connect("draw", self._draw_layout_preview, layout)
+        card.pack_start(preview, False, False, 5)
+        
+        name_label = Gtk.Label()
+        name_label.set_markup(f'<span weight="bold" foreground="#f8fafc">{layout["name"]}</span>')
+        card.pack_start(name_label, False, False, 0)
+        
+        desc_label = Gtk.Label()
+        desc_label.set_markup(f'<span font="9" foreground="#94a3b8">{layout["description"][:35]}...</span>')
+        desc_label.set_line_wrap(True)
+        desc_label.set_max_width_chars(25)
+        card.pack_start(desc_label, False, False, 0)
+        
+        return card
+        
+    def _draw_layout_preview(self, widget, cr, layout):
+        width = widget.get_allocated_width()
+        height = widget.get_allocated_height()
+        
+        cr.set_source_rgb(0.1, 0.1, 0.15)
+        cr.rectangle(0, 0, width, height)
+        cr.fill()
+        
+        accent = layout.get("accent_color", "#3b82f6")
+        r, g, b = self._hex_to_rgb(accent)
+        
+        panel_pos = layout.get("panel_position", "bottom")
+        cr.set_source_rgba(0.15, 0.2, 0.3, 0.9)
+        if panel_pos == "bottom":
+            cr.rectangle(0, height - 12, width, 12)
+        else:
+            cr.rectangle(0, 0, width, 12)
+        cr.fill()
+        
+        cr.set_source_rgba(r, g, b, 0.9)
+        if panel_pos == "bottom":
+            cr.rectangle(5, height - 10, 15, 8)
+        else:
+            cr.rectangle(5, 2, 15, 8)
+        cr.fill()
+        
+        cr.set_source_rgba(0.2, 0.25, 0.35, 0.8)
+        cr.rectangle(10, 20, 60, 40)
+        cr.fill()
+        cr.set_source_rgba(r, g, b, 1.0)
+        cr.rectangle(10, 20, 60, 2)
+        cr.fill()
+        
+        return False
+        
+    def _hex_to_rgb(self, hex_color: str) -> Tuple[float, float, float]:
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+        
+    def _on_layout_selected(self, flowbox, child):
+        card = child.get_child()
+        layout_id = getattr(card, 'layout_id', None)
+        if layout_id:
+            self.theme_manager.apply_layout(layout_id)
+            self.preview_panel.update_preview()
+            self._show_notification(f"Applied layout: {DESKTOP_LAYOUTS[layout_id]['name']}")
+            
+    def _show_notification(self, message: str):
+        try:
+            subprocess.run(["notify-send", "Aegis Desktop Style Manager", message], timeout=5)
+        except Exception:
+            pass
+
+
+class ThemesPage(Gtk.Box):
+    """Page for GTK theme and window decoration management"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">GTK & Window Themes</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        gtk_section = self._create_section("GTK Application Theme")
+        gtk_combo = self._create_theme_combo(
+            self.theme_manager.get_available_gtk_themes(),
+            self.theme_manager.current_settings.get("gtk_theme", "Arc-Dark"),
+            self._on_gtk_theme_changed
+        )
+        gtk_section.pack_start(gtk_combo, False, False, 0)
+        self.pack_start(gtk_section, False, False, 0)
+        
+        wm_section = self._create_section("Window Decoration Theme")
+        wm_combo = self._create_theme_combo(
+            self.theme_manager.get_available_gtk_themes(),
+            self.theme_manager.current_settings.get("wm_theme", "Arc-Dark"),
+            self._on_wm_theme_changed
+        )
+        wm_section.pack_start(wm_combo, False, False, 0)
+        self.pack_start(wm_section, False, False, 0)
+        
+        accent_section = self._create_section("Accent Color")
+        accent_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        current_accent = self.theme_manager.current_settings.get("accent_color", "#3b82f6")
+        rgba = Gdk.RGBA()
+        rgba.parse(current_accent)
+        
+        self.color_button = Gtk.ColorButton()
+        self.color_button.set_rgba(rgba)
+        self.color_button.connect("color-set", self._on_accent_color_changed)
+        accent_box.pack_start(self.color_button, False, False, 0)
+        
+        presets_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        preset_colors = ["#3b82f6", "#ff6600", "#22c55e", "#8b5cf6", "#ef4444", "#f59e0b"]
+        for color in preset_colors:
+            btn = Gtk.Button()
+            btn.set_size_request(30, 30)
+            btn.color = color
+            btn.connect("clicked", self._on_preset_color_clicked)
+            
+            css_provider = Gtk.CssProvider()
+            css_provider.load_from_data(f"button {{ background: {color}; border-radius: 4px; }}".encode())
+            btn.get_style_context().add_provider(css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+            presets_box.pack_start(btn, False, False, 0)
+            
+        accent_box.pack_start(presets_box, False, False, 10)
+        accent_section.pack_start(accent_box, False, False, 0)
+        self.pack_start(accent_section, False, False, 0)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _create_theme_combo(self, themes: List[str], current: str, callback) -> Gtk.ComboBoxText:
+        combo = Gtk.ComboBoxText()
+        active_idx = 0
+        for i, theme in enumerate(themes):
+            combo.append_text(theme)
+            if theme == current:
+                active_idx = i
+        combo.set_active(active_idx)
+        combo.connect("changed", callback)
+        return combo
+        
+    def _on_gtk_theme_changed(self, combo):
+        theme = combo.get_active_text()
+        if theme:
+            self.theme_manager.apply_gtk_theme(theme)
+            self.preview_panel.update_preview()
+            
+    def _on_wm_theme_changed(self, combo):
+        theme = combo.get_active_text()
+        if theme:
+            self.theme_manager.apply_wm_theme(theme)
+            self.preview_panel.update_preview()
+            
+    def _on_accent_color_changed(self, button):
+        rgba = button.get_rgba()
+        hex_color = "#{:02x}{:02x}{:02x}".format(
+            int(rgba.red * 255),
+            int(rgba.green * 255),
+            int(rgba.blue * 255)
+        )
+        self.theme_manager.current_settings["accent_color"] = hex_color
+        self.theme_manager.save_settings()
+        self.preview_panel.update_preview()
+        
+    def _on_preset_color_clicked(self, button):
+        color = button.color
+        rgba = Gdk.RGBA()
+        rgba.parse(color)
+        self.color_button.set_rgba(rgba)
+        self.theme_manager.current_settings["accent_color"] = color
+        self.theme_manager.save_settings()
+        self.preview_panel.update_preview()
+
+
+class IconsPage(Gtk.Box):
+    """Page for icon pack and cursor theme selection"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Icons & Cursors</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        icons_section = self._create_section("Icon Theme")
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(200)
+        
+        icons_list = Gtk.ListBox()
+        icons_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
+        available_icons = self.theme_manager.get_available_icon_themes()
+        current_icon = self.theme_manager.current_settings.get("icon_theme", "Papirus-Dark")
+        
+        for icon_theme in available_icons[:15]:
+            row = self._create_icon_row(icon_theme, icon_theme == current_icon)
+            icons_list.add(row)
+            
+        icons_list.connect("row-activated", self._on_icon_selected)
+        scroll.add(icons_list)
+        icons_section.pack_start(scroll, True, True, 0)
+        self.pack_start(icons_section, True, True, 0)
+        
+        cursor_section = self._create_section("Cursor Theme")
+        
+        cursor_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        cursor_combo = Gtk.ComboBoxText()
+        available_cursors = self.theme_manager.get_available_cursor_themes()
+        current_cursor = self.theme_manager.current_settings.get("cursor_theme", "Adwaita")
+        
+        active_idx = 0
+        for i, cursor in enumerate(available_cursors):
+            cursor_combo.append_text(cursor)
+            if cursor == current_cursor:
+                active_idx = i
+        cursor_combo.set_active(active_idx)
+        cursor_combo.connect("changed", self._on_cursor_changed)
+        cursor_box.pack_start(cursor_combo, True, True, 0)
+        
+        size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        size_label = Gtk.Label(label="Size:")
+        size_box.pack_start(size_label, False, False, 0)
+        
+        size_spin = Gtk.SpinButton.new_with_range(16, 48, 4)
+        size_spin.set_value(self.theme_manager.current_settings.get("cursor_size", 24))
+        size_spin.connect("value-changed", self._on_cursor_size_changed)
+        self.cursor_combo = cursor_combo
+        self.size_spin = size_spin
+        size_box.pack_start(size_spin, False, False, 0)
+        
+        cursor_box.pack_start(size_box, False, False, 0)
+        cursor_section.pack_start(cursor_box, False, False, 0)
+        self.pack_start(cursor_section, False, False, 0)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _create_icon_row(self, theme_name: str, is_active: bool) -> Gtk.ListBoxRow:
+        row = Gtk.ListBoxRow()
+        row.theme_name = theme_name
+        
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        
+        icon_preview = Gtk.Image.new_from_icon_name("folder", Gtk.IconSize.LARGE_TOOLBAR)
+        box.pack_start(icon_preview, False, False, 0)
+        
+        label = Gtk.Label()
+        if is_active:
+            label.set_markup(f'<span foreground="#3b82f6" weight="bold">{theme_name}</span> <span foreground="#22c55e">✓</span>')
+        else:
+            label.set_markup(f'<span foreground="#f8fafc">{theme_name}</span>')
+        label.set_halign(Gtk.Align.START)
+        box.pack_start(label, True, True, 0)
+        
+        row.add(box)
+        return row
+        
+    def _on_icon_selected(self, listbox, row):
+        theme_name = row.theme_name
+        self.theme_manager.apply_icon_theme(theme_name)
+        self.preview_panel.update_preview()
+        
+    def _on_cursor_changed(self, combo):
+        cursor = combo.get_active_text()
+        if cursor:
+            size = int(self.size_spin.get_value())
+            self.theme_manager.apply_cursor_theme(cursor, size)
+            self.preview_panel.update_preview()
+            
+    def _on_cursor_size_changed(self, spin):
+        cursor = self.cursor_combo.get_active_text()
+        if cursor:
+            size = int(spin.get_value())
+            self.theme_manager.apply_cursor_theme(cursor, size)
+
+
+class FontsPage(Gtk.Box):
+    """Page for font customization"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Font Settings</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        ui_section = self._create_section("Interface Font")
+        
+        font_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        self.font_button = Gtk.FontButton()
+        current_font = self.theme_manager.current_settings.get("font_name", "Inter")
+        current_size = self.theme_manager.current_settings.get("font_size", 10)
+        self.font_button.set_font(f"{current_font} {current_size}")
+        self.font_button.connect("font-set", self._on_font_changed)
+        font_box.pack_start(self.font_button, True, True, 0)
+        
+        ui_section.pack_start(font_box, False, False, 0)
+        self.pack_start(ui_section, False, False, 0)
+        
+        mono_section = self._create_section("Monospace Font (Terminal, Code)")
+        
+        mono_combo = Gtk.ComboBoxText()
+        mono_fonts = ["JetBrains Mono", "Fira Code", "Source Code Pro", "Hack", 
+                      "Ubuntu Mono", "Cascadia Code", "Consolas", "Monaco"]
+        current_mono = self.theme_manager.current_settings.get("monospace_font", "JetBrains Mono")
+        
+        active_idx = 0
+        for i, font in enumerate(mono_fonts):
+            mono_combo.append_text(font)
+            if font == current_mono:
+                active_idx = i
+        mono_combo.set_active(active_idx)
+        mono_combo.connect("changed", self._on_mono_font_changed)
+        mono_section.pack_start(mono_combo, False, False, 0)
+        self.pack_start(mono_section, False, False, 0)
+        
+        preview_section = self._create_section("Font Preview")
+        
+        self.preview_label = Gtk.Label()
+        self.preview_label.set_markup(
+            '<span font="12">The quick brown fox jumps over the lazy dog</span>\n'
+            '<span font="10" foreground="#94a3b8">ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789</span>'
+        )
+        self.preview_label.set_halign(Gtk.Align.START)
+        preview_section.pack_start(self.preview_label, False, False, 0)
+        self.pack_start(preview_section, False, False, 0)
+        
+        presets_section = self._create_section("Gaming Font Presets")
+        
+        presets_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        gaming_fonts = [
+            ("Orbitron", "Sci-Fi"),
+            ("Rajdhani", "Tech"),
+            ("Exo 2", "Modern"),
+            ("Russo One", "Bold")
+        ]
+        
+        for font_name, label in gaming_fonts:
+            btn = Gtk.Button(label=label)
+            btn.font_name = font_name
+            btn.connect("clicked", self._on_preset_font_clicked)
+            presets_box.pack_start(btn, False, False, 0)
+            
+        presets_section.pack_start(presets_box, False, False, 0)
+        self.pack_start(presets_section, False, False, 0)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _on_font_changed(self, button):
+        font_desc = button.get_font()
+        pango_desc = Pango.FontDescription.from_string(font_desc)
+        font_name = pango_desc.get_family()
+        font_size = pango_desc.get_size() // Pango.SCALE
+        
+        self.theme_manager.apply_font(font_name, font_size)
+        self.preview_panel.update_preview()
+        self._update_preview()
+        
+    def _on_mono_font_changed(self, combo):
+        font = combo.get_active_text()
+        if font:
+            self.theme_manager.apply_monospace_font(font)
+            
+    def _on_preset_font_clicked(self, button):
+        font_name = button.font_name
+        self.theme_manager.apply_font(font_name, 10)
+        self.font_button.set_font(f"{font_name} 10")
+        self.preview_panel.update_preview()
+        self._update_preview()
+        
+    def _update_preview(self):
+        font_name = self.theme_manager.current_settings.get("font_name", "Inter")
+        self.preview_label.set_markup(
+            f'<span font_family="{font_name}" size="large">The quick brown fox jumps over the lazy dog</span>\n'
+            f'<span font_family="{font_name}" foreground="#94a3b8">ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789</span>'
+        )
+
+
+class PanelPage(Gtk.Box):
+    """Page for panel/taskbar configuration"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Panel Configuration</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        pos_section = self._create_section("Panel Position")
+        
+        pos_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        current_pos = self.theme_manager.current_settings.get("panel_position", "bottom")
+        
+        self.bottom_radio = Gtk.RadioButton.new_with_label(None, "Bottom")
+        self.bottom_radio.set_active(current_pos == "bottom")
+        self.bottom_radio.connect("toggled", self._on_position_changed, "bottom")
+        pos_box.pack_start(self.bottom_radio, False, False, 0)
+        
+        self.top_radio = Gtk.RadioButton.new_with_label_from_widget(self.bottom_radio, "Top")
+        self.top_radio.set_active(current_pos == "top")
+        self.top_radio.connect("toggled", self._on_position_changed, "top")
+        pos_box.pack_start(self.top_radio, False, False, 0)
+        
+        pos_section.pack_start(pos_box, False, False, 0)
+        self.pack_start(pos_section, False, False, 0)
+        
+        size_section = self._create_section("Panel Size")
+        
+        size_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        current_size = self.theme_manager.current_settings.get("panel_size", 40)
+        
+        self.size_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 24, 64, 2)
+        self.size_scale.set_value(current_size)
+        self.size_scale.set_size_request(300, -1)
+        self.size_scale.connect("value-changed", self._on_size_changed)
+        size_box.pack_start(self.size_scale, True, True, 0)
+        
+        self.size_label = Gtk.Label(label=f"{current_size}px")
+        size_box.pack_start(self.size_label, False, False, 0)
+        
+        size_section.pack_start(size_box, False, False, 0)
+        self.pack_start(size_section, False, False, 0)
+        
+        trans_section = self._create_section("Panel Transparency")
+        
+        trans_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=15)
+        
+        current_trans = self.theme_manager.current_settings.get("panel_transparency", 85)
+        
+        self.trans_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
+        self.trans_scale.set_value(current_trans)
+        self.trans_scale.set_size_request(300, -1)
+        self.trans_scale.connect("value-changed", self._on_transparency_changed)
+        trans_box.pack_start(self.trans_scale, True, True, 0)
+        
+        self.trans_label = Gtk.Label(label=f"{current_trans}%")
+        trans_box.pack_start(self.trans_label, False, False, 0)
+        
+        trans_section.pack_start(trans_box, False, False, 0)
+        self.pack_start(trans_section, False, False, 0)
+        
+        icons_section = self._create_section("Desktop Icons")
+        
+        self.show_icons = Gtk.CheckButton(label="Show desktop icons")
+        self.show_icons.set_active(self.theme_manager.current_settings.get("desktop_icons", True))
+        self.show_icons.connect("toggled", self._on_desktop_icons_changed)
+        icons_section.pack_start(self.show_icons, False, False, 0)
+        
+        self.show_home = Gtk.CheckButton(label="Show Home folder")
+        self.show_home.set_active(self.theme_manager.current_settings.get("show_home", True))
+        self.show_home.connect("toggled", self._on_desktop_icons_changed)
+        icons_section.pack_start(self.show_home, False, False, 0)
+        
+        self.show_trash = Gtk.CheckButton(label="Show Trash")
+        self.show_trash.set_active(self.theme_manager.current_settings.get("show_trash", True))
+        self.show_trash.connect("toggled", self._on_desktop_icons_changed)
+        icons_section.pack_start(self.show_trash, False, False, 0)
+        
+        self.pack_start(icons_section, False, False, 0)
+        
+        apply_btn = Gtk.Button(label="Apply Panel Settings")
+        apply_btn.get_style_context().add_class("suggested-action")
+        apply_btn.connect("clicked", self._on_apply_clicked)
+        self.pack_start(apply_btn, False, False, 20)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _on_position_changed(self, button, position):
+        if button.get_active():
+            self.theme_manager.current_settings["panel_position"] = position
+            self.preview_panel.update_preview()
+            
+    def _on_size_changed(self, scale):
+        size = int(scale.get_value())
+        self.size_label.set_text(f"{size}px")
+        self.theme_manager.current_settings["panel_size"] = size
+        self.preview_panel.update_preview()
+        
+    def _on_transparency_changed(self, scale):
+        trans = int(scale.get_value())
+        self.trans_label.set_text(f"{trans}%")
+        self.theme_manager.current_settings["panel_transparency"] = trans
+        self.preview_panel.update_preview()
+        
+    def _on_desktop_icons_changed(self, button):
+        pass
+        
+    def _on_apply_clicked(self, button):
+        position = "bottom" if self.bottom_radio.get_active() else "top"
+        size = int(self.size_scale.get_value())
+        transparency = int(self.trans_scale.get_value())
+        
+        self.theme_manager.apply_panel_settings(position, size, transparency)
+        self.theme_manager.apply_desktop_icons(
+            self.show_icons.get_active(),
+            self.show_home.get_active(),
+            self.show_trash.get_active()
+        )
+        self.preview_panel.update_preview()
+
+
+class ImportExportPage(Gtk.Box):
+    """Page for importing and exporting themes"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Import & Export</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        export_section = self._create_section("Export Current Theme")
+        
+        export_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        self.theme_name_entry = Gtk.Entry()
+        self.theme_name_entry.set_placeholder_text("Theme name...")
+        self.theme_name_entry.set_text("My Custom Theme")
+        export_box.pack_start(self.theme_name_entry, True, True, 0)
+        
+        export_btn = Gtk.Button(label="Export Theme")
+        export_btn.connect("clicked", self._on_export_clicked)
+        export_box.pack_start(export_btn, False, False, 0)
+        
+        export_section.pack_start(export_box, False, False, 0)
+        self.pack_start(export_section, False, False, 0)
+        
+        import_section = self._create_section("Import Theme")
+        
+        import_btn = Gtk.Button(label="Import Theme File...")
+        import_btn.connect("clicked", self._on_import_clicked)
+        import_section.pack_start(import_btn, False, False, 0)
+        
+        self.pack_start(import_section, False, False, 0)
+        
+        saved_section = self._create_section("Saved Themes")
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_min_content_height(200)
+        
+        self.saved_list = Gtk.ListBox()
+        self.saved_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._refresh_saved_themes()
+        
+        scroll.add(self.saved_list)
+        saved_section.pack_start(scroll, True, True, 0)
+        
+        self.pack_start(saved_section, True, True, 0)
+        
+        actions_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        load_btn = Gtk.Button(label="Load Selected")
+        load_btn.connect("clicked", self._on_load_clicked)
+        actions_box.pack_start(load_btn, False, False, 0)
+        
+        delete_btn = Gtk.Button(label="Delete Selected")
+        delete_btn.get_style_context().add_class("destructive-action")
+        delete_btn.connect("clicked", self._on_delete_clicked)
+        actions_box.pack_start(delete_btn, False, False, 0)
+        
+        refresh_btn = Gtk.Button(label="Refresh List")
+        refresh_btn.connect("clicked", lambda b: self._refresh_saved_themes())
+        actions_box.pack_end(refresh_btn, False, False, 0)
+        
+        self.pack_start(actions_box, False, False, 0)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _refresh_saved_themes(self):
+        for child in self.saved_list.get_children():
+            self.saved_list.remove(child)
+            
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        
+        for theme_file in EXPORT_DIR.glob("*.json"):
+            try:
+                with open(theme_file) as f:
+                    data = json.load(f)
+                    
+                row = Gtk.ListBoxRow()
+                row.theme_file = theme_file
+                
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                box.set_margin_start(10)
+                box.set_margin_end(10)
+                box.set_margin_top(8)
+                box.set_margin_bottom(8)
+                
+                name_label = Gtk.Label()
+                name_label.set_markup(f'<span foreground="#f8fafc">{data.get("name", "Unknown")}</span>')
+                name_label.set_halign(Gtk.Align.START)
+                box.pack_start(name_label, True, True, 0)
+                
+                date_label = Gtk.Label()
+                created = data.get("created", "")[:10]
+                date_label.set_markup(f'<span foreground="#94a3b8" font="9">{created}</span>')
+                box.pack_end(date_label, False, False, 0)
+                
+                row.add(box)
+                self.saved_list.add(row)
+            except Exception:
+                pass
+                
+        self.saved_list.show_all()
+        
+    def _on_export_clicked(self, button):
+        theme_name = self.theme_name_entry.get_text().strip()
+        if not theme_name:
+            theme_name = "Exported Theme"
+            
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        
+        safe_name = "".join(c for c in theme_name if c.isalnum() or c in " -_").strip()
+        filepath = EXPORT_DIR / f"{safe_name}.json"
+        
+        self.theme_manager.export_theme(str(filepath), theme_name)
+        self._refresh_saved_themes()
+        self._show_notification(f"Theme exported: {theme_name}")
+        
+    def _on_import_clicked(self, button):
+        dialog = Gtk.FileChooserDialog(
+            title="Import Theme",
+            parent=self.get_toplevel(),
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        
+        filter_json = Gtk.FileFilter()
+        filter_json.set_name("Theme files (*.json)")
+        filter_json.add_pattern("*.json")
+        dialog.add_filter(filter_json)
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            if self.theme_manager.import_theme(filepath):
+                self.preview_panel.update_preview()
+                self._show_notification("Theme imported successfully!")
+            else:
+                self._show_notification("Failed to import theme")
+                
+        dialog.destroy()
+        
+    def _on_load_clicked(self, button):
+        row = self.saved_list.get_selected_row()
+        if row and hasattr(row, 'theme_file'):
+            if self.theme_manager.import_theme(str(row.theme_file)):
+                self.preview_panel.update_preview()
+                self._show_notification("Theme loaded!")
+                
+    def _on_delete_clicked(self, button):
+        row = self.saved_list.get_selected_row()
+        if row and hasattr(row, 'theme_file'):
+            try:
+                row.theme_file.unlink()
+                self._refresh_saved_themes()
+                self._show_notification("Theme deleted")
+            except Exception:
+                pass
+                
+    def _show_notification(self, message: str):
+        try:
+            subprocess.run(["notify-send", APP_NAME, message], timeout=5)
+        except Exception:
+            pass
+
+
+class WallpaperPage(Gtk.Box):
+    """Page for wallpaper integration"""
+    
+    def __init__(self, theme_manager: ThemeManager, preview_panel: PreviewPanel):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=15)
+        self.theme_manager = theme_manager
+        self.preview_panel = preview_panel
+        self.set_margin_start(20)
+        self.set_margin_end(20)
+        self.set_margin_top(20)
+        
+        self._build_ui()
+        
+    def _build_ui(self):
+        header = Gtk.Label()
+        header.set_markup('<span font="14" weight="bold" foreground="#3b82f6">Wallpaper</span>')
+        header.set_halign(Gtk.Align.START)
+        self.pack_start(header, False, False, 0)
+        
+        current_section = self._create_section("Current Wallpaper")
+        
+        self.wallpaper_preview = Gtk.Image()
+        self.wallpaper_preview.set_size_request(400, 225)
+        self._load_current_wallpaper()
+        current_section.pack_start(self.wallpaper_preview, False, False, 0)
+        
+        self.pack_start(current_section, False, False, 0)
+        
+        actions_section = self._create_section("Wallpaper Actions")
+        
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        browse_btn = Gtk.Button(label="Browse Wallpapers...")
+        browse_btn.connect("clicked", self._on_browse_clicked)
+        btn_box.pack_start(browse_btn, False, False, 0)
+        
+        engine_btn = Gtk.Button(label="Open Wallpaper Engine")
+        engine_btn.connect("clicked", self._on_open_engine_clicked)
+        btn_box.pack_start(engine_btn, False, False, 0)
+        
+        actions_section.pack_start(btn_box, False, False, 0)
+        self.pack_start(actions_section, False, False, 0)
+        
+        style_section = self._create_section("Wallpaper Style")
+        
+        style_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        styles = [("Stretched", "3"), ("Scaled", "4"), ("Zoomed", "5"), ("Centered", "1"), ("Tiled", "2")]
+        
+        first_radio = None
+        for label, value in styles:
+            if first_radio is None:
+                radio = Gtk.RadioButton.new_with_label(None, label)
+                first_radio = radio
+            else:
+                radio = Gtk.RadioButton.new_with_label_from_widget(first_radio, label)
+            radio.style_value = value
+            radio.connect("toggled", self._on_style_changed)
+            style_box.pack_start(radio, False, False, 0)
+            
+        style_section.pack_start(style_box, False, False, 0)
+        self.pack_start(style_section, False, False, 0)
+        
+    def _create_section(self, title: str) -> Gtk.Box:
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        section.set_margin_top(10)
+        
+        label = Gtk.Label()
+        label.set_markup(f'<span foreground="#f8fafc" weight="bold">{title}</span>')
+        label.set_halign(Gtk.Align.START)
+        section.pack_start(label, False, False, 0)
+        
+        return section
+        
+    def _load_current_wallpaper(self):
+        try:
+            result = subprocess.run(
+                ["xfconf-query", "-c", "xfce4-desktop", "-p", 
+                 "/backdrop/screen0/monitoreDP-1/workspace0/last-image"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                wallpaper_path = result.stdout.strip()
+                if os.path.exists(wallpaper_path):
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                        wallpaper_path, 400, 225, True
+                    )
+                    self.wallpaper_preview.set_from_pixbuf(pixbuf)
+                    return
+        except Exception:
+            pass
+            
+        self.wallpaper_preview.set_from_icon_name("image-missing", Gtk.IconSize.DIALOG)
+        
+    def _on_browse_clicked(self, button):
+        dialog = Gtk.FileChooserDialog(
+            title="Select Wallpaper",
+            parent=self.get_toplevel(),
+            action=Gtk.FileChooserAction.OPEN
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+        
+        filter_images = Gtk.FileFilter()
+        filter_images.set_name("Image files")
+        filter_images.add_mime_type("image/png")
+        filter_images.add_mime_type("image/jpeg")
+        filter_images.add_mime_type("image/webp")
+        dialog.add_filter(filter_images)
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            self._set_wallpaper(filepath)
+            
+        dialog.destroy()
+        
+    def _on_open_engine_clicked(self, button):
+        try:
+            subprocess.Popen(["aegis-wallpaper-engine"], start_new_session=True)
+        except Exception:
+            try:
+                subprocess.run(["notify-send", APP_NAME, "Wallpaper Engine not found"], timeout=5)
+            except Exception:
+                pass
+                
+    def _on_style_changed(self, button):
+        if button.get_active():
+            style = button.style_value
+            try:
+                subprocess.run([
+                    "xfconf-query", "-c", "xfce4-desktop", "-p",
+                    "/backdrop/screen0/monitoreDP-1/workspace0/image-style",
+                    "-s", style
+                ], capture_output=True, timeout=5)
+            except Exception:
+                pass
+                
+    def _set_wallpaper(self, filepath: str):
+        try:
+            subprocess.run([
+                "xfconf-query", "-c", "xfce4-desktop", "-p",
+                "/backdrop/screen0/monitoreDP-1/workspace0/last-image",
+                "-s", filepath
+            ], capture_output=True, timeout=5)
+            
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(filepath, 400, 225, True)
+            self.wallpaper_preview.set_from_pixbuf(pixbuf)
+        except Exception:
+            pass
+
+
+class DesktopStyleManager(Gtk.Window):
+    """Main application window"""
+    
+    def __init__(self):
+        super().__init__(title=APP_NAME)
+        self.set_default_size(1100, 700)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        
+        self.theme_manager = ThemeManager()
+        
+        self._apply_css()
+        self._build_ui()
+        
+    def _apply_css(self):
+        css = b"""
+        window {
+            background-color: #1a1a2e;
+        }
+        
+        .sidebar {
+            background-color: #16213e;
+            border-right: 1px solid #334155;
+        }
+        
+        .sidebar-item {
+            padding: 12px 20px;
+            color: #94a3b8;
+            border-radius: 0;
+        }
+        
+        .sidebar-item:hover {
+            background-color: #1e293b;
+            color: #f8fafc;
+        }
+        
+        .sidebar-item:selected {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        
+        .content-area {
+            background-color: #1a1a2e;
+        }
+        
+        .preview-panel {
+            background-color: #16213e;
+            border-left: 1px solid #334155;
+        }
+        
+        .layout-card {
+            background-color: #1e293b;
+            border-radius: 8px;
+            border: 2px solid #334155;
+            padding: 10px;
+        }
+        
+        .layout-card:hover {
+            border-color: #3b82f6;
+        }
+        
+        .layout-card-active {
+            background-color: #1e293b;
+            border-radius: 8px;
+            border: 2px solid #3b82f6;
+            padding: 10px;
+        }
+        
+        label {
+            color: #f8fafc;
+        }
+        
+        entry {
+            background-color: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            border-radius: 4px;
+            padding: 8px;
+        }
+        
+        entry:focus {
+            border-color: #3b82f6;
+        }
+        
+        button {
+            background-color: #334155;
+            color: #f8fafc;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+        }
+        
+        button:hover {
+            background-color: #475569;
+        }
+        
+        button.suggested-action {
+            background-color: #3b82f6;
+            color: white;
+        }
+        
+        button.suggested-action:hover {
+            background-color: #2563eb;
+        }
+        
+        button.destructive-action {
+            background-color: #ef4444;
+            color: white;
+        }
+        
+        button.destructive-action:hover {
+            background-color: #dc2626;
+        }
+        
+        combobox {
+            background-color: #1e293b;
+            color: #f8fafc;
+        }
+        
+        scale {
+            color: #3b82f6;
+        }
+        
+        scale trough {
+            background-color: #334155;
+            border-radius: 4px;
+        }
+        
+        scale highlight {
+            background-color: #3b82f6;
+            border-radius: 4px;
+        }
+        
+        checkbutton {
+            color: #f8fafc;
+        }
+        
+        radiobutton {
+            color: #f8fafc;
+        }
+        
+        scrolledwindow {
+            background-color: transparent;
+        }
+        
+        list {
+            background-color: #1e293b;
+            border-radius: 4px;
+        }
+        
+        list row {
+            background-color: transparent;
+        }
+        
+        list row:hover {
+            background-color: #334155;
+        }
+        
+        list row:selected {
+            background-color: #3b82f6;
+        }
+        
+        notebook {
+            background-color: #1a1a2e;
+        }
+        
+        notebook tab {
+            background-color: #16213e;
+            color: #94a3b8;
+            padding: 8px 16px;
+        }
+        
+        notebook tab:checked {
+            background-color: #1a1a2e;
+            color: #3b82f6;
+        }
+        
+        frame {
+            background-color: #1e293b;
+            border-radius: 4px;
+        }
+        """
+        
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        
+    def _build_ui(self):
+        main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar.set_size_request(220, -1)
+        sidebar.get_style_context().add_class("sidebar")
+        
+        logo_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        logo_box.set_margin_top(20)
+        logo_box.set_margin_bottom(20)
+        logo_box.set_margin_start(20)
+        logo_box.set_margin_end(20)
+        
+        logo_label = Gtk.Label()
+        logo_label.set_markup('<span font="16" weight="bold" foreground="#3b82f6">Aegis</span> <span font="16" foreground="#ff6600">Style</span>')
+        logo_box.pack_start(logo_label, False, False, 0)
+        
+        version_label = Gtk.Label()
+        version_label.set_markup(f'<span font="9" foreground="#94a3b8">v{APP_VERSION}</span>')
+        logo_box.pack_start(version_label, False, False, 0)
+        
+        sidebar.pack_start(logo_box, False, False, 0)
+        
+        separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sidebar.pack_start(separator, False, False, 0)
+        
+        self.sidebar_list = Gtk.ListBox()
+        self.sidebar_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        
+        pages = [
+            ("Layouts", "view-grid-symbolic"),
+            ("Themes", "preferences-desktop-theme-symbolic"),
+            ("Icons & Cursors", "applications-graphics-symbolic"),
+            ("Fonts", "font-x-generic-symbolic"),
+            ("Panel", "view-paged-symbolic"),
+            ("Wallpaper", "preferences-desktop-wallpaper-symbolic"),
+            ("Import/Export", "document-save-symbolic")
+        ]
+        
+        for page_name, icon_name in pages:
+            row = Gtk.ListBoxRow()
+            row.get_style_context().add_class("sidebar-item")
+            
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.set_margin_start(15)
+            box.set_margin_end(15)
+            box.set_margin_top(12)
+            box.set_margin_bottom(12)
+            
+            icon = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            box.pack_start(icon, False, False, 0)
+            
+            label = Gtk.Label(label=page_name)
+            label.set_halign(Gtk.Align.START)
+            box.pack_start(label, True, True, 0)
+            
+            row.add(box)
+            self.sidebar_list.add(row)
+            
+        self.sidebar_list.connect("row-selected", self._on_sidebar_selected)
+        sidebar.pack_start(self.sidebar_list, True, True, 0)
+        
+        about_btn = Gtk.Button(label="About")
+        about_btn.set_margin_start(15)
+        about_btn.set_margin_end(15)
+        about_btn.set_margin_bottom(15)
+        about_btn.connect("clicked", self._on_about_clicked)
+        sidebar.pack_end(about_btn, False, False, 0)
+        
+        main_box.pack_start(sidebar, False, False, 0)
+        
+        content_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.stack.get_style_context().add_class("content-area")
+        
+        preview_panel = PreviewPanel(self.theme_manager)
+        preview_panel.set_size_request(320, -1)
+        preview_panel.get_style_context().add_class("preview-panel")
+        
+        layouts_page = LayoutsPage(self.theme_manager, preview_panel)
+        themes_page = ThemesPage(self.theme_manager, preview_panel)
+        icons_page = IconsPage(self.theme_manager, preview_panel)
+        fonts_page = FontsPage(self.theme_manager, preview_panel)
+        panel_page = PanelPage(self.theme_manager, preview_panel)
+        wallpaper_page = WallpaperPage(self.theme_manager, preview_panel)
+        import_export_page = ImportExportPage(self.theme_manager, preview_panel)
+        
+        self.stack.add_named(layouts_page, "layouts")
+        self.stack.add_named(themes_page, "themes")
+        self.stack.add_named(icons_page, "icons")
+        self.stack.add_named(fonts_page, "fonts")
+        self.stack.add_named(panel_page, "panel")
+        self.stack.add_named(wallpaper_page, "wallpaper")
+        self.stack.add_named(import_export_page, "import_export")
+        
+        content_paned.pack1(self.stack, True, False)
+        content_paned.pack2(preview_panel, False, False)
+        content_paned.set_position(700)
+        
+        main_box.pack_start(content_paned, True, True, 0)
+        
+        self.add(main_box)
+        
+        self.sidebar_list.select_row(self.sidebar_list.get_row_at_index(0))
+        
+    def _on_sidebar_selected(self, listbox, row):
+        if row is None:
+            return
+            
+        index = row.get_index()
+        page_names = ["layouts", "themes", "icons", "fonts", "panel", "wallpaper", "import_export"]
+        
+        if 0 <= index < len(page_names):
+            self.stack.set_visible_child_name(page_names[index])
+            
+    def _on_about_clicked(self, button):
+        about = Gtk.AboutDialog()
+        about.set_transient_for(self)
+        about.set_modal(True)
+        
+        about.set_program_name(APP_NAME)
+        about.set_version(APP_VERSION)
+        about.set_comments("Complete desktop customization for Aegis OS Gamer Edition")
+        about.set_copyright("© 2025 Aegis OS Team")
+        about.set_website("https://aegis-os.com")
+        about.set_website_label("Aegis OS Website")
+        about.set_license_type(Gtk.License.GPL_3_0)
+        
+        about.set_authors(["Aegis OS Development Team"])
+        
+        about.run()
+        about.destroy()
+
+
+def main():
+    app = DesktopStyleManager()
+    app.connect("destroy", Gtk.main_quit)
+    app.show_all()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
