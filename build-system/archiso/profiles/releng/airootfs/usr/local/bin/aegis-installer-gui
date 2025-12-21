@@ -652,6 +652,7 @@ class AegisInstaller(Gtk.Window):
         
         self.current_step = 2
         self.show_current_step()
+        self.update_navigation()
         
     def create_user_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -943,7 +944,10 @@ class AegisInstaller(Gtk.Window):
             self.locale_combo.append_text(f"{name} ({code})")
         self.locale_combo.set_active(0)
         self.locale_combo.set_hexpand(True)
+        self.locale_combo.connect("changed", self.on_region_changed)
         grid.attach(self.locale_combo, 1, 1, 1, 1)
+        
+        self.tz_combo.connect("changed", self.on_region_changed)
         
         card.pack_start(grid, True, True, 0)
         
@@ -961,11 +965,19 @@ class AegisInstaller(Gtk.Window):
         page.pack_start(card, True, True, 0)
         
         return page
+    
+    def on_region_changed(self, widget):
+        if self.current_step == 4:
+            self.update_summary()
         
     def update_summary(self):
+        if not self.selected_disk:
+            self.summary_label.set_text("Please select a disk first.")
+            return
+            
         boot_mode = "UEFI" if os.path.isdir("/sys/firmware/efi") else "BIOS"
-        username = self.username_entry.get_text().strip()
-        hostname = self.hostname_entry.get_text().strip() or "aegis"
+        username = self.username_entry.get_text().strip() or self.username
+        hostname = self.hostname_entry.get_text().strip() or self.hostname or "aegis"
         timezone = self.tz_combo.get_active_text() or "UTC"
         locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
         
@@ -1186,6 +1198,11 @@ Locale: {locale}
         self.update_step_indicator()
         self.update_navigation()
         
+        if self.current_step == 3:
+            self.refresh_disks()
+        elif self.current_step == 4:
+            self.update_summary()
+        
     def log(self, message):
         GLib.idle_add(self._log_ui, message)
         
@@ -1297,7 +1314,12 @@ Locale: {locale}
         self.update_progress(0.20, "Installing base system (this may take a while)...")
         self.log("Installing base packages...")
         if not self.run_cmd("pacstrap -K /mnt base linux linux-firmware base-devel", "Installing base system"):
-            raise Exception("Failed to install base system. Check network connection.")
+            self.log("ERROR: pacstrap failed. Cleaning up mounts...")
+            try:
+                subprocess.run(["umount", "-R", "/mnt"], capture_output=True, timeout=60)
+            except:
+                pass
+            raise Exception("Failed to install base system. Please check:\n- Network connection\n- Mirror availability\n- Disk space\n\nMounts have been cleaned up. You can retry the installation.")
             
         self.update_progress(0.50, "Generating filesystem table...")
         self.run_cmd("genfstab -U /mnt >> /mnt/etc/fstab", "Generating fstab")
@@ -1392,8 +1414,15 @@ chmod 644 /etc/aegis/license.key
 '''
         
         chroot_script += f'''
+# Enable OOBE (Out-of-Box Experience) service for first-boot wizard
+if [ -f /etc/systemd/system/aegis-oobe.service ]; then
+    systemctl enable aegis-oobe.service
+fi
+
 echo "Configuration complete for user: {USERNAME}"
 '''
+        
+        self.run_cmd("mkdir -p /mnt/tmp", "Creating /mnt/tmp directory")
         
         with open("/mnt/tmp/aegis-setup.sh", "w") as f:
             f.write(chroot_script)
