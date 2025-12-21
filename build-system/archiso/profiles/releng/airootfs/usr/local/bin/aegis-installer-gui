@@ -1264,6 +1264,16 @@ systemctl enable lightdm
 groupadd -f autologin
 usermod -a -G autologin aegis
 
+# Configure PAM for passwordless autologin (CRITICAL for LightDM autologin)
+cat > /etc/pam.d/lightdm-autologin << 'PAM_EOF'
+#%PAM-1.0
+auth        required    pam_env.so
+auth        sufficient  pam_succeed_if.so user ingroup autologin
+auth        required    pam_permit.so
+account     include     system-local-login
+session     include     system-local-login
+PAM_EOF
+
 # Configure LightDM for passwordless autologin on first boot
 mkdir -p /etc/lightdm
 cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
