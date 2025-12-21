@@ -360,28 +360,39 @@ jobs:
           aegis:x:1000:1000:Aegis User:/home/aegis:/bin/bash
           PASSWD
           
-          cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
-          aegis:$6$rounds=656000$aegis$8iJnYLuJuq5pGQ6xGDZY6NqQ4aVXX.yQQ9dYcR0DfHZJZNvZ3ZZcW0ZZZoZZZcZZZJZZpZZZmZZZnZZZvZZZsZZZxZZZ:19000:0:99999:7:::
-          SHADOW
-          
-          cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
-          aegis:x:1000:
-          GROUP
-          
-          # For passwordless edition, add autologin group (required by LightDM PAM)
+          # For passwordless edition: empty password field allows login without password
+          # For secure editions: locked account (!) - password set during installation
           if [ "$EDITION" = "gamer-passwordless" ]; then
-            echo "=== Adding autologin group for passwordless login ==="
-            cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'AUTOLOGINGRP'
-          autologin:x:969:aegis
-          AUTOLOGINGRP
-            cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'AUTOLOGINGSHADOW'
-          autologin:!::aegis
-          AUTOLOGINGSHADOW
+            echo "=== Passwordless edition: setting empty password for aegis ==="
+            cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
+          aegis::19000:0:99999:7:::
+          SHADOW
+          else
+            echo "=== Secure edition: locked account until installation ==="
+            cat >> "${PROFILE_DIR}/airootfs/etc/shadow" << 'SHADOW'
+          aegis:!:19000:0:99999:7:::
+          SHADOW
           fi
           
-          cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
+          # For passwordless edition, add autologin group and wheel membership
+          if [ "$EDITION" = "gamer-passwordless" ]; then
+            echo "=== Adding groups for passwordless login ==="
+            cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
+          aegis:x:1000:
+          autologin:x:969:aegis
+          GROUP
+            cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
+          aegis:!::
+          autologin:!::aegis
+          GSHADOW
+          else
+            cat >> "${PROFILE_DIR}/airootfs/etc/group" << 'GROUP'
+          aegis:x:1000:
+          GROUP
+            cat >> "${PROFILE_DIR}/airootfs/etc/gshadow" << 'GSHADOW'
           aegis:!::
           GSHADOW
+          fi
           
           mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
           mkdir -p "${PROFILE_DIR}/airootfs/home/aegis/.config"
