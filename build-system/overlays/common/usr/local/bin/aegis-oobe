@@ -12,6 +12,7 @@ import os
 import threading
 import time
 import json
+import re
 
 AEGIS_BLUE = "#3b82f6"
 AEGIS_ORANGE = "#ff6600"
@@ -1157,6 +1158,20 @@ class AegisOOBE(Gtk.Window):
             )
         except:
             pass
+        
+        # Disable autologin after OOBE completes - require password on future boots
+        try:
+            lightdm_conf = "/etc/lightdm/lightdm.conf"
+            if os.path.exists(lightdm_conf):
+                with open(lightdm_conf, "r") as f:
+                    content = f.read()
+                # Comment out autologin-user line
+                content = re.sub(r'^(autologin-user=.*)$', r'#\1', content, flags=re.MULTILINE)
+                with open(lightdm_conf, "w") as f:
+                    f.write(content)
+                print("Autologin disabled for future boots")
+        except Exception as e:
+            print(f"Warning: Could not disable autologin: {e}")
             
         self.destroy()
         Gtk.main_quit()

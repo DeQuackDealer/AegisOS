@@ -1395,6 +1395,48 @@ grep -q "^%wheel ALL=(ALL:ALL) ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) A
 pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
 systemctl enable lightdm
 
+# Configure LightDM for installed system (NOT the live ISO config)
+# Enable autologin for OOBE first boot, then OOBE will disable it
+mkdir -p /etc/lightdm
+cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
+[LightDM]
+run-directory=/run/lightdm
+
+[Seat:*]
+autologin-user={USERNAME}
+autologin-user-timeout=0
+autologin-session=xfce
+user-session=xfce
+greeter-session=lightdm-gtk-greeter
+greeter-hide-users=false
+LIGHTDM_EOF
+
+# Configure the greeter styling
+mkdir -p /etc/lightdm
+cat > /etc/lightdm/lightdm-gtk-greeter.conf << 'GREETER_EOF'
+[greeter]
+background=/usr/share/backgrounds/aegis-wallpaper.png
+theme-name=Adwaita-dark
+icon-theme-name=Adwaita
+font-name=Sans 10
+xft-antialias=true
+xft-hintstyle=slight
+indicators=~host;~spacer;~clock;~spacer;~session;~power
+clock-format=%H:%M
+default-user-image=#avatar-default
+hide-user-image=false
+GREETER_EOF
+
+# Clean up any stale AccountsService cache from live ISO
+rm -rf /var/lib/AccountsService/users/aegis 2>/dev/null || true
+
+# Create AccountsService entry for new user
+mkdir -p /var/lib/AccountsService/users
+cat > /var/lib/AccountsService/users/{USERNAME} << ACCOUNTS_EOF
+[User]
+SystemAccount=false
+ACCOUNTS_EOF
+
 # Save license key if provided
 mkdir -p /etc/aegis
 echo "{EDITION}" > /etc/aegis/edition
