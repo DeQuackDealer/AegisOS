@@ -208,15 +208,17 @@ jobs:
             cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
           [LightDM]
           run-directory=/run/lightdm
+          logind-check-graphical=true
           
           [Seat:*]
+          pam-service=lightdm
+          pam-autologin-service=lightdm-autologin
+          session-wrapper=/etc/lightdm/Xsession
           greeter-session=lightdm-gtk-greeter
           user-session=xfce
           autologin-user=aegis
           autologin-user-timeout=0
           autologin-session=xfce
-          pam-service=lightdm-autologin
-          pam-autologin-service=lightdm-autologin
           LIGHTDM
             
             # Create PAM configuration for autologin
@@ -228,11 +230,20 @@ jobs:
           account     include     system-local-login
           session     include     system-local-login
           PAM
+            
+            # Create .dmrc for aegis user to specify default session
+            echo "=== Creating .dmrc for aegis user ==="
+            mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
+            cat > "${PROFILE_DIR}/airootfs/home/aegis/.dmrc" << 'DMRC'
+          [Desktop]
+          Session=xfce
+          DMRC
           else
             echo "=== Secure edition: login required ==="
             cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
           [LightDM]
           run-directory=/run/lightdm
+          logind-check-graphical=true
           
           [Seat:*]
           greeter-session=lightdm-gtk-greeter
