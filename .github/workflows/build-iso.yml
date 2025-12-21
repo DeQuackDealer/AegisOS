@@ -17,6 +17,7 @@ on:
           - freemium
           - basic
           - gamer
+          - gamer-passwordless
           - workplace
           - aidev
           - gamer-ai
@@ -202,13 +203,23 @@ jobs:
           
           echo "=== Creating LightDM configuration ==="
           mkdir -p "${PROFILE_DIR}/airootfs/etc/lightdm"
-          cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+          if [ "$EDITION" = "gamer-passwordless" ]; then
+            echo "=== Passwordless edition: enabling autologin ==="
+            cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
           [Seat:*]
           greeter-session=lightdm-gtk-greeter
           user-session=xfce
           autologin-user=aegis
           autologin-session=xfce
           LIGHTDM
+          else
+            echo "=== Secure edition: login required ==="
+            cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+          [Seat:*]
+          greeter-session=lightdm-gtk-greeter
+          user-session=xfce
+          LIGHTDM
+          fi
           
           cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" << 'GREETER'
           [greeter]
@@ -371,7 +382,14 @@ jobs:
           
           echo "=== Configuring sudo for aegis user ==="
           mkdir -p "${PROFILE_DIR}/airootfs/etc/sudoers.d"
-          echo "aegis ALL=(ALL) NOPASSWD: ALL" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+          if [ "$EDITION" = "gamer-passwordless" ]; then
+            echo "=== Passwordless edition: NOPASSWD sudo (TESTING ONLY) ==="
+            echo "aegis ALL=(ALL) NOPASSWD: ALL" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+          else
+            echo "=== Secure edition: password required for sudo ==="
+            echo "# Aegis user requires password for sudo (secure by default)" > "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+            echo "# Password will be set during installation" >> "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
+          fi
           chmod 440 "${PROFILE_DIR}/airootfs/etc/sudoers.d/aegis"
           
           echo "=== Creating user setup script ==="
@@ -513,7 +531,7 @@ jobs:
           
           # Edition-specific packages
           case "$EDITION" in
-            gamer|gamer-ai)
+            gamer|gamer-ai|gamer-passwordless)
               cat >> "${PROFILE_DIR}/packages.x86_64" << 'GAMERPKGS'
           steam
           lutris
