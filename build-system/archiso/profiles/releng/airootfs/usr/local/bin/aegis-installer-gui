@@ -1356,6 +1356,85 @@ echo "Configuration complete - system ready for first boot with OOBE"
         self.run_cmd("cp -r /etc/aegis /mnt/etc/ 2>/dev/null || true", "Copying Aegis config")
         self.run_cmd("cp /usr/local/bin/aegis-* /mnt/usr/local/bin/ 2>/dev/null || true", "Copying Aegis tools")
         
+        # Copy OOBE service files to installed system
+        self.run_cmd("mkdir -p /mnt/etc/systemd/system", "Creating systemd directory")
+        self.run_cmd("cp /etc/systemd/system/aegis-*.service /mnt/etc/systemd/system/ 2>/dev/null || true", "Copying Aegis services")
+        
+        # Create OOBE service if it doesn't exist in live ISO
+        oobe_service = """[Unit]
+Description=Aegis OS Out of Box Experience (OOBE) Wizard
+After=graphical.target display-manager.service
+Wants=graphical.target
+ConditionPathExists=!/etc/aegis/.oobe-complete
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/local/bin/aegis-oobe-launcher
+Restart=no
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical.target
+"""
+        with open("/mnt/etc/systemd/system/aegis-oobe.service", "w") as f:
+            f.write(oobe_service)
+        self.log("Created OOBE service file")
+        
+        # Create OOBE launcher script
+        oobe_launcher = """#!/bin/bash
+# Aegis OOBE Launcher - finds logged in user and runs OOBE
+
+OOBE_MARKER="/etc/aegis/.oobe-complete"
+
+if [ -f "$OOBE_MARKER" ]; then
+    exit 0
+fi
+
+# Find the logged-in user
+DISPLAY_USER=""
+for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+        username=$(basename "$user_home")
+        if [ -f "$user_home/.Xauthority" ]; then
+            DISPLAY_USER="$username"
+            break
+        fi
+    fi
+done
+
+if [ -z "$DISPLAY_USER" ]; then
+    DISPLAY_USER=$(who | grep -E '\\(:0\\)|\\(tty' | head -1 | awk '{print $1}')
+fi
+
+if [ -z "$DISPLAY_USER" ]; then
+    DISPLAY_USER=$(ls /home/ 2>/dev/null | head -1)
+fi
+
+if [ -z "$DISPLAY_USER" ]; then
+    DISPLAY_USER="aegis"
+fi
+
+USER_HOME="/home/$DISPLAY_USER"
+XAUTH="$USER_HOME/.Xauthority"
+
+export DISPLAY=":0"
+export XAUTHORITY="$XAUTH"
+export HOME="$USER_HOME"
+export USER="$DISPLAY_USER"
+
+exec sudo -u "$DISPLAY_USER" DISPLAY=":0" XAUTHORITY="$XAUTH" HOME="$USER_HOME" /usr/local/bin/aegis-oobe
+"""
+        with open("/mnt/usr/local/bin/aegis-oobe-launcher", "w") as f:
+            f.write(oobe_launcher)
+        os.chmod("/mnt/usr/local/bin/aegis-oobe-launcher", 0o755)
+        self.log("Created OOBE launcher script")
+        
+        # Enable OOBE service in chroot
+        subprocess.run(["arch-chroot", "/mnt", "systemctl", "enable", "aegis-oobe.service"], capture_output=True)
+        self.log("Enabled OOBE service")
+        
         self.update_progress(0.95, "Finishing installation...")
         os.remove("/mnt/tmp/aegis-setup.sh")
         self.run_cmd("umount -R /mnt", "Unmounting filesystems")
