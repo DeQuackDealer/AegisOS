@@ -285,7 +285,6 @@ class AegisOOBE(Gtk.Window):
         self.current_step = 0
         self.steps = [
             "Welcome",
-            "Account",
             "Network",
             "Updates",
             "License",
@@ -299,10 +298,8 @@ class AegisOOBE(Gtk.Window):
         self.detected_gpus = []
         self.gaming_services_enabled = True
         
-        self.new_username = ""
-        self.new_fullname = ""
-        self.new_password = ""
-        self.account_created = False
+        # Load primary user from installation
+        self.primary_user = self.get_primary_user()
         
         self.apply_css()
         self.build_ui()
@@ -332,7 +329,6 @@ class AegisOOBE(Gtk.Window):
         self.content_stack.set_transition_duration(300)
         
         self.content_stack.add_named(self.create_welcome_page(), "welcome")
-        self.content_stack.add_named(self.create_account_page(), "account")
         self.content_stack.add_named(self.create_network_page(), "network")
         self.content_stack.add_named(self.create_updates_page(), "updates")
         self.content_stack.add_named(self.create_license_page(), "license")
@@ -384,6 +380,22 @@ class AegisOOBE(Gtk.Window):
         if os.path.exists("/etc/aegis-freemium-marker"):
             return "Freemium Edition"
         return "Gaming Edition"
+    
+    def get_primary_user(self):
+        if os.path.exists("/etc/aegis/primary-user"):
+            try:
+                with open("/etc/aegis/primary-user") as f:
+                    return f.read().strip()
+            except:
+                pass
+        # Fallback: find first non-system user
+        try:
+            users = [d for d in os.listdir("/home") if os.path.isdir(f"/home/{d}")]
+            if users:
+                return users[0]
+        except:
+            pass
+        return "user"
         
     def create_step_indicator(self):
         self.step_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
@@ -455,7 +467,6 @@ class AegisOOBE(Gtk.Window):
         desc.set_markup(
             f'<span color="{AEGIS_TEXT}">Let\'s get your system ready for the ultimate gaming experience.</span>\n\n'
             f'<span color="{AEGIS_TEXT_DIM}">This wizard will help you:</span>\n'
-            f'<span color="{AEGIS_TEXT}">• Create your user account</span>\n'
             f'<span color="{AEGIS_TEXT}">• Connect to the internet</span>\n'
             f'<span color="{AEGIS_TEXT}">• Check for system updates</span>\n'
             f'<span color="{AEGIS_TEXT}">• Activate your license</span>\n'
@@ -1268,106 +1279,26 @@ class AegisOOBE(Gtk.Window):
     def on_next(self, widget):
         if self.current_step == len(self.steps) - 1:
             self.complete_oobe()
-        elif self.current_step == 1:
-            if not self.validate_account_fields():
-                self.show_error_dialog("Please fill in all account fields correctly before continuing.")
-                return
-            self.current_step += 1
-            self.show_current_step()
         else:
             self.current_step += 1
             self.show_current_step()
             
     def show_current_step(self):
-        pages = ["welcome", "account", "network", "updates", "license", "gaming", "complete"]
+        pages = ["welcome", "network", "updates", "license", "gaming", "complete"]
         if self.current_step < len(pages):
             self.content_stack.set_visible_child_name(pages[self.current_step])
         self.update_step_indicator()
         self.update_navigation()
         
     def complete_oobe(self):
-        user_created = False
-        password_set = False
+        # User account was created during installation - no need to create here
+        # Just mark OOBE as complete and clean up
         
-        if self.new_username and self.new_password and not self.account_created:
-            try:
-                # Step 1: Create user
-                result = subprocess.run(
-                    ["useradd", "-m", "-G", "wheel,audio,video,storage,optical", 
-                     "-s", "/bin/bash", "-c", self.new_fullname, self.new_username],
-                    capture_output=True, text=True
-                )
-                if result.returncode == 0:
-                    print(f"Created user: {self.new_username}")
-                    user_created = True
-                else:
-                    print(f"Failed to create user: {result.stderr}")
-                    self.show_error_dialog(f"Failed to create user account. Please try again.\n\nError: {result.stderr}")
-                    return
-                
-                # Step 2: Set password (only if user was created)
-                result = subprocess.run(
-                    ["chpasswd"],
-                    input=f"{self.new_username}:{self.new_password}",
-                    text=True, capture_output=True
-                )
-                if result.returncode == 0:
-                    print(f"Password set for: {self.new_username}")
-                    password_set = True
-                else:
-                    print(f"Failed to set password: {result.stderr}")
-                    # Rollback: delete the user we just created
-                    subprocess.run(["userdel", "-r", self.new_username], capture_output=True)
-                    self.show_error_dialog(f"Failed to set password. Please try again.\n\nError: {result.stderr}")
-                    return
-                
-                # Step 3: Add to sudoers (only if user+password succeeded)
-                sudoers_file = f"/etc/sudoers.d/{self.new_username}"
-                try:
-                    with open(sudoers_file, "w") as f:
-                        f.write(f"{self.new_username} ALL=(ALL) ALL\n")
-                    os.chmod(sudoers_file, 0o440)
-                    print(f"Added {self.new_username} to sudoers")
-                except Exception as e:
-                    print(f"Warning: Could not create sudoers file: {e}")
-                
-                # Only mark as complete if BOTH user creation AND password setting succeeded
-                self.account_created = True
-                
-            except Exception as e:
-                print(f"Error creating user account: {e}")
-                self.show_error_dialog(f"Error creating user account: {e}")
-                return
-        
-        # ONLY disable autologin and lock aegis if account was successfully created
-        if self.account_created:
-            try:
-                subprocess.run(["usermod", "-L", "aegis"], capture_output=True)
-                print("Locked temporary aegis account")
-            except Exception as e:
-                print(f"Warning: Could not lock aegis account: {e}")
-            
-            try:
-                lightdm_conf = "/etc/lightdm/lightdm.conf"
-                if os.path.exists(lightdm_conf):
-                    with open(lightdm_conf, "r") as f:
-                        content = f.read()
-                    content = re.sub(r'^(autologin-user=.*)$', r'#\1', content, flags=re.MULTILINE)
-                    with open(lightdm_conf, "w") as f:
-                        f.write(content)
-                    print("Autologin disabled for future boots")
-            except Exception as e:
-                print(f"Warning: Could not disable autologin: {e}")
-        
-        # Always create OOBE marker and disable service
         try:
             os.makedirs("/etc/aegis", exist_ok=True)
             with open(OOBE_MARKER, "w") as f:
                 f.write(f"OOBE completed: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                if self.account_created and self.new_username:
-                    f.write(f"User created: {self.new_username}\n")
-                else:
-                    f.write("User creation: skipped or failed - aegis account still active\n")
+                f.write(f"Primary user: {self.primary_user}\n")
         except Exception as e:
             print(f"Warning: Could not create OOBE marker: {e}")
             
