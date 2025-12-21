@@ -119,7 +119,9 @@ Located at: `AegisOSRepo/` directory
   - Rounded corners (8-12px), Fluent Design, Mica-style effects
   - Dark mode: #202020 background, #0078D4 accent, #60CDFF highlights
   - Papirus-Dark icons, Noto Sans typography
-- **XFCE Panel**: Windows 10-style taskbar (40px bottom panel, start button left, tray right)
+- **XFCE Panel**: Windows 10-style taskbar (48px bottom panel, start button left, tray right)
+- **Pinned Taskbar Apps**: Thunderbolt Runner, Files, Firefox (one-click launch)
+- **Desktop Shortcuts**: Thunderbolt Runner, StreamForge, Settings, Files, Browser
 - **TIER_LIMIT**: Set to "gamer" for full feature access in security and system applications
 - **Build Options**: post-build.sh accepts PASSWORD_MODE parameter ("passwordless" or "password")
 
