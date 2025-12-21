@@ -322,7 +322,6 @@ class AegisInstaller(Gtk.Window):
         self.steps = [
             "Welcome",
             "License",
-            "User Setup",
             "Disk Selection",
             "Region",
             "Install",
@@ -330,9 +329,6 @@ class AegisInstaller(Gtk.Window):
         ]
         
         self.selected_disk = None
-        self.username = ""
-        self.fullname = ""
-        self.password = ""
         self.hostname = "aegis"
         self.timezone = "UTC"
         self.locale = "en_US.UTF-8"
@@ -371,7 +367,6 @@ class AegisInstaller(Gtk.Window):
         
         self.content_stack.add_named(self.create_welcome_page(), "welcome")
         self.content_stack.add_named(self.create_license_page(), "license")
-        self.content_stack.add_named(self.create_user_page(), "user")
         self.content_stack.add_named(self.create_disk_page(), "disk")
         self.content_stack.add_named(self.create_region_page(), "region")
         self.content_stack.add_named(self.create_install_page(), "install")
@@ -653,139 +648,6 @@ class AegisInstaller(Gtk.Window):
         self.current_step = 2
         self.show_current_step()
         self.update_navigation()
-        
-    def create_user_page(self):
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        page.get_style_context().add_class("content-area")
-        page.set_spacing(20)
-        
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        card.get_style_context().add_class("card")
-        card.set_spacing(15)
-        
-        title = Gtk.Label(label="Create Your Account")
-        title.get_style_context().add_class("section-title")
-        title.set_halign(Gtk.Align.START)
-        card.pack_start(title, False, False, 0)
-        
-        subtitle = Gtk.Label(label="Set up your user account and system hostname.")
-        subtitle.get_style_context().add_class("section-subtitle")
-        subtitle.set_halign(Gtk.Align.START)
-        card.pack_start(subtitle, False, False, 0)
-        
-        grid = Gtk.Grid()
-        grid.set_column_spacing(20)
-        grid.set_row_spacing(15)
-        
-        fullname_label = Gtk.Label(label="Full Name")
-        fullname_label.get_style_context().add_class("input-label")
-        fullname_label.set_halign(Gtk.Align.START)
-        grid.attach(fullname_label, 0, 0, 1, 1)
-        
-        self.fullname_entry = Gtk.Entry()
-        self.fullname_entry.set_placeholder_text("John Doe")
-        self.fullname_entry.set_hexpand(True)
-        self.fullname_entry.connect("changed", self.on_user_input_changed)
-        grid.attach(self.fullname_entry, 0, 1, 1, 1)
-        
-        username_label = Gtk.Label(label="Username")
-        username_label.get_style_context().add_class("input-label")
-        username_label.set_halign(Gtk.Align.START)
-        grid.attach(username_label, 1, 0, 1, 1)
-        
-        self.username_entry = Gtk.Entry()
-        self.username_entry.set_placeholder_text("johndoe")
-        self.username_entry.set_hexpand(True)
-        self.username_entry.connect("changed", self.on_user_input_changed)
-        grid.attach(self.username_entry, 1, 1, 1, 1)
-        
-        self.username_error = Gtk.Label()
-        self.username_error.get_style_context().add_class("error-label")
-        self.username_error.set_halign(Gtk.Align.START)
-        grid.attach(self.username_error, 1, 2, 1, 1)
-        
-        password_label = Gtk.Label(label="Password")
-        password_label.get_style_context().add_class("input-label")
-        password_label.set_halign(Gtk.Align.START)
-        grid.attach(password_label, 0, 3, 1, 1)
-        
-        self.password_entry = Gtk.Entry()
-        self.password_entry.set_visibility(False)
-        self.password_entry.set_placeholder_text("••••••••")
-        self.password_entry.set_hexpand(True)
-        self.password_entry.connect("changed", self.on_user_input_changed)
-        grid.attach(self.password_entry, 0, 4, 1, 1)
-        
-        confirm_label = Gtk.Label(label="Confirm Password")
-        confirm_label.get_style_context().add_class("input-label")
-        confirm_label.set_halign(Gtk.Align.START)
-        grid.attach(confirm_label, 1, 3, 1, 1)
-        
-        self.confirm_entry = Gtk.Entry()
-        self.confirm_entry.set_visibility(False)
-        self.confirm_entry.set_placeholder_text("••••••••")
-        self.confirm_entry.set_hexpand(True)
-        self.confirm_entry.connect("changed", self.on_user_input_changed)
-        grid.attach(self.confirm_entry, 1, 4, 1, 1)
-        
-        self.password_error = Gtk.Label()
-        self.password_error.get_style_context().add_class("error-label")
-        self.password_error.set_halign(Gtk.Align.START)
-        grid.attach(self.password_error, 0, 5, 2, 1)
-        
-        hostname_label = Gtk.Label(label="Hostname")
-        hostname_label.get_style_context().add_class("input-label")
-        hostname_label.set_halign(Gtk.Align.START)
-        grid.attach(hostname_label, 0, 6, 1, 1)
-        
-        self.hostname_entry = Gtk.Entry()
-        self.hostname_entry.set_text("aegis")
-        self.hostname_entry.set_placeholder_text("aegis")
-        self.hostname_entry.set_hexpand(True)
-        self.hostname_entry.connect("changed", self.on_user_input_changed)
-        grid.attach(self.hostname_entry, 0, 7, 1, 1)
-        
-        card.pack_start(grid, True, True, 0)
-        page.pack_start(card, True, True, 0)
-        
-        return page
-        
-    def on_user_input_changed(self, widget):
-        username = self.username_entry.get_text().strip()
-        password = self.password_entry.get_text()
-        confirm = self.confirm_entry.get_text()
-        
-        self.username_error.set_text("")
-        if username and not re.match(r'^[a-z_][a-z0-9_-]*$', username):
-            self.username_error.set_text("Username must start with letter, lowercase only")
-        elif len(username) > 32:
-            self.username_error.set_text("Username too long (max 32 chars)")
-            
-        self.password_error.set_text("")
-        if password and len(password) < 4:
-            self.password_error.set_text("Password must be at least 4 characters")
-        elif password and confirm and password != confirm:
-            self.password_error.set_text("Passwords do not match")
-            
-        self.update_navigation()
-        
-    def validate_user_input(self):
-        username = self.username_entry.get_text().strip()
-        password = self.password_entry.get_text()
-        confirm = self.confirm_entry.get_text()
-        
-        if not username:
-            return False
-        if not re.match(r'^[a-z_][a-z0-9_-]*$', username):
-            return False
-        if len(username) > 32:
-            return False
-        if len(password) < 4:
-            return False
-        if password != confirm:
-            return False
-            
-        return True
     
     def create_disk_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -949,6 +811,17 @@ class AegisInstaller(Gtk.Window):
         
         self.tz_combo.connect("changed", self.on_region_changed)
         
+        hostname_label = Gtk.Label(label="Hostname")
+        hostname_label.get_style_context().add_class("input-label")
+        hostname_label.set_halign(Gtk.Align.START)
+        grid.attach(hostname_label, 0, 2, 1, 1)
+        
+        self.hostname_entry = Gtk.Entry()
+        self.hostname_entry.set_text("aegis")
+        self.hostname_entry.set_placeholder_text("aegis")
+        self.hostname_entry.set_hexpand(True)
+        grid.attach(self.hostname_entry, 0, 3, 1, 1)
+        
         card.pack_start(grid, True, True, 0)
         
         summary_title = Gtk.Label(label="Installation Summary")
@@ -967,7 +840,7 @@ class AegisInstaller(Gtk.Window):
         return page
     
     def on_region_changed(self, widget):
-        if self.current_step == 4:
+        if self.current_step == 3:
             self.update_summary()
         
     def update_summary(self):
@@ -976,7 +849,6 @@ class AegisInstaller(Gtk.Window):
             return
             
         boot_mode = "UEFI" if os.path.isdir("/sys/firmware/efi") else "BIOS"
-        username = self.username_entry.get_text().strip() or self.username
         hostname = self.hostname_entry.get_text().strip() or self.hostname or "aegis"
         timezone = self.tz_combo.get_active_text() or "UTC"
         locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
@@ -988,10 +860,12 @@ Edition: {self.edition_name}
 License: {license_info}
 Target Disk: /dev/{self.selected_disk}
 Boot Mode: {boot_mode}
-Username: {username}
 Hostname: {hostname}
 Timezone: {timezone}
 Locale: {locale}
+
+Note: A default 'aegis' user will be created for first boot.
+You will create your personal account during the first-boot setup wizard.
 
 ⚠️ All data on /dev/{self.selected_disk} will be permanently erased!
 """
@@ -1125,7 +999,7 @@ Locale: {locale}
         return nav
         
     def update_navigation(self):
-        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < 5)
+        self.back_btn.set_sensitive(self.current_step > 0 and self.current_step < 4)
         
         self.next_btn.get_style_context().remove_class("nav-button-danger")
         self.next_btn.get_style_context().add_class("nav-button-primary")
@@ -1137,17 +1011,14 @@ Locale: {locale}
             self.next_btn.set_sensitive(self.license_validated or self.is_freemium)
             self.next_btn.set_label("Next →")
         elif self.current_step == 2:
-            self.next_btn.set_sensitive(self.validate_user_input())
-            self.next_btn.set_label("Next →")
-        elif self.current_step == 3:
             self.next_btn.set_sensitive(self.selected_disk is not None)
             self.next_btn.set_label("Next →")
-        elif self.current_step == 4:
+        elif self.current_step == 3:
             self.next_btn.set_sensitive(True)
             self.next_btn.set_label("Install →")
             self.next_btn.get_style_context().remove_class("nav-button-primary")
             self.next_btn.get_style_context().add_class("nav-button-danger")
-        elif self.current_step >= 5:
+        elif self.current_step >= 4:
             self.next_btn.set_sensitive(False)
             self.back_btn.set_sensitive(False)
             self.cancel_btn.set_sensitive(False)
@@ -1159,22 +1030,17 @@ Locale: {locale}
             
     def on_next(self, widget):
         if self.current_step < len(self.steps) - 1:
-            if self.current_step == 2:
-                self.username = self.username_entry.get_text().strip()
-                self.fullname = self.fullname_entry.get_text().strip()
-                self.password = self.password_entry.get_text()
-                self.hostname = self.hostname_entry.get_text().strip() or "aegis"
-                
-            if self.current_step == 4:
+            if self.current_step == 3:
                 self.timezone = self.tz_combo.get_active_text() or "UTC"
                 self.locale = LOCALES[self.locale_combo.get_active()][0] if self.locale_combo.get_active() >= 0 else "en_US.UTF-8"
+                self.hostname = self.hostname_entry.get_text().strip() or "aegis"
                 
             self.current_step += 1
             self.show_current_step()
             
-            if self.current_step == 4:
+            if self.current_step == 3:
                 self.update_summary()
-            elif self.current_step == 5:
+            elif self.current_step == 4:
                 self.start_installation()
                 
     def on_cancel(self, widget):
@@ -1193,14 +1059,14 @@ Locale: {locale}
             Gtk.main_quit()
             
     def show_current_step(self):
-        pages = ["welcome", "license", "user", "disk", "region", "install", "complete"]
+        pages = ["welcome", "license", "disk", "region", "install", "complete"]
         self.content_stack.set_visible_child_name(pages[self.current_step])
         self.update_step_indicator()
         self.update_navigation()
         
-        if self.current_step == 3:
+        if self.current_step == 2:
             self.refresh_disks()
-        elif self.current_step == 4:
+        elif self.current_step == 3:
             self.update_summary()
         
     def log(self, message):
@@ -1285,7 +1151,7 @@ Locale: {locale}
         self.log(f"License: {self.license_key if self.license_key else 'Freemium'}")
         self.log(f"Target: /dev/{disk}")
         self.log(f"Boot mode: {'UEFI' if is_uefi else 'BIOS'}")
-        self.log(f"User: {self.username}")
+        self.log(f"First-boot user: aegis (passwordless)")
         self.log("")
         
         if is_uefi:
@@ -1326,17 +1192,12 @@ Locale: {locale}
         
         self.update_progress(0.55, "Configuring system...")
         
-        USERNAME = self.username
-        PASSWORD = self.password
-        FULLNAME = self.fullname
         HOSTNAME = self.hostname
         TIMEZONE = self.timezone
         LOCALE = self.locale
         LICENSE_KEY = self.license_key
         EDITION = self.edition_name
         
-        escaped_fullname = FULLNAME.replace("'", "'\\''")
-        escaped_password = PASSWORD.replace("'", "'\\''")
         escaped_license = LICENSE_KEY.replace("'", "'\\''") if LICENSE_KEY else ""
         
         chroot_script = f'''#!/bin/bash
@@ -1381,29 +1242,36 @@ grub-install --target=i386-pc /dev/{disk}
         chroot_script += f'''
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# User creation with collected credentials from installer form
-useradd -m -G wheel,audio,video,storage,optical -s /bin/bash -c '{escaped_fullname}' {USERNAME}
+# Create passwordless aegis user for first boot (OOBE will handle account creation)
+useradd -m -G wheel,audio,video,storage,optical,autologin -s /bin/bash aegis
 
-# Set password using chpasswd
-echo '{USERNAME}:{escaped_password}' | chpasswd
+# No password set - passwordless login for first boot
+# OOBE wizard will create the real user account
 
-# Configure sudo access for wheel group
+# Configure sudo access for wheel group (passwordless for OOBE)
 sed -i 's/^# *%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 grep -q "^%wheel ALL=(ALL:ALL) ALL" /etc/sudoers || echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
+
+# Also allow passwordless sudo for aegis during OOBE
+echo "aegis ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/aegis-oobe
+chmod 440 /etc/sudoers.d/aegis-oobe
 
 # Desktop environment
 pacman -S --noconfirm xfce4 xfce4-goodies lightdm lightdm-gtk-greeter
 systemctl enable lightdm
 
-# Configure LightDM for installed system (NOT the live ISO config)
-# Enable autologin for OOBE first boot, then OOBE will disable it
+# Create autologin group if it doesn't exist
+groupadd -f autologin
+usermod -a -G autologin aegis
+
+# Configure LightDM for passwordless autologin on first boot
 mkdir -p /etc/lightdm
 cat > /etc/lightdm/lightdm.conf << LIGHTDM_EOF
 [LightDM]
 run-directory=/run/lightdm
 
 [Seat:*]
-autologin-user={USERNAME}
+autologin-user=aegis
 autologin-user-timeout=0
 autologin-session=xfce
 user-session=xfce
@@ -1412,7 +1280,6 @@ greeter-hide-users=false
 LIGHTDM_EOF
 
 # Configure the greeter styling
-mkdir -p /etc/lightdm
 cat > /etc/lightdm/lightdm-gtk-greeter.conf << 'GREETER_EOF'
 [greeter]
 background=/usr/share/backgrounds/aegis-wallpaper.png
@@ -1427,12 +1294,12 @@ default-user-image=#avatar-default
 hide-user-image=false
 GREETER_EOF
 
-# Clean up any stale AccountsService cache from live ISO
-rm -rf /var/lib/AccountsService/users/aegis 2>/dev/null || true
+# Clean up any stale AccountsService cache
+rm -rf /var/lib/AccountsService/users/* 2>/dev/null || true
 
-# Create AccountsService entry for new user
+# Create AccountsService entry for aegis (temporary first-boot user)
 mkdir -p /var/lib/AccountsService/users
-cat > /var/lib/AccountsService/users/{USERNAME} << ACCOUNTS_EOF
+cat > /var/lib/AccountsService/users/aegis << ACCOUNTS_EOF
 [User]
 SystemAccount=false
 ACCOUNTS_EOF
@@ -1456,12 +1323,15 @@ chmod 644 /etc/aegis/license.key
 '''
         
         chroot_script += f'''
-# Enable OOBE (Out-of-Box Experience) service for first-boot wizard
+# Mark system for OOBE (Out-of-Box Experience) on first boot
+touch /etc/aegis/.needs-oobe
+
+# Enable OOBE service for first-boot wizard if it exists
 if [ -f /etc/systemd/system/aegis-oobe.service ]; then
     systemctl enable aegis-oobe.service
 fi
 
-echo "Configuration complete for user: {USERNAME}"
+echo "Configuration complete - system ready for first boot with OOBE"
 '''
         
         self.run_cmd("mkdir -p /mnt/tmp", "Creating /mnt/tmp directory")
@@ -1496,7 +1366,8 @@ echo "Configuration complete for user: {USERNAME}"
         self.log("Installation completed successfully!")
         self.log("=" * 50)
         self.log(f"Edition: {self.edition_name}")
-        self.log(f"Username: {self.username}")
+        self.log("First boot: Desktop will load automatically")
+        self.log("OOBE wizard will guide you to create your account")
         self.log("Please remove installation media and reboot.")
         
         self.installation_complete = True
@@ -1513,12 +1384,12 @@ echo "Configuration complete for user: {USERNAME}"
             f"Aegis OS has been successfully installed.\n\n"
             f"Edition: {self.edition_name}\n"
             f"{license_info}"
-            f"Username: {self.username}\n"
             f"Hostname: {self.hostname}\n\n"
-            f"Please remove the installation media and reboot your computer.\n"
-            f"You will need to enter your password at login."
+            f"On first boot, the desktop will load automatically.\n"
+            f"The setup wizard will guide you to create your user account.\n\n"
+            f"Please remove the installation media and reboot your computer."
         )
-        self.current_step = 6
+        self.current_step = 5
         self.show_current_step()
 
 def check_root():
