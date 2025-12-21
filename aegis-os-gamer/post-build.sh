@@ -4,15 +4,32 @@ set -e
 
 TARGET_DIR=$1
 
-echo "Setting up Aegis OS Freemium..."
+echo "Setting up Aegis OS Gamer Edition..."
 
-# Create aegis user
+# Create aegis user in passwd (using 'x' placeholder pointing to shadow)
 echo "aegis:x:1000:1000:Aegis User:/home/aegis:/bin/bash" >> $TARGET_DIR/etc/passwd
 echo "aegis:x:1000:" >> $TARGET_DIR/etc/group
+
+# Create shadow entry with disabled/empty password for passwordless login
+# Using '!' as password field means account has no password and password login is disabled
+# The user can still login via auto-login getty without any password prompt
+echo "aegis:!:19722:0:99999:7:::" >> $TARGET_DIR/etc/shadow
+
+# Set proper permissions on shadow file
+chmod 640 $TARGET_DIR/etc/shadow
+
+# Create gshadow entry
+echo "aegis:!::" >> $TARGET_DIR/etc/gshadow
+
 mkdir -p $TARGET_DIR/home/aegis
 chroot $TARGET_DIR chown -R 1000:1000 /home/aegis
 
-# Set up auto-login for XFCE
+# Set up passwordless sudo for aegis user
+mkdir -p $TARGET_DIR/etc/sudoers.d
+echo "aegis ALL=(ALL) NOPASSWD: ALL" > $TARGET_DIR/etc/sudoers.d/aegis
+chmod 440 $TARGET_DIR/etc/sudoers.d/aegis
+
+# Set up auto-login for XFCE via getty (no password required)
 mkdir -p $TARGET_DIR/etc/systemd/system/getty@tty1.service.d
 cat > $TARGET_DIR/etc/systemd/system/getty@tty1.service.d/override.conf << 'EOF'
 [Service]
@@ -79,9 +96,9 @@ mkdir -p $TARGET_DIR/var/log
 mkdir -p $TARGET_DIR/etc/aegis
 
 # Set up Aegis branding
-echo "AEGIS_OS_VERSION=1.0.0-freemium" >> $TARGET_DIR/etc/os-release
+echo "AEGIS_OS_VERSION=1.0.0-gamer" >> $TARGET_DIR/etc/os-release
 echo "AEGIS_OS_CODENAME=Genesis" >> $TARGET_DIR/etc/os-release
-echo "AEGIS_OS_EDITION=Freemium" >> $TARGET_DIR/etc/os-release
+echo "AEGIS_OS_EDITION=Gamer" >> $TARGET_DIR/etc/os-release
 
 # Create issue file with Aegis branding
 cat > $TARGET_DIR/etc/issue << 'EOF'
@@ -89,7 +106,7 @@ cat > $TARGET_DIR/etc/issue << 'EOF'
     ▄▀█ █▀▀ █▀▀ █ █▀   █▀█ █▀
     █▀█ ██▄ █▄█ █ ▄█   █▄█ ▄█
     
-Aegis OS Freemium Edition - Genesis
+Aegis OS Gamer Edition - Genesis
 The Gold Standard for Gaming
 
 Login: aegis (no password required)
@@ -97,4 +114,4 @@ Web: https://aegis-os.com
 
 EOF
 
-echo "Aegis OS Freemium build complete!"
+echo "Aegis OS Gamer Edition build complete!"

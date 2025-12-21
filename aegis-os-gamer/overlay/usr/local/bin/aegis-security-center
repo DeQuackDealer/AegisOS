@@ -764,6 +764,23 @@ class AegisSecurityCenter:
             }
 
 
+COLORS = {
+    'bg_dark': '#0a0a0f',
+    'bg_panel': '#12121a',
+    'bg_card': '#1a1a2e',
+    'accent_cyan': '#00d4ff',
+    'accent_green': '#00ff88',
+    'accent_purple': '#8b5cf6',
+    'accent_orange': '#ff8c00',
+    'text_primary': '#ffffff',
+    'text_secondary': '#a0a0b0',
+    'text_muted': '#606070',
+    'border': '#2a2a3e',
+    'success': '#00ff88',
+    'warning': '#ffb800',
+    'error': '#ff4757',
+}
+
 class SecurityCenterGUI:
     def __init__(self):
         self.security = AegisSecurityCenter()
@@ -773,122 +790,215 @@ class SecurityCenterGUI:
         self.refresh_status()
         
     def setup_window(self):
-        """Configure the main window"""
         self.root.title("Aegis Security Center")
-        self.root.geometry("900x700")
-        self.root.configure(bg='#1a1a2e')
+        self.root.geometry("1000x750")
+        self.root.configure(bg=COLORS['bg_dark'])
+        self.root.minsize(900, 650)
         
-        style = ttk.Style()
-        style.theme_use('clam')
-        style.configure('TFrame', background='#1a1a2e')
-        style.configure('TLabel', background='#1a1a2e', foreground='white')
-        style.configure('TButton', padding=10)
-        style.configure('Header.TLabel', font=('Arial', 24, 'bold'), foreground='#00d4ff')
-        style.configure('Status.TLabel', font=('Arial', 12))
-        style.configure('Score.TLabel', font=('Arial', 48, 'bold'))
+    def create_styled_button(self, parent, text, command, color=None):
+        if color is None:
+            color = COLORS['accent_cyan']
+        btn = tk.Button(parent, text=text, command=command,
+                       bg=COLORS['bg_panel'],
+                       fg=COLORS['text_primary'],
+                       activebackground=color,
+                       activeforeground=COLORS['bg_dark'],
+                       font=('Segoe UI', 10, 'bold'),
+                       bd=0, padx=18, pady=10,
+                       cursor='hand2',
+                       highlightthickness=1,
+                       highlightbackground=color)
+        btn.bind('<Enter>', lambda e, b=btn, c=color: b.configure(bg=c, fg=COLORS['bg_dark']))
+        btn.bind('<Leave>', lambda e, b=btn: b.configure(bg=COLORS['bg_panel'], fg=COLORS['text_primary']))
+        return btn
+        
+    def create_card(self, parent, title=None, icon=None):
+        card = tk.Frame(parent, bg=COLORS['bg_card'],
+                       highlightbackground=COLORS['border'],
+                       highlightthickness=1)
+        
+        if title:
+            header = tk.Frame(card, bg=COLORS['bg_card'])
+            header.pack(fill='x', padx=15, pady=(12, 0))
+            
+            title_text = f"{icon} {title}" if icon else title
+            title_label = tk.Label(header, text=title_text,
+                                  bg=COLORS['bg_card'],
+                                  fg=COLORS['accent_green'],
+                                  font=('Segoe UI', 13, 'bold'))
+            title_label.pack(anchor='w')
+            
+            separator = tk.Frame(card, bg=COLORS['border'], height=1)
+            separator.pack(fill='x', padx=15, pady=(8, 0))
+        
+        content = tk.Frame(card, bg=COLORS['bg_card'])
+        content.pack(fill='both', expand=True, padx=15, pady=12)
+        
+        return card, content
         
     def create_widgets(self):
-        """Create GUI widgets"""
-        header = ttk.Frame(self.root)
-        header.pack(fill='x', padx=20, pady=20)
+        main_container = tk.Frame(self.root, bg=COLORS['bg_dark'])
+        main_container.pack(fill='both', expand=True, padx=20, pady=15)
         
-        title = ttk.Label(header, text="🛡️ Aegis Security Center", style='Header.TLabel')
-        title.pack(side='left')
+        header = tk.Frame(main_container, bg=COLORS['bg_dark'])
+        header.pack(fill='x', pady=(0, 15))
         
-        refresh_btn = ttk.Button(header, text="🔄 Refresh", command=self.refresh_status)
+        title_frame = tk.Frame(header, bg=COLORS['bg_dark'])
+        title_frame.pack(side='left')
+        
+        title = tk.Label(title_frame, text="🛡️ Aegis Security Center",
+                        bg=COLORS['bg_dark'],
+                        fg=COLORS['accent_cyan'],
+                        font=('Segoe UI', 24, 'bold'))
+        title.pack(anchor='w')
+        
+        subtitle = tk.Label(title_frame, text="Gamer Edition • Real-time Protection Dashboard",
+                           bg=COLORS['bg_dark'],
+                           fg=COLORS['text_muted'],
+                           font=('Segoe UI', 11))
+        subtitle.pack(anchor='w')
+        
+        refresh_btn = self.create_styled_button(header, "🔄 Refresh", self.refresh_status)
         refresh_btn.pack(side='right')
         
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill='both', expand=True, padx=20)
+        main_frame = tk.Frame(main_container, bg=COLORS['bg_dark'])
+        main_frame.pack(fill='both', expand=True)
         
-        left_panel = ttk.Frame(main_frame)
+        left_panel = tk.Frame(main_frame, bg=COLORS['bg_dark'])
         left_panel.pack(side='left', fill='both', expand=True)
         
-        score_frame = ttk.LabelFrame(left_panel, text="Security Score", padding=20)
-        score_frame.pack(fill='x', pady=10)
+        score_card, score_content = self.create_card(left_panel, "Security Score", "📊")
+        score_card.pack(fill='x', pady=(0, 10))
         
-        self.score_label = ttk.Label(score_frame, text="--", style='Score.TLabel')
-        self.score_label.pack()
+        score_display = tk.Frame(score_content, bg=COLORS['bg_card'])
+        score_display.pack(fill='x')
         
-        self.score_status = ttk.Label(score_frame, text="Calculating...", style='Status.TLabel')
-        self.score_status.pack()
+        self.score_label = tk.Label(score_display, text="--",
+                                   bg=COLORS['bg_card'],
+                                   fg=COLORS['accent_green'],
+                                   font=('Segoe UI', 52, 'bold'))
+        self.score_label.pack(side='left')
         
-        av_frame = ttk.LabelFrame(left_panel, text="🦠 Antivirus (ClamAV)", padding=15)
-        av_frame.pack(fill='x', pady=10)
+        self.score_status = tk.Label(score_display, text="Calculating...",
+                                    bg=COLORS['bg_card'],
+                                    fg=COLORS['text_secondary'],
+                                    font=('Segoe UI', 14))
+        self.score_status.pack(side='left', padx=(15, 0), pady=(15, 0))
         
-        self.av_status = ttk.Label(av_frame, text="Checking...", style='Status.TLabel')
+        av_card, av_content = self.create_card(left_panel, "Antivirus (ClamAV)", "🦠")
+        av_card.pack(fill='x', pady=(0, 10))
+        
+        self.av_status = tk.Label(av_content, text="Checking...",
+                                 bg=COLORS['bg_card'],
+                                 fg=COLORS['text_primary'],
+                                 font=('Segoe UI', 11))
         self.av_status.pack(anchor='w')
         
-        self.av_version = ttk.Label(av_frame, text="", style='Status.TLabel')
-        self.av_version.pack(anchor='w')
+        self.av_version = tk.Label(av_content, text="",
+                                  bg=COLORS['bg_card'],
+                                  fg=COLORS['text_muted'],
+                                  font=('Segoe UI', 10))
+        self.av_version.pack(anchor='w', pady=(2, 0))
         
-        self.av_db = ttk.Label(av_frame, text="", style='Status.TLabel')
+        self.av_db = tk.Label(av_content, text="",
+                             bg=COLORS['bg_card'],
+                             fg=COLORS['text_muted'],
+                             font=('Segoe UI', 10))
         self.av_db.pack(anchor='w')
         
-        av_buttons = ttk.Frame(av_frame)
-        av_buttons.pack(fill='x', pady=10)
+        av_buttons = tk.Frame(av_content, bg=COLORS['bg_card'])
+        av_buttons.pack(fill='x', pady=(10, 0))
         
-        ttk.Button(av_buttons, text="Quick Scan", command=self.run_scan).pack(side='left', padx=5)
-        ttk.Button(av_buttons, text="Full Scan", command=lambda: self.run_scan("/")).pack(side='left', padx=5)
+        self.create_styled_button(av_buttons, "Quick Scan", self.run_scan, COLORS['accent_cyan']).pack(side='left', padx=(0, 8))
+        self.create_styled_button(av_buttons, "Full Scan", lambda: self.run_scan("/"), COLORS['accent_orange']).pack(side='left')
         
-        fw_frame = ttk.LabelFrame(left_panel, text="🔥 Firewall", padding=15)
-        fw_frame.pack(fill='x', pady=10)
+        fw_card, fw_content = self.create_card(left_panel, "Firewall", "🔥")
+        fw_card.pack(fill='x', pady=(0, 10))
         
-        self.fw_status = ttk.Label(fw_frame, text="Checking...", style='Status.TLabel')
+        self.fw_status = tk.Label(fw_content, text="Checking...",
+                                 bg=COLORS['bg_card'],
+                                 fg=COLORS['text_primary'],
+                                 font=('Segoe UI', 11))
         self.fw_status.pack(anchor='w')
         
-        self.fw_rules = ttk.Label(fw_frame, text="", style='Status.TLabel')
-        self.fw_rules.pack(anchor='w')
+        self.fw_rules = tk.Label(fw_content, text="",
+                                bg=COLORS['bg_card'],
+                                fg=COLORS['text_muted'],
+                                font=('Segoe UI', 10))
+        self.fw_rules.pack(anchor='w', pady=(2, 0))
         
-        fw_buttons = ttk.Frame(fw_frame)
-        fw_buttons.pack(fill='x', pady=10)
+        fw_buttons = tk.Frame(fw_content, bg=COLORS['bg_card'])
+        fw_buttons.pack(fill='x', pady=(10, 0))
         
-        ttk.Button(fw_buttons, text="Enable", command=self.enable_firewall).pack(side='left', padx=5)
-        ttk.Button(fw_buttons, text="Disable", command=self.disable_firewall).pack(side='left', padx=5)
+        self.create_styled_button(fw_buttons, "Enable", self.enable_firewall, COLORS['success']).pack(side='left', padx=(0, 8))
+        self.create_styled_button(fw_buttons, "Disable", self.disable_firewall, COLORS['error']).pack(side='left')
         
-        ai_frame = ttk.LabelFrame(left_panel, text="🤖 AI Security", padding=15)
-        ai_frame.pack(fill='x', pady=10)
+        ai_card, ai_content = self.create_card(left_panel, "AI Security", "🤖")
+        ai_card.pack(fill='x', pady=(0, 10))
         
-        self.ai_tier_label = ttk.Label(ai_frame, text="Loading...", style='Status.TLabel')
+        self.ai_tier_label = tk.Label(ai_content, text="Loading...",
+                                     bg=COLORS['bg_card'],
+                                     fg=COLORS['text_primary'],
+                                     font=('Segoe UI', 11))
         self.ai_tier_label.pack(anchor='w')
         
-        self.ai_level_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
-        self.ai_level_label.pack(anchor='w')
+        self.ai_level_label = tk.Label(ai_content, text="",
+                                      bg=COLORS['bg_card'],
+                                      fg=COLORS['accent_purple'],
+                                      font=('Segoe UI', 10))
+        self.ai_level_label.pack(anchor='w', pady=(2, 0))
         
-        self.ai_caps_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
+        self.ai_caps_label = tk.Label(ai_content, text="",
+                                     bg=COLORS['bg_card'],
+                                     fg=COLORS['text_muted'],
+                                     font=('Segoe UI', 10))
         self.ai_caps_label.pack(anchor='w')
         
-        self.ai_realtime_label = ttk.Label(ai_frame, text="", style='Status.TLabel')
+        self.ai_realtime_label = tk.Label(ai_content, text="",
+                                         bg=COLORS['bg_card'],
+                                         fg=COLORS['text_muted'],
+                                         font=('Segoe UI', 10))
         self.ai_realtime_label.pack(anchor='w')
         
-        ai_buttons = ttk.Frame(ai_frame)
-        ai_buttons.pack(fill='x', pady=10)
+        ai_buttons = tk.Frame(ai_content, bg=COLORS['bg_card'])
+        ai_buttons.pack(fill='x', pady=(10, 0))
         
-        ttk.Button(ai_buttons, text="AI Scan", command=self.run_ai_scan).pack(side='left', padx=5)
-        ttk.Button(ai_buttons, text="Behavioral", command=self.run_behavioral).pack(side='left', padx=5)
+        self.create_styled_button(ai_buttons, "AI Scan", self.run_ai_scan, COLORS['accent_purple']).pack(side='left', padx=(0, 8))
+        self.create_styled_button(ai_buttons, "Behavioral", self.run_behavioral, COLORS['accent_purple']).pack(side='left')
         
-        right_panel = ttk.Frame(main_frame)
-        right_panel.pack(side='right', fill='both', expand=True, padx=(20, 0))
+        right_panel = tk.Frame(main_frame, bg=COLORS['bg_dark'])
+        right_panel.pack(side='right', fill='both', expand=True, padx=(15, 0))
         
-        events_frame = ttk.LabelFrame(right_panel, text="📋 Recent Security Events", padding=10)
-        events_frame.pack(fill='both', expand=True)
+        events_card, events_content = self.create_card(right_panel, "Recent Security Events", "📋")
+        events_card.pack(fill='both', expand=True, pady=(0, 10))
         
-        self.events_text = scrolledtext.ScrolledText(events_frame, height=15, bg='#0f0f1a', 
-                                                     fg='#00ff00', font=('Courier', 9))
+        self.events_text = scrolledtext.ScrolledText(events_content, height=12,
+                                                     bg=COLORS['bg_panel'],
+                                                     fg=COLORS['accent_green'],
+                                                     font=('Consolas', 9),
+                                                     bd=0,
+                                                     insertbackground=COLORS['text_primary'],
+                                                     selectbackground=COLORS['accent_cyan'])
         self.events_text.pack(fill='both', expand=True)
         
-        ports_frame = ttk.LabelFrame(right_panel, text="🌐 Open Ports", padding=10)
-        ports_frame.pack(fill='x', pady=10)
+        ports_card, ports_content = self.create_card(right_panel, "Open Ports", "🌐")
+        ports_card.pack(fill='x', pady=(0, 10))
         
-        self.ports_text = tk.Text(ports_frame, height=5, bg='#0f0f1a', 
-                                  fg='white', font=('Courier', 9))
+        self.ports_text = tk.Text(ports_content, height=4,
+                                 bg=COLORS['bg_panel'],
+                                 fg=COLORS['text_primary'],
+                                 font=('Consolas', 9),
+                                 bd=0)
         self.ports_text.pack(fill='x')
         
-        issues_frame = ttk.LabelFrame(right_panel, text="⚠️ Security Issues", padding=10)
-        issues_frame.pack(fill='x')
+        issues_card, issues_content = self.create_card(right_panel, "Security Issues", "⚠️")
+        issues_card.pack(fill='x')
         
-        self.issues_text = tk.Text(issues_frame, height=4, bg='#0f0f1a',
-                                   fg='#ff6b6b', font=('Arial', 10))
+        self.issues_text = tk.Text(issues_content, height=3,
+                                  bg=COLORS['bg_panel'],
+                                  fg=COLORS['warning'],
+                                  font=('Segoe UI', 10),
+                                  bd=0)
         self.issues_text.pack(fill='x')
         
     def refresh_status(self):
@@ -899,16 +1009,16 @@ class SecurityCenterGUI:
         self.score_label.config(text=f"{score}%")
         
         if score >= 80:
-            color = '#00ff00'
-            text = "Good"
+            color = COLORS['success']
+            text = "✓ Good"
         elif score >= 60:
-            color = '#ffff00'
-            text = "Fair"
+            color = COLORS['warning']
+            text = "⚠ Fair"
         else:
-            color = '#ff0000'
-            text = "Poor"
+            color = COLORS['error']
+            text = "✗ Poor"
         
-        self.score_label.config(foreground=color)
+        self.score_label.config(fg=color)
         self.score_status.config(text=f"Status: {text}")
         
         av = status["antivirus"]
@@ -941,11 +1051,12 @@ class SecurityCenterGUI:
         
         self.issues_text.delete('1.0', tk.END)
         if issues:
+            self.issues_text.config(fg=COLORS['warning'])
             for issue in issues:
                 self.issues_text.insert(tk.END, f"• {issue}\n")
         else:
+            self.issues_text.config(fg=COLORS['success'])
             self.issues_text.insert(tk.END, "✅ No security issues detected")
-            self.issues_text.config(fg='#00ff00')
         
         ai = status.get("ai_security", {})
         if ai.get("available", False):
