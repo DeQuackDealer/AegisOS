@@ -114,14 +114,17 @@ Located at: `AegisOSRepo/` directory
 ## UI & Login System (Updated December 2025)
 - **Dual Login Modes**: Two Gamer edition variants available in GitHub Actions workflow:
   - `gamer`: Password-protected (default password: "aegis"), requires password for sudo
-  - `gamer-passwordless`: No password, auto-login via getty, NOPASSWD sudo
-- **Aegis-Win11 Theme**: Windows 10 layout + Windows 11 aesthetics
-  - Rounded corners (8-12px), Fluent Design, Mica-style effects
-  - Dark mode: #202020 background, #0078D4 accent, #60CDFF highlights
-  - Papirus-Dark icons, Noto Sans typography
-- **XFCE Panel**: Windows 10-style taskbar (48px bottom panel, start button left, tray right)
-- **Pinned Taskbar Apps**: Thunderbolt Runner, Files, Firefox (one-click launch)
-- **Desktop Shortcuts**: Thunderbolt Runner, StreamForge, Settings, Files, Browser
+  - `gamer-passwordless`: No password, auto-login via SDDM, NOPASSWD sudo
+- **Desktop Environment**: KDE Plasma (gamer editions) / XFCE (other editions)
+  - KDE Plasma: Modern, fluid animations, blur effects, Windows 11-style layout
+  - SDDM display manager with Breeze theme
+- **Aegis Plasma Theme**: Windows 11-inspired layout
+  - Breeze Dark theme with Papirus-Dark icons
+  - Bottom panel (48px) with Kickoff launcher, pinned apps, task manager, system tray
+  - Reduced animations for gaming performance
+  - Baloo file indexer disabled for performance
+- **Pinned Taskbar Apps**: Thunderbolt Runner, Dolphin, Firefox, Konsole
+- **App Category**: All Aegis apps tagged with "X-Aegis-Suite" for easy discovery
 - **TIER_LIMIT**: Set to "gamer" for full feature access in security and system applications
 - **Build Options**: post-build.sh accepts PASSWORD_MODE parameter ("passwordless" or "password")
 

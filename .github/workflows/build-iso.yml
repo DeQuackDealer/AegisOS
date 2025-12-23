@@ -201,46 +201,53 @@ jobs:
           ANSI_COLOR="0;36"
           OSRELEASE
           
-          echo "=== Creating LightDM configuration ==="
-          mkdir -p "${PROFILE_DIR}/airootfs/etc/lightdm"
-          if [ "$EDITION" = "gamer-passwordless" ]; then
-            echo "=== Passwordless edition: enabling autologin ==="
-            cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
-          [LightDM]
-          run-directory=/run/lightdm
-          logind-check-graphical=true
+          echo "=== Creating Display Manager configuration ==="
           
-          [Seat:*]
-          pam-service=lightdm
-          pam-autologin-service=lightdm-autologin
-          session-wrapper=/etc/lightdm/Xsession
-          greeter-session=lightdm-gtk-greeter
-          user-session=xfce
-          autologin-user=aegis
-          autologin-user-timeout=0
-          autologin-session=xfce
-          LIGHTDM
-            
-            # Create PAM configuration for autologin
-            echo "=== Creating PAM autologin configuration ==="
-            mkdir -p "${PROFILE_DIR}/airootfs/etc/pam.d"
-            cat > "${PROFILE_DIR}/airootfs/etc/pam.d/lightdm-autologin" << 'PAM'
-          auth        required    pam_env.so
-          auth        required    pam_permit.so
-          account     include     system-local-login
-          session     include     system-local-login
-          PAM
-            
-            # Create .dmrc for aegis user to specify default session
-            echo "=== Creating .dmrc for aegis user ==="
-            mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
-            cat > "${PROFILE_DIR}/airootfs/home/aegis/.dmrc" << 'DMRC'
+          # Gamer editions use SDDM with Plasma, others use LightDM with XFCE
+          case "$EDITION" in
+            gamer|gamer-ai|gamer-passwordless)
+              echo "=== Configuring SDDM for KDE Plasma (Gamer edition) ==="
+              mkdir -p "${PROFILE_DIR}/airootfs/etc/sddm.conf.d"
+              
+              if [ "$EDITION" = "gamer-passwordless" ]; then
+                echo "=== Passwordless gamer edition: enabling SDDM autologin ==="
+                cat > "${PROFILE_DIR}/airootfs/etc/sddm.conf.d/aegis.conf" << 'SDDMCONF'
+          [Theme]
+          Current=breeze
+          
+          [Autologin]
+          User=aegis
+          Session=plasma
+          Relogin=false
+          
+          [General]
+          HaltCommand=/usr/bin/systemctl poweroff
+          RebootCommand=/usr/bin/systemctl reboot
+          SDDMCONF
+              else
+                echo "=== Secure gamer edition: SDDM login required ==="
+                cat > "${PROFILE_DIR}/airootfs/etc/sddm.conf.d/aegis.conf" << 'SDDMCONF'
+          [Theme]
+          Current=breeze
+          
+          [General]
+          HaltCommand=/usr/bin/systemctl poweroff
+          RebootCommand=/usr/bin/systemctl reboot
+          SDDMCONF
+              fi
+              
+              # Create .dmrc for aegis user to specify default Plasma session
+              echo "=== Creating .dmrc for aegis user (Plasma session) ==="
+              mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
+              cat > "${PROFILE_DIR}/airootfs/home/aegis/.dmrc" << 'DMRC'
           [Desktop]
-          Session=xfce
+          Session=plasma
           DMRC
-          else
-            echo "=== Secure edition: login required ==="
-            cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
+              ;;
+            *)
+              echo "=== Configuring LightDM for XFCE ==="
+              mkdir -p "${PROFILE_DIR}/airootfs/etc/lightdm"
+              cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" << 'LIGHTDM'
           [LightDM]
           run-directory=/run/lightdm
           logind-check-graphical=true
@@ -249,9 +256,8 @@ jobs:
           greeter-session=lightdm-gtk-greeter
           user-session=xfce
           LIGHTDM
-          fi
-          
-          cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" << 'GREETER'
+              
+              cat > "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" << 'GREETER'
           [greeter]
           theme-name=Aegis-Win11
           icon-theme-name=Papirus-Dark
@@ -262,6 +268,15 @@ jobs:
           indicators=~host;~spacer;~clock;~spacer;~session;~a11y;~power
           clock-format=%A, %B %d  %H:%M
           GREETER
+              
+              # Create .dmrc for aegis user to specify default XFCE session
+              mkdir -p "${PROFILE_DIR}/airootfs/home/aegis"
+              cat > "${PROFILE_DIR}/airootfs/home/aegis/.dmrc" << 'DMRC'
+          [Desktop]
+          Session=xfce
+          DMRC
+              ;;
+          esac
           
           # Create GTK settings to use Aegis-Win11 theme
           mkdir -p "${PROFILE_DIR}/airootfs/etc/skel/.config/gtk-3.0"
@@ -510,8 +525,19 @@ jobs:
           
           ln -sf /usr/lib/systemd/system/NetworkManager.service \
             "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/NetworkManager.service" 2>/dev/null || true
-          ln -sf /usr/lib/systemd/system/lightdm.service \
-            "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants/lightdm.service" 2>/dev/null || true
+          
+          # Enable appropriate display manager based on edition
+          case "$EDITION" in
+            gamer|gamer-ai|gamer-passwordless)
+              echo "=== Enabling SDDM for Plasma desktop ==="
+              ln -sf /usr/lib/systemd/system/sddm.service \
+                "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants/sddm.service" 2>/dev/null || true
+              ;;
+            *)
+              ln -sf /usr/lib/systemd/system/lightdm.service \
+                "${PROFILE_DIR}/airootfs/etc/systemd/system/graphical.target.wants/lightdm.service" 2>/dev/null || true
+              ;;
+          esac
           ln -sf /usr/lib/systemd/system/aegis-setup.service \
             "${PROFILE_DIR}/airootfs/etc/systemd/system/multi-user.target.wants/aegis-setup.service" 2>/dev/null || true
           
@@ -569,6 +595,7 @@ jobs:
             "${PROFILE_DIR}/airootfs/etc/os-release" \
             "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm.conf" \
             "${PROFILE_DIR}/airootfs/etc/lightdm/lightdm-gtk-greeter.conf" \
+            "${PROFILE_DIR}/airootfs/etc/sddm.conf.d/aegis.conf" \
             "${PROFILE_DIR}/airootfs/etc/plymouth/plymouthd.conf" \
             "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.plymouth" \
             "${PROFILE_DIR}/airootfs/usr/share/plymouth/themes/aegis/aegis.script" \
@@ -580,7 +607,8 @@ jobs:
             "${PROFILE_DIR}/airootfs/usr/lib/systemd/system/aegis-setup.service" \
             "${PROFILE_DIR}/airootfs/usr/local/bin/aegis-first-boot" \
             "${PROFILE_DIR}/airootfs/etc/skel/.config/gtk-3.0/settings.ini" \
-            "${PROFILE_DIR}/airootfs/etc/modules-load.d/virtualbox.conf"; do
+            "${PROFILE_DIR}/airootfs/etc/modules-load.d/virtualbox.conf" \
+            "${PROFILE_DIR}/airootfs/home/aegis/.dmrc"; do
             [ -f "$f" ] && sed -i 's/^[[:space:]]*//' "$f"
           done
           
@@ -598,7 +626,7 @@ jobs:
           EDITION="${{ matrix.edition }}"
           PROFILE_DIR="${{ env.PROFILE_DIR }}"
           
-          # Base packages for all editions
+          # Base packages for all editions (DE packages added conditionally below)
           cat > "${PROFILE_DIR}/packages.x86_64" << 'BASEPKGS'
           base
           linux
@@ -612,14 +640,9 @@ jobs:
           libglvnd
           iptables-nft
           pipewire-jack
-          xdg-desktop-portal-gtk
           lib32-libglvnd
           chaotic-keyring
           chaotic-mirrorlist
-          xfce4
-          xfce4-goodies
-          lightdm
-          lightdm-gtk-greeter
           firefox
           vlc
           libreoffice-fresh
@@ -637,13 +660,51 @@ jobs:
           pavucontrol
           gvfs
           gvfs-mtp
-          thunar-volman
           xdg-user-dirs
           fastfetch
           sudo
           bash-completion
           virtualbox-guest-utils
           BASEPKGS
+          
+          # Desktop Environment packages based on edition
+          case "$EDITION" in
+            gamer|gamer-ai|gamer-passwordless)
+              # KDE Plasma for Gamer editions - modern, fluid gaming experience
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'KDEPKGS'
+          plasma-desktop
+          plasma-pa
+          plasma-nm
+          plasma-systemmonitor
+          dolphin
+          konsole
+          sddm
+          breeze
+          breeze-gtk
+          kvantum
+          kde-gtk-config
+          spectacle
+          ark
+          kate
+          powerdevil
+          bluedevil
+          xdg-desktop-portal-kde
+          kscreen
+          kinfocenter
+          KDEPKGS
+              ;;
+            *)
+              # XFCE for other editions
+              cat >> "${PROFILE_DIR}/packages.x86_64" << 'XFCEPKGS'
+          xfce4
+          xfce4-goodies
+          lightdm
+          lightdm-gtk-greeter
+          thunar-volman
+          xdg-desktop-portal-gtk
+          XFCEPKGS
+              ;;
+          esac
           
           # Edition-specific packages
           case "$EDITION" in

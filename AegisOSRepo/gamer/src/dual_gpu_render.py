@@ -356,7 +356,7 @@ class FrameCompositor:
     def composite_alternate_frame(
         self,
         frame_a: bytes,
-        frame_b: bytes,
+        frame_b: bytes,    
         blend: float = 0.0
     ) -> bytes:
         """Composite alternate frame rendering"""
